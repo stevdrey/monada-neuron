@@ -6,6 +6,12 @@ plugins {
 group = "monada.neuron"
 version = "0.1.0-SNAPSHOT"
 
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(26))
+    }
+}
+
 repositories {
     mavenCentral()
 }
