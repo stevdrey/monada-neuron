@@ -141,10 +141,13 @@ public final class Node {
     /**
      * Updates the energy level of this node.
      *
-     * @param energy new energy value (must be non-negative)
-     * @throws IllegalArgumentException if {@code energy} is negative
+     * @param energy new energy value (must be non-negative and finite)
+     * @throws IllegalArgumentException if {@code energy} is negative or non-finite
      */
     public void setEnergy(double energy) {
+        if (!Double.isFinite(energy)) {
+            throw new IllegalArgumentException("energy must be finite, got: " + energy);
+        }
         if (energy < 0) {
             throw new IllegalArgumentException("energy must be non-negative, got: " + energy);
         }
@@ -157,15 +160,16 @@ public final class Node {
 
     /**
      * Adds a directed connection from this node to {@code target}.
-     * Self-connections are not permitted.
+     * Self-connections are not permitted (checked by UUID identity).
      *
-     * @param target the node to connect to (must not be {@code null} or {@code this})
+     * @param target the node to connect to (must not be {@code null} and must have a different UUID)
      * @return {@code true} if the connection was newly added; {@code false} if it already existed
+     * @throws IllegalArgumentException if {@code target} has the same UUID as this node
      */
     public boolean connect(Node target) {
         Objects.requireNonNull(target, "target must not be null");
-        if (target == this) {
-            throw new IllegalArgumentException("A node cannot connect to itself");
+        if (target.id.equals(this.id)) {
+            throw new IllegalArgumentException("A node cannot connect to itself (UUID: " + this.id + ")");
         }
         return connections.add(target);
     }
@@ -261,9 +265,13 @@ public final class Node {
         /**
          * Sets the initial energy level.
          *
-         * @param energy must be non-negative
+         * @param energy must be non-negative and finite
+         * @throws IllegalArgumentException if {@code energy} is negative or non-finite
          */
         public Builder energy(double energy) {
+            if (!Double.isFinite(energy)) {
+                throw new IllegalArgumentException("energy must be finite, got: " + energy);
+            }
             if (energy < 0) {
                 throw new IllegalArgumentException("energy must be non-negative, got: " + energy);
             }
@@ -289,10 +297,16 @@ public final class Node {
          * Builds and returns the {@link Node}.
          *
          * @throws IllegalStateException if {@link #type} has not been set
+         * @throws IllegalArgumentException if any connection has the same UUID as the node being built
          */
         public Node build() {
             if (type == null) {
                 throw new IllegalStateException("NodeType must be specified via type(NodeType)");
+            }
+            for (Node connection : connections) {
+                if (connection.id.equals(this.id)) {
+                    throw new IllegalArgumentException("A node cannot connect to itself (UUID: " + this.id + ")");
+                }
             }
             return new Node(this);
         }

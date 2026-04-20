@@ -18,11 +18,17 @@ public record FrequencyState(double amplitude, double frequency, double phase) {
 
     /**
      * Canonical constructor with basic validation.
-     * Amplitude and frequency must be non-negative; phase is unrestricted.
+     * Amplitude and frequency must be non-negative and finite; phase is unrestricted.
      */
     public FrequencyState {
+        if (!Double.isFinite(amplitude)) {
+            throw new IllegalArgumentException("amplitude must be finite, got: " + amplitude);
+        }
         if (amplitude < 0) {
             throw new IllegalArgumentException("amplitude must be non-negative, got: " + amplitude);
+        }
+        if (!Double.isFinite(frequency)) {
+            throw new IllegalArgumentException("frequency must be finite, got: " + frequency);
         }
         if (frequency < 0) {
             throw new IllegalArgumentException("frequency must be non-negative, got: " + frequency);

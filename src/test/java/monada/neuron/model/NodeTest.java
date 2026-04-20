@@ -73,6 +73,32 @@ class NodeTest {
             assertEquals(1.0, shifted.amplitude());
             assertEquals(50.0, shifted.frequency());
         }
+
+        @Test
+        @DisplayName("NaN amplitude throws")
+        void nanAmplitudeThrows() {
+            assertThrows(IllegalArgumentException.class, () -> new FrequencyState(Double.NaN, 1.0, 0.0));
+        }
+
+        @Test
+        @DisplayName("Infinity amplitude throws")
+        void infinityAmplitudeThrows() {
+            assertThrows(IllegalArgumentException.class, () -> new FrequencyState(Double.POSITIVE_INFINITY, 1.0, 0.0));
+            assertThrows(IllegalArgumentException.class, () -> new FrequencyState(Double.NEGATIVE_INFINITY, 1.0, 0.0));
+        }
+
+        @Test
+        @DisplayName("NaN frequency throws")
+        void nanFrequencyThrows() {
+            assertThrows(IllegalArgumentException.class, () -> new FrequencyState(1.0, Double.NaN, 0.0));
+        }
+
+        @Test
+        @DisplayName("Infinity frequency throws")
+        void infinityFrequencyThrows() {
+            assertThrows(IllegalArgumentException.class, () -> new FrequencyState(1.0, Double.POSITIVE_INFINITY, 0.0));
+            assertThrows(IllegalArgumentException.class, () -> new FrequencyState(1.0, Double.NEGATIVE_INFINITY, 0.0));
+        }
     }
 
     // =========================================================================
@@ -122,6 +148,22 @@ class NodeTest {
             assertThrows(IllegalArgumentException.class,
                     () -> new Node.Builder().type(NodeType.PROCESSOR).energy(-1.0).build());
         }
+
+        @Test
+        @DisplayName("Builder rejects NaN energy")
+        void nanEnergyThrows() {
+            assertThrows(IllegalArgumentException.class,
+                    () -> new Node.Builder().type(NodeType.PROCESSOR).energy(Double.NaN).build());
+        }
+
+        @Test
+        @DisplayName("Builder rejects Infinity energy")
+        void infinityEnergyThrows() {
+            assertThrows(IllegalArgumentException.class,
+                    () -> new Node.Builder().type(NodeType.PROCESSOR).energy(Double.POSITIVE_INFINITY).build());
+            assertThrows(IllegalArgumentException.class,
+                    () -> new Node.Builder().type(NodeType.PROCESSOR).energy(Double.NEGATIVE_INFINITY).build());
+        }
     }
 
     // =========================================================================
@@ -158,6 +200,15 @@ class NodeTest {
         }
 
         @Test
+        @DisplayName("connect to node with same UUID throws")
+        void sameUuidConnectionThrows() {
+            var uuid = UUID.randomUUID();
+            var a = new Node.Builder().id(uuid).type(NodeType.PROCESSOR).build();
+            var b = new Node.Builder().id(uuid).type(NodeType.INPUT).build();
+            assertThrows(IllegalArgumentException.class, () -> a.connect(b));
+        }
+
+        @Test
         @DisplayName("disconnect removes target")
         void disconnectRemovesTarget() {
             var a = new Node.Builder().type(NodeType.INPUT).build();
@@ -181,6 +232,25 @@ class NodeTest {
             var a = new Node.Builder().type(NodeType.PROCESSOR).build();
             var b = new Node.Builder().type(NodeType.MEMORY).build();
             assertThrows(UnsupportedOperationException.class, () -> a.getConnections().add(b));
+        }
+
+        @Test
+        @DisplayName("Builder rejects self-connection at build time")
+        void builderRejectsSelfConnection() {
+            var uuid = UUID.randomUUID();
+            var selfNode = new Node.Builder().id(uuid).type(NodeType.PROCESSOR).build();
+            assertThrows(IllegalArgumentException.class,
+                    () -> new Node.Builder().id(uuid).type(NodeType.PROCESSOR).connection(selfNode).build());
+        }
+
+        @Test
+        @DisplayName("Builder rejects connection with same UUID at build time")
+        void builderRejectsSameUuidConnection() {
+            var uuid = UUID.randomUUID();
+            var nodeA = new Node.Builder().id(uuid).type(NodeType.PROCESSOR).build();
+            var nodeB = new Node.Builder().id(uuid).type(NodeType.INPUT).build();
+            assertThrows(IllegalArgumentException.class,
+                    () -> new Node.Builder().id(uuid).type(NodeType.PROCESSOR).connection(nodeB).build());
         }
     }
 
@@ -248,6 +318,21 @@ class NodeTest {
         void setEnergyNegativeThrows() {
             var node = new Node.Builder().type(NodeType.PROCESSOR).build();
             assertThrows(IllegalArgumentException.class, () -> node.setEnergy(-0.001));
+        }
+
+        @Test
+        @DisplayName("setEnergy with NaN throws")
+        void setEnergyNanThrows() {
+            var node = new Node.Builder().type(NodeType.PROCESSOR).build();
+            assertThrows(IllegalArgumentException.class, () -> node.setEnergy(Double.NaN));
+        }
+
+        @Test
+        @DisplayName("setEnergy with Infinity throws")
+        void setEnergyInfinityThrows() {
+            var node = new Node.Builder().type(NodeType.PROCESSOR).build();
+            assertThrows(IllegalArgumentException.class, () -> node.setEnergy(Double.POSITIVE_INFINITY));
+            assertThrows(IllegalArgumentException.class, () -> node.setEnergy(Double.NEGATIVE_INFINITY));
         }
     }
 
