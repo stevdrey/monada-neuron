@@ -24,11 +24,14 @@ For new implementation work, use `docs/specs/spec-context-template.md` as the ex
 ## Repository Context Layout
 
 - `AGENTS.md` is the root operating guide.
-- `.agents/skills/<skill-name>/SKILL.md` contains project-specific implementation skills.
+- `.agents/skills/<skill-name>/SKILL.md` contains the canonical project-specific implementation skills.
+- `.windsurf/skills/<skill-name>/SKILL.md` mirrors the canonical skills for tools that scan the Windsurf-compatible path.
 - `docs/architecture.md` describes the current and target architecture.
 - `docs/design-principles.md` contains durable design constraints.
 - `docs/adr/*.md` records architecture decisions and their consequences.
 - `docs/specs/*.md` contains task and review templates.
+
+When updating a project skill, edit `.agents/skills/` first and mirror the same content under `.windsurf/skills/` so agent behavior does not drift between tools.
 
 If a rule conflicts with an accepted ADR, the ADR wins for the scope it governs. If implementation reality diverges from documentation, do not silently normalize the mismatch: either update the documentation or record a new decision.
 
