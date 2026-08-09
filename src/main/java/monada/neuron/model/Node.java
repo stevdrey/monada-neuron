@@ -1,6 +1,12 @@
 package monada.neuron.model;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
 
 /**
  * Core abstraction of the Monada-Neuron system.
@@ -28,7 +34,7 @@ import java.util.*;
  *
  * <p>Use {@link Node.Builder} to construct instances.
  */
-public final class Node {
+public final class Node implements NodeView {
 
     /** Immutable unique identifier for this node. */
     private final UUID id;
