@@ -4,7 +4,7 @@
 
 Monada Neuron is an experimental Java 26 cognitive system whose architecture separates cognition from long-term memory and from optional external AI/tool integrations.
 
-The current implementation is intentionally small. The repository presently contains the Phase-1 node model (`Node`, `FrequencyState`, `NodeType`) plus Gradle scaffolding. The module structure below is therefore a **target architecture**, not a claim that every module already exists.
+The current implementation is intentionally small. The repository presently contains the Phase-1 node model (`Node`, `FrequencyState`, `NodeType`), the immutable signal model and node-processing contract, plus Gradle scaffolding. The module structure below is therefore a **target architecture**, not a claim that every module already exists.
 
 ## Core Cognitive Flow
 
@@ -58,6 +58,16 @@ The current domain baseline is under `src/main/java/monada/neuron/model`.
 This representation prioritizes correctness and inspectability. It should remain the reference behavior until scale measurements justify a different internal representation.
 
 In particular, a future compact graph representation must not silently alter node identity, connection semantics, state transition behavior, or deterministic iteration requirements.
+
+## Current Signal and Processing Model
+
+`Signal` is an immutable, cycle-ephemeral information carrier composed of a modality-neutral `SignalKind` and a `FrequencyState`. Its amplitude is the signal intensity; the signal does not duplicate energy, identity, or sequence metadata.
+
+Signal has no durable or cycle-local identity. Correlation and tracing belong to a surrounding cognitive context when required, rather than to the signal value. Signal equality is structural across its kind and frequency state.
+
+`NodeProcessor` receives a `NodeView` and one input signal. The view exposes node identity, type, energy, and frequency state for observation but excludes graph connections and mutation operations. Processing therefore emits its complete observable output through `NodeProcessingResult` rather than changing the node. State transition and adaptation remain separate explicit behaviors.
+
+`NodeProcessingResult` owns an immutable snapshot of its emitted signals. The list order is the observable emission order, including duplicate signals. An empty list represents successful processing with no output; failures propagate to the caller rather than being hidden as empty output.
 
 ## Target Module Boundaries
 

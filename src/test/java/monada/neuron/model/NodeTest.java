@@ -99,6 +99,41 @@ class NodeTest {
             assertThrows(IllegalArgumentException.class, () -> new FrequencyState(1.0, Double.POSITIVE_INFINITY, 0.0));
             assertThrows(IllegalArgumentException.class, () -> new FrequencyState(1.0, Double.NEGATIVE_INFINITY, 0.0));
         }
+
+        @Test
+        @DisplayName("Non-finite phase throws")
+        void nonFinitePhaseThrows() {
+            assertThrows(IllegalArgumentException.class,
+                    () -> new FrequencyState(1.0, 1.0, Double.NaN));
+            assertThrows(IllegalArgumentException.class,
+                    () -> new FrequencyState(1.0, 1.0, Double.POSITIVE_INFINITY));
+            assertThrows(IllegalArgumentException.class,
+                    () -> new FrequencyState(1.0, 1.0, Double.NEGATIVE_INFINITY));
+        }
+
+        @Test
+        @DisplayName("Non-finite amplitude scale throws")
+        void nonFiniteAmplitudeScaleThrows() {
+            var state = new FrequencyState(1.0, 1.0, 0.0);
+            assertThrows(IllegalArgumentException.class,
+                    () -> state.withScaledAmplitude(Double.NaN));
+            assertThrows(IllegalArgumentException.class,
+                    () -> state.withScaledAmplitude(Double.POSITIVE_INFINITY));
+            assertThrows(IllegalArgumentException.class,
+                    () -> state.withScaledAmplitude(Double.NEGATIVE_INFINITY));
+        }
+
+        @Test
+        @DisplayName("Non-finite phase shift throws")
+        void nonFinitePhaseShiftThrows() {
+            var state = new FrequencyState(1.0, 1.0, 0.0);
+            assertThrows(IllegalArgumentException.class,
+                    () -> state.withPhaseShift(Double.NaN));
+            assertThrows(IllegalArgumentException.class,
+                    () -> state.withPhaseShift(Double.POSITIVE_INFINITY));
+            assertThrows(IllegalArgumentException.class,
+                    () -> state.withPhaseShift(Double.NEGATIVE_INFINITY));
+        }
     }
 
     // =========================================================================
