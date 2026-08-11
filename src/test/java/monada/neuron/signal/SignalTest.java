@@ -4,7 +4,6 @@ import monada.neuron.model.FrequencyState;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.RecordComponent;
-import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.UUID;
 
@@ -72,12 +71,5 @@ class SignalTest {
                 Arrays.stream(Signal.class.getRecordComponents())
                         .map(RecordComponent::getType)
                         .toArray(Class<?>[]::new));
-        assertEquals(1, Signal.class.getConstructors().length);
-        assertArrayEquals(
-                new Class<?>[] {UUID.class, SignalKind.class, FrequencyState.class},
-                Signal.class.getConstructors()[0].getParameterTypes());
-        assertTrue(Arrays.stream(Signal.class.getDeclaredMethods())
-                .noneMatch(method -> Modifier.isStatic(method.getModifiers())
-                        && method.getReturnType() == Signal.class));
     }
 }

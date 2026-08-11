@@ -45,7 +45,7 @@ public record FrequencyState(double amplitude, double frequency, double phase) {
      * Returns a new {@code FrequencyState} with the amplitude scaled by the given factor.
      * Useful for attenuation or amplification without altering frequency or phase.
      *
-     * @param factor scaling factor (must be non-negative)
+     * @param factor finite scaling factor (must be non-negative)
      * @return scaled state
      */
     public FrequencyState withScaledAmplitude(double factor) {
@@ -61,7 +61,7 @@ public record FrequencyState(double amplitude, double frequency, double phase) {
     /**
      * Returns a new {@code FrequencyState} with the phase shifted by the given offset (in radians).
      *
-     * @param offset phase delta in radians
+     * @param offset finite phase delta in radians
      * @return phase-shifted state
      */
     public FrequencyState withPhaseShift(double offset) {
