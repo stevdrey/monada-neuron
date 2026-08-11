@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -92,7 +91,6 @@ class NodeProcessingTest {
     }
 
     private Signal signal(SignalKind kind, double amplitude) {
-        var id = new UUID(kind.ordinal(), Double.doubleToLongBits(amplitude));
-        return new Signal(id, kind, new FrequencyState(amplitude, 10.0, 0.0));
+        return new Signal(kind, new FrequencyState(amplitude, 10.0, 0.0));
     }
 }

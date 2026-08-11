@@ -61,9 +61,9 @@ In particular, a future compact graph representation must not silently alter nod
 
 ## Current Signal and Processing Model
 
-`Signal` is an immutable, cycle-ephemeral information carrier composed of an explicit caller-assigned `UUID`, a modality-neutral `SignalKind`, and a `FrequencyState`. Its amplitude is the signal intensity; the signal does not duplicate energy or introduce sequence metadata.
+`Signal` is an immutable, cycle-ephemeral information carrier composed of a modality-neutral `SignalKind` and a `FrequencyState`. Its amplitude is the signal intensity; the signal does not duplicate energy, identity, or sequence metadata.
 
-The signal UUID supports correlation and tracing without implying persistence or long-term identity. Signal creation never generates a UUID implicitly. Producers own UUID assignment and any uniqueness policy required by their cognitive flow. Signal equality is structural across the UUID, kind, and frequency state.
+Signal has no durable or cycle-local identity. Correlation and tracing belong to a surrounding cognitive context when required, rather than to the signal value. Signal equality is structural across its kind and frequency state.
 
 `NodeProcessor` receives a `NodeView` and one input signal. The view exposes node identity, type, energy, and frequency state for observation but excludes graph connections and mutation operations. Processing therefore emits its complete observable output through `NodeProcessingResult` rather than changing the node. State transition and adaptation remain separate explicit behaviors.
 

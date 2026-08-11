@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; the Signal identity portion is superseded by ADR 0005.
 
 ## Context
 
