@@ -4,7 +4,10 @@
 
 Monada Neuron is an experimental Java 26 cognitive system whose architecture separates cognition from long-term memory and from optional external AI/tool integrations.
 
-The current implementation is intentionally small. The repository presently contains the Phase-1 node model (`Node`, `FrequencyState`, `NodeType`), the immutable signal model and node-processing contract, plus Gradle scaffolding. The module structure below is therefore a **target architecture**, not a claim that every module already exists.
+The current implementation is intentionally small. The repository presently contains the Phase-1
+Node model, immutable Signal and processing contracts, deterministic graph propagation, scalar
+resonance, and the first native Aeon coordination boundary. The module structure below is therefore
+a **target architecture**, not a claim that every module already exists.
 
 ## Core Cognitive Flow
 
@@ -131,6 +134,35 @@ The runtime is sequential, mutates no Nodes, and assumes callers do not modify N
 topology concurrently. It has no dependency on external orchestration frameworks or long-term
 memory. ADR 0007 records the complete reference semantics that future compact or parallel backends
 must preserve.
+
+## Current Aeon Domain and Coordination
+
+`Aeon` owns the identity, cognitive-purpose classification, and deterministic membership of one
+coherent cognitive capability. Its UUID and `AeonPurpose` are immutable. Members are canonical
+`Node` references indexed by UUID in insertion order; duplicate UUIDs do not replace the original
+member, and removing then re-adding a member appends it to the membership order. The exposed member
+collection is a live unmodifiable view rather than a per-access snapshot.
+
+`AeonInput` explicitly pairs an initial Signal with the UUID of its starting member. This avoids an
+implicit root or broadcast rule and lets the coordinator resolve the canonical Node instance owned
+by the Aeon. `AeonCoordinator` accepts an ordered input list, a `NodeProcessor`, and the bounded
+`PropagationConfig`. `DeterministicAeonCoordinator` validates every starting membership before
+processing and then executes inputs sequentially in declared order. Member UUIDs resolve to the
+canonical Node objects stored by the Aeon; another Node object with the same UUID is not accepted
+as a substitute.
+
+Each input delegates traversal to `SignalPropagationEngine`; Aeon coordination does not copy or
+reimplement the Node graph. A composed routing policy rejects connections whose targets are not
+canonical Aeon member instances before applying the caller's policy. Each `AeonInputResult` retains
+its input and complete `PropagationResult`, and `AeonCoordinationResult` snapshots those
+associations in input order.
+
+An empty input list succeeds with an empty result, including for an empty Aeon. A non-member start
+fails before any propagation. Zero Node energy is not an inactivity flag: reached members are still
+processed, while `NodeProcessingResult.noOutput()` ends only that propagation branch. Processing
+and routing failures propagate without a partial result. Membership, Node state, and topology must
+not change during coordination; the Phase-1 Aeon and graph runtime are sequential and not
+thread-safe. ADR 0008 records these ownership and execution semantics.
 
 ## Target Module Boundaries
 
