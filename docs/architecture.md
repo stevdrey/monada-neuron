@@ -69,6 +69,41 @@ Signal has no durable or cycle-local identity. Correlation and tracing belong to
 
 `NodeProcessingResult` owns an immutable snapshot of its emitted signals. The list order is the observable emission order, including duplicate signals. An empty list represents successful processing with no output; failures propagate to the caller rather than being hidden as empty output.
 
+## Current Scalar Resonance Model
+
+`ResonanceMetric` defines the in-process cognitive operation for scoring two `FrequencyState`
+values. The portable reference implementation is `ScalarResonanceMetric`; it is intentionally
+scalar, deterministic, and independent from persisted recall or ranking in Monada Resonance Store.
+
+For states `(a1, f1, p1)` and `(a2, f2, p2)`, the normalized score is:
+
+```text
+resonance = amplitudeSimilarity * frequencySimilarity * phaseSimilarity
+```
+
+The component similarities are:
+
+- `amplitudeSimilarity = min(a1, a2) / max(a1, a2)` when both amplitudes are positive;
+- the complete resonance is `0` when either amplitude is zero, including two silent states;
+- `frequencySimilarity = 1` for equal frequencies, including two zero frequencies;
+- `frequencySimilarity = 0` when exactly one frequency is zero, otherwise it is
+  `min(f1, f2) / max(f1, f2)`;
+- `phaseSimilarity = (1 + cos(delta)) / 2`, where each phase is wrapped to one cycle before
+  calculating the wrapped phase difference `delta`.
+
+The result is finite, symmetric, and bounded by `[0, 1]`. Relative amplitude or frequency
+divergence monotonically lowers its factor while the other components remain fixed. Equal scores
+are ties; ranking and stable tie-breaking belong to a caller that has ordering context.
+
+The metric consumes only `FrequencyState`. A `Signal` caller extracts `frequencyState()`
+explicitly; `SignalKind` and Node energy do not influence this reference formula. The implementation
+uses `StrictMath` for reproducible phase operations and performs no avoidable allocation or boxing
+on the successful calculation path.
+
+This scalar implementation remains the semantic correctness oracle for future SIMD, native,
+parallel, or accelerator backends. Alternative formulas require explicit evaluation and must not
+silently replace it.
+
 ## Target Module Boundaries
 
 As the repository grows, prefer boundaries similar to:
