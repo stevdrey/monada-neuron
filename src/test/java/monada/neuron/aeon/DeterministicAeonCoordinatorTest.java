@@ -147,19 +147,19 @@ class DeterministicAeonCoordinatorTest {
         var equalButDifferentTarget = node(uuid(2));
         root.connect(equalButDifferentTarget);
         var aeon = aeonWith(root, canonicalMember);
-        var processedNodes = new ArrayList<Node>();
+        var processedNodeIds = new ArrayList<UUID>();
 
         var result = coordinator.coordinate(
                 aeon,
                 List.of(new AeonInput(root.getId(), signal(1.0))),
                 (node, input) -> {
-                    processedNodes.add((Node) node);
+                    processedNodeIds.add(node.getId());
                     return new NodeProcessingResult(List.of(input));
                 },
                 PropagationConfig.routeAll(10, 1));
 
         assertAll(
-                () -> assertEquals(List.of(root), processedNodes),
+                () -> assertEquals(List.of(root.getId()), processedNodeIds),
                 () -> assertEquals(1,
                         result.inputResults().getFirst().propagationResult().processedSteps()),
                 () -> assertSame(
