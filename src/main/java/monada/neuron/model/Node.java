@@ -122,7 +122,9 @@ public final class Node implements NodeView {
     /**
      * Returns an unmodifiable view of the directly connected nodes.
      * The returned set reflects live structural changes made via {@link #connect(Node)} and
-     * {@link #disconnect(Node)}.
+     * {@link #disconnect(Node)}. Its iteration order is unspecified and must not be used as an
+     * execution-order contract; graph runtimes are responsible for defining observable traversal
+     * order explicitly.
      */
     public Set<Node> getConnections() {
         return connectionsView;

@@ -104,6 +104,34 @@ This scalar implementation remains the semantic correctness oracle for future SI
 parallel, or accelerator backends. Alternative formulas require explicit evaluation and must not
 silently replace it.
 
+## Current Deterministic Graph Runtime
+
+`SignalPropagationEngine` defines bounded Signal execution over directed Node connections. The
+portable `DeterministicSignalPropagationEngine` is the reference path: it uses breadth-first
+traversal, processes the start Node at hop zero, and counts each completed `NodeProcessor` call as
+one step.
+
+`Node` retains its Phase-1 `HashSet` adjacency. During one propagation, the runtime snapshots and
+sorts each expanded Node's connections by ascending UUID once. Processor emissions remain in their
+declared list order; each emitted Signal is then considered against targets in UUID order. Every
+accepted delivery is independent, so Nodes and structurally equal Signals may be revisited without
+deduplication. This preserves fan-in and meaningful duplicate emissions.
+
+`PropagationConfig` requires explicit positive step and non-negative hop limits. A cycle therefore
+terminates even when every arrival emits more work. `PropagationResult` snapshots all emissions in
+global execution order and reports step-limit and hop-limit truncation independently. It is an
+execution result, not the detailed cycle trace planned for the cognitive-context layer.
+
+Routing is explicit through `SignalRoutingPolicy`. The named route-all configuration has no gating.
+`ResonanceThresholdRoutingPolicy` optionally compares each emitted Signal state with the target
+Node state through an injected `ResonanceMetric` and an inclusive normalized threshold. Resonance
+is therefore selectable policy rather than global graph behavior.
+
+The runtime is sequential, mutates no Nodes, and assumes callers do not modify Node state or graph
+topology concurrently. It has no dependency on external orchestration frameworks or long-term
+memory. ADR 0007 records the complete reference semantics that future compact or parallel backends
+must preserve.
+
 ## Target Module Boundaries
 
 As the repository grows, prefer boundaries similar to:
