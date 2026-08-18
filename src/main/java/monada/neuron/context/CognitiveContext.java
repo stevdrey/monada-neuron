@@ -4,7 +4,6 @@ import monada.neuron.aeon.AeonInputResult;
 import monada.neuron.signal.Signal;
 
 import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 import java.util.OptionalLong;
 import java.util.UUID;
@@ -282,9 +281,9 @@ public final class CognitiveContext implements AutoCloseable {
                 stepBudgetExhausted,
                 signalBudgetExhausted,
                 traceBudgetExhausted(),
-                List.copyOf(signalOccurrences),
-                List.copyOf(aeonResults),
-                List.copyOf(traceEntries),
+                signalOccurrences,
+                aeonResults,
+                traceEntries,
                 omittedTraceEntries);
         clearBuffers();
         lifecycle = CognitiveLifecycle.COMPLETED;

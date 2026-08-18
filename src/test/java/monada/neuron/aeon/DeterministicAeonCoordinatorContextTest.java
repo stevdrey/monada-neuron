@@ -53,6 +53,11 @@ class DeterministicAeonCoordinatorContextTest {
                 PropagationConfig.routeAll(10, 1),
                 context);
         var snapshot = context.complete(CognitiveCycleOutcome.SUCCESS);
+        var completedInputs = snapshot.traceEntries().stream()
+                .map(entry -> entry.event())
+                .filter(CognitiveTraceEvent.AeonInputCompleted.class::isInstance)
+                .map(CognitiveTraceEvent.AeonInputCompleted.class::cast)
+                .toList();
 
         assertAll(
                 () -> assertEquals(2, result.inputResults().size()),
@@ -61,14 +66,13 @@ class DeterministicAeonCoordinatorContextTest {
                 () -> assertFalse(result.inputResults().get(0).propagationResult().stepLimitReached()),
                 () -> assertEquals(0,
                         result.inputResults().get(1).propagationResult().processedSteps()),
-                () -> assertTrue(result.inputResults().get(1).propagationResult().stepLimitReached()),
+                () -> assertFalse(result.inputResults().get(1).propagationResult().stepLimitReached()),
                 () -> assertEquals(2, snapshot.processedSteps()),
                 () -> assertTrue(snapshot.stepBudgetExhausted()),
                 () -> assertEquals(1, snapshot.aeonResults().size()),
                 () -> assertEquals(inputs.getFirst(), snapshot.aeonResults().getFirst().inputResult().input()),
-                () -> assertEquals(2, snapshot.traceEntries().stream()
-                        .filter(entry -> entry.event() instanceof CognitiveTraceEvent.AeonInputCompleted)
-                        .count()));
+                () -> assertEquals(2, completedInputs.size()),
+                () -> assertTrue(completedInputs.getLast().contextLimitReached()));
     }
 
     @Test

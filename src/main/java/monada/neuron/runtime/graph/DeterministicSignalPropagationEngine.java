@@ -113,7 +113,7 @@ public final class DeterministicSignalPropagationEngine implements CognitiveSign
         Objects.requireNonNull(context, "context must not be null");
 
         if (!context.hasRemainingStepCapacity()) {
-            return new PropagationResult(List.of(), 0, true, false);
+            return new PropagationResult(List.of(), 0, false, false);
         }
 
         OptionalLong initialSequence = context.tryRecordInputSignal(startNode.getId(), input);
@@ -128,11 +128,9 @@ public final class DeterministicSignalPropagationEngine implements CognitiveSign
 
         int processedSteps = 0;
         boolean hopLimitReached = false;
-        boolean contextStepLimitReached = false;
 
         while (!pending.isEmpty() && processedSteps < config.maxSteps()) {
             if (!context.hasRemainingStepCapacity()) {
-                contextStepLimitReached = true;
                 break;
             }
 
@@ -175,7 +173,6 @@ public final class DeterministicSignalPropagationEngine implements CognitiveSign
                         continue;
                     }
                     if (!context.hasRemainingStepCapacity()) {
-                        contextStepLimitReached = true;
                         canEnqueueMoreWork = false;
                         break;
                     }
@@ -210,7 +207,7 @@ public final class DeterministicSignalPropagationEngine implements CognitiveSign
         return new PropagationResult(
                 emittedSignals,
                 processedSteps,
-                !pending.isEmpty() || contextStepLimitReached,
+                !pending.isEmpty() && processedSteps == config.maxSteps(),
                 hopLimitReached);
     }
 
