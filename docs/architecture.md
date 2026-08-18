@@ -6,8 +6,9 @@ Monada Neuron is an experimental Java 26 cognitive system whose architecture sep
 
 The current implementation is intentionally small. The repository presently contains the Phase-1
 Node model, immutable Signal and processing contracts, deterministic graph propagation, scalar
-resonance, and the first native Aeon coordination boundary. The module structure below is therefore
-a **target architecture**, not a claim that every module already exists.
+resonance, native Aeon coordination, and a bounded ephemeral cognitive context. The module
+structure below is therefore a **target architecture**, not a claim that every module already
+exists.
 
 ## Core Cognitive Flow
 
@@ -163,6 +164,35 @@ processed, while `NodeProcessingResult.noOutput()` ends only that propagation br
 and routing failures propagate without a partial result. Membership, Node state, and topology must
 not change during coordination; the Phase-1 Aeon and graph runtime are sequential and not
 thread-safe. ADR 0008 records these ownership and execution semantics.
+
+## Current Cognitive Context and Cycle Trace
+
+`CognitiveContext` owns mutable working state for exactly one active, sequential cognitive cycle.
+It is created with an explicit `CognitiveBudget` for global completed processing steps, accepted
+Signal occurrences, and retained trace entries. It is neither thread-safe nor reusable: its owner
+completes it once with a success or failure outcome to obtain a `CognitiveCycleSnapshot`, or closes
+it to discard the cycle. Both terminal paths clear the context's mutable retained references.
+
+The context assigns ordered, cycle-local sequences to accepted propagation inputs, processor
+emissions, and enqueued deliveries. This keeps correlation outside the identifier-free `Signal`
+value. Completed Aeon input results are also retained in their completed order. No context API
+persists data, exposes a durable cycle identity, records timestamps, or retains exception objects.
+
+The contextual deterministic runtime is available through `CognitiveSignalPropagationEngine` and
+`CognitiveAeonCoordinator`; the existing propagation and Aeon contracts retain their exact legacy
+behavior. The contextual route shares one budget across all Aeon calls using the same context.
+Successful `NodeProcessor` calls consume steps. Inputs, accepted emissions, and enqueued deliveries
+consume signal capacity. When either budget would admit no more work, the runtime preserves the
+deterministic prefix and reports truncation in the context rather than throwing a budget exception.
+
+The diagnostic trace uses stable event types for Aeon-input start/completion, completed Node
+processing, and accepted routes. It deliberately excludes rejected routes, clocks, threads, and
+provider-specific values. Its events retain only identifiers, counters, and accepted-occurrence
+sequences; accepted `Signal` values exist only in bounded signal occurrences, so the trace does not
+retain a signal rejected by the shared signal budget. Trace storage retains the first configured
+entries in append order; later events increase an omission count but do not alter cognition.
+Outcome and resource counters remain available in the immutable snapshot even when trace retention
+is exhausted. ADR 0009 records these lifetime, resource, and diagnostic semantics.
 
 ## Target Module Boundaries
 

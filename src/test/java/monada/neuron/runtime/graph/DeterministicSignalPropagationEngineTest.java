@@ -1,5 +1,7 @@
 package monada.neuron.runtime.graph;
 
+import monada.neuron.context.CognitiveBudget;
+import monada.neuron.context.CognitiveContext;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
@@ -294,6 +296,28 @@ class DeterministicSignalPropagationEngineTest {
                 () -> assertEquals(2, result.processedSteps()),
                 () -> assertFalse(result.stepLimitReached()),
                 () -> assertFalse(result.hopLimitReached()));
+    }
+
+    @Test
+    void globalContextStepBudgetDoesNotSetThePropagationStepLimit() {
+        var root = node(rootId);
+        root.connect(node(lowId));
+        var context = new CognitiveContext(new CognitiveBudget(1, 3, 0));
+        var contextualEngine = new DeterministicSignalPropagationEngine();
+        NodeProcessor passthrough = (node, input) -> new NodeProcessingResult(List.of(input));
+        var config = PropagationConfig.routeAll(2, 1);
+
+        var truncated = contextualEngine.propagate(
+                root, signal(1.0), passthrough, config, context);
+        var skipped = contextualEngine.propagate(
+                root, signal(2.0), passthrough, config, context);
+
+        assertAll(
+                () -> assertEquals(1, truncated.processedSteps()),
+                () -> assertFalse(truncated.stepLimitReached()),
+                () -> assertEquals(0, skipped.processedSteps()),
+                () -> assertFalse(skipped.stepLimitReached()),
+                () -> assertTrue(context.stepBudgetExhausted()));
     }
 
     @Test
