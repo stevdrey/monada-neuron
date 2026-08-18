@@ -194,6 +194,42 @@ entries in append order; later events increase an omission count but do not alte
 Outcome and resource counters remain available in the immutable snapshot even when trace retention
 is exhausted. ADR 0009 records these lifetime, resource, and diagnostic semantics.
 
+## Current Primary Monad and Reference Cognitive Cycle
+
+`PrimaryMonad` is the stable cognitive identity above Aeons. It owns an insertion-ordered
+`LinkedHashMap<UUID, Aeon>` of canonical Aeon references: the first registration for a UUID remains
+canonical, and remove/re-register appends the Aeon to the ownership order. The Monad is deliberately
+not a global mutable context, history store, framework controller, or exclusive owner of an Aeon.
+As with Aeon membership, registration is sequential and must not change while a cycle executes.
+
+`DeterministicCognitiveCycle` is the control-plane reference path. Its optional stages always run
+in the canonical order below, never in caller-provided order:
+
+```text
+PERCEPTION -> MEMORY_RECALL -> REASONING -> EVALUATION -> ADAPTATION -> ACTION
+```
+
+`MEMORY_RECALL` is a typed extension point only until a Neuron-owned resonance-memory port exists.
+The other positions can use `AeonCognitiveStage`, which validates that the referenced Aeon is the
+Monad's canonical instance, that its immutable purpose matches the position, and that its entry
+Node is a current member. Constraint and self-monitoring Aeons remain valid cognitive capabilities,
+but do not receive independent positions in this initial reference cycle.
+
+The cycle creates and completes exactly one `CognitiveContext`. Initial signals enter the first
+configured stage; each later stage receives all emissions from its predecessor in existing
+input-result and global emission order. Missing stages are skipped without fabricating behavior.
+An empty stage plan is a successful pass-through. If no signals remain before a pending stage, the
+cycle ends with `NO_SIGNALS`; completing all configured stages ends with `COMPLETED`.
+
+A context step/signal budget exhaustion ends the cycle with `CONTEXT_BUDGET_EXHAUSTED`. A local
+propagation step/hop limit ends it with `STAGE_LIMIT_REACHED`; when both are observed, context-budget
+exhaustion wins and the snapshot retains both underlying indicators. Successful results retain the
+executed stage prefix, final signals, and context snapshot. Operational stage failures record a
+typed stage-failure trace event, complete a `FAILURE` snapshot, and propagate a
+`CognitiveCycleException` containing the failed stage, original cause, snapshot, and completed
+prefix. The trace records stage start/completion/failure without retaining exceptions, timestamps,
+or external payloads.
+
 ## Target Module Boundaries
 
 As the repository grows, prefer boundaries similar to:

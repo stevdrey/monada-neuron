@@ -1,12 +1,56 @@
 package monada.neuron.context;
 
+import monada.neuron.monad.CognitiveStageKind;
+import monada.neuron.monad.CognitiveStageStatus;
+
 import java.util.Objects;
 import java.util.UUID;
 
 /** Stable event vocabulary for the deterministic, cycle-local diagnostic trace. */
 public sealed interface CognitiveTraceEvent permits CognitiveTraceEvent.AeonInputStarted,
         CognitiveTraceEvent.NodeProcessed, CognitiveTraceEvent.SignalRouted,
-        CognitiveTraceEvent.AeonInputCompleted {
+        CognitiveTraceEvent.AeonInputCompleted, CognitiveTraceEvent.CognitiveStageStarted,
+        CognitiveTraceEvent.CognitiveStageCompleted, CognitiveTraceEvent.CognitiveStageFailed {
+
+    /** One configured Monad stage started with its inherited ordered input signals. */
+    record CognitiveStageStarted(CognitiveStageKind stage) implements CognitiveTraceEvent {
+
+        /** Validates the fixed stage position. */
+        public CognitiveStageStarted {
+            Objects.requireNonNull(stage, "stage must not be null");
+        }
+    }
+
+    /** One configured Monad stage completed or reached a local execution limit. */
+    record CognitiveStageCompleted(
+            CognitiveStageKind stage,
+            int inputSignalCount,
+            int outputSignalCount,
+            CognitiveStageStatus status) implements CognitiveTraceEvent {
+
+        /** Validates deterministic stage counters and status. */
+        public CognitiveStageCompleted {
+            Objects.requireNonNull(stage, "stage must not be null");
+            Objects.requireNonNull(status, "status must not be null");
+            if (inputSignalCount < 0) {
+                throw new IllegalArgumentException(
+                        "inputSignalCount must be non-negative, got: " + inputSignalCount);
+            }
+            if (outputSignalCount < 0) {
+                throw new IllegalArgumentException(
+                        "outputSignalCount must be non-negative, got: " + outputSignalCount);
+            }
+        }
+    }
+
+    /** One configured Monad stage failed; the exception itself remains outside the trace. */
+    record CognitiveStageFailed(CognitiveStageKind stage) implements CognitiveTraceEvent {
+
+        /** Validates the fixed stage position. */
+        public CognitiveStageFailed {
+            Objects.requireNonNull(stage, "stage must not be null");
+        }
+    }
 
     /** An explicit input began coordination within an Aeon. */
     record AeonInputStarted(UUID aeonId, UUID startNodeId)

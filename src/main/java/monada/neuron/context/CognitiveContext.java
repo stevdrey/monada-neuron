@@ -1,6 +1,8 @@
 package monada.neuron.context;
 
 import monada.neuron.aeon.AeonInputResult;
+import monada.neuron.monad.CognitiveStageKind;
+import monada.neuron.monad.CognitiveStageStatus;
 import monada.neuron.signal.Signal;
 
 import java.util.ArrayList;
@@ -191,6 +193,59 @@ public final class CognitiveContext implements AutoCloseable {
             traceEntries.add(new CognitiveTraceEntry(
                     traceSequence,
                     new CognitiveTraceEvent.AeonInputStarted(aeonId, startNodeId)));
+        }
+    }
+
+    /** Records the start of one configured Monad cognitive stage. */
+    public void recordCognitiveStageStarted(CognitiveStageKind stage) {
+        requireActive();
+        Objects.requireNonNull(stage, "stage must not be null");
+        long traceSequence = reserveTraceSequence();
+        if (traceSequence != TRACE_ENTRY_OMITTED) {
+            traceEntries.add(new CognitiveTraceEntry(
+                    traceSequence,
+                    new CognitiveTraceEvent.CognitiveStageStarted(stage)));
+        }
+    }
+
+    /** Records the successful or locally truncated completion of one cognitive stage. */
+    public void recordCognitiveStageCompleted(
+            CognitiveStageKind stage,
+            int inputSignalCount,
+            int outputSignalCount,
+            CognitiveStageStatus status) {
+        requireActive();
+        Objects.requireNonNull(stage, "stage must not be null");
+        Objects.requireNonNull(status, "status must not be null");
+        if (inputSignalCount < 0) {
+            throw new IllegalArgumentException(
+                    "inputSignalCount must be non-negative, got: " + inputSignalCount);
+        }
+        if (outputSignalCount < 0) {
+            throw new IllegalArgumentException(
+                    "outputSignalCount must be non-negative, got: " + outputSignalCount);
+        }
+        long traceSequence = reserveTraceSequence();
+        if (traceSequence != TRACE_ENTRY_OMITTED) {
+            traceEntries.add(new CognitiveTraceEntry(
+                    traceSequence,
+                    new CognitiveTraceEvent.CognitiveStageCompleted(
+                            stage,
+                            inputSignalCount,
+                            outputSignalCount,
+                            status)));
+        }
+    }
+
+    /** Records an operational failure before the cycle owner completes a FAILURE snapshot. */
+    public void recordCognitiveStageFailed(CognitiveStageKind stage) {
+        requireActive();
+        Objects.requireNonNull(stage, "stage must not be null");
+        long traceSequence = reserveTraceSequence();
+        if (traceSequence != TRACE_ENTRY_OMITTED) {
+            traceEntries.add(new CognitiveTraceEntry(
+                    traceSequence,
+                    new CognitiveTraceEvent.CognitiveStageFailed(stage)));
         }
     }
 
