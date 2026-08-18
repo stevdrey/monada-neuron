@@ -1,6 +1,8 @@
 package monada.neuron.aeon;
 
+import monada.neuron.context.CognitiveContext;
 import monada.neuron.model.Node;
+import monada.neuron.runtime.graph.CognitiveSignalPropagationEngine;
 import monada.neuron.runtime.graph.PropagationConfig;
 import monada.neuron.runtime.graph.PropagationResult;
 import monada.neuron.runtime.graph.SignalPropagationEngine;
@@ -22,7 +24,7 @@ import java.util.Objects;
  * <p>Membership, Node state, and graph topology must not change during this call. Processing and
  * routing failures propagate to the caller; no partial coordination result is returned.
  */
-public final class DeterministicAeonCoordinator implements AeonCoordinator {
+public final class DeterministicAeonCoordinator implements CognitiveAeonCoordinator {
 
     private final SignalPropagationEngine propagationEngine;
 
@@ -62,6 +64,77 @@ public final class DeterministicAeonCoordinator implements AeonCoordinator {
                             confinedConfig),
                     "propagation result must not be null");
             inputResults.add(new AeonInputResult(input, propagationResult));
+        }
+        return new AeonCoordinationResult(inputResults);
+    }
+
+    /**
+     * Coordinates inputs through a context-aware propagation engine while preserving the legacy
+     * Aeon ordering, membership validation, and topology confinement rules.
+     *
+     * <p>Every declared input receives one result in its original order. If a shared cycle budget
+     * has already suppressed the input, the result has zero steps and the context trace identifies
+     * the applicable cycle-limit condition.
+     */
+    @Override
+    public AeonCoordinationResult coordinate(
+            Aeon aeon,
+            List<AeonInput> inputs,
+            NodeProcessor processor,
+            PropagationConfig config,
+            CognitiveContext context) {
+        Objects.requireNonNull(aeon, "aeon must not be null");
+        Objects.requireNonNull(inputs, "inputs must not be null");
+        Objects.requireNonNull(processor, "processor must not be null");
+        Objects.requireNonNull(config, "config must not be null");
+        Objects.requireNonNull(context, "context must not be null");
+        if (!context.isActive()) {
+            throw new IllegalStateException("context must be active: " + context.lifecycle());
+        }
+
+        var stableInputs = List.copyOf(inputs);
+        if (stableInputs.isEmpty()) {
+            return AeonCoordinationResult.empty();
+        }
+
+        var startNodes = resolveStartNodes(aeon, stableInputs);
+        if (!(propagationEngine instanceof CognitiveSignalPropagationEngine cognitiveEngine)) {
+            throw new UnsupportedOperationException(
+                    "propagationEngine must implement CognitiveSignalPropagationEngine");
+        }
+
+        var confinedConfig = confinedConfig(aeon, config);
+        var inputResults = new ArrayList<AeonInputResult>(stableInputs.size());
+        for (int index = 0; index < stableInputs.size(); index++) {
+            var input = stableInputs.get(index);
+            boolean stepBudgetExhaustedBefore = context.stepBudgetExhausted();
+            boolean signalBudgetExhaustedBefore = context.signalBudgetExhausted();
+            context.recordAeonInputStarted(aeon.getId(), input.startNodeId());
+
+            PropagationResult propagationResult = Objects.requireNonNull(
+                    cognitiveEngine.propagate(
+                            startNodes.get(index),
+                            input.signal(),
+                            processor,
+                            confinedConfig,
+                            context),
+                    "propagation result must not be null");
+            var inputResult = new AeonInputResult(input, propagationResult);
+            inputResults.add(inputResult);
+            context.recordAeonResult(aeon.getId(), inputResult);
+
+            boolean contextLimitReached = (!stepBudgetExhaustedBefore
+                    && context.stepBudgetExhausted())
+                    || (!signalBudgetExhaustedBefore && context.signalBudgetExhausted())
+                    || (propagationResult.processedSteps() == 0
+                    && (context.stepBudgetExhausted() || context.signalBudgetExhausted()));
+            context.recordAeonInputCompleted(
+                    aeon.getId(),
+                    input.startNodeId(),
+                    propagationResult.processedSteps(),
+                    propagationResult.stepLimitReached(),
+                    propagationResult.hopLimitReached(),
+                    contextLimitReached);
         }
         return new AeonCoordinationResult(inputResults);
     }
