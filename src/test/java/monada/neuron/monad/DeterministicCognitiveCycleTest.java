@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -90,6 +91,8 @@ class DeterministicCognitiveCycleTest {
                         CognitiveStageKind.REASONING), result.stageResults().stream()
                         .map(CognitiveStageResult::kind)
                         .toList()),
+                () -> assertInstanceOf(AeonCognitiveStageResult.class,
+                        result.stageResults().getFirst()),
                 () -> assertEquals(List.of(output), result.outputSignals()),
                 () -> assertEquals(CognitiveCycleTermination.COMPLETED, result.termination()),
                 () -> assertEquals(List.of(

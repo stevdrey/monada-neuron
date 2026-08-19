@@ -15,4 +15,15 @@ public interface CognitiveStageResult {
 
     /** Returns ordered signals offered to the next configured stage. */
     List<Signal> outputSignals();
+
+    /**
+     * Returns this result with the cycle-admitted output prefix.
+     *
+     * <p>The deterministic cycle owns signal-budget admission for extension stages. Implementations
+     * that retain typed metadata may override this method, but must not retain rejected output
+     * candidates in the returned result.
+     */
+    default CognitiveStageResult withAdmittedOutputSignals(List<Signal> admittedOutputSignals) {
+        return new CognitiveStageResultSnapshot(kind(), status(), admittedOutputSignals);
+    }
 }
