@@ -90,7 +90,7 @@ public final class DeterministicCognitiveCycle implements CognitiveCycle {
                             monad,
                             CognitiveCycleTermination.CONTEXT_BUDGET_EXHAUSTED,
                             stageResults,
-                            stageInputs,
+                            currentSignals,
                             context);
                 }
 
