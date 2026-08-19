@@ -7,6 +7,7 @@ package monada.neuron.action;
  * outcomes are returned through {@link ActionResult}; an unexpected runtime failure remains an
  * operational failure of the calling cognitive stage.
  */
+@FunctionalInterface
 public interface ActionCapability {
 
     /** Executes one ordered, bounded action request. */
