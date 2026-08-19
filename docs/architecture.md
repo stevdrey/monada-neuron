@@ -217,10 +217,20 @@ forwards the input Signals followed by the adapter-ordered recalled prefix. `COM
 matches, `UNAVAILABLE`, `TIMED_OUT`, and expected `FAILED` responses all preserve the input flow;
 `PARTIAL` forwards the available prefix. The typed response remains visible in
 `ResonanceMemoryStageResult`, while unexpected adapter failures follow normal cycle-failure
-semantics. The other positions can use `AeonCognitiveStage`, which validates that the referenced
-Aeon is the Monad's canonical instance, that its immutable purpose matches the position, and that
-its entry Node is a current member. Constraint and self-monitoring Aeons remain valid cognitive
-capabilities, but do not receive independent positions in this initial reference cycle.
+semantics.
+
+`ACTION` can instead use `ActionCognitiveStage`, backed by a Neuron-owned `ActionCapability`.
+It submits one ordered, bounded Signal batch and exposes an `ActionOutcome` containing the admitted
+request and typed result. `SUCCEEDED` and `PARTIALLY_COMPLETED` may retain observations in
+capability order; `REJECTED`, `UNAVAILABLE`, `TIMED_OUT`, and expected `FAILED` outcomes retain no
+provider-specific payload and do not fail the cognitive cycle. Action observations are the stage's
+only outputs: input Signals are not implicitly forwarded. An `ActionCognitiveStage` and an
+`AeonCognitiveStage` are alternatives for the single `ACTION` position, so the deterministic cycle
+rejects a plan that configures both. The other positions can use `AeonCognitiveStage`, which
+validates that the referenced Aeon is the Monad's canonical instance, that its immutable purpose
+matches the position, and that its entry Node is a current member. Constraint and self-monitoring
+Aeons remain valid cognitive capabilities, but do not receive independent positions in this initial
+reference cycle.
 
 The cycle creates and completes exactly one `CognitiveContext`. Initial signals enter the first
 configured stage; each later stage receives all emissions from its predecessor in existing
@@ -230,8 +240,9 @@ cycle ends with `NO_SIGNALS`; completing all configured stages ends with `COMPLE
 
 A context step/signal budget exhaustion ends the cycle with `CONTEXT_BUDGET_EXHAUSTED`. Non-Aeon
 stage results are normalized to their admitted output prefix; a memory result whose complete recall
-is cut by that prefix becomes `PARTIAL` and retains no rejected match. Aeon result accounting is
-unchanged, avoiding double-counting. A local
+is cut by that prefix becomes `PARTIAL`, while a successful action result becomes
+`PARTIALLY_COMPLETED`; neither retains a rejected Signal. Aeon result accounting is unchanged,
+avoiding double-counting. A local
 propagation step/hop limit ends it with `STAGE_LIMIT_REACHED`; when both are observed, context-budget
 exhaustion wins and the snapshot retains both underlying indicators. Successful results retain the
 executed stage prefix, final signals, and context snapshot. Operational stage failures record a
