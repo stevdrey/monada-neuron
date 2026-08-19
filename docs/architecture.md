@@ -174,16 +174,18 @@ completes it once with a success or failure outcome to obtain a `CognitiveCycleS
 it to discard the cycle. Both terminal paths clear the context's mutable retained references.
 
 The context assigns ordered, cycle-local sequences to accepted propagation inputs, processor
-emissions, and enqueued deliveries. This keeps correlation outside the identifier-free `Signal`
-value. Completed Aeon input results are also retained in their completed order. No context API
-persists data, exposes a durable cycle identity, records timestamps, or retains exception objects.
+emissions, enqueued deliveries, and inputs/outputs admitted for non-Aeon cognitive stages. This
+keeps correlation outside the identifier-free `Signal` value. Completed Aeon input results are also
+retained in their completed order. No context API persists data, exposes a durable cycle identity,
+records timestamps, or retains exception objects.
 
 The contextual deterministic runtime is available through `CognitiveSignalPropagationEngine` and
 `CognitiveAeonCoordinator`; the existing propagation and Aeon contracts retain their exact legacy
 behavior. The contextual route shares one budget across all Aeon calls using the same context.
-Successful `NodeProcessor` calls consume steps. Inputs, accepted emissions, and enqueued deliveries
-consume signal capacity. When either budget would admit no more work, the runtime preserves the
-deterministic prefix and reports truncation in the context rather than throwing a budget exception.
+Successful `NodeProcessor` calls consume steps. Inputs, accepted emissions, enqueued deliveries,
+and non-Aeon stage inputs/outputs consume signal capacity. The cycle admits non-Aeon candidates
+left-to-right and retains only the admitted prefix. When either budget would admit no more work,
+the runtime reports truncation in the context rather than throwing a budget exception.
 
 The diagnostic trace uses stable event types for Aeon-input start/completion, completed Node
 processing, and accepted routes. It deliberately excludes rejected routes, clocks, threads, and
@@ -209,11 +211,16 @@ in the canonical order below, never in caller-provided order:
 PERCEPTION -> MEMORY_RECALL -> REASONING -> EVALUATION -> ADAPTATION -> ACTION
 ```
 
-`MEMORY_RECALL` is a typed extension point only until a Neuron-owned resonance-memory port exists.
-The other positions can use `AeonCognitiveStage`, which validates that the referenced Aeon is the
-Monad's canonical instance, that its immutable purpose matches the position, and that its entry
-Node is a current member. Constraint and self-monitoring Aeons remain valid cognitive capabilities,
-but do not receive independent positions in this initial reference cycle.
+`MEMORY_RECALL` can use `ResonanceMemoryCognitiveStage`, backed by the Neuron-owned
+`ResonanceMemoryPort`. It submits one ordered Signal batch with an explicit result limit, then
+forwards the input Signals followed by the adapter-ordered recalled prefix. `COMPLETE` with no
+matches, `UNAVAILABLE`, `TIMED_OUT`, and expected `FAILED` responses all preserve the input flow;
+`PARTIAL` forwards the available prefix. The typed response remains visible in
+`ResonanceMemoryStageResult`, while unexpected adapter failures follow normal cycle-failure
+semantics. The other positions can use `AeonCognitiveStage`, which validates that the referenced
+Aeon is the Monad's canonical instance, that its immutable purpose matches the position, and that
+its entry Node is a current member. Constraint and self-monitoring Aeons remain valid cognitive
+capabilities, but do not receive independent positions in this initial reference cycle.
 
 The cycle creates and completes exactly one `CognitiveContext`. Initial signals enter the first
 configured stage; each later stage receives all emissions from its predecessor in existing
@@ -221,7 +228,10 @@ input-result and global emission order. Missing stages are skipped without fabri
 An empty stage plan is a successful pass-through. If no signals remain before a pending stage, the
 cycle ends with `NO_SIGNALS`; completing all configured stages ends with `COMPLETED`.
 
-A context step/signal budget exhaustion ends the cycle with `CONTEXT_BUDGET_EXHAUSTED`. A local
+A context step/signal budget exhaustion ends the cycle with `CONTEXT_BUDGET_EXHAUSTED`. Non-Aeon
+stage results are normalized to their admitted output prefix; a memory result whose complete recall
+is cut by that prefix becomes `PARTIAL` and retains no rejected match. Aeon result accounting is
+unchanged, avoiding double-counting. A local
 propagation step/hop limit ends it with `STAGE_LIMIT_REACHED`; when both are observed, context-budget
 exhaustion wins and the snapshot retains both underlying indicators. Successful results retain the
 executed stage prefix, final signals, and context snapshot. Operational stage failures record a
@@ -263,6 +273,12 @@ Monada Resonance Store
 ```
 
 Neuron may hold ephemeral working state needed for an active cognitive cycle. Ephemeral state must not become an accidental second long-term memory subsystem.
+
+`ResonanceMemoryPort` is a synchronous, transport-neutral capability contract. Its request, result,
+and response records use only Neuron Signals, an opaque adapter reference, a finite score, explicit
+result limits, and adapter-supplied ordering. The contract exposes no persisted file format, vector
+or index type, compatibility metadata, feedback log, or ranking algorithm from Monada Resonance
+Store. A later production adapter may own those translations without changing the cognitive core.
 
 ## External Model Boundary
 

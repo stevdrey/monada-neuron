@@ -149,6 +149,40 @@ public final class CognitiveContext implements AutoCloseable {
         return sequence;
     }
 
+    /** Records one Signal admitted as input to a non-Aeon cognitive stage. */
+    public OptionalLong tryRecordCognitiveStageInputSignal(
+            CognitiveStageKind stage,
+            Signal signal) {
+        Objects.requireNonNull(stage, "stage must not be null");
+        Objects.requireNonNull(signal, "signal must not be null");
+        var sequence = tryReserveSignalSequence();
+        if (sequence.isEmpty()) {
+            return sequence;
+        }
+        signalOccurrences.add(new CognitiveSignalOccurrence.StageInput(
+                sequence.getAsLong(),
+                stage,
+                signal));
+        return sequence;
+    }
+
+    /** Records one Signal admitted as output from a non-Aeon cognitive stage. */
+    public OptionalLong tryRecordCognitiveStageOutputSignal(
+            CognitiveStageKind stage,
+            Signal signal) {
+        Objects.requireNonNull(stage, "stage must not be null");
+        Objects.requireNonNull(signal, "signal must not be null");
+        var sequence = tryReserveSignalSequence();
+        if (sequence.isEmpty()) {
+            return sequence;
+        }
+        signalOccurrences.add(new CognitiveSignalOccurrence.StageOutput(
+                sequence.getAsLong(),
+                stage,
+                signal));
+        return sequence;
+    }
+
     /** Records one successfully completed NodeProcessor call and its deterministic trace event. */
     public int recordCompletedStep(
             UUID nodeId,

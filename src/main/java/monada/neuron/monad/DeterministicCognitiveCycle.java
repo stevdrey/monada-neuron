@@ -82,20 +82,44 @@ public final class DeterministicCognitiveCycle implements CognitiveCycle {
                             context);
                 }
 
+                var stageInputs = stage instanceof AeonCognitiveStage
+                        ? currentSignals
+                        : admitStageInputs(stage.kind(), currentSignals, context);
+                if (stageInputs.isEmpty()) {
+                    return complete(
+                            monad,
+                            CognitiveCycleTermination.CONTEXT_BUDGET_EXHAUSTED,
+                            stageResults,
+                            stageInputs,
+                            context);
+                }
+
                 context.recordCognitiveStageStarted(stage.kind());
                 var stageResult = Objects.requireNonNull(
-                        stage.execute(monad, currentSignals, context),
+                        stage.execute(monad, stageInputs, context),
                         "cognitive stage result must not be null");
-                var stableOutputs = validateStageResult(stage, stageResult);
+                var candidateOutputs = validateStageResult(stage, stageResult);
                 if (!context.isActive()) {
                     throw new IllegalStateException("cognitive stages must leave the context active");
                 }
-                stageResults.add(stageResult);
+                var stableOutputs = stage instanceof AeonCognitiveStage
+                        ? candidateOutputs
+                        : admitStageOutputs(stage.kind(), candidateOutputs, context);
+                var observedStageResult = stage instanceof AeonCognitiveStage
+                        ? stageResult
+                        : Objects.requireNonNull(
+                                stageResult.withAdmittedOutputSignals(stableOutputs),
+                                "admitted stage result must not be null");
+                if (!stableOutputs.equals(validateStageResult(stage, observedStageResult))) {
+                    throw new IllegalArgumentException(
+                            "admitted stage result outputs must match the cycle-admitted prefix");
+                }
+                stageResults.add(observedStageResult);
                 context.recordCognitiveStageCompleted(
                         stage.kind(),
-                        currentSignals.size(),
-                        stageResult.outputSignals().size(),
-                        stageResult.status());
+                        stageInputs.size(),
+                        stableOutputs.size(),
+                        observedStageResult.status());
                 currentSignals = stableOutputs;
 
                 if (context.stepBudgetExhausted() || context.signalBudgetExhausted()) {
@@ -106,7 +130,7 @@ public final class DeterministicCognitiveCycle implements CognitiveCycle {
                             currentSignals,
                             context);
                 }
-                if (stageResult.status() == CognitiveStageStatus.LIMIT_REACHED) {
+                if (observedStageResult.status() == CognitiveStageStatus.LIMIT_REACHED) {
                     return complete(
                             monad,
                             CognitiveCycleTermination.STAGE_LIMIT_REACHED,
@@ -152,6 +176,34 @@ public final class DeterministicCognitiveCycle implements CognitiveCycle {
         return List.copyOf(Objects.requireNonNull(
                 result.outputSignals(),
                 "stage result outputSignals must not be null"));
+    }
+
+    private List<Signal> admitStageInputs(
+            CognitiveStageKind stage,
+            List<Signal> candidateInputs,
+            CognitiveContext context) {
+        var admittedInputs = new ArrayList<Signal>();
+        for (var input : candidateInputs) {
+            if (context.tryRecordCognitiveStageInputSignal(stage, input).isEmpty()) {
+                break;
+            }
+            admittedInputs.add(input);
+        }
+        return List.copyOf(admittedInputs);
+    }
+
+    private List<Signal> admitStageOutputs(
+            CognitiveStageKind stage,
+            List<Signal> candidateOutputs,
+            CognitiveContext context) {
+        var admittedOutputs = new ArrayList<Signal>();
+        for (var output : candidateOutputs) {
+            if (context.tryRecordCognitiveStageOutputSignal(stage, output).isEmpty()) {
+                break;
+            }
+            admittedOutputs.add(output);
+        }
+        return List.copyOf(admittedOutputs);
     }
 
     private CognitiveCycleResult complete(
