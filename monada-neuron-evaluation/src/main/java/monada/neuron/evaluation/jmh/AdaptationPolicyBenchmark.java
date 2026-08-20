@@ -7,7 +7,6 @@ import monada.neuron.evolution.DeterministicBaselineAdaptationPolicy;
 import monada.neuron.evolution.FeedbackInput;
 import monada.neuron.evolution.NoOpAdaptationPolicy;
 import monada.neuron.model.Node;
-import monada.neuron.signal.Signal;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -22,14 +21,15 @@ import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
 import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
  * JMH microbenchmark comparing {@link NoOpAdaptationPolicy} vs {@link DeterministicBaselineAdaptationPolicy}.
  *
- * <p>Resets fresh node state fixtures at {@link Level#Iteration} to prevent mutation history accumulation
- * and ensure stable, reproducible per-operation measurements across benchmark iterations.
+ * <p>Uses a large power-of-two pool (131,072 entries) of pre-allocated, independent {@link Node} fixtures
+ * recreated at {@link Level#Iteration}. Benchmark invocations cycle through the pool using branchless bitmasking,
+ * ensuring each invocation operates on fresh nodes and preventing unbounded {@code Node.history} accumulation
+ * from distorting the measured adaptation latency.
  */
 @BenchmarkMode({Mode.Throughput, Mode.AverageTime})
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -38,6 +38,9 @@ import java.util.concurrent.TimeUnit;
 @Fork(1)
 @State(Scope.Benchmark)
 public class AdaptationPolicyBenchmark {
+
+    private static final int POOL_SIZE = 131_072;
+    private static final int POOL_MASK = POOL_SIZE - 1;
 
     private NoOpAdaptationPolicy noOpPolicy;
     private DeterministicBaselineAdaptationPolicy baselinePolicy;
@@ -52,17 +55,18 @@ public class AdaptationPolicyBenchmark {
     }
 
     /**
-     * Re-creates pristine nodes at the start of each iteration so history does not accumulate across iterations.
+     * Re-creates the 131,072 pristine node fixtures at the start of each iteration so that
+     * history list mutations do not accumulate across warmup and measurement iterations.
      */
     @Setup(Level.Iteration)
     public void setupIteration() {
         var generator = new DeterministicWorkloadGenerator();
-        var topology = generator.generateGraph(100, 0);
+        var topology = generator.generateGraph(POOL_SIZE, 0);
         var nodes = topology.nodes();
-        var signals = generator.generateSignals(100);
+        var signals = generator.generateSignals(POOL_SIZE);
 
-        var feedbacks = new ArrayList<FeedbackInput>(100);
-        for (int i = 0; i < 100; i++) {
+        var feedbacks = new ArrayList<FeedbackInput>(POOL_SIZE);
+        for (int i = 0; i < POOL_SIZE; i++) {
             feedbacks.add(FeedbackInput.ofTarget(nodes.get(i).getId(), signals.get(i), 0.8));
         }
 
@@ -76,26 +80,18 @@ public class AdaptationPolicyBenchmark {
      */
     @Benchmark
     public void benchmarkNoOpPolicy(Blackhole blackhole) {
-        int idx = index++;
-        if (idx >= nodesArray.length) {
-            idx = 0;
-            index = 0;
-        }
+        int idx = (index++) & POOL_MASK;
         AdaptationDecision decision = noOpPolicy.adapt(nodesArray[idx], feedbacksArray[idx]);
         blackhole.consume(decision);
     }
 
     /**
      * Benchmarks a single invocation of {@link DeterministicBaselineAdaptationPolicy#adapt(Node, FeedbackInput)},
-     * including policy calculation, state transition, and energy update.
+     * including candidate frequency/energy arithmetic, node state transition, and energy update.
      */
     @Benchmark
     public void benchmarkBaselinePolicy(Blackhole blackhole) {
-        int idx = index++;
-        if (idx >= nodesArray.length) {
-            idx = 0;
-            index = 0;
-        }
+        int idx = (index++) & POOL_MASK;
         AdaptationDecision decision = baselinePolicy.adapt(nodesArray[idx], feedbacksArray[idx]);
         blackhole.consume(decision);
     }

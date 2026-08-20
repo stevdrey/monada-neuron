@@ -26,7 +26,7 @@ monada-neuron-evaluation
 
 ## Experimental Validity & Workload Equivalence
 
-To guarantee reliable and reproducible baselines, the harness enforces three key experimental invariants:
+To guarantee reliable and reproducible baselines, the harness enforces four key experimental invariants:
 
 1. **Workload Equivalence Between Aeon Variants**:
    - Both `AeonCoordinator.Direct` and `AeonCoordinator.Contextual` run over identical 10-input workloads on 100-member topologies.
@@ -34,13 +34,16 @@ To guarantee reliable and reproducible baselines, the harness enforces three key
    - Assertions verify that both direct and contextual runs process exactly 5,000 steps and emit exactly 5,000 signals, isolating the exact runtime and allocation cost of ephemeral `CognitiveContext` tracking.
 
 2. **Per-Iteration State Reset & Isolation**:
-   - `EvaluationMetricsCollector` executes a per-iteration setup hook outside the measurement window, excluding setup allocations and timing.
+   - `EvaluationMetricsCollector` executes a per-iteration setup hook outside the measurement window, excluding setup allocations and timing from latency and thread allocation deltas.
    - For all full-cycle and adaptation benchmarks, pristine topologies and node states with zero history are instantiated for each warmup and measurement iteration.
-   - In JMH microbenchmarks, `@Setup(Level.Iteration)` refreshes node arrays to prevent mutation history from growing unbounded across iterations.
 
-3. **Domain Throughput & Allocation Semantics**:
-   - Batch scalar resonance calculations report true domain operations/sec (pairs scored per second) and memory allocation per individual pair.
-   - Run configuration parameters (seed, quick mode, warmup/measurement counts, operation semantics) and JVM arguments/GCs are permanently recorded in generated reports.
+3. **Large Fixture Pools in JMH Microbenchmarks**:
+   - `AdaptationPolicyBenchmark` pre-allocates a pool of 131,072 ($2^{17}$) independent `Node` fixtures at `@Setup(Level.Iteration)` and indexes into them using branchless bitmasking (`& 0x1FFFF`).
+   - This ensures benchmark invocations operate on fresh nodes, preventing unbounded `Node.history` accumulation from skewing measured adaptation latency.
+
+4. **Telemetry Scope and GC Reporting**:
+   - Latency and thread allocation are isolated strictly to the measured workload interval.
+   - GC deltas capture JVM-wide cumulative GC activity across the entire measurement phase.
 
 ## Reproducible Workloads
 
@@ -109,21 +112,21 @@ Captured on Linux x86_64 with Java 26 (Eclipse Adoptium OpenJDK 64-Bit Server VM
 
 | Benchmark | Workload Scale | Mean Latency | Median (p50) | p95 | Throughput | Allocation / Op |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `ScalarResonanceMetric.score` | 100 pairs | ~125 µs | ~122 µs | ~156 µs | ~798,000 pairs/s | ~62.0 B |
-| `ScalarResonanceMetric.score` | 1,000 pairs | ~303 µs | ~290 µs | ~367 µs | ~3,297,000 pairs/s | ~62.2 B |
-| `ScalarResonanceMetric.score` | 10,000 pairs | ~1.51 ms | ~1.26 ms | ~3.59 ms | ~6,643,000 pairs/s | ~32.0 B |
-| `ScalarResonanceMetric.score` | 100,000 pairs | ~12.02 ms | ~12.21 ms | ~13.35 ms | ~8,317,000 pairs/s | ~32.0 B |
-| `GraphPropagation.RouteAll` | Small (50 nodes, deg 3) | ~1.18 ms | ~1.09 ms | ~1.78 ms | ~851 ops/s | ~60.9 KB |
-| `GraphPropagation.ThresholdRouting` | Small (50 nodes, deg 3) | ~27.8 µs | ~11.5 µs | ~91.9 µs | ~36,000 ops/s | ~1.0 KB |
-| `GraphPropagation.RouteAll` | Medium (500 nodes, deg 5) | ~1.84 ms | ~1.60 ms | ~2.96 ms | ~545 ops/s | ~841.4 KB |
-| `GraphPropagation.ThresholdRouting` | Medium (500 nodes, deg 5) | ~12.4 µs | ~11.4 µs | ~16.8 µs | ~80,700 ops/s | ~1.74 KB |
-| `GraphPropagation.RouteAll` | Large (2,000 nodes, deg 8) | ~9.36 ms | ~8.82 ms | ~15.72 ms | ~107 ops/s | ~4.84 MB |
-| `GraphPropagation.ThresholdRouting` | Large (2,000 nodes, deg 8) | ~17.7 µs | ~16.4 µs | ~26.9 µs | ~56,500 ops/s | ~2.79 KB |
-| `AeonCoordinator.Direct` | 10 inputs, 100 members | ~1.99 ms | ~1.80 ms | ~3.27 ms | ~503 ops/s | ~1.30 MB |
-| `AeonCoordinator.Contextual` | 10 inputs, 100 members | ~6.74 ms | ~7.00 ms | ~11.98 ms | ~148 ops/s | ~5.21 MB |
-| `DeterministicCognitiveCycle.FullCycle` | 5 stages, 5 initial signals | ~531.4 µs | ~508.4 µs | ~696.9 µs | ~1,882 ops/s | ~255.4 KB |
-| `CognitiveCycle.Adaptation.NoOp` | 50 target nodes | ~648.7 µs | ~489.0 µs | ~1.34 ms | ~1,542 ops/s | ~255.4 KB |
-| `CognitiveCycle.Adaptation.BaselinePolicy` | 50 target nodes | ~556.4 µs | ~442.1 µs | ~1.05 ms | ~1,797 ops/s | ~255.4 KB |
+| `ScalarResonanceMetric.score` | 100 pairs | ~242 µs | ~244 µs | ~382 µs | ~414,000 pairs/s | ~62.0 B |
+| `ScalarResonanceMetric.score` | 1,000 pairs | ~501 µs | ~425 µs | ~797 µs | ~1,995,000 pairs/s | ~62.2 B |
+| `ScalarResonanceMetric.score` | 10,000 pairs | ~1.56 ms | ~1.31 ms | ~2.31 ms | ~6,410,000 pairs/s | ~32.0 B |
+| `ScalarResonanceMetric.score` | 100,000 pairs | ~12.03 ms | ~12.10 ms | ~12.94 ms | ~8,313,000 pairs/s | ~32.0 B |
+| `GraphPropagation.RouteAll` | Small (50 nodes, deg 3) | ~1.13 ms | ~1.19 ms | ~1.53 ms | ~887 ops/s | ~60.9 KB |
+| `GraphPropagation.ThresholdRouting` | Small (50 nodes, deg 3) | ~13.7 µs | ~9.5 µs | ~26.5 µs | ~73,000 ops/s | ~1.0 KB |
+| `GraphPropagation.RouteAll` | Medium (500 nodes, deg 5) | ~3.01 ms | ~2.91 ms | ~4.69 ms | ~332 ops/s | ~841.4 KB |
+| `GraphPropagation.ThresholdRouting` | Medium (500 nodes, deg 5) | ~16.1 µs | ~11.2 µs | ~45.2 µs | ~62,000 ops/s | ~1.74 KB |
+| `GraphPropagation.RouteAll` | Large (2,000 nodes, deg 8) | ~10.91 ms | ~8.69 ms | ~21.59 ms | ~92 ops/s | ~4.51 MB |
+| `GraphPropagation.ThresholdRouting` | Large (2,000 nodes, deg 8) | ~7.83 µs | ~5.92 µs | ~20.21 µs | ~128,000 ops/s | ~2.55 KB |
+| `AeonCoordinator.Direct` | 10 inputs, 100 members | ~6.45 ms | ~6.37 ms | ~10.66 ms | ~155 ops/s | ~1.68 MB |
+| `AeonCoordinator.Contextual` | 10 inputs, 100 members | ~7.93 ms | ~7.97 ms | ~10.74 ms | ~126 ops/s | ~5.21 MB |
+| `DeterministicCognitiveCycle.FullCycle` | 5 stages, 5 initial signals | ~951.4 µs | ~630.0 µs | ~2.57 ms | ~1,051 ops/s | ~255.4 KB |
+| `CognitiveCycle.Adaptation.NoOp` | 50 target nodes | ~586.5 µs | ~539.9 µs | ~796.0 µs | ~1,705 ops/s | ~255.4 KB |
+| `CognitiveCycle.Adaptation.BaselinePolicy` | 50 target nodes | ~529.4 µs | ~476.7 µs | ~771.9 µs | ~1,889 ops/s | ~255.4 KB |
 
 ### JMH Microbenchmark Results (Single-Operation)
 
@@ -132,8 +135,8 @@ Captured on Linux x86_64 with Java 26 (Eclipse Adoptium OpenJDK 64-Bit Server VM
 | `ScalarResonanceBenchmark.benchmarkSingleScore` | 100 size | avgt | ~65.1 | ns/op |
 | `ScalarResonanceBenchmark.benchmarkSingleScore` | 1,000 size | avgt | ~84.7 | ns/op |
 | `ScalarResonanceBenchmark.benchmarkSingleScore` | 10,000 size | avgt | ~102.0 | ns/op |
-| `AdaptationPolicyBenchmark.benchmarkNoOpPolicy` | N/A | avgt | ~12.3 | ns/op |
-| `AdaptationPolicyBenchmark.benchmarkBaselinePolicy` | N/A | avgt | ~100.0 | ns/op |
+| `AdaptationPolicyBenchmark.benchmarkNoOpPolicy` | N/A | avgt | ~59.5 | ns/op |
+| `AdaptationPolicyBenchmark.benchmarkBaselinePolicy` | N/A | avgt | ~324.2 | ns/op |
 
 ## Analysis of Bottlenecks & Next Optimization Experiments
 
@@ -145,7 +148,7 @@ From the empirical evidence gathered by the baseline harness, four candidate opt
 - **Target Metric**: >3x throughput increase on batches $\ge 1,000$ pairs while maintaining strict equivalence with the scalar oracle within floating-point tolerance.
 
 ### 2. Compact Graph Representation (CSR / Compact Integer Adjacency)
-- **Observation**: `GraphPropagation.RouteAll` on 2,000 nodes allocates ~4.84 MB per run and runs in ~9.4 ms due to `Node` UUID set iterations, sorting UUIDs, and allocating intermediate `Signal` and `NodeProcessingResult` lists.
+- **Observation**: `GraphPropagation.RouteAll` on 2,000 nodes allocates ~4.5–4.8 MB per run due to `Node` UUID set iterations, sorting UUIDs, and allocating intermediate `Signal` and `NodeProcessingResult` lists.
 - **Proposed Experiment**: Design a compact integer ID layout with Compressed Sparse Row (CSR) adjacency indexing and primitive state arrays.
 - **Target Metric**: >75% allocation reduction and >2x traversal throughput improvement on graphs $\ge 500$ nodes.
 
@@ -155,6 +158,6 @@ From the empirical evidence gathered by the baseline harness, four candidate opt
 - **Target Metric**: Zero GC overhead for node state storage and measurable cache locality improvements.
 
 ### 4. Bounded Parallelism for Multi-Input Aeon Dispatch
-- **Observation**: Multi-input Aeon coordination is currently sequential. Contextual coordination on 10 inputs costs ~6.7 ms vs 1.99 ms direct due to single-threaded sequential signal tracking and trace entries.
+- **Observation**: Multi-input Aeon coordination is currently sequential. Contextual coordination on 10 inputs costs ~7.9 ms vs 6.5 ms direct due to single-threaded sequential signal tracking and trace entries.
 - **Proposed Experiment**: Evaluate bounded parallel propagation for independent Aeon inputs when graph mutations are absent.
 - **Target Metric**: Linear scaling across available CPU cores for multi-input workloads with batch sizes $\ge 10$ inputs.

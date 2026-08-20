@@ -10,7 +10,17 @@ import java.util.Objects;
 /**
  * Metric collector harness that executes target workloads, collects latency distributions,
  * allocation telemetry, and garbage collection diagnostics.
+ *
+ * <p>Note on telemetry isolation:
+ * <ul>
+ *   <li><b>Latency & Thread Allocation:</b> Isolated strictly to the {@code workload.run()} execution interval.
+ *       Any per-iteration setup work executed via {@code iterationSetup} is excluded from measured latency and
+ *       thread-allocated byte deltas.</li>
+ *   <li><b>Garbage Collection Deltas:</b> JVM GC MXBeans report whole-JVM cumulative statistics, which cover the
+ *       entire measurement phase (including any GC triggered during per-iteration setup).</li>
+ * </ul>
  */
+
 public final class EvaluationMetricsCollector {
 
     private final com.sun.management.ThreadMXBean sunThreadMXBean;
