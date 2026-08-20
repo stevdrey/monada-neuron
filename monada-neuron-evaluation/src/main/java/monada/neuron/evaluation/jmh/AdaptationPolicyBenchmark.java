@@ -28,7 +28,8 @@ import java.util.concurrent.TimeUnit;
 /**
  * JMH microbenchmark comparing {@link NoOpAdaptationPolicy} vs {@link DeterministicBaselineAdaptationPolicy}.
  *
- * <p>Measures single-invocation adaptation decisions by cycling across pre-allocated test fixtures.
+ * <p>Resets fresh node state fixtures at {@link Level#Iteration} to prevent mutation history accumulation
+ * and ensure stable, reproducible per-operation measurements across benchmark iterations.
  */
 @BenchmarkMode({Mode.Throughput, Mode.AverageTime})
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -45,10 +46,16 @@ public class AdaptationPolicyBenchmark {
     private int index;
 
     @Setup(Level.Trial)
-    public void setup() {
+    public void setupTrial() {
         noOpPolicy = NoOpAdaptationPolicy.INSTANCE;
         baselinePolicy = new DeterministicBaselineAdaptationPolicy(AdaptationConfig.DEFAULT);
+    }
 
+    /**
+     * Re-creates pristine nodes at the start of each iteration so history does not accumulate across iterations.
+     */
+    @Setup(Level.Iteration)
+    public void setupIteration() {
         var generator = new DeterministicWorkloadGenerator();
         var topology = generator.generateGraph(100, 0);
         var nodes = topology.nodes();
@@ -79,7 +86,8 @@ public class AdaptationPolicyBenchmark {
     }
 
     /**
-     * Benchmarks a single invocation of {@link DeterministicBaselineAdaptationPolicy#adapt(Node, FeedbackInput)}.
+     * Benchmarks a single invocation of {@link DeterministicBaselineAdaptationPolicy#adapt(Node, FeedbackInput)},
+     * including policy calculation, state transition, and energy update.
      */
     @Benchmark
     public void benchmarkBaselinePolicy(Blackhole blackhole) {

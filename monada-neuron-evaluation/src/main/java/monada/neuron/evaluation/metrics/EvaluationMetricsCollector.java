@@ -6,7 +6,6 @@ import java.lang.management.ThreadMXBean;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.Consumer;
 
 /**
  * Metric collector harness that executes target workloads, collects latency distributions,
@@ -38,14 +37,6 @@ public final class EvaluationMetricsCollector {
 
     /**
      * Executes a benchmark runnable across warm-up and measurement iterations (1 op per iteration).
-     *
-     * @param benchmarkName name of the benchmark
-     * @param workloadScale description of workload size/scale
-     * @param warmupIterations number of warm-up runs (not recorded)
-     * @param measurementIterations number of measurement runs (recorded)
-     * @param workload the workload to benchmark
-     * @param diagnostics additional diagnostic metadata
-     * @return benchmark run result
      */
     public BenchmarkRunResult measure(
             String benchmarkName,
@@ -54,20 +45,11 @@ public final class EvaluationMetricsCollector {
             int measurementIterations,
             Runnable workload,
             Map<String, String> diagnostics) {
-        return measure(benchmarkName, workloadScale, warmupIterations, measurementIterations, 1, workload, diagnostics);
+        return measure(benchmarkName, workloadScale, warmupIterations, measurementIterations, 1, null, workload, diagnostics);
     }
 
     /**
      * Executes a benchmark runnable across warm-up and measurement iterations with domain operation count.
-     *
-     * @param benchmarkName name of the benchmark
-     * @param workloadScale description of workload size/scale
-     * @param warmupIterations number of warm-up runs (not recorded)
-     * @param measurementIterations number of measurement runs (recorded)
-     * @param operationsPerIteration number of domain operations executed within each measured iteration
-     * @param workload the workload to benchmark
-     * @param diagnostics additional diagnostic metadata
-     * @return benchmark run result
      */
     public BenchmarkRunResult measure(
             String benchmarkName,
@@ -75,6 +57,22 @@ public final class EvaluationMetricsCollector {
             int warmupIterations,
             int measurementIterations,
             int operationsPerIteration,
+            Runnable workload,
+            Map<String, String> diagnostics) {
+        return measure(benchmarkName, workloadScale, warmupIterations, measurementIterations, operationsPerIteration, null, workload, diagnostics);
+    }
+
+    /**
+     * Executes a benchmark runnable across warm-up and measurement iterations with per-iteration setup,
+     * ensuring setup operations and allocations are excluded from timing and allocation telemetry.
+     */
+    public BenchmarkRunResult measure(
+            String benchmarkName,
+            String workloadScale,
+            int warmupIterations,
+            int measurementIterations,
+            int operationsPerIteration,
+            Runnable iterationSetup,
             Runnable workload,
             Map<String, String> diagnostics) {
         Objects.requireNonNull(benchmarkName, "benchmarkName must not be null");
@@ -92,26 +90,40 @@ public final class EvaluationMetricsCollector {
 
         // Warm-up phase
         for (int i = 0; i < warmupIterations; i++) {
+            if (iterationSetup != null) {
+                iterationSetup.run();
+            }
             workload.run();
         }
 
         // Prepare GC baseline
         long gcCountBefore = totalGcCount();
         long gcTimeBefore = totalGcTime();
-        long threadAllocatedBefore = currentThreadAllocatedBytes();
         long heapBefore = currentHeapUsedBytes();
 
         long[] sampleNanos = new long[measurementIterations];
+        long totalAllocatedInIntervals = 0L;
+        boolean trackingSucceeded = threadAllocatedMemorySupported;
 
         // Measurement phase
         for (int i = 0; i < measurementIterations; i++) {
+            if (iterationSetup != null) {
+                iterationSetup.run();
+            }
+            long threadStart = currentThreadAllocatedBytes();
             long start = System.nanoTime();
             workload.run();
             long elapsed = System.nanoTime() - start;
+            long threadEnd = currentThreadAllocatedBytes();
             sampleNanos[i] = elapsed;
+
+            if (trackingSucceeded && threadEnd >= threadStart) {
+                totalAllocatedInIntervals += (threadEnd - threadStart);
+            } else {
+                trackingSucceeded = false;
+            }
         }
 
-        long threadAllocatedAfter = currentThreadAllocatedBytes();
         long gcCountAfter = totalGcCount();
         long gcTimeAfter = totalGcTime();
         long heapAfter = currentHeapUsedBytes();
@@ -119,8 +131,8 @@ public final class EvaluationMetricsCollector {
         LatencyDistribution latency = LatencyDistribution.fromSamples(sampleNanos, operationsPerIteration);
 
         long totalAllocated = 0L;
-        if (threadAllocatedMemorySupported && threadAllocatedAfter >= threadAllocatedBefore) {
-            totalAllocated = threadAllocatedAfter - threadAllocatedBefore;
+        if (trackingSucceeded && totalAllocatedInIntervals > 0L) {
+            totalAllocated = totalAllocatedInIntervals;
         } else if (heapAfter > heapBefore) {
             totalAllocated = heapAfter - heapBefore;
         }
@@ -145,7 +157,6 @@ public final class EvaluationMetricsCollector {
                 allocation,
                 diagnostics);
     }
-
 
     private long currentThreadAllocatedBytes() {
         if (threadAllocatedMemorySupported && sunThreadMXBean != null) {

@@ -1,6 +1,7 @@
 package monada.neuron.evaluation.baseline;
 
 import monada.neuron.action.ActionCapability;
+import monada.neuron.aeon.AeonCoordinationResult;
 import monada.neuron.aeon.AeonPurpose;
 import monada.neuron.aeon.CognitiveAeonCoordinator;
 import monada.neuron.aeon.DeterministicAeonCoordinator;
@@ -10,9 +11,11 @@ import monada.neuron.evaluation.metrics.BenchmarkRunResult;
 import monada.neuron.evaluation.metrics.EnvironmentMetadata;
 import monada.neuron.evaluation.metrics.EvaluationMetricsCollector;
 import monada.neuron.evaluation.metrics.EvaluationReport;
+import monada.neuron.evaluation.metrics.EvaluationReport.RunConfiguration;
 import monada.neuron.evaluation.workload.DeterministicActionFixture;
 import monada.neuron.evaluation.workload.DeterministicMemoryFixture;
 import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator;
+import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator.CognitiveCycleSetup;
 import monada.neuron.evolution.AdaptationConfig;
 import monada.neuron.evolution.DeterministicBaselineAdaptationPolicy;
 import monada.neuron.evolution.NoOpAdaptationPolicy;
@@ -21,7 +24,6 @@ import monada.neuron.resonance.ScalarResonanceMetric;
 import monada.neuron.runtime.graph.DeterministicSignalPropagationEngine;
 import monada.neuron.runtime.graph.PropagationConfig;
 import monada.neuron.runtime.graph.ResonanceThresholdRoutingPolicy;
-import monada.neuron.runtime.graph.SignalRoutingPolicy;
 import monada.neuron.signal.NodeProcessingResult;
 import monada.neuron.signal.NodeProcessor;
 import monada.neuron.signal.Signal;
@@ -35,6 +37,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * Main baseline runner that executes deterministic, reproducible cognitive workloads
@@ -44,6 +47,7 @@ public final class CognitiveBaselineRunner {
 
     private final DeterministicWorkloadGenerator generator;
     private final EvaluationMetricsCollector collector;
+    private final long seed;
     private final boolean quickMode;
 
     public CognitiveBaselineRunner() {
@@ -51,6 +55,7 @@ public final class CognitiveBaselineRunner {
     }
 
     public CognitiveBaselineRunner(long seed, boolean quickMode) {
+        this.seed = seed;
         this.generator = new DeterministicWorkloadGenerator(seed);
         this.collector = new EvaluationMetricsCollector();
         this.quickMode = quickMode;
@@ -99,18 +104,23 @@ public final class CognitiveBaselineRunner {
         // 2. Sparse Graph Propagation
         results.addAll(benchmarkGraphPropagation());
 
-        // 3. Aeon Coordination
+        // 3. Aeon Coordination (Direct vs Contextual with Workload Equivalence Guarantee)
         results.addAll(benchmarkAeonCoordination());
 
-        // 4. Primary Monad Cognitive Cycles
+        // 4. Primary Monad Cognitive Cycles (with Per-Iteration State Isolation)
         results.addAll(benchmarkCognitiveCycles());
 
-        // 5. Adaptation Enabled vs No-Op
+        // 5. Adaptation Policy Comparison (with Per-Iteration State Isolation)
         results.addAll(benchmarkAdaptationComparison());
+
+        var runConfig = quickMode
+                ? RunConfiguration.defaultQuick(seed)
+                : RunConfiguration.defaultFull(seed);
 
         return new EvaluationReport(
                 Instant.now(),
                 EnvironmentMetadata.current(),
+                runConfig,
                 results);
     }
 
@@ -146,7 +156,6 @@ public final class CognitiveBaselineRunner {
         return results;
     }
 
-
     private List<BenchmarkRunResult> benchmarkGraphPropagation() {
         var engine = new DeterministicSignalPropagationEngine();
         int warmups = quickMode ? 2 : 5;
@@ -176,6 +185,10 @@ public final class CognitiveBaselineRunner {
             var routeAllConfig = PropagationConfig.routeAll(config.maxSteps(), config.maxHops());
             var thresholdConfig = new PropagationConfig(config.maxSteps(), config.maxHops(), resonancePolicy);
 
+            // Sample propagation runs to record exact work volume diagnostics
+            var sampleRouteAll = engine.propagate(topology.entryNode(), initialSignal, processor, routeAllConfig);
+            var sampleThreshold = engine.propagate(topology.entryNode(), initialSignal, processor, thresholdConfig);
+
             // Route All Policy
             results.add(collector.measure(
                     "GraphPropagation.RouteAll",
@@ -197,6 +210,10 @@ public final class CognitiveBaselineRunner {
                             "totalEdges", String.valueOf(topology.totalEdges()),
                             "maxSteps", String.valueOf(config.maxSteps()),
                             "maxHops", String.valueOf(config.maxHops()),
+                            "processedSteps", String.valueOf(sampleRouteAll.processedSteps()),
+                            "emittedSignals", String.valueOf(sampleRouteAll.emittedSignals().size()),
+                            "stepLimitReached", String.valueOf(sampleRouteAll.stepLimitReached()),
+                            "hopLimitReached", String.valueOf(sampleRouteAll.hopLimitReached()),
                             "routingPolicy", "RouteAll")));
 
             // Resonance Threshold Policy
@@ -219,6 +236,10 @@ public final class CognitiveBaselineRunner {
                             "nodeCount", String.valueOf(config.nodes()),
                             "totalEdges", String.valueOf(topology.totalEdges()),
                             "threshold", "0.5",
+                            "processedSteps", String.valueOf(sampleThreshold.processedSteps()),
+                            "emittedSignals", String.valueOf(sampleThreshold.emittedSignals().size()),
+                            "stepLimitReached", String.valueOf(sampleThreshold.stepLimitReached()),
+                            "hopLimitReached", String.valueOf(sampleThreshold.hopLimitReached()),
                             "routingPolicy", "ResonanceThresholdRoutingPolicy")));
         }
         return results;
@@ -238,6 +259,40 @@ public final class CognitiveBaselineRunner {
 
         var propConfig = PropagationConfig.routeAll(500, 6);
         NodeProcessor processor = (node, input) -> new NodeProcessingResult(List.of(input));
+
+        // Ensure both runs have equal global step capacity (budget >= 10 * 500 = 5,000 steps, > 25,000 signals/traces)
+        var cognitiveBudget = new CognitiveBudget(50_000, 100_000, 100_000);
+
+        // Pre-validate semantic equivalence of work volume
+        var directSample = coordinator.coordinate(aeon, inputs, processor, propConfig);
+        var testContext = new CognitiveContext(cognitiveBudget);
+        var contextualSample = coordinator.coordinate(aeon, inputs, processor, propConfig, testContext);
+        testContext.close();
+
+        int directTotalSteps = directSample.inputResults().stream()
+                .mapToInt(ir -> ir.propagationResult().processedSteps())
+                .sum();
+        int directTotalEmitted = directSample.inputResults().stream()
+                .mapToInt(ir -> ir.propagationResult().emittedSignals().size())
+                .sum();
+
+        int contextualTotalSteps = contextualSample.inputResults().stream()
+                .mapToInt(ir -> ir.propagationResult().processedSteps())
+                .sum();
+        int contextualTotalEmitted = contextualSample.inputResults().stream()
+                .mapToInt(ir -> ir.propagationResult().emittedSignals().size())
+                .sum();
+
+        if (directTotalSteps != contextualTotalSteps
+                || directTotalEmitted != contextualTotalEmitted
+                || directSample.inputResults().size() != contextualSample.inputResults().size()) {
+            throw new IllegalStateException(String.format(
+                    "Workload equivalence violation between Direct and Contextual Aeon coordination: "
+                            + "steps=(%d vs %d), emitted=(%d vs %d), results=(%d vs %d)",
+                    directTotalSteps, contextualTotalSteps,
+                    directTotalEmitted, contextualTotalEmitted,
+                    directSample.inputResults().size(), contextualSample.inputResults().size()));
+        }
 
         var results = new ArrayList<BenchmarkRunResult>();
 
@@ -259,7 +314,11 @@ public final class CognitiveBaselineRunner {
                 },
                 Map.of(
                         "inputCount", String.valueOf(inputs.size()),
-                        "memberCount", "100",
+                        "memberCount", String.valueOf(topology.nodes().size()),
+                        "totalProcessedSteps", String.valueOf(directTotalSteps),
+                        "totalEmittedSignals", String.valueOf(directTotalEmitted),
+                        "inputResultCount", String.valueOf(directSample.inputResults().size()),
+                        "workloadEquivalent", "true",
                         "contextual", "false")));
 
         // Cognitive Aeon Coordination (With CognitiveContext)
@@ -269,8 +328,7 @@ public final class CognitiveBaselineRunner {
                 warmups,
                 iterations,
                 () -> {
-                    var budget = new CognitiveBudget(2_000, 2_000, 5_000);
-                    var context = new CognitiveContext(budget);
+                    var context = new CognitiveContext(cognitiveBudget);
                     try {
                         var res = coordinator.coordinate(
                                 aeon,
@@ -287,7 +345,12 @@ public final class CognitiveBaselineRunner {
                 },
                 Map.of(
                         "inputCount", String.valueOf(inputs.size()),
-                        "memberCount", "100",
+                        "memberCount", String.valueOf(topology.nodes().size()),
+                        "totalProcessedSteps", String.valueOf(contextualTotalSteps),
+                        "totalEmittedSignals", String.valueOf(contextualTotalEmitted),
+                        "inputResultCount", String.valueOf(contextualSample.inputResults().size()),
+                        "workloadEquivalent", "true",
+                        "contextBudgetExhausted", "false",
                         "contextual", "true")));
 
         return results;
@@ -297,15 +360,25 @@ public final class CognitiveBaselineRunner {
         int warmups = quickMode ? 2 : 5;
         int iterations = quickMode ? 5 : 15;
 
-        var perceptionTop = generator.generateGraph(50, 3);
-        var reasoningTop = generator.generateGraph(50, 3);
         var memoryPort = new DeterministicMemoryFixture();
         var actionCap = new DeterministicActionFixture();
         var policy = new DeterministicBaselineAdaptationPolicy(AdaptationConfig.DEFAULT);
-
-        var setup = generator.generateFullCycleSetup(perceptionTop, reasoningTop, policy, memoryPort, actionCap);
         var initialSignals = generator.generateSignals(quickMode ? 2 : 5);
         var budget = new CognitiveBudget(5_000, 5_000, 10_000);
+
+        // Pre-generate sample for diagnostic inspection
+        var samplePerception = generator.generateGraph(50, 3);
+        var sampleReasoning = generator.generateGraph(50, 3);
+        var sampleSetup = generator.generateFullCycleSetup(samplePerception, sampleReasoning, policy, memoryPort, actionCap);
+        var sampleSnapshot = sampleSetup.cycle().execute(sampleSetup.monad(), initialSignals, budget);
+
+        // Holder to store fresh setup recreated before each iteration outside measurement interval
+        var setupHolder = new CognitiveCycleSetup[1];
+        Runnable iterationSetup = () -> {
+            var perceptionTop = generator.generateGraph(50, 3);
+            var reasoningTop = generator.generateGraph(50, 3);
+            setupHolder[0] = generator.generateFullCycleSetup(perceptionTop, reasoningTop, policy, memoryPort, actionCap);
+        };
 
         var results = new ArrayList<BenchmarkRunResult>();
         results.add(collector.measure(
@@ -313,7 +386,10 @@ public final class CognitiveBaselineRunner {
                 "5 stages, 5 initial signals",
                 warmups,
                 iterations,
+                1,
+                iterationSetup,
                 () -> {
+                    var setup = setupHolder[0];
                     var snapshot = setup.cycle().execute(setup.monad(), initialSignals, budget);
                     if (snapshot.snapshot().traceEntries().isEmpty()) {
                         throw new IllegalStateException("empty cycle snapshot");
@@ -322,7 +398,9 @@ public final class CognitiveBaselineRunner {
                 Map.of(
                         "stages", "PERCEPTION -> MEMORY_RECALL -> REASONING -> ADAPTATION -> ACTION",
                         "initialSignalCount", String.valueOf(initialSignals.size()),
-                        "budgetSteps", "5000")));
+                        "budgetSteps", "5000",
+                        "traceEntriesCount", String.valueOf(sampleSnapshot.snapshot().traceEntries().size()),
+                        "stateResetPerIteration", "true")));
 
         return results;
     }
@@ -331,19 +409,28 @@ public final class CognitiveBaselineRunner {
         int warmups = quickMode ? 2 : 5;
         int iterations = quickMode ? 5 : 15;
 
-        var perceptionTop = generator.generateGraph(50, 3);
-        var reasoningTop = generator.generateGraph(50, 3);
         var memoryPort = new DeterministicMemoryFixture();
         var actionCap = new DeterministicActionFixture();
 
         var noOpPolicy = NoOpAdaptationPolicy.INSTANCE;
         var baselinePolicy = new DeterministicBaselineAdaptationPolicy(AdaptationConfig.DEFAULT);
 
-        var noOpSetup = generator.generateFullCycleSetup(perceptionTop, reasoningTop, noOpPolicy, memoryPort, actionCap);
-        var baselineSetup = generator.generateFullCycleSetup(perceptionTop, reasoningTop, baselinePolicy, memoryPort, actionCap);
-
         var initialSignals = generator.generateSignals(quickMode ? 2 : 5);
         var budget = new CognitiveBudget(5_000, 5_000, 10_000);
+
+        var noOpSetupHolder = new CognitiveCycleSetup[1];
+        Runnable noOpIterationSetup = () -> {
+            var pTop = generator.generateGraph(50, 3);
+            var rTop = generator.generateGraph(50, 3);
+            noOpSetupHolder[0] = generator.generateFullCycleSetup(pTop, rTop, noOpPolicy, memoryPort, actionCap);
+        };
+
+        var baselineSetupHolder = new CognitiveCycleSetup[1];
+        Runnable baselineIterationSetup = () -> {
+            var pTop = generator.generateGraph(50, 3);
+            var rTop = generator.generateGraph(50, 3);
+            baselineSetupHolder[0] = generator.generateFullCycleSetup(pTop, rTop, baselinePolicy, memoryPort, actionCap);
+        };
 
         var results = new ArrayList<BenchmarkRunResult>();
 
@@ -353,15 +440,19 @@ public final class CognitiveBaselineRunner {
                 "50 target nodes",
                 warmups,
                 iterations,
+                1,
+                noOpIterationSetup,
                 () -> {
-                    var snapshot = noOpSetup.cycle().execute(noOpSetup.monad(), initialSignals, budget);
+                    var setup = noOpSetupHolder[0];
+                    var snapshot = setup.cycle().execute(setup.monad(), initialSignals, budget);
                     if (snapshot.snapshot().traceEntries().isEmpty()) {
                         throw new IllegalStateException("empty cycle snapshot");
                     }
                 },
                 Map.of(
                         "policy", "NoOpAdaptationPolicy",
-                        "targetNodeCount", "50")));
+                        "targetNodeCount", "50",
+                        "stateResetPerIteration", "true")));
 
         // Baseline Adaptation Policy Cycle
         results.add(collector.measure(
@@ -369,8 +460,11 @@ public final class CognitiveBaselineRunner {
                 "50 target nodes",
                 warmups,
                 iterations,
+                1,
+                baselineIterationSetup,
                 () -> {
-                    var snapshot = baselineSetup.cycle().execute(baselineSetup.monad(), initialSignals, budget);
+                    var setup = baselineSetupHolder[0];
+                    var snapshot = setup.cycle().execute(setup.monad(), initialSignals, budget);
                     if (snapshot.snapshot().traceEntries().isEmpty()) {
                         throw new IllegalStateException("empty cycle snapshot");
                     }
@@ -378,7 +472,8 @@ public final class CognitiveBaselineRunner {
                 Map.of(
                         "policy", "DeterministicBaselineAdaptationPolicy",
                         "targetNodeCount", "50",
-                        "learningRate", String.valueOf(AdaptationConfig.DEFAULT.learningRate()))));
+                        "learningRate", String.valueOf(AdaptationConfig.DEFAULT.learningRate()),
+                        "stateResetPerIteration", "true")));
 
         return results;
     }

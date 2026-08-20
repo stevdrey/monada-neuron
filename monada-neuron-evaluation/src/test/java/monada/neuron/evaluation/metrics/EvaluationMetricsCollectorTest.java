@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -62,46 +63,48 @@ class EvaluationMetricsCollectorTest {
     }
 
     @Test
-    void measuresWorkloadExecutionWithExplicitOperationsPerIteration() {
+    void executesIterationSetupOutsideMeasurementInterval() {
         var collector = new EvaluationMetricsCollector();
+        var setupCount = new AtomicInteger(0);
+        var runCount = new AtomicInteger(0);
+
         BenchmarkRunResult result = collector.measure(
-                "BatchTestBenchmark",
-                "100 items",
+                "SetupTestBenchmark",
+                "1 item",
                 2,
                 5,
-                100,
-                () -> {
-                    long x = 0;
-                    for (int i = 0; i < 100; i++) {
-                        x += i;
-                    }
-                },
-                Map.of("batchSize", "100"));
+                1,
+                setupCount::incrementAndGet,
+                runCount::incrementAndGet,
+                Map.of("test", "setupIsolation"));
 
-        assertAll(
-                () -> assertEquals("BatchTestBenchmark", result.benchmarkName()),
-                () -> assertEquals("100 items", result.workloadScale()),
-                () -> assertEquals(5, result.iterations()),
-                () -> assertTrue(result.latency().throughputOpsPerSec() > 0));
+        // 2 warmups + 5 measurements = 7 total setup and run executions
+        assertEquals(7, setupCount.get());
+        assertEquals(7, runCount.get());
+        assertEquals(5, result.iterations());
     }
 
     @Test
-    void serializesReportToJsonAndMarkdown() {
+    void serializesReportToJsonAndMarkdownWithRunConfiguration() {
         var env = EnvironmentMetadata.current();
+        var runConfig = EvaluationReport.RunConfiguration.defaultFull(42L);
         var latency = new LatencyDistribution(5, 10.0, 20.0, 25.0, 28.0, 29.0, 30.0, 20.0, 5.0, 50_000_000.0);
         var allocation = new AllocationMetrics(1024L, 204.8, 0L, 0L, 1000L, 2024L);
-        var run = new BenchmarkRunResult("SampleBench", "scale-1", 5, latency, allocation, Map.of("tag", "test"));
+        var run = new BenchmarkRunResult("SampleBench", "scale-1", 5, latency, allocation, Map.of("b_tag", "val2", "a_tag", "val1"));
 
-        var report = new EvaluationReport(Instant.now(), env, List.of(run));
+        var report = new EvaluationReport(Instant.now(), env, runConfig, List.of(run));
         String json = report.toJson();
         String markdown = report.toMarkdown();
 
         assertNotNull(json);
+        assertTrue(json.contains("\"runConfiguration\":"));
+        assertTrue(json.contains("\"seed\": 42"));
         assertTrue(json.contains("\"benchmarkName\": \"SampleBench\""));
         assertTrue(json.contains("\"throughputOpsPerSec\":"));
 
         assertNotNull(markdown);
         assertTrue(markdown.contains("`SampleBench`"));
+        assertTrue(markdown.contains("Run Configuration"));
         assertTrue(markdown.contains("Environment Metadata"));
     }
 }
