@@ -15,6 +15,11 @@ import java.util.function.BiFunction;
 
 /**
  * Optional cognitive stage that adapts eligible target nodes based on evaluated feedback signals.
+ *
+ * <p>When executing, admitted input signals are mapped cyclically (round-robin by target node index,
+ * {@code inputSignals.get(i % inputSignals.size())}) to each target node and passed to the
+ * {@link BiFunction} feedback mapper. Callers requiring custom multi-signal routing can supply a
+ * specialized feedback mapper.
  */
 public final class AdaptationCognitiveStage implements CognitiveStage {
 
@@ -24,6 +29,9 @@ public final class AdaptationCognitiveStage implements CognitiveStage {
 
     /**
      * Creates an adaptation stage with explicit policy, target nodes, and feedback mapping.
+     *
+     * <p>Target nodes are evaluated sequentially in the supplied order. Input signals are distributed
+     * cyclically across target nodes if fewer or more signals than nodes are available.
      */
     public AdaptationCognitiveStage(
             AdaptationPolicy policy,
@@ -39,6 +47,9 @@ public final class AdaptationCognitiveStage implements CognitiveStage {
 
     /**
      * Creates an adaptation stage with a default target-signal feedback mapping.
+     *
+     * <p>Distributes input signals cyclically across target nodes, pairing each {@code (node, signal)}
+     * via {@link FeedbackInput#ofTarget(java.util.UUID, Signal, double)} with a score of {@code 1.0}.
      */
     public AdaptationCognitiveStage(AdaptationPolicy policy, List<Node> targetNodes) {
         this(policy, targetNodes, (node, signal) -> FeedbackInput.ofTarget(node.getId(), signal, 1.0));

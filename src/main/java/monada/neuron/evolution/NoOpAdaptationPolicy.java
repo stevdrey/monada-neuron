@@ -12,8 +12,8 @@ public final class NoOpAdaptationPolicy implements AdaptationPolicy {
     /** Shared singleton instance. */
     public static final NoOpAdaptationPolicy INSTANCE = new NoOpAdaptationPolicy();
 
-    /** Creates a no-op adaptation policy. */
-    public NoOpAdaptationPolicy() {
+    /** Private constructor enforcing singleton usage. */
+    private NoOpAdaptationPolicy() {
     }
 
     /**
