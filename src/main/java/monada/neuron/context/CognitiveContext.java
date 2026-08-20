@@ -1,6 +1,7 @@
 package monada.neuron.context;
 
 import monada.neuron.aeon.AeonInputResult;
+import monada.neuron.model.FrequencyState;
 import monada.neuron.monad.CognitiveStageKind;
 import monada.neuron.monad.CognitiveStageStatus;
 import monada.neuron.signal.Signal;
@@ -336,6 +337,40 @@ public final class CognitiveContext implements AutoCloseable {
                             stepLimitReached,
                             hopLimitReached,
                             contextLimitReached)));
+        }
+    }
+
+    /** Records one adaptation decision applied to a node during the cycle. */
+    public void recordNodeAdapted(
+            UUID nodeId,
+            boolean adapted,
+            FrequencyState previousState,
+            FrequencyState newState,
+            double previousEnergy,
+            double newEnergy) {
+        requireActive();
+        Objects.requireNonNull(nodeId, "nodeId must not be null");
+        Objects.requireNonNull(previousState, "previousState must not be null");
+        Objects.requireNonNull(newState, "newState must not be null");
+        if (!Double.isFinite(previousEnergy) || previousEnergy < 0) {
+            throw new IllegalArgumentException(
+                    "previousEnergy must be non-negative and finite, got: " + previousEnergy);
+        }
+        if (!Double.isFinite(newEnergy) || newEnergy < 0) {
+            throw new IllegalArgumentException(
+                    "newEnergy must be non-negative and finite, got: " + newEnergy);
+        }
+        long traceSequence = reserveTraceSequence();
+        if (traceSequence != TRACE_ENTRY_OMITTED) {
+            traceEntries.add(new CognitiveTraceEntry(
+                    traceSequence,
+                    new CognitiveTraceEvent.NodeAdapted(
+                            nodeId,
+                            adapted,
+                            previousState,
+                            newState,
+                            previousEnergy,
+                            newEnergy)));
         }
     }
 

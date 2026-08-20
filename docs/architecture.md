@@ -219,6 +219,16 @@ matches, `UNAVAILABLE`, `TIMED_OUT`, and expected `FAILED` responses all preserv
 `ResonanceMemoryStageResult`, while unexpected adapter failures follow normal cycle-failure
 semantics.
 
+`ADAPTATION` can use `AdaptationCognitiveStage`, backed by an `AdaptationPolicy`. It evaluates
+incoming feedback against eligible target Nodes and applies bounded in-place state and energy
+transitions. `NoOpAdaptationPolicy` provides an immutable reference baseline where `adapted = false`,
+while `DeterministicBaselineAdaptationPolicy` calculates bounded, deterministic updates: when a target
+signal is provided, positive feedback shifts amplitude, frequency, and phase towards the target, while
+negative feedback attenuates amplitude/energy and diverges from error-causing frequency; when scalar
+feedback is provided without a target signal, amplitude and energy scale proportionally while frequency
+and phase remain unchanged. Each adaptation decision is recorded as a `NodeAdapted` event in
+`CognitiveContext` without persisting feedback state to disk or duplicating Monada Resonance Store.
+
 `ACTION` can instead use `ActionCognitiveStage`, backed by a Neuron-owned `ActionCapability`.
 It submits one ordered, bounded Signal batch and exposes an `ActionOutcome` containing the admitted
 request and typed result. `SUCCEEDED` and `PARTIALLY_COMPLETED` may retain observations in

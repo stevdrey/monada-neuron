@@ -8,6 +8,10 @@ import monada.neuron.context.CognitiveBudget;
 import monada.neuron.context.CognitiveContext;
 import monada.neuron.context.CognitiveCycleOutcome;
 import monada.neuron.context.CognitiveTraceEvent;
+import monada.neuron.evolution.AdaptationCognitiveStage;
+import monada.neuron.evolution.AdaptationCognitiveStageResult;
+import monada.neuron.evolution.DeterministicBaselineAdaptationPolicy;
+import monada.neuron.evolution.NoOpAdaptationPolicy;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
@@ -529,6 +533,72 @@ class DeterministicCognitiveCycleTest {
 
     private UUID uuid(long value) {
         return new UUID(0L, value);
+    }
+
+    @Test
+    void demonstratesABExecutionWithAdaptationDisabledVsEnabled() {
+        var perceptionRootA = node(1);
+        var perceptionA = aeon(10, AeonPurpose.PERCEPTION, perceptionRootA);
+        var monadA = monad(perceptionA);
+
+        var targetNodeA = node(3);
+        var noOpStage = new AdaptationCognitiveStage(NoOpAdaptationPolicy.INSTANCE, List.of(targetNodeA));
+        var perceptionStageA = stage(
+                CognitiveStageKind.PERCEPTION,
+                perceptionA,
+                perceptionRootA.getId(),
+                (n, sig) -> new NodeProcessingResult(List.of(new Signal(SignalKind.FEEDBACK, new FrequencyState(5.0, 50.0, 1.0)))),
+                3,
+                0);
+
+        var resultA = new DeterministicCognitiveCycle(List.of(perceptionStageA, noOpStage)).execute(
+                monadA,
+                List.of(signal(1.0)),
+                new CognitiveBudget(10, 10, 30));
+
+        // In A (no-op), target node is untouched
+        assertEquals(FrequencyState.ZERO, targetNodeA.getFrequencyState());
+        assertEquals(0.0, targetNodeA.getEnergy());
+        assertTrue(targetNodeA.getHistory().isEmpty());
+        assertEquals(CognitiveCycleTermination.COMPLETED, resultA.termination());
+
+        // In B (baseline adaptation enabled), identical structure adapts target node
+        var perceptionRootB = node(1);
+        var perceptionB = aeon(10, AeonPurpose.PERCEPTION, perceptionRootB);
+        var monadB = monad(perceptionB);
+
+        var targetNodeB = node(3);
+        var baselineStage = new AdaptationCognitiveStage(new DeterministicBaselineAdaptationPolicy(), List.of(targetNodeB));
+        var perceptionStageB = stage(
+                CognitiveStageKind.PERCEPTION,
+                perceptionB,
+                perceptionRootB.getId(),
+                (n, sig) -> new NodeProcessingResult(List.of(new Signal(SignalKind.FEEDBACK, new FrequencyState(5.0, 50.0, 1.0)))),
+                3,
+                0);
+
+        var resultB = new DeterministicCognitiveCycle(List.of(perceptionStageB, baselineStage)).execute(
+                monadB,
+                List.of(signal(1.0)),
+                new CognitiveBudget(10, 10, 30));
+
+        // In B, target node adapted and state history recorded
+        assertAll(
+                () -> assertEquals(CognitiveCycleTermination.COMPLETED, resultB.termination()),
+                () -> assertTrue(targetNodeB.getFrequencyState().amplitude() > 0.0),
+                () -> assertTrue(targetNodeB.getEnergy() > 0.0),
+                () -> assertEquals(1, targetNodeB.getHistory().size()),
+                () -> assertEquals(FrequencyState.ZERO, targetNodeB.getHistory().getFirst()),
+                () -> {
+                    var adaptedEvent = resultB.snapshot().traceEntries().stream()
+                            .map(entry -> entry.event())
+                            .filter(CognitiveTraceEvent.NodeAdapted.class::isInstance)
+                            .map(CognitiveTraceEvent.NodeAdapted.class::cast)
+                            .findFirst()
+                            .orElseThrow();
+                    assertEquals(targetNodeB.getId(), adaptedEvent.nodeId());
+                    assertTrue(adaptedEvent.adapted());
+                });
     }
 
     private record TestStageResult(
