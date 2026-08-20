@@ -1,5 +1,6 @@
 package monada.neuron.context;
 
+import monada.neuron.model.FrequencyState;
 import monada.neuron.monad.CognitiveStageKind;
 import monada.neuron.monad.CognitiveStageStatus;
 
@@ -10,7 +11,8 @@ import java.util.UUID;
 public sealed interface CognitiveTraceEvent permits CognitiveTraceEvent.AeonInputStarted,
         CognitiveTraceEvent.NodeProcessed, CognitiveTraceEvent.SignalRouted,
         CognitiveTraceEvent.AeonInputCompleted, CognitiveTraceEvent.CognitiveStageStarted,
-        CognitiveTraceEvent.CognitiveStageCompleted, CognitiveTraceEvent.CognitiveStageFailed {
+        CognitiveTraceEvent.CognitiveStageCompleted, CognitiveTraceEvent.CognitiveStageFailed,
+        CognitiveTraceEvent.NodeAdapted {
 
     /** One configured Monad stage started with its inherited ordered input signals. */
     record CognitiveStageStarted(CognitiveStageKind stage) implements CognitiveTraceEvent {
@@ -128,6 +130,31 @@ public sealed interface CognitiveTraceEvent permits CognitiveTraceEvent.AeonInpu
             if (processedSteps < 0) {
                 throw new IllegalArgumentException(
                         "processedSteps must be non-negative, got: " + processedSteps);
+            }
+        }
+    }
+
+    /** One Node was adapted by an adaptation policy during the cognitive cycle. */
+    record NodeAdapted(
+            UUID nodeId,
+            boolean adapted,
+            FrequencyState previousState,
+            FrequencyState newState,
+            double previousEnergy,
+            double newEnergy) implements CognitiveTraceEvent {
+
+        /** Validates the node adaptation event. */
+        public NodeAdapted {
+            Objects.requireNonNull(nodeId, "nodeId must not be null");
+            Objects.requireNonNull(previousState, "previousState must not be null");
+            Objects.requireNonNull(newState, "newState must not be null");
+            if (!Double.isFinite(previousEnergy) || previousEnergy < 0) {
+                throw new IllegalArgumentException(
+                        "previousEnergy must be non-negative and finite, got: " + previousEnergy);
+            }
+            if (!Double.isFinite(newEnergy) || newEnergy < 0) {
+                throw new IllegalArgumentException(
+                        "newEnergy must be non-negative and finite, got: " + newEnergy);
             }
         }
     }

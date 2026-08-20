@@ -154,6 +154,31 @@ class CognitiveContextTest {
     }
 
     @Test
+    void recordsNodeAdaptedEventsInTrace() {
+        var context = new CognitiveContext(new CognitiveBudget(1, 1, 5));
+        var nodeId = uuid(1);
+        var prev = new FrequencyState(1.0, 10.0, 0.0);
+        var next = new FrequencyState(2.0, 10.0, 0.0);
+        context.recordNodeAdapted(nodeId, true, prev, next, 0.5, 1.5);
+        var snapshot = context.complete(CognitiveCycleOutcome.SUCCESS);
+
+        assertAll(
+                () -> assertEquals(1, snapshot.traceEntries().size()),
+                () -> assertInstanceOf(CognitiveTraceEvent.NodeAdapted.class,
+                        snapshot.traceEntries().getFirst().event()),
+                () -> {
+                    var event = (CognitiveTraceEvent.NodeAdapted) snapshot.traceEntries().getFirst().event();
+                    assertAll(
+                            () -> assertEquals(nodeId, event.nodeId()),
+                            () -> assertTrue(event.adapted()),
+                            () -> assertEquals(prev, event.previousState()),
+                            () -> assertEquals(next, event.newState()),
+                            () -> assertEquals(0.5, event.previousEnergy()),
+                            () -> assertEquals(1.5, event.newEnergy()));
+                });
+    }
+
+    @Test
     void discardIsIdempotentAndPreventsReuse() {
         var context = new CognitiveContext(new CognitiveBudget(1, 1, 0));
         context.close();
