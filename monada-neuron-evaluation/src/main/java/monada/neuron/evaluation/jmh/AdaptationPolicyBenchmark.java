@@ -27,6 +27,8 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * JMH microbenchmark comparing {@link NoOpAdaptationPolicy} vs {@link DeterministicBaselineAdaptationPolicy}.
+ *
+ * <p>Measures single-invocation adaptation decisions by cycling across pre-allocated test fixtures.
  */
 @BenchmarkMode({Mode.Throughput, Mode.AverageTime})
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -38,8 +40,9 @@ public class AdaptationPolicyBenchmark {
 
     private NoOpAdaptationPolicy noOpPolicy;
     private DeterministicBaselineAdaptationPolicy baselinePolicy;
-    private List<Node> nodes;
-    private List<FeedbackInput> feedbacks;
+    private Node[] nodesArray;
+    private FeedbackInput[] feedbacksArray;
+    private int index;
 
     @Setup(Level.Trial)
     public void setup() {
@@ -48,28 +51,44 @@ public class AdaptationPolicyBenchmark {
 
         var generator = new DeterministicWorkloadGenerator();
         var topology = generator.generateGraph(100, 0);
-        nodes = topology.nodes();
-
+        var nodes = topology.nodes();
         var signals = generator.generateSignals(100);
-        feedbacks = new ArrayList<>(100);
+
+        var feedbacks = new ArrayList<FeedbackInput>(100);
         for (int i = 0; i < 100; i++) {
             feedbacks.add(FeedbackInput.ofTarget(nodes.get(i).getId(), signals.get(i), 0.8));
         }
+
+        nodesArray = nodes.toArray(new Node[0]);
+        feedbacksArray = feedbacks.toArray(new FeedbackInput[0]);
+        index = 0;
     }
 
+    /**
+     * Benchmarks a single invocation of {@link NoOpAdaptationPolicy#adapt(Node, FeedbackInput)}.
+     */
     @Benchmark
     public void benchmarkNoOpPolicy(Blackhole blackhole) {
-        for (int i = 0; i < nodes.size(); i++) {
-            AdaptationDecision decision = noOpPolicy.adapt(nodes.get(i), feedbacks.get(i));
-            blackhole.consume(decision);
+        int idx = index++;
+        if (idx >= nodesArray.length) {
+            idx = 0;
+            index = 0;
         }
+        AdaptationDecision decision = noOpPolicy.adapt(nodesArray[idx], feedbacksArray[idx]);
+        blackhole.consume(decision);
     }
 
+    /**
+     * Benchmarks a single invocation of {@link DeterministicBaselineAdaptationPolicy#adapt(Node, FeedbackInput)}.
+     */
     @Benchmark
     public void benchmarkBaselinePolicy(Blackhole blackhole) {
-        for (int i = 0; i < nodes.size(); i++) {
-            AdaptationDecision decision = baselinePolicy.adapt(nodes.get(i), feedbacks.get(i));
-            blackhole.consume(decision);
+        int idx = index++;
+        if (idx >= nodesArray.length) {
+            idx = 0;
+            index = 0;
         }
+        AdaptationDecision decision = baselinePolicy.adapt(nodesArray[idx], feedbacksArray[idx]);
+        blackhole.consume(decision);
     }
 }

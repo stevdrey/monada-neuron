@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit;
  * JMH microbenchmark for {@link ScalarResonanceMetric#score(FrequencyState, FrequencyState)}.
  */
 @BenchmarkMode({Mode.Throughput, Mode.AverageTime})
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
 @Warmup(iterations = 2, time = 1, timeUnit = TimeUnit.SECONDS)
 @Measurement(iterations = 3, time = 1, timeUnit = TimeUnit.SECONDS)
 @Fork(1)
@@ -36,18 +36,40 @@ public class ScalarResonanceBenchmark {
     private int batchSize;
 
     private ScalarResonanceMetric metric;
-    private List<FrequencyStatePair> pairs;
+    private FrequencyStatePair[] pairsArray;
+    private int pairIndex;
 
     @Setup(Level.Trial)
     public void setup() {
         metric = new ScalarResonanceMetric();
         var generator = new DeterministicWorkloadGenerator();
-        pairs = generator.generateFrequencyStatePairs(batchSize);
+        var pairs = generator.generateFrequencyStatePairs(batchSize);
+        pairsArray = pairs.toArray(new FrequencyStatePair[0]);
+        pairIndex = 0;
     }
 
+    /**
+     * Benchmarks a single scalar resonance score calculation cycling across pre-generated pairs.
+     * Reports latency per individual score calculation in nanoseconds.
+     */
     @Benchmark
-    public void benchmarkBatchResonance(Blackhole blackhole) {
-        for (var pair : pairs) {
+    public void benchmarkSingleScore(Blackhole blackhole) {
+        int idx = pairIndex++;
+        if (idx >= pairsArray.length) {
+            idx = 0;
+            pairIndex = 0;
+        }
+        var pair = pairsArray[idx];
+        double score = metric.score(pair.first(), pair.second());
+        blackhole.consume(score);
+    }
+
+    /**
+     * Benchmarks batch evaluation. Reports latency per full batch invocation in nanoseconds.
+     */
+    @Benchmark
+    public void benchmarkBatch(Blackhole blackhole) {
+        for (var pair : pairsArray) {
             double score = metric.score(pair.first(), pair.second());
             blackhole.consume(score);
         }

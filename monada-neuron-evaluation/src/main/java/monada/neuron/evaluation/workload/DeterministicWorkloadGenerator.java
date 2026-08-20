@@ -152,8 +152,9 @@ public final class DeterministicWorkloadGenerator {
                     int targetIndex = (i + d + random.nextInt(Math.max(1, nodeCount / 4))) % nodeCount;
                     if (targetIndex != i) {
                         var target = nodes.get(targetIndex);
-                        source.connect(target);
-                        totalEdges++;
+                        if (source.connect(target)) {
+                            totalEdges++;
+                        }
                     }
                 }
             }
@@ -182,7 +183,7 @@ public final class DeterministicWorkloadGenerator {
     }
 
     /**
-     * Builds a full 6-stage Primary Monad cognitive cycle with deterministic fixtures.
+     * Builds a representative 5-stage Primary Monad cognitive cycle with deterministic fixtures.
      *
      * @param perceptionTopology topology for perception stage
      * @param reasoningTopology topology for reasoning stage
@@ -192,6 +193,7 @@ public final class DeterministicWorkloadGenerator {
      * @return a prepared Monad and cycle setup
      */
     public CognitiveCycleSetup generateFullCycleSetup(
+
             GraphTopology perceptionTopology,
             GraphTopology reasoningTopology,
             AdaptationPolicy policy,

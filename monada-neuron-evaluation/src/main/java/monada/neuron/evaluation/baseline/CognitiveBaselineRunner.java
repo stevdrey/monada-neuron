@@ -128,6 +128,7 @@ public final class CognitiveBaselineRunner {
                     scale + " pairs",
                     warmups,
                     iterations,
+                    scale,
                     () -> {
                         double sum = 0.0;
                         for (var pair : pairs) {
@@ -139,11 +140,12 @@ public final class CognitiveBaselineRunner {
                     },
                     Map.of(
                             "pairCount", String.valueOf(scale),
-                            "formula", "amplitude * frequency * phase"));
+                            "formula", "amplitudeSimilarity * frequencySimilarity * phaseSimilarity"));
             results.add(result);
         }
         return results;
     }
+
 
     private List<BenchmarkRunResult> benchmarkGraphPropagation() {
         var engine = new DeterministicSignalPropagationEngine();

@@ -30,7 +30,8 @@ All synthetic workloads are generated deterministically from configurable seeds 
 
 1. **Scalar Resonance Batches**:
    - Compares pairs of `FrequencyState` across multiple batch sizes (100, 1,000, 10,000, 100,000 pairs).
-   - Evaluates amplitude, frequency, and phase similarity calculation costs.
+   - Evaluates `amplitudeSimilarity * frequencySimilarity * phaseSimilarity` calculation costs.
+   - Reports both iteration latency and domain throughput (pairs/sec) and allocation per pair.
 
 2. **Sparse Directed Graph Propagation**:
    - Evaluates `DeterministicSignalPropagationEngine` on sparse topologies at multiple scales:
@@ -43,7 +44,7 @@ All synthetic workloads are generated deterministically from configurable seeds 
    - Evaluates `DeterministicAeonCoordinator` under direct mode vs. contextual mode (with `CognitiveContext` and budget bounds).
 
 4. **Primary Monad Cognitive Cycles**:
-   - Evaluates `DeterministicCognitiveCycle` over full 5-stage lifecycles (`PERCEPTION` -> `MEMORY_RECALL` -> `REASONING` -> `ADAPTATION` -> `ACTION`) using deterministic memory port and action capability fixtures.
+   - Evaluates `DeterministicCognitiveCycle` over 5-stage lifecycles (`PERCEPTION` -> `MEMORY_RECALL` -> `REASONING` -> `ADAPTATION` -> `ACTION`) using deterministic memory port and action capability fixtures.
 
 5. **Adaptation Policy A/B Comparison**:
    - Measures cycle overhead with `NoOpAdaptationPolicy` (no-op baseline) versus `DeterministicBaselineAdaptationPolicy` (in-place bounded frequency state and energy updates).
@@ -91,35 +92,47 @@ Pass custom JMH arguments:
 
 The following baseline metrics were captured on Linux x86_64 with Java 26 (Eclipse Adoptium OpenJDK 64-Bit Server VM):
 
+### End-to-End Suite Results
+
 | Benchmark | Workload Scale | Mean Latency | Median (p50) | p95 | Throughput | Allocation / Op |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `ScalarResonanceMetric.score` | 100 pairs | ~0.50 ms | ~0.30 ms | ~1.86 ms | ~2,000 ops/s | ~6.0 KB |
-| `ScalarResonanceMetric.score` | 1,000 pairs | ~0.73 ms | ~0.66 ms | ~1.56 ms | ~1,380 ops/s | ~60.7 KB |
-| `ScalarResonanceMetric.score` | 10,000 pairs | ~1.97 ms | ~2.08 ms | ~2.52 ms | ~500 ops/s | ~312.7 KB |
-| `ScalarResonanceMetric.score` | 100,000 pairs | ~11.59 ms | ~11.79 ms | ~13.56 ms | ~86 ops/s | ~3.05 MB |
-| `GraphPropagation.RouteAll` | Small (50 nodes, deg 3) | ~1.01 ms | ~1.08 ms | ~1.61 ms | ~980 ops/s | ~60.9 KB |
-| `GraphPropagation.ThresholdRouting` | Small (50 nodes, deg 3) | ~6.25 µs | ~4.99 µs | ~12.64 µs | ~160,000 ops/s | ~1.0 KB |
-| `GraphPropagation.RouteAll` | Medium (500 nodes, deg 5) | ~2.49 ms | ~2.74 ms | ~3.24 ms | ~400 ops/s | ~841.4 KB |
-| `GraphPropagation.ThresholdRouting` | Medium (500 nodes, deg 5) | ~8.43 µs | ~6.16 µs | ~17.66 µs | ~118,000 ops/s | ~1.75 KB |
-| `GraphPropagation.RouteAll` | Large (2,000 nodes, deg 8) | ~12.59 ms | ~12.05 ms | ~17.02 ms | ~80 ops/s | ~4.98 MB |
-| `GraphPropagation.ThresholdRouting` | Large (2,000 nodes, deg 8) | ~16.35 µs | ~14.73 µs | ~25.98 µs | ~61,000 ops/s | ~2.80 KB |
-| `AeonCoordinator.Direct` | 10 inputs, 100 members | ~4.47 ms | ~2.94 ms | ~9.56 ms | ~220 ops/s | ~1.44 MB |
-| `AeonCoordinator.Contextual` | 10 inputs, 100 members | ~1.82 ms | ~1.58 ms | ~3.37 ms | ~550 ops/s | ~453.4 KB |
-| `DeterministicCognitiveCycle.FullCycle` | 5 stages, 5 initial signals | ~561.4 µs | ~578.5 µs | ~771.4 µs | ~1,780 ops/s | ~255.4 KB |
-| `CognitiveCycle.Adaptation.NoOp` | 50 target nodes | ~405.6 µs | ~313.2 µs | ~745.1 µs | ~2,460 ops/s | ~255.4 KB |
-| `CognitiveCycle.Adaptation.BaselinePolicy` | 50 target nodes | ~376.8 µs | ~347.3 µs | ~504.7 µs | ~2,650 ops/s | ~255.4 KB |
+| `ScalarResonanceMetric.score` | 100 pairs | ~134 µs | ~125 µs | ~208 µs | ~747,000 pairs/s | ~62.2 B |
+| `ScalarResonanceMetric.score` | 1,000 pairs | ~497 µs | ~483 µs | ~548 µs | ~2,012,000 pairs/s | ~62.2 B |
+| `ScalarResonanceMetric.score` | 10,000 pairs | ~1.70 ms | ~1.66 ms | ~2.21 ms | ~5,871,000 pairs/s | ~32.0 B |
+| `ScalarResonanceMetric.score` | 100,000 pairs | ~12.22 ms | ~12.62 ms | ~13.07 ms | ~8,184,000 pairs/s | ~32.0 B |
+| `GraphPropagation.RouteAll` | Small (50 nodes, deg 3) | ~1.87 ms | ~1.54 ms | ~3.57 ms | ~535 ops/s | ~60.9 KB |
+| `GraphPropagation.ThresholdRouting` | Small (50 nodes, deg 3) | ~10.7 µs | ~6.7 µs | ~25.9 µs | ~93,000 ops/s | ~1.0 KB |
+| `GraphPropagation.RouteAll` | Medium (500 nodes, deg 5) | ~2.09 ms | ~1.84 ms | ~2.97 ms | ~478 ops/s | ~841.4 KB |
+| `GraphPropagation.ThresholdRouting` | Medium (500 nodes, deg 5) | ~12.9 µs | ~11.2 µs | ~20.4 µs | ~77,500 ops/s | ~1.75 KB |
+| `GraphPropagation.RouteAll` | Large (2,000 nodes, deg 8) | ~13.43 ms | ~12.10 ms | ~21.00 ms | ~74 ops/s | ~4.98 MB |
+| `GraphPropagation.ThresholdRouting` | Large (2,000 nodes, deg 8) | ~17.05 µs | ~14.60 µs | ~25.49 µs | ~58,600 ops/s | ~2.80 KB |
+| `AeonCoordinator.Direct` | 10 inputs, 100 members | ~6.83 ms | ~6.01 ms | ~11.96 ms | ~146 ops/s | ~1.53 MB |
+| `AeonCoordinator.Contextual` | 10 inputs, 100 members | ~1.52 ms | ~1.47 ms | ~2.95 ms | ~658 ops/s | ~453.5 KB |
+| `DeterministicCognitiveCycle.FullCycle` | 5 stages, 5 initial signals | ~331.6 µs | ~307.9 µs | ~431.4 µs | ~3,016 ops/s | ~255.4 KB |
+| `CognitiveCycle.Adaptation.NoOp` | 50 target nodes | ~483.6 µs | ~379.4 µs | ~827.0 µs | ~2,068 ops/s | ~255.4 KB |
+| `CognitiveCycle.Adaptation.BaselinePolicy` | 50 target nodes | ~556.8 µs | ~476.1 µs | ~876.5 µs | ~1,796 ops/s | ~255.4 KB |
+
+### JMH Microbenchmark Primitive Results
+
+| Benchmark | Parameter | Mode | Score | Units |
+| :--- | :--- | :--- | :--- | :--- |
+| `ScalarResonanceBenchmark.benchmarkSingleScore` | 100 size | avgt | ~68.5 | ns/op |
+| `ScalarResonanceBenchmark.benchmarkSingleScore` | 1,000 size | avgt | ~71.7 | ns/op |
+| `ScalarResonanceBenchmark.benchmarkSingleScore` | 10,000 size | avgt | ~91.8 | ns/op |
+| `AdaptationPolicyBenchmark.benchmarkNoOpPolicy` | N/A | avgt | ~11.3 | ns/op |
+| `AdaptationPolicyBenchmark.benchmarkBaselinePolicy` | N/A | avgt | ~66.3 | ns/op |
 
 ## Analysis of Bottlenecks & Next Optimization Experiments
 
 From the empirical evidence gathered by the baseline harness, four candidate optimization experiments are identified:
 
 ### 1. Vector API SIMD for `ScalarResonanceMetric`
-- **Observation**: Batch scalar scoring scales linearly (~98–115 ns per pair in large batches). The calculation involves floating-point ratios and trigonometric phase differences (`StrictMath.IEEEremainder` and `StrictMath.cos`).
+- **Observation**: Batch scalar scoring costs ~68–92 ns per pair. The calculation involves floating-point ratios and trigonometric phase differences (`StrictMath.IEEEremainder` and `StrictMath.cos`).
 - **Proposed Experiment**: Implement a SIMD vector batch evaluator using `jdk.incubator.vector.DoubleVector` / `FloatVector`.
 - **Target Metric**: >3x throughput increase on batches $\ge 1,000$ pairs while maintaining strict equivalence with the scalar oracle within floating-point tolerance.
 
 ### 2. Compact Graph Representation (CSR / Compact Integer Adjacency)
-- **Observation**: `GraphPropagation.RouteAll` on 2,000 nodes allocates ~4.98 MB per run and runs in ~12.6 ms due to `Node` UUID set iterations, sorting UUIDs, and allocating intermediate `Signal` and `NodeProcessingResult` lists.
+- **Observation**: `GraphPropagation.RouteAll` on 2,000 nodes allocates ~4.98 MB per run and runs in ~13.4 ms due to `Node` UUID set iterations, sorting UUIDs, and allocating intermediate `Signal` and `NodeProcessingResult` lists.
 - **Proposed Experiment**: Design a compact integer ID layout with Compressed Sparse Row (CSR) adjacency indexing and primitive state arrays.
 - **Target Metric**: >75% allocation reduction and >2x traversal throughput improvement on graphs $\ge 500$ nodes.
 

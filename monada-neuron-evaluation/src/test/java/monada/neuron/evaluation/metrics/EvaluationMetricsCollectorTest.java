@@ -28,6 +28,16 @@ class EvaluationMetricsCollectorTest {
     }
 
     @Test
+    void scalesThroughputWithOperationsPerIteration() {
+        long[] samples = new long[]{1_000_000}; // 1 ms mean
+        LatencyDistribution single = LatencyDistribution.fromSamples(samples, 1);
+        LatencyDistribution batch = LatencyDistribution.fromSamples(samples, 100);
+
+        assertEquals(1_000.0, single.throughputOpsPerSec(), 1e-3);
+        assertEquals(100_000.0, batch.throughputOpsPerSec(), 1e-3);
+    }
+
+    @Test
     void measuresWorkloadExecution() {
         var collector = new EvaluationMetricsCollector();
         BenchmarkRunResult result = collector.measure(
@@ -49,6 +59,30 @@ class EvaluationMetricsCollectorTest {
                 () -> assertEquals(5, result.iterations()),
                 () -> assertTrue(result.latency().meanNanos() > 0),
                 () -> assertEquals("value", result.diagnostics().get("key")));
+    }
+
+    @Test
+    void measuresWorkloadExecutionWithExplicitOperationsPerIteration() {
+        var collector = new EvaluationMetricsCollector();
+        BenchmarkRunResult result = collector.measure(
+                "BatchTestBenchmark",
+                "100 items",
+                2,
+                5,
+                100,
+                () -> {
+                    long x = 0;
+                    for (int i = 0; i < 100; i++) {
+                        x += i;
+                    }
+                },
+                Map.of("batchSize", "100"));
+
+        assertAll(
+                () -> assertEquals("BatchTestBenchmark", result.benchmarkName()),
+                () -> assertEquals("100 items", result.workloadScale()),
+                () -> assertEquals(5, result.iterations()),
+                () -> assertTrue(result.latency().throughputOpsPerSec() > 0));
     }
 
     @Test

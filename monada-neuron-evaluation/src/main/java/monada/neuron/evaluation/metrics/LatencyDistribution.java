@@ -19,15 +19,29 @@ public record LatencyDistribution(
         double throughputOpsPerSec) {
 
     /**
-     * Calculates latency statistics from an array of measured elapsed nanoseconds.
+     * Calculates latency statistics from an array of measured elapsed nanoseconds for single-op iterations.
      *
      * @param samples measured nanoseconds per iteration
      * @return latency distribution
      */
     public static LatencyDistribution fromSamples(long[] samples) {
+        return fromSamples(samples, 1);
+    }
+
+    /**
+     * Calculates latency statistics and domain throughput from measured samples and operations per iteration.
+     *
+     * @param samples measured nanoseconds per iteration
+     * @param operationsPerIteration number of domain operations executed within each measured iteration
+     * @return latency distribution
+     */
+    public static LatencyDistribution fromSamples(long[] samples, int operationsPerIteration) {
         Objects.requireNonNull(samples, "samples must not be null");
         if (samples.length == 0) {
             throw new IllegalArgumentException("samples must not be empty");
+        }
+        if (operationsPerIteration <= 0) {
+            throw new IllegalArgumentException("operationsPerIteration must be positive, got: " + operationsPerIteration);
         }
 
         var sorted = samples.clone();
@@ -55,10 +69,11 @@ public record LatencyDistribution(
         double p95 = percentile(sorted, 95.0);
         double p99 = percentile(sorted, 99.0);
 
-        double throughput = mean > 0.0 ? (1_000_000_000.0 / mean) : 0.0;
+        double throughput = mean > 0.0 ? ((double) operationsPerIteration * 1_000_000_000.0 / mean) : 0.0;
 
         return new LatencyDistribution(count, min, median, p90, p95, p99, max, mean, stdDev, throughput);
     }
+
 
     private static double percentile(long[] sorted, double p) {
         if (sorted.length == 1) {
