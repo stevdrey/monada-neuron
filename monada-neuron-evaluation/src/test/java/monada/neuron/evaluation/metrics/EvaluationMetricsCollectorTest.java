@@ -59,7 +59,8 @@ class EvaluationMetricsCollectorTest {
                 () -> assertEquals("10 items", result.workloadScale()),
                 () -> assertEquals(5, result.iterations()),
                 () -> assertTrue(result.latency().meanNanos() > 0),
-                () -> assertEquals("value", result.diagnostics().get("key")));
+                () -> assertEquals("value", result.diagnostics().get("key")),
+                () -> assertNotNull(result.allocation().source()));
     }
 
     @Test
@@ -70,7 +71,7 @@ class EvaluationMetricsCollectorTest {
 
         BenchmarkRunResult result = collector.measure(
                 "SetupTestBenchmark",
-                "1 item",
+                "1item",
                 2,
                 5,
                 1,
@@ -85,14 +86,17 @@ class EvaluationMetricsCollectorTest {
     }
 
     @Test
-    void serializesReportToJsonAndMarkdownWithRunConfiguration() {
+    void serializesReportToJsonAndMarkdownWithRunConfigurationAndAllocationSource() {
         var env = EnvironmentMetadata.current();
         var runConfig = EvaluationReport.RunConfiguration.defaultFull(42L);
         var latency = new LatencyDistribution(5, 10.0, 20.0, 25.0, 28.0, 29.0, 30.0, 20.0, 5.0, 50_000_000.0);
-        var allocation = new AllocationMetrics(1024L, 204.8, 0L, 0L, 1000L, 2024L);
-        var run = new BenchmarkRunResult("SampleBench", "scale-1", 5, latency, allocation, Map.of("b_tag", "val2", "a_tag", "val1"));
+        var allocationThread = AllocationMetrics.ofThreadAllocated(1024L, 204.8, 0L, 0L, 1000L, 2024L);
+        var runThread = new BenchmarkRunResult("SampleBench", "scale-1", 5, latency, allocationThread, Map.of("b_tag", "val2", "a_tag", "val1"));
 
-        var report = new EvaluationReport(Instant.now(), env, runConfig, List.of(run));
+        var allocationUnavail = AllocationMetrics.unavailable(1L, 5L, 2000L, 3000L);
+        var runUnavail = new BenchmarkRunResult("UnavailBench", "scale-2", 5, latency, allocationUnavail, Map.of());
+
+        var report = new EvaluationReport(Instant.now(), env, runConfig, List.of(runThread, runUnavail));
         String json = report.toJson();
         String markdown = report.toMarkdown();
 
@@ -100,10 +104,16 @@ class EvaluationMetricsCollectorTest {
         assertTrue(json.contains("\"runConfiguration\":"));
         assertTrue(json.contains("\"seed\": 42"));
         assertTrue(json.contains("\"benchmarkName\": \"SampleBench\""));
+        assertTrue(json.contains("\"source\": \"THREAD_MX_BEAN\""));
+        assertTrue(json.contains("\"source\": \"UNAVAILABLE\""));
+        assertTrue(json.contains("\"heapUsedBeforeBytes\": 1000"));
+        assertTrue(json.contains("\"heapUsedAfterBytes\": 2024"));
         assertTrue(json.contains("\"throughputOpsPerSec\":"));
 
         assertNotNull(markdown);
         assertTrue(markdown.contains("`SampleBench`"));
+        assertTrue(markdown.contains("`UnavailBench`"));
+        assertTrue(markdown.contains("N/A"));
         assertTrue(markdown.contains("Run Configuration"));
         assertTrue(markdown.contains("Environment Metadata"));
     }

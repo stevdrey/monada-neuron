@@ -164,6 +164,32 @@ public final class DeterministicWorkloadGenerator {
     }
 
     /**
+     * Estimates the retained heap footprint in bytes for a Monada Neuron Node object graph.
+     *
+     * <p>Footprint model on 64-bit HotSpot JVM with Compressed OOPs (-XX:+UseCompressedOops):
+     * <ul>
+     *   <li>{@link Node} instance: 48 bytes (header + references + primitive fields).</li>
+     *   <li>{@link UUID}: 32 bytes (header + two 64-bit longs).</li>
+     *   <li>{@link FrequencyState}: 32 bytes (header + three 64-bit doubles).</li>
+     *   <li>{@link java.util.Collections#unmodifiableSet}: 24 bytes wrapper.</li>
+     *   <li>{@link java.util.HashSet} & backing {@link java.util.HashMap}: ~80 bytes base + table array (~4 bytes/entry).</li>
+     *   <li>Adjacency entries: 32 bytes per {@code HashMap$Node} edge entry.</li>
+     * </ul>
+     * Total per node base: ~216 bytes. Total per directed edge: ~32 bytes.
+     *
+     * @param nodeCount number of nodes in the graph
+     * @param totalEdges total directed edges across all nodes
+     * @return approximate retained heap footprint in bytes
+     */
+    public static long estimateRetainedHeapBytes(int nodeCount, int totalEdges) {
+        if (nodeCount <= 0) {
+            return 0L;
+        }
+        return ((long) nodeCount * 216L) + ((long) totalEdges * 32L);
+    }
+
+
+    /**
      * Creates a representative deterministic Aeon with connected members.
      *
      * @param purpose Aeon cognitive purpose

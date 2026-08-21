@@ -189,7 +189,11 @@ public final class CognitiveBaselineRunner {
             var sampleRouteAll = engine.propagate(topology.entryNode(), initialSignal, processor, routeAllConfig);
             var sampleThreshold = engine.propagate(topology.entryNode(), initialSignal, processor, thresholdConfig);
 
-            // Route All Policy
+            long estimatedRetainedBytes = DeterministicWorkloadGenerator.estimateRetainedHeapBytes(
+                    config.nodes(),
+                    topology.totalEdges());
+
+            // Unbounded (RouteAll) Policy
             results.add(collector.measure(
                     "GraphPropagation.RouteAll",
                     config.name() + " (" + config.nodes() + " nodes, deg " + config.degree() + ")",
@@ -205,9 +209,11 @@ public final class CognitiveBaselineRunner {
                             throw new IllegalStateException("empty propagation");
                         }
                     },
+
                     Map.of(
                             "nodeCount", String.valueOf(config.nodes()),
                             "totalEdges", String.valueOf(topology.totalEdges()),
+                            "estimatedRetainedBytes", String.valueOf(estimatedRetainedBytes),
                             "maxSteps", String.valueOf(config.maxSteps()),
                             "maxHops", String.valueOf(config.maxHops()),
                             "processedSteps", String.valueOf(sampleRouteAll.processedSteps()),
@@ -235,6 +241,7 @@ public final class CognitiveBaselineRunner {
                     Map.of(
                             "nodeCount", String.valueOf(config.nodes()),
                             "totalEdges", String.valueOf(topology.totalEdges()),
+                            "estimatedRetainedBytes", String.valueOf(estimatedRetainedBytes),
                             "threshold", "0.5",
                             "processedSteps", String.valueOf(sampleThreshold.processedSteps()),
                             "emittedSignals", String.valueOf(sampleThreshold.emittedSignals().size()),

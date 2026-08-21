@@ -112,10 +112,18 @@ public record EvaluationReport(
             sb.append(String.format(Locale.ROOT, "        \"throughputOpsPerSec\": %.2f\n", r.latency().throughputOpsPerSec()));
             sb.append("      },\n");
             sb.append("      \"allocation\": {\n");
-            sb.append("        \"totalAllocatedBytes\": ").append(r.allocation().totalAllocatedBytes()).append(",\n");
-            sb.append(String.format(Locale.ROOT, "        \"bytesPerOp\": %.2f,\n", r.allocation().bytesPerOp()));
+            sb.append("        \"source\": \"").append(r.allocation().source().name()).append("\",\n");
+            if (r.allocation().source() == AllocationMetrics.AllocationSource.THREAD_MX_BEAN) {
+                sb.append("        \"totalAllocatedBytes\": ").append(r.allocation().totalAllocatedBytes()).append(",\n");
+                sb.append(String.format(Locale.ROOT, "        \"bytesPerOp\": %.2f,\n", r.allocation().bytesPerOp()));
+            } else {
+                sb.append("        \"totalAllocatedBytes\": null,\n");
+                sb.append("        \"bytesPerOp\": null,\n");
+            }
             sb.append("        \"gcCountDelta\": ").append(r.allocation().gcCountDelta()).append(",\n");
-            sb.append("        \"gcTimeMillisDelta\": ").append(r.allocation().gcTimeMillisDelta()).append("\n");
+            sb.append("        \"gcTimeMillisDelta\": ").append(r.allocation().gcTimeMillisDelta()).append(",\n");
+            sb.append("        \"heapUsedBeforeBytes\": ").append(r.allocation().heapUsedBeforeBytes()).append(",\n");
+            sb.append("        \"heapUsedAfterBytes\": ").append(r.allocation().heapUsedAfterBytes()).append("\n");
             sb.append("      },\n");
             sb.append("      \"diagnostics\": {\n");
             var sortedDiagnostics = new TreeMap<>(r.diagnostics());
@@ -171,6 +179,9 @@ public record EvaluationReport(
         sb.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n");
 
         for (var r : results) {
+            String allocStr = (r.allocation().source() == AllocationMetrics.AllocationSource.THREAD_MX_BEAN)
+                    ? formatBytes(r.allocation().bytesPerOp())
+                    : "N/A";
             sb.append(String.format(
                     Locale.ROOT,
                     "| `%s` | %s | %s | %s | %s | %s | %,.0f ops/s | %s |\n",
@@ -181,8 +192,9 @@ public record EvaluationReport(
                     formatNanos(r.latency().p95Nanos()),
                     formatNanos(r.latency().p99Nanos()),
                     r.latency().throughputOpsPerSec(),
-                    formatBytes(r.allocation().bytesPerOp())));
+                    allocStr));
         }
+
 
         sb.append("\n## Diagnostic Details\n\n");
         for (var r : results) {

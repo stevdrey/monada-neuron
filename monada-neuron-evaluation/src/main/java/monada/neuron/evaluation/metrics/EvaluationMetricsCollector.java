@@ -140,24 +140,26 @@ public final class EvaluationMetricsCollector {
 
         LatencyDistribution latency = LatencyDistribution.fromSamples(sampleNanos, operationsPerIteration);
 
-        long totalAllocated = 0L;
-        if (trackingSucceeded && totalAllocatedInIntervals > 0L) {
-            totalAllocated = totalAllocatedInIntervals;
-        } else if (heapAfter > heapBefore) {
-            totalAllocated = heapAfter - heapBefore;
-        }
-
-        double bytesPerOp = (double) totalAllocated / ((long) measurementIterations * operationsPerIteration);
         long gcCountDelta = Math.max(0L, gcCountAfter - gcCountBefore);
         long gcTimeDelta = Math.max(0L, gcTimeAfter - gcTimeBefore);
 
-        AllocationMetrics allocation = new AllocationMetrics(
-                totalAllocated,
-                bytesPerOp,
-                gcCountDelta,
-                gcTimeDelta,
-                heapBefore,
-                heapAfter);
+        AllocationMetrics allocation;
+        if (trackingSucceeded && threadAllocatedMemorySupported) {
+            double bytesPerOp = (double) totalAllocatedInIntervals / ((long) measurementIterations * operationsPerIteration);
+            allocation = AllocationMetrics.ofThreadAllocated(
+                    totalAllocatedInIntervals,
+                    bytesPerOp,
+                    gcCountDelta,
+                    gcTimeDelta,
+                    heapBefore,
+                    heapAfter);
+        } else {
+            allocation = AllocationMetrics.unavailable(
+                    gcCountDelta,
+                    gcTimeDelta,
+                    heapBefore,
+                    heapAfter);
+        }
 
         return new BenchmarkRunResult(
                 benchmarkName,
@@ -166,6 +168,7 @@ public final class EvaluationMetricsCollector {
                 latency,
                 allocation,
                 diagnostics);
+
     }
 
     private long currentThreadAllocatedBytes() {
