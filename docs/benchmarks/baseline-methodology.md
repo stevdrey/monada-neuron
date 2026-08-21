@@ -142,13 +142,15 @@ Captured on Linux x86_64 with Java 26 (Eclipse Adoptium OpenJDK 64-Bit Server VM
 
 | Benchmark | Parameter | Mode | Score | Units |
 | :--- | :--- | :--- | :--- | :--- |
-| `ScalarResonanceBenchmark.benchmarkSingleScore` | 100 size | avgt | ~71.1 | ns/op |
-| `ScalarResonanceBenchmark.benchmarkSingleScore` | 1,000 size | avgt | ~80.8 | ns/op |
-| `ScalarResonanceBenchmark.benchmarkSingleScore` | 10,000 size | avgt | ~96.5 | ns/op |
+| `ScalarResonanceBenchmark.benchmarkSingleScore` | 100 size | avgt | ~89.9 | ns/op |
+| `ScalarResonanceBenchmark.benchmarkSingleScore` | 1,000 size | avgt | ~98.1 | ns/op |
+| `ScalarResonanceBenchmark.benchmarkSingleScore` | 10,000 size | avgt | ~102.6 | ns/op |
 | `AdaptationPolicyBenchmark.benchmarkNoOpPolicy` | N/A | avgt | ~12.5 | ns/op |
 | `AdaptationPolicyBenchmark.benchmarkBaselinePolicyDecisionArithmetic` | N/A | avgt | ~46.6 | ns/op |
-| `CognitiveCycleBenchmark.benchmarkCognitiveCycleNoOp` | N/A | avgt | ~74.4 | µs/op |
-| `CognitiveCycleBenchmark.benchmarkCognitiveCycleBaseline` | N/A | avgt | ~65.4 | µs/op |
+| `AdaptationPolicyBenchmark.benchmarkBaselinePolicyFull` | N/A | avgt | ~120.4 | ns/op |
+| `CognitiveCycleBenchmark.benchmarkCognitiveCycleNoOp` | N/A | avgt | ~96.2 | µs/op |
+| `CognitiveCycleBenchmark.benchmarkCognitiveCycleBaseline` | N/A | avgt | ~110.4 | µs/op |
+
 
 ## Analysis of Bottlenecks & Next Optimization Experiments
 

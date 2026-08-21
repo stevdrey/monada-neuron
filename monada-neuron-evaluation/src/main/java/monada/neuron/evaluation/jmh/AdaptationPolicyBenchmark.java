@@ -79,13 +79,15 @@ public class AdaptationPolicyBenchmark {
         @Setup(Level.Invocation)
         public void setupInvocation(BenchmarkPlan plan) {
             node = new Node.Builder()
-                    .id(UUID.randomUUID())
+                    .id(plan.staticNode.getId())
+                    .type(plan.staticNode.getType())
                     .frequencyState(plan.baseState)
                     .energy(plan.baseEnergy)
                     .build();
             var targetSignal = new Signal(SignalKind.FEEDBACK, new FrequencyState(1.2, 450.0, 0.5));
             feedback = FeedbackInput.ofTarget(node.getId(), targetSignal, 0.8);
         }
+
     }
 
     /**
