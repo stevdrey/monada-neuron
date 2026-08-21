@@ -21,8 +21,12 @@ public enum NodeType {
     PROCESSOR,
 
     /**
-     * Retains historical frequency states for recall and pattern recognition.
-     * May persist state across multiple time steps.
+     * Participates in Neuron-local working or adaptive state behavior.
+     *
+     * <p>This role does not own long-term associative memory, persisted experience, recall
+     * ranking, or storage compatibility. Durable or reusable experience intended for later
+     * associative recall belongs to Monada Resonance Store and must be accessed through the
+     * explicit resonance-memory boundary.
      */
     MEMORY
 }
