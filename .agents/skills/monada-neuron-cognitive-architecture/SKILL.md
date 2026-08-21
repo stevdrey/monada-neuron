@@ -9,7 +9,7 @@ description: Use when changing Monad, Aeon, Node, Signal, resonance, evolution, 
 
 Read `README.md`, `AGENTS.md`, `docs/architecture.md`, `docs/design-principles.md`, and the accepted ADRs before changing cognitive concepts.
 
-Inspect the current Phase-1 model under `src/main/java/monada/neuron/model` before introducing parallel abstractions.
+Inspect the current implementation and related tests across the affected cognitive areas, including `model`, `signal`, `resonance`, `runtime/graph`, `aeon`, `context`, `monad`, `memory`, `adaptation`, and `action`. Treat the existing deterministic scalar/runtime paths as reference semantics before introducing parallel, native, or accelerated alternatives.
 
 ## Core Ownership
 
