@@ -18,14 +18,15 @@ class CognitiveBaselineRunnerTest {
         assertNotNull(report.environment());
         assertFalse(report.results().isEmpty());
 
-        // Verify key benchmarks executed
         boolean hasResonance = report.results().stream().anyMatch(r -> r.benchmarkName().contains("ScalarResonanceMetric"));
+        boolean hasBatchResonance = report.results().stream().anyMatch(r -> r.benchmarkName().contains("VectorBatchResonance"));
         boolean hasGraph = report.results().stream().anyMatch(r -> r.benchmarkName().contains("GraphPropagation"));
         boolean hasAeon = report.results().stream().anyMatch(r -> r.benchmarkName().contains("AeonCoordinator"));
         boolean hasCycle = report.results().stream().anyMatch(r -> r.benchmarkName().contains("DeterministicCognitiveCycle"));
         boolean hasAdaptation = report.results().stream().anyMatch(r -> r.benchmarkName().contains("CognitiveCycle.Adaptation"));
 
         assertTrue(hasResonance, "Should contain ScalarResonanceMetric benchmark");
+        assertTrue(hasBatchResonance, "Should contain VectorBatchResonance benchmark");
         assertTrue(hasGraph, "Should contain GraphPropagation benchmark");
         assertTrue(hasAeon, "Should contain AeonCoordinator benchmark");
         assertTrue(hasCycle, "Should contain DeterministicCognitiveCycle benchmark");
