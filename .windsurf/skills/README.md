@@ -15,7 +15,8 @@ Use the smallest relevant skill set for the task. `AGENTS.md` remains the reposi
 | `monada-neuron-performance-optimization` | Optimizing latency, throughput, memory, allocation, locality, or hot loops from a measured baseline. |
 | `monada-neuron-concurrency-hardware-acceleration` | Adding concurrency, SIMD, FFM/native memory, shared-memory integration, GPU, or accelerator paths. |
 | `monada-neuron-evaluation-benchmarking` | Designing correctness baselines, performance experiments, JMH benchmarks, or regression gates. |
-| `monada-neuron-executive-summary` | Generating or publishing high-level, non-technical executive summaries in English Markdown for Issues, PRs, or milestones. |
+| `monada-neuron-executive-summary` | Generating or publishing high-level, non-technical executive summaries in English Markdown for GitHub Issues. |
+
 
 ## Skill Combination Examples
 
