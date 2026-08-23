@@ -29,17 +29,9 @@ public final class VectorBatchResonanceEvaluator implements BatchResonanceEvalua
     private static final double EXTREME_PHASE_THRESHOLD = 1000.0;
 
     static {
-        boolean available = false;
-        VectorSpecies<Double> species = null;
-        try {
-            species = DoubleVector.SPECIES_PREFERRED;
-            available = (species != null && species.length() > 1);
-        } catch (Throwable t) {
-            available = false;
-            species = null;
-        }
+        VectorSpecies<Double> species = DoubleVector.SPECIES_PREFERRED;
         SPECIES = species;
-        AVAILABLE = available;
+        AVAILABLE = species.length() > 1;
     }
 
     /** Creates a Vector API batch resonance evaluator. */
