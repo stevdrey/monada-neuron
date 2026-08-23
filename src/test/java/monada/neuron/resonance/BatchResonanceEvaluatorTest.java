@@ -11,6 +11,7 @@ import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -28,6 +29,10 @@ class BatchResonanceEvaluatorTest {
         assertAll(
                 () -> assertTrue(scalarBatch.isAvailable()),
                 () -> assertTrue(adaptiveBatch.isAvailable()),
+                () -> assertNotNull(BatchResonanceEvaluator.scalar()),
+                () -> assertNotNull(BatchResonanceEvaluator.vector()),
+                () -> assertNotNull(BatchResonanceEvaluator.adaptive()),
+                () -> assertNotNull(BatchResonanceEvaluator.defaultEvaluator()),
                 () -> {
                     if (vectorBatch instanceof VectorBatchResonanceEvaluator v) {
                         if (v.isAvailable()) {
@@ -90,6 +95,53 @@ class BatchResonanceEvaluatorTest {
             assertEquals(exp, actualScalarAoO[i], TOLERANCE, "Scalar AoO mismatch at index " + i);
             assertEquals(exp, actualVectorAoO[i], TOLERANCE, "Vector AoO mismatch at index " + i);
             assertEquals(exp, actualAdaptiveAoO[i], TOLERANCE, "Adaptive AoO mismatch at index " + i);
+        }
+    }
+
+    @Test
+    void largePhaseValuesEquivalenceAcrossThresholds() {
+        double[] largePhases = {
+                500.0, 1000.0, 2000.0, 5000.0, 1.0e5, 1.0e6, 1.0e7, 1.0e10, 1.0e12,
+                7.3e13, 7.5e13, 1.0e14, 1.0e15, Double.MAX_VALUE
+        };
+
+        var pairs = new ArrayList<FrequencyState[]>();
+        for (double p1 : largePhases) {
+            for (double p2 : largePhases) {
+                pairs.add(new FrequencyState[]{
+                        new FrequencyState(1.5, 100.0, p1),
+                        new FrequencyState(2.0, 100.0, p2)
+                });
+            }
+        }
+
+        int count = pairs.size();
+        var first = new FrequencyState[count];
+        var second = new FrequencyState[count];
+        var expected = new double[count];
+
+        for (int i = 0; i < count; i++) {
+            first[i] = pairs.get(i)[0];
+            second[i] = pairs.get(i)[1];
+            expected[i] = oracle.score(first[i], second[i]);
+        }
+
+        var b1 = FrequencyStateBatch.fromStates(first);
+        var b2 = FrequencyStateBatch.fromStates(second);
+
+        double[] resScalar = new double[count];
+        double[] resVector = new double[count];
+        double[] resAdaptive = new double[count];
+
+        scalarBatch.scoreBatch(b1, b2, resScalar, 0, count);
+        vectorBatch.scoreBatch(b1, b2, resVector, 0, count);
+        adaptiveBatch.scoreBatch(b1, b2, resAdaptive, 0, count);
+
+        for (int i = 0; i < count; i++) {
+            double exp = expected[i];
+            assertEquals(exp, resScalar[i], TOLERANCE, "Scalar mismatch at large phase index " + i);
+            assertEquals(exp, resVector[i], TOLERANCE, "Vector mismatch at large phase index " + i);
+            assertEquals(exp, resAdaptive[i], TOLERANCE, "Adaptive mismatch at large phase index " + i);
         }
     }
 
@@ -189,7 +241,12 @@ class BatchResonanceEvaluatorTest {
                 () -> assertThrows(IllegalArgumentException.class, () -> scalarBatch.scoreBatch(valid, valid, valid, valid, valid, valid, valid, -1, 5)),
                 () -> assertThrows(IllegalArgumentException.class, () -> vectorBatch.scoreBatch(valid, valid, valid, valid, valid, valid, valid, 0, -1)),
                 () -> assertThrows(IndexOutOfBoundsException.class, () -> scalarBatch.scoreBatch(valid, valid, valid, valid, valid, valid, valid, 5, 10)),
-                () -> assertThrows(IndexOutOfBoundsException.class, () -> vectorBatch.scoreBatch(valid, valid, valid, valid, valid, valid, valid, 5, 10)));
+                () -> assertThrows(IndexOutOfBoundsException.class, () -> vectorBatch.scoreBatch(valid, valid, valid, valid, valid, valid, valid, 5, 10)),
+                // Overflow tests
+                () -> assertThrows(IndexOutOfBoundsException.class, () -> scalarBatch.scoreBatch(valid, valid, valid, valid, valid, valid, valid, Integer.MAX_VALUE, 1)),
+                () -> assertThrows(IndexOutOfBoundsException.class, () -> vectorBatch.scoreBatch(valid, valid, valid, valid, valid, valid, valid, Integer.MAX_VALUE, 1)),
+                () -> assertThrows(IndexOutOfBoundsException.class, () -> scalarBatch.scoreBatch(valid, valid, valid, valid, valid, valid, valid, 1, Integer.MAX_VALUE)),
+                () -> assertThrows(IndexOutOfBoundsException.class, () -> vectorBatch.scoreBatch(valid, valid, valid, valid, valid, valid, valid, 1, Integer.MAX_VALUE)));
     }
 
     @Test

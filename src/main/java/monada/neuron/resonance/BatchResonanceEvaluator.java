@@ -103,12 +103,20 @@ public interface BatchResonanceEvaluator {
     }
 
     /**
-     * Returns the Java 26 Vector API SIMD batch evaluator.
+     * Returns the Java 26 Vector API SIMD batch evaluator, or the scalar reference evaluator if unavailable.
      *
-     * @return vector batch evaluator
+     * @return vector batch evaluator if available, otherwise scalar evaluator
      */
     static BatchResonanceEvaluator vector() {
-        return VectorBatchResonanceEvaluator.INSTANCE;
+        try {
+            Class<?> clazz = Class.forName(
+                    "monada.neuron.resonance.VectorBatchResonanceEvaluator",
+                    true,
+                    BatchResonanceEvaluator.class.getClassLoader());
+            return (BatchResonanceEvaluator) clazz.getField("INSTANCE").get(null);
+        } catch (Throwable t) {
+            return ScalarBatchResonanceEvaluator.INSTANCE;
+        }
     }
 
     /**

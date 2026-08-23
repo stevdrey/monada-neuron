@@ -10,6 +10,9 @@ import java.util.Objects;
  * <p>Automatically routes batch evaluation requests to {@link VectorBatchResonanceEvaluator} when
  * the Java 26 Vector API is available and the batch size amortizes SIMD dispatch overhead
  * (default: &ge; 64 pairs). Otherwise routes to {@link ScalarBatchResonanceEvaluator}.
+ *
+ * <p>Vector API linkage is deferred dynamically to ensure that runtimes without incubator module
+ * flags degrade gracefully to the scalar reference backend without {@link NoClassDefFoundError}.
  */
 public final class AdaptiveBatchResonanceEvaluator implements BatchResonanceEvaluator {
 
@@ -20,8 +23,8 @@ public final class AdaptiveBatchResonanceEvaluator implements BatchResonanceEval
     public static final AdaptiveBatchResonanceEvaluator INSTANCE = new AdaptiveBatchResonanceEvaluator(DEFAULT_CROSSOVER_THRESHOLD);
 
     private final int crossoverThreshold;
-    private final VectorBatchResonanceEvaluator vectorEvaluator;
-    private final ScalarBatchResonanceEvaluator scalarEvaluator;
+    private final BatchResonanceEvaluator vectorEvaluator;
+    private final BatchResonanceEvaluator scalarEvaluator;
 
     /**
      * Creates an adaptive evaluator with the specified crossover threshold.
@@ -33,13 +36,31 @@ public final class AdaptiveBatchResonanceEvaluator implements BatchResonanceEval
             throw new IllegalArgumentException("crossoverThreshold must be non-negative, got: " + crossoverThreshold);
         }
         this.crossoverThreshold = crossoverThreshold;
-        this.vectorEvaluator = VectorBatchResonanceEvaluator.INSTANCE;
         this.scalarEvaluator = ScalarBatchResonanceEvaluator.INSTANCE;
+        this.vectorEvaluator = loadVectorEvaluatorIfAvailable();
+    }
+
+    private static BatchResonanceEvaluator loadVectorEvaluatorIfAvailable() {
+        try {
+            Class<?> clazz = Class.forName(
+                    "monada.neuron.resonance.VectorBatchResonanceEvaluator",
+                    true,
+                    AdaptiveBatchResonanceEvaluator.class.getClassLoader());
+            BatchResonanceEvaluator evaluator = (BatchResonanceEvaluator) clazz.getField("INSTANCE").get(null);
+            return evaluator.isAvailable() ? evaluator : null;
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     /** Returns the crossover threshold configured for this evaluator. */
     public int crossoverThreshold() {
         return crossoverThreshold;
+    }
+
+    /** Returns whether the Vector API backend is available and active in this evaluator. */
+    public boolean isVectorAvailable() {
+        return vectorEvaluator != null && vectorEvaluator.isAvailable();
     }
 
     @Override
@@ -53,7 +74,7 @@ public final class AdaptiveBatchResonanceEvaluator implements BatchResonanceEval
             double[] results,
             int offset,
             int length) {
-        if (vectorEvaluator.isAvailable() && length >= crossoverThreshold) {
+        if (vectorEvaluator != null && vectorEvaluator.isAvailable() && length >= crossoverThreshold) {
             vectorEvaluator.scoreBatch(
                     firstAmplitudes, firstFrequencies, firstPhases,
                     secondAmplitudes, secondFrequencies, secondPhases,
@@ -73,7 +94,7 @@ public final class AdaptiveBatchResonanceEvaluator implements BatchResonanceEval
             double[] results,
             int offset,
             int length) {
-        if (vectorEvaluator.isAvailable() && length >= crossoverThreshold) {
+        if (vectorEvaluator != null && vectorEvaluator.isAvailable() && length >= crossoverThreshold) {
             vectorEvaluator.scoreBatch(first, second, results, offset, length);
         } else {
             scalarEvaluator.scoreBatch(first, second, results, offset, length);

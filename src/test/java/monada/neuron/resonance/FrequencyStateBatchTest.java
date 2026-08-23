@@ -3,6 +3,7 @@ package monada.neuron.resonance;
 import monada.neuron.model.FrequencyState;
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
@@ -60,9 +61,14 @@ class FrequencyStateBatchTest {
         var batchFromList = FrequencyStateBatch.fromStates(states);
         var batchFromArray = FrequencyStateBatch.fromStates(states.toArray(new FrequencyState[0]));
 
+        // Test non-random-access list (e.g. LinkedList)
+        var linkedList = new LinkedList<>(states);
+        var batchFromLinkedList = FrequencyStateBatch.fromStates(linkedList);
+
         assertAll(
                 () -> assertEquals(3, batchFromList.size()),
                 () -> assertEquals(batchFromList, batchFromArray),
+                () -> assertEquals(batchFromList, batchFromLinkedList),
                 () -> assertEquals(batchFromList.hashCode(), batchFromArray.hashCode()),
                 () -> assertEquals(new FrequencyState(2.0, 200.0, 1.5), batchFromList.get(1)),
                 () -> assertEquals(FrequencyState.ZERO, batchFromList.get(2)));

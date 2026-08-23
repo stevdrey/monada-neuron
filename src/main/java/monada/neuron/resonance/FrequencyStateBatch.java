@@ -30,6 +30,10 @@ public final class FrequencyStateBatch {
      * @throws IllegalArgumentException if size is negative, arrays are shorter than size, or any value is invalid
      */
     public FrequencyStateBatch(double[] amplitudes, double[] frequencies, double[] phases, int size) {
+        this(amplitudes, frequencies, phases, size, false);
+    }
+
+    private FrequencyStateBatch(double[] amplitudes, double[] frequencies, double[] phases, int size, boolean trusted) {
         Objects.requireNonNull(amplitudes, "amplitudes must not be null");
         Objects.requireNonNull(frequencies, "frequencies must not be null");
         Objects.requireNonNull(phases, "phases must not be null");
@@ -43,25 +47,30 @@ public final class FrequencyStateBatch {
                     amplitudes.length, frequencies.length, phases.length, size));
         }
 
-        for (int i = 0; i < size; i++) {
-            double a = amplitudes[i];
-            double f = frequencies[i];
-            double p = phases[i];
+        if (!trusted) {
+            for (int i = 0; i < size; i++) {
+                double a = amplitudes[i];
+                double f = frequencies[i];
+                double p = phases[i];
 
-            if (!Double.isFinite(a) || a < 0.0) {
-                throw new IllegalArgumentException("amplitude at index " + i + " must be non-negative and finite, got: " + a);
+                if (!Double.isFinite(a) || a < 0.0) {
+                    throw new IllegalArgumentException("amplitude at index " + i + " must be non-negative and finite, got: " + a);
+                }
+                if (!Double.isFinite(f) || f < 0.0) {
+                    throw new IllegalArgumentException("frequency at index " + i + " must be non-negative and finite, got: " + f);
+                }
+                if (!Double.isFinite(p)) {
+                    throw new IllegalArgumentException("phase at index " + i + " must be finite, got: " + p);
+                }
             }
-            if (!Double.isFinite(f) || f < 0.0) {
-                throw new IllegalArgumentException("frequency at index " + i + " must be non-negative and finite, got: " + f);
-            }
-            if (!Double.isFinite(p)) {
-                throw new IllegalArgumentException("phase at index " + i + " must be finite, got: " + p);
-            }
+            this.amplitudes = Arrays.copyOf(amplitudes, size);
+            this.frequencies = Arrays.copyOf(frequencies, size);
+            this.phases = Arrays.copyOf(phases, size);
+        } else {
+            this.amplitudes = amplitudes;
+            this.frequencies = frequencies;
+            this.phases = phases;
         }
-
-        this.amplitudes = Arrays.copyOf(amplitudes, size);
-        this.frequencies = Arrays.copyOf(frequencies, size);
-        this.phases = Arrays.copyOf(phases, size);
         this.size = size;
     }
 
@@ -104,11 +113,11 @@ public final class FrequencyStateBatch {
             f[i] = state.frequency();
             p[i] = state.phase();
         }
-        return new FrequencyStateBatch(a, f, p, length);
+        return new FrequencyStateBatch(a, f, p, length, true);
     }
 
     /**
-     * Creates a batch from a list of {@link FrequencyState} instances.
+     * Creates a batch from a list of {@link FrequencyState} instances in linear time.
      *
      * @param states list of frequency states
      * @return the immutable batch
@@ -120,13 +129,15 @@ public final class FrequencyStateBatch {
         double[] f = new double[length];
         double[] p = new double[length];
 
-        for (int i = 0; i < length; i++) {
-            FrequencyState state = Objects.requireNonNull(states.get(i), "state at index " + i + " must not be null");
+        int i = 0;
+        for (FrequencyState state : states) {
+            Objects.requireNonNull(state, "state at index " + i + " must not be null");
             a[i] = state.amplitude();
             f[i] = state.frequency();
             p[i] = state.phase();
+            i++;
         }
-        return new FrequencyStateBatch(a, f, p, length);
+        return new FrequencyStateBatch(a, f, p, length, true);
     }
 
     /** Returns the number of frequency states in this batch. */

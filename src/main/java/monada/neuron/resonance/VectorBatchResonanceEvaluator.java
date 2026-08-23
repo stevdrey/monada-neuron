@@ -26,7 +26,7 @@ public final class VectorBatchResonanceEvaluator implements BatchResonanceEvalua
     private static final double TWO_PI = 2.0 * StrictMath.PI;
     private static final double INV_TWO_PI = 1.0 / (2.0 * StrictMath.PI);
     private static final double MAGIC = 1.5 * (1L << 52); // 6755399441055744.0 (2^52 + 2^51) for round-to-nearest
-    private static final double EXTREME_PHASE_THRESHOLD = 1.0e14;
+    private static final double EXTREME_PHASE_THRESHOLD = 1000.0;
 
     static {
         boolean available = false;
@@ -74,9 +74,9 @@ public final class VectorBatchResonanceEvaluator implements BatchResonanceEvalua
 
         if (!AVAILABLE || SPECIES == null) {
             ScalarBatchResonanceEvaluator.INSTANCE.scoreBatch(
-                    firstAmplitudes, firstFrequencies, firstPhases,
-                    secondAmplitudes, secondFrequencies, secondPhases,
-                    results, offset, length);
+                firstAmplitudes, firstFrequencies, firstPhases,
+                secondAmplitudes, secondFrequencies, secondPhases,
+                results, offset, length);
             return;
         }
 
@@ -182,7 +182,10 @@ public final class VectorBatchResonanceEvaluator implements BatchResonanceEvalua
         Objects.requireNonNull(second, "second must not be null");
         Objects.requireNonNull(results, "results must not be null");
 
-        if (offset < 0 || length < 0 || offset + length > first.length || offset + length > second.length || offset + length > results.length) {
+        if (offset < 0 || length < 0
+                || offset > first.length - length
+                || offset > second.length - length
+                || offset > results.length - length) {
             throw new IndexOutOfBoundsException(String.format(
                     "Invalid offset/length: offset=%d, length=%d, first=%d, second=%d, results=%d",
                     offset, length, first.length, second.length, results.length));
@@ -319,12 +322,11 @@ public final class VectorBatchResonanceEvaluator implements BatchResonanceEvalua
             throw new IllegalArgumentException("offset and length must be non-negative, got offset=" + offset + ", length=" + length);
         }
 
-        int end = offset + length;
-        if (end > a1.length || end > f1.length || end > p1.length
-                || end > a2.length || end > f2.length || end > p2.length
-                || end > results.length) {
+        if (offset > a1.length - length || offset > f1.length - length || offset > p1.length - length
+                || offset > a2.length - length || offset > f2.length - length || offset > p2.length - length
+                || offset > results.length - length) {
             throw new IndexOutOfBoundsException(String.format(
-                    "Range [%d, %d) exceeds array bounds", offset, end));
+                    "Range offset=%d, length=%d exceeds array bounds", offset, length));
         }
     }
 }
