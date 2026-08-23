@@ -15,6 +15,7 @@ Use the smallest relevant skill set for the task. `AGENTS.md` remains the reposi
 | `monada-neuron-performance-optimization` | Optimizing latency, throughput, memory, allocation, locality, or hot loops from a measured baseline. |
 | `monada-neuron-concurrency-hardware-acceleration` | Adding concurrency, SIMD, FFM/native memory, shared-memory integration, GPU, or accelerator paths. |
 | `monada-neuron-evaluation-benchmarking` | Designing correctness baselines, performance experiments, JMH benchmarks, or regression gates. |
+| `monada-neuron-executive-summary` | Generating or publishing high-level, non-technical executive summaries in English Markdown for Issues, PRs, or milestones. |
 
 ## Skill Combination Examples
 
@@ -30,3 +31,8 @@ A new Aeon generally starts with:
 - `monada-neuron-cognitive-architecture`;
 - `monada-neuron-java-26-implementation`;
 - `monada-neuron-evaluation-benchmarking`.
+
+A milestone or feature completion update will normally use:
+
+- `monada-neuron-agent-task-workflow`;
+- `monada-neuron-executive-summary`.

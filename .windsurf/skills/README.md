@@ -1,8 +1,8 @@
 # Monada Neuron Agent Skills
 
-This directory mirrors the canonical project skills from `.agents/skills/` for tools that discover skills through the `.windsurf/skills/` path.
+This directory contains project-specific skills for coding agents working on Monada Neuron.
 
-When updating a skill, edit `.agents/skills/<skill-name>/SKILL.md` first and then mirror the same content here.
+Use the smallest relevant skill set for the task. `AGENTS.md` remains the repository-wide source of operating rules.
 
 ## Skills
 
@@ -15,3 +15,24 @@ When updating a skill, edit `.agents/skills/<skill-name>/SKILL.md` first and the
 | `monada-neuron-performance-optimization` | Optimizing latency, throughput, memory, allocation, locality, or hot loops from a measured baseline. |
 | `monada-neuron-concurrency-hardware-acceleration` | Adding concurrency, SIMD, FFM/native memory, shared-memory integration, GPU, or accelerator paths. |
 | `monada-neuron-evaluation-benchmarking` | Designing correctness baselines, performance experiments, JMH benchmarks, or regression gates. |
+| `monada-neuron-executive-summary` | Generating or publishing high-level, non-technical executive summaries in English Markdown for Issues, PRs, or milestones. |
+
+## Skill Combination Examples
+
+A vectorized signal-processing change will normally use:
+
+- `monada-neuron-data-structures-algorithms`;
+- `monada-neuron-performance-optimization`;
+- `monada-neuron-concurrency-hardware-acceleration`;
+- `monada-neuron-java-26-implementation`.
+
+A new Aeon generally starts with:
+
+- `monada-neuron-cognitive-architecture`;
+- `monada-neuron-java-26-implementation`;
+- `monada-neuron-evaluation-benchmarking`.
+
+A milestone or feature completion update will normally use:
+
+- `monada-neuron-agent-task-workflow`;
+- `monada-neuron-executive-summary`.
