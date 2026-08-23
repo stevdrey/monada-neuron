@@ -1,0 +1,89 @@
+package monada.neuron.evaluation.workload;
+
+import monada.neuron.aeon.AeonPurpose;
+import monada.neuron.evolution.NoOpAdaptationPolicy;
+import monada.neuron.model.Node;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class DeterministicWorkloadGeneratorTest {
+
+    @Test
+    void generatesDeterministicFrequencyStatePairsFromSeed() {
+        var gen1 = new DeterministicWorkloadGenerator(12345L);
+        var gen2 = new DeterministicWorkloadGenerator(12345L);
+
+        var pairs1 = gen1.generateFrequencyStatePairs(100);
+        var pairs2 = gen2.generateFrequencyStatePairs(100);
+
+        assertEquals(100, pairs1.size());
+        assertEquals(pairs1, pairs2);
+    }
+
+    @Test
+    void generatesDeterministicSignals() {
+        var gen1 = new DeterministicWorkloadGenerator(42L);
+        var gen2 = new DeterministicWorkloadGenerator(42L);
+
+        var sigs1 = gen1.generateSignals(50);
+        var sigs2 = gen2.generateSignals(50);
+
+        assertEquals(50, sigs1.size());
+        assertEquals(sigs1, sigs2);
+    }
+
+    @Test
+    void generatesDeterministicGraphTopologyWithSortedIds() {
+        var generator = new DeterministicWorkloadGenerator(42L);
+        var topology = generator.generateGraph(50, 4);
+
+        assertAll(
+                () -> assertEquals(50, topology.nodeCount()),
+                () -> assertNotNull(topology.entryNode()),
+                () -> assertTrue(topology.totalEdges() > 0));
+
+        // Check node UUIDs are strictly sorted
+        List<Node> nodes = topology.nodes();
+        for (int i = 0; i < nodes.size() - 1; i++) {
+            assertTrue(nodes.get(i).getId().compareTo(nodes.get(i + 1).getId()) < 0);
+        }
+    }
+
+    @Test
+    void generatesAeonAndFullCycleSetup() {
+        var generator = new DeterministicWorkloadGenerator(42L);
+        var perceptionTop = generator.generateGraph(20, 2);
+        var reasoningTop = generator.generateGraph(20, 2);
+
+        var aeon = generator.generateAeon(AeonPurpose.PERCEPTION, perceptionTop);
+        assertEquals(20, aeon.getMembers().size());
+        assertEquals(AeonPurpose.PERCEPTION, aeon.getPurpose());
+
+
+        var setup = generator.generateFullCycleSetup(
+                perceptionTop,
+                reasoningTop,
+                NoOpAdaptationPolicy.INSTANCE,
+                new DeterministicMemoryFixture(),
+                new DeterministicActionFixture());
+
+        assertNotNull(setup.monad());
+        assertNotNull(setup.cycle());
+    }
+
+    @Test
+    void validatesInputArguments() {
+        var generator = new DeterministicWorkloadGenerator();
+        assertThrows(IllegalArgumentException.class, () -> generator.generateFrequencyStatePairs(0));
+        assertThrows(IllegalArgumentException.class, () -> generator.generateSignals(-1));
+        assertThrows(IllegalArgumentException.class, () -> generator.generateGraph(0, 0));
+        assertThrows(IllegalArgumentException.class, () -> generator.generateGraph(10, 10));
+    }
+}
