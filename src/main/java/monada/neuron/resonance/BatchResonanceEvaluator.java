@@ -113,7 +113,8 @@ public interface BatchResonanceEvaluator {
                     "monada.neuron.resonance.VectorBatchResonanceEvaluator",
                     true,
                     BatchResonanceEvaluator.class.getClassLoader());
-            return (BatchResonanceEvaluator) clazz.getField("INSTANCE").get(null);
+            BatchResonanceEvaluator evaluator = (BatchResonanceEvaluator) clazz.getField("INSTANCE").get(null);
+            return evaluator.isAvailable() ? evaluator : ScalarBatchResonanceEvaluator.INSTANCE;
         } catch (Throwable t) {
             return ScalarBatchResonanceEvaluator.INSTANCE;
         }

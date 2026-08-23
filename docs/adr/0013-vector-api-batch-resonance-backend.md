@@ -32,7 +32,7 @@ Because resonance computation is purely mathematical and element-wise independen
    - Vectorize amplitude similarity via boolean zero-masking and `min.div(max)`.
    - Vectorize frequency similarity via equality and single-zero XOR masks.
    - Vectorize phase wrapping modulo $2\pi$ via IEEE 754 round-to-nearest arithmetic and compute cosine similarity via `VectorOperators.COS`.
-   - Protect numerical stability on extreme phase values ($|p| > 10^{14}$) through automatic scalar lane reduction.
+   - Protect numerical equivalence on large phase values ($|p| > 1000.0$) through automatic scalar lane reduction via `StrictMath.IEEEremainder` to avoid floating-point multiplication precision loss with $1/(2\pi)$ and preserve tolerance $\le 1.0\times 10^{-12}$ up to `Double.MAX_VALUE`.
    - Process tail elements ($length \pmod{vectorWidth}$) deterministically via the scalar oracle formula.
 
 4. **Capability Detection & Adaptive Fallback**:

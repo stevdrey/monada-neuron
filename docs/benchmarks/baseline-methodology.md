@@ -144,9 +144,11 @@ Captured on Linux x86_64 with Java 26 (Eclipse Adoptium OpenJDK 64-Bit Server VM
 
 | Benchmark | Parameter | Mode | Score | Units |
 | :--- | :--- | :--- | :--- | :--- |
-| `ScalarResonanceBenchmark.benchmarkSingleScore` | 100 size | avgt | ~61.2 | ns/op |
+| `ScalarResonanceBenchmark.benchmarkSingleScore` | 64 size | avgt | ~61.2 | ns/op |
+| `ScalarResonanceBenchmark.benchmarkSingleScore` | 256 size | avgt | ~62.4 | ns/op |
 | `ScalarResonanceBenchmark.benchmarkSingleScore` | 1,000 size | avgt | ~71.7 | ns/op |
 | `ScalarResonanceBenchmark.benchmarkSingleScore` | 10,000 size | avgt | ~97.6 | ns/op |
+| `ScalarResonanceBenchmark.benchmarkSingleScore` | 100,000 size | avgt | ~125.8 | ns/op |
 | `ScalarResonanceBenchmark.benchmarkScalarBatchSoA` | 1,000 size | avgt | ~72.2 | µs/op |
 | `ScalarResonanceBenchmark.benchmarkVectorBatchSoA` | 1,000 size | avgt | ~11.6 | µs/op (**6.23x speedup**) |
 | `ScalarResonanceBenchmark.benchmarkScalarBatchSoA` | 10,000 size | avgt | ~905.9 | µs/op |
