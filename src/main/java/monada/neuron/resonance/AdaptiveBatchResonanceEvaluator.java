@@ -11,8 +11,9 @@ import java.util.Objects;
  * the Java 26 Vector API is available and the batch size amortizes SIMD dispatch overhead
  * (default: &ge; 64 pairs). Otherwise routes to {@link ScalarBatchResonanceEvaluator}.
  *
- * <p>Vector API linkage is deferred dynamically to ensure that runtimes without incubator module
- * flags degrade gracefully to the scalar reference backend without {@link NoClassDefFoundError}.
+ * <p>Vector API linkage is deferred dynamically so runtimes without the incubator module degrade
+ * gracefully to the scalar reference backend without {@link NoClassDefFoundError}. Backend
+ * initialization failures remain visible rather than being treated as missing capability.
  */
 public final class AdaptiveBatchResonanceEvaluator implements BatchResonanceEvaluator {
 
@@ -48,8 +49,10 @@ public final class AdaptiveBatchResonanceEvaluator implements BatchResonanceEval
                     AdaptiveBatchResonanceEvaluator.class.getClassLoader());
             BatchResonanceEvaluator evaluator = (BatchResonanceEvaluator) clazz.getField("INSTANCE").get(null);
             return evaluator.isAvailable() ? evaluator : null;
-        } catch (Throwable t) {
+        } catch (ClassNotFoundException | NoClassDefFoundError ignored) {
             return null;
+        } catch (NoSuchFieldException | IllegalAccessException exception) {
+            throw new IllegalStateException("Unable to access the Vector API batch evaluator", exception);
         }
     }
 

@@ -115,8 +115,10 @@ public interface BatchResonanceEvaluator {
                     BatchResonanceEvaluator.class.getClassLoader());
             BatchResonanceEvaluator evaluator = (BatchResonanceEvaluator) clazz.getField("INSTANCE").get(null);
             return evaluator.isAvailable() ? evaluator : ScalarBatchResonanceEvaluator.INSTANCE;
-        } catch (Throwable t) {
+        } catch (ClassNotFoundException | NoClassDefFoundError ignored) {
             return ScalarBatchResonanceEvaluator.INSTANCE;
+        } catch (NoSuchFieldException | IllegalAccessException exception) {
+            throw new IllegalStateException("Unable to access the Vector API batch evaluator", exception);
         }
     }
 

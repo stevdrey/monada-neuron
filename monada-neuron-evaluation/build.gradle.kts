@@ -31,6 +31,7 @@ dependencies {
 
 application {
     mainClass.set("monada.neuron.evaluation.baseline.CognitiveBaselineRunner")
+    applicationDefaultJvmArgs = listOf("--add-modules", "jdk.incubator.vector")
 }
 
 tasks.register<JavaExec>("runCognitiveBaseline") {

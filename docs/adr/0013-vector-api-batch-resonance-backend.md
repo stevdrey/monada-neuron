@@ -65,3 +65,26 @@ Benchmarks executed on Linux x86_64 with Java 26 (Temurin-26+35, Intel Core i7-6
 - Throughput exceeds **72M pairs/second** on contiguous SoA layouts.
 - Incubator module dependency is isolated: callers running without `--add-modules jdk.incubator.vector` continue executing portably via the scalar backend.
 - Core domain model remains independent of hardware-specific types.
+
+## Alternatives Considered
+
+- **Retain only the scalar batch evaluator:** rejected because the measured 1,000-plus pair
+  workloads exceed the Issue #25 throughput hypothesis while preserving the scalar implementation
+  as the semantic oracle and fallback.
+- **Use only `FrequencyState[]` object arrays:** rejected for the accelerated hot path because
+  object indirection and field extraction reduce locality and add avoidable overhead compared with
+  the contiguous SoA representation. The batch contract still accepts object arrays for callers
+  that already hold that layout.
+- **Use native or GPU acceleration:** rejected for this decision because it would add deployment,
+  transfer, capability-detection, and ownership complexity beyond the CPU SIMD experiment. Any
+  later native or accelerator path must retain the scalar reference and establish its own boundary.
+
+## Follow-up Work
+
+- Revalidate numerical equivalence, vector availability, crossover behavior, and JMH evidence when
+  upgrading the JDK or when the incubating Vector API changes status, packaging, or semantics.
+- Migrate the isolated backend and its module configuration if the Vector API becomes standard or
+  changes incompatibly; keep `ScalarBatchResonanceEvaluator` available throughout that migration.
+- Remove the Vector API backend, its experimental configuration, and benchmark claims if it no
+  longer provides reproducible end-to-end benefit on supported hardware, without changing the
+  scalar batch contract or resonance formula.
