@@ -108,6 +108,82 @@ Pass custom JMH arguments:
 ./gradlew :monada-neuron-evaluation:jmh -PjmhArgs="-f 1 -wi 1 -i 1 -r 1s AdaptationPolicyBenchmark CognitiveCycleBenchmark ScalarResonanceBenchmark"
 ```
 
+### PR #35 Vector API allocation and crossover study
+
+The current SIMD retention decision is based on JMH allocation telemetry, not
+the older coarse end-to-end allocation rows below. The controlled study ran on
+Linux x86_64, Intel Core i7-6500U with AVX2 (four available CPUs), Temurin
+26+35, and `DoubleVector.SPECIES_PREFERRED` length `4`. It used one thread,
+`avgt`, two one-second warmups, three one-second measurement iterations, and
+three forks.
+
+Run Scalar, Vector, and the then-current Adaptive dispatch together:
+
+```bash
+./gradlew :monada-neuron-evaluation:jmh \
+  -PjmhArgs="-bm avgt -f 3 -wi 2 -i 3 -r 1s -prof gc -rf json \
+  -rff /tmp/pr35-soa-gc.json \
+  ScalarResonanceBenchmark.benchmark(Scalar|Vector|Adaptive)BatchSoA"
+```
+
+After setting the derived threshold, validate the resulting Adaptive dispatch:
+
+```bash
+./gradlew :monada-neuron-evaluation:jmh \
+  -PjmhArgs="-bm avgt -f 3 -wi 2 -i 3 -r 1s -prof gc -rf json \
+  -rff /tmp/pr35-adaptive-threshold4-gc.json \
+  ScalarResonanceBenchmark.benchmarkAdaptiveBatchSoA"
+```
+
+For the 100,000-pair Vector allocation attribution, create an allocation-enabled
+JFR configuration and capture the benchmark:
+
+```bash
+jfr configure --input "$JAVA_HOME/lib/jfr/profile.jfc" \
+  --output /tmp/pr35-vector-allocation.jfc \
+  jdk.ObjectAllocationInNewTLAB#enabled=true \
+  jdk.ObjectAllocationOutsideTLAB#enabled=true \
+  jdk.ObjectAllocationSample#enabled=true \
+  jdk.ObjectAllocationSample#throttle=1000/s
+
+./gradlew :monada-neuron-evaluation:jmh \
+  -PjmhArgs='-bm avgt -f 1 -wi 2 -i 3 -r 1s -prof jfr:dir=/tmp/pr35-vector-allocation-jfr;configName=/tmp/pr35-vector-allocation.jfc -p batchSize=100000 ScalarResonanceBenchmark.benchmarkVectorBatchSoA'
+```
+
+Inspect the generated `profile.jfr` with:
+
+```bash
+jfr summary profile.jfr
+jfr print --events jdk.ObjectAllocationInNewTLAB,jdk.ObjectAllocationOutsideTLAB,jdk.ObjectAllocationSample profile.jfr
+```
+
+The measured matrix is batch latency in ns / JMH allocated bytes per pair.
+Adaptive was measured after `DEFAULT_CROSSOVER_THRESHOLD` changed to `4`.
+
+| Pairs | Scalar | Vector | Adaptive |
+| :--- | ---: | ---: | ---: |
+| 1 | 94.05 / 32.000658 | 92.11 / 32.000642 | 90.97 / 32.000637 |
+| 4 | 319.97 / 32.000558 | 77.09 / 0.000134 | 85.44 / 0.000149 |
+| 8 | 644.04 / 32.000562 | 127.65 / 0.000111 | 131.41 / 0.000114 |
+| 16 | 1,290.07 / 32.000563 | 222.93 / 0.000097 | 219.49 / 0.000095 |
+| 32 | 3,310.88 / 32.000722 | 424.88 / 0.000093 | 429.79 / 0.000093 |
+| 64 | 6,859.80 / 32.000750 | 904.86 / 0.000098 | 789.44 / 0.000086 |
+| 128 | 23,883.53 / 32.001301 | 1,606.12 / 0.000087 | 1,598.69 / 0.000087 |
+| 256 | 16,402.92 / 32.000451 | 3,308.66 / 0.000090 | 3,193.23 / 0.000087 |
+| 1,000 | 78,002.71 / 32.000547 | 12,620.64 / 0.000088 | 12,641.00 / 0.000089 |
+| 10,000 | 956,206.48 / 32.000670 | 142,138.04 / 0.000099 | 122,491.23 / 0.000085 |
+| 100,000 | 9,287,027.59 / 32.000650 | 1,405,598.31 / 0.000098 | 1,383,684.78 / 0.000096 |
+
+At 1,000, 10,000, and 100,000 pairs, both Vector and Adaptive are much lower
+than the 105% Scalar allocation limit. The allocation-enabled JFR capture at
+100,000 pairs found only JFR/JMH support objects, with no allocation stack in
+Monada or the Vector API hot path. The three-fork crossover comparison chose
+`4`: Vector was at least 5% faster than Scalar in each fork at that size and
+at every larger sampled size; one pair failed that condition in one fork.
+
+The former approximate `70.3 B/pair` Vector end-to-end row is superseded for
+the SIMD retention decision by this controlled JMH and JFR evidence.
+
 ### Run Unit and Harness Tests
 
 ```bash
@@ -138,13 +214,15 @@ Captured on Linux x86_64 with Java 26 (Eclipse Adoptium OpenJDK 64-Bit Server VM
 | `CognitiveCycle.Adaptation.NoOp` | 50 target nodes | ~470.3 µs | ~372.2 µs | ~959.1 µs | ~2,126 ops/s | ~255.4 KB |
 | `CognitiveCycle.Adaptation.BaselinePolicy` | 50 target nodes | ~328.5 µs | ~290.4 µs | ~518.4 µs | ~3,044 ops/s | ~255.4 KB |
 
-### JMH Microbenchmark Results (Single-Operation)
+### JMH Microbenchmark Results (Steady-State JIT Microbenchmarks)
 
 | Benchmark | Parameter | Mode | Score | Units |
 | :--- | :--- | :--- | :--- | :--- |
-| `ScalarResonanceBenchmark.benchmarkSingleScore` | 100 size | avgt | ~89.9 | ns/op |
-| `ScalarResonanceBenchmark.benchmarkSingleScore` | 1,000 size | avgt | ~98.1 | ns/op |
-| `ScalarResonanceBenchmark.benchmarkSingleScore` | 10,000 size | avgt | ~102.6 | ns/op |
+| `ScalarResonanceBenchmark.benchmarkSingleScore` | 64 size | avgt | ~61.2 | ns/op |
+| `ScalarResonanceBenchmark.benchmarkSingleScore` | 256 size | avgt | ~62.4 | ns/op |
+| `ScalarResonanceBenchmark.benchmarkSingleScore` | 1,000 size | avgt | ~71.7 | ns/op |
+| `ScalarResonanceBenchmark.benchmarkSingleScore` | 10,000 size | avgt | ~97.6 | ns/op |
+| `ScalarResonanceBenchmark.benchmarkSingleScore` | 100,000 size | avgt | ~125.8 | ns/op |
 | `AdaptationPolicyBenchmark.benchmarkNoOpPolicy` | N/A | avgt | ~12.5 | ns/op |
 | `AdaptationPolicyBenchmark.benchmarkBaselinePolicyDecisionArithmetic` | N/A | avgt | ~46.6 | ns/op |
 | `AdaptationPolicyBenchmark.benchmarkBaselinePolicyFull` | N/A | avgt | ~120.4 | ns/op |
@@ -154,12 +232,11 @@ Captured on Linux x86_64 with Java 26 (Eclipse Adoptium OpenJDK 64-Bit Server VM
 
 ## Analysis of Bottlenecks & Next Optimization Experiments
 
-From the empirical evidence gathered by the baseline harness, four candidate optimization experiments are identified:
+From the empirical evidence gathered by the baseline harness and the completion of Experiment 1 (Vector API SIMD batch resonance):
 
-### 1. Vector API SIMD for `ScalarResonanceMetric`
-- **Observation**: Batch scalar scoring costs ~71–96 ns per pair. The calculation involves floating-point ratios and trigonometric phase differences (`StrictMath.IEEEremainder` and `StrictMath.cos`).
-- **Proposed Experiment**: Implement a SIMD vector batch evaluator using `jdk.incubator.vector.DoubleVector` / `FloatVector`.
-- **Target Metric**: >3x throughput increase on batches $\ge 1,000$ pairs while maintaining strict equivalence with the scalar oracle within floating-point tolerance.
+### 1. Vector API SIMD for Batch Resonance (Completed - ADR 0013)
+- **Result**: `VectorBatchResonanceEvaluator` remains behind the capability-driven `AdaptiveBatchResonanceEvaluator`, with `FrequencyStateBatch` contiguous Structure-of-Arrays (SoA) layout.
+- **Retention evidence**: The controlled three-fork GC/JFR study above meets the 105% allocation gate at 1,000, 10,000, and 100,000 pairs and selects a four-pair crossover. On the large SoA sizes, Vector is approximately 6.2x to 6.7x faster than Scalar. Numerical equivalence with `ScalarResonanceMetric` remains protected within $10^{-12}$ tolerance.
 
 ### 2. Compact Graph Representation (CSR / Compact Integer Adjacency)
 - **Observation**: `GraphPropagation.RouteAll` on 2,000 nodes allocates ~4.98 MB per run and retains ~941 KB in heap due to `Node` UUID set iterations, sorting UUIDs, and allocating intermediate `Signal` and `NodeProcessingResult` lists.

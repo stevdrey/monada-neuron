@@ -31,6 +31,7 @@ dependencies {
 
 application {
     mainClass.set("monada.neuron.evaluation.baseline.CognitiveBaselineRunner")
+    applicationDefaultJvmArgs = listOf("--add-modules", "jdk.incubator.vector")
 }
 
 tasks.register<JavaExec>("runCognitiveBaseline") {
@@ -38,6 +39,7 @@ tasks.register<JavaExec>("runCognitiveBaseline") {
     description = "Runs the deterministic Monada Neuron end-to-end cognitive baseline suite"
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("monada.neuron.evaluation.baseline.CognitiveBaselineRunner")
+    jvmArgs("--add-modules", "jdk.incubator.vector")
     if (project.hasProperty("benchmarkArgs")) {
         args(project.property("benchmarkArgs").toString().split(" "))
     }
@@ -48,6 +50,7 @@ tasks.register<JavaExec>("jmh") {
     description = "Runs JMH microbenchmarks"
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("org.openjdk.jmh.Main")
+    jvmArgs("--add-modules", "jdk.incubator.vector")
     if (project.hasProperty("jmhArgs")) {
         args(project.property("jmhArgs").toString().split(" "))
     } else {
@@ -57,4 +60,21 @@ tasks.register<JavaExec>("jmh") {
 
 tasks.test {
     useJUnitPlatform()
+    jvmArgs("--add-modules", "jdk.incubator.vector")
+}
+
+tasks.withType<JavaCompile> {
+    options.compilerArgs.addAll(listOf("--add-modules", "jdk.incubator.vector"))
+}
+
+tasks.withType<Test> {
+    jvmArgs("--add-modules", "jdk.incubator.vector")
+}
+
+tasks.withType<JavaExec> {
+    jvmArgs("--add-modules", "jdk.incubator.vector")
+}
+
+tasks.withType<Javadoc> {
+    (options as StandardJavadocDocletOptions).addStringOption("-add-modules", "jdk.incubator.vector")
 }

@@ -13,7 +13,7 @@ import java.util.Objects;
  *
  * <p>Note on telemetry isolation:
  * <ul>
- *   <li><b>Latency & Thread Allocation:</b> Isolated strictly to the {@code workload.run()} execution interval.
+ *   <li><b>Latency and Thread Allocation:</b> Isolated strictly to the {@code workload.run()} execution interval.
  *       Any per-iteration setup work executed via {@code iterationSetup} is excluded from measured latency and
  *       thread-allocated byte deltas.</li>
  *   <li><b>Garbage Collection Deltas:</b> JVM GC MXBeans report whole-JVM cumulative statistics, which cover the

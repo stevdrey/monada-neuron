@@ -6,9 +6,9 @@ Monada Neuron is an experimental Java 26 cognitive system whose architecture sep
 
 The current implementation is intentionally small. The repository presently contains the Phase-1
 Node model, immutable Signal and processing contracts, deterministic graph propagation, scalar
-resonance, native Aeon coordination, and a bounded ephemeral cognitive context. The module
-structure below is therefore a **target architecture**, not a claim that every module already
-exists.
+resonance with an optional SIMD batch backend, native Aeon coordination, and a bounded ephemeral
+cognitive context. The module structure below is therefore a **target architecture**, not a claim
+that every module already exists.
 
 ## Core Cognitive Flow
 
@@ -107,6 +107,28 @@ on the successful calculation path.
 This scalar implementation remains the semantic correctness oracle for future SIMD, native,
 parallel, or accelerator backends. Alternative formulas require explicit evaluation and must not
 silently replace it.
+
+## Current Batch Resonance Backends
+
+`BatchResonanceEvaluator` defines bulk scoring for independent `FrequencyState` pairs without
+changing the scalar `ResonanceMetric` contract. `FrequencyStateBatch` is the immutable
+Structure-of-Arrays representation for that workload: its amplitude, frequency, and phase values
+are held in parallel primitive arrays, avoiding boxing and object-pointer traversal on the hot
+path. The contract also supports direct parallel arrays and `FrequencyState[]` callers where an
+array-of-objects representation is already available.
+
+`ScalarBatchResonanceEvaluator` is the portable reference backend. It has no incubator dependency
+and preserves `ScalarResonanceMetric` semantics, so it remains the correctness oracle and fallback.
+`VectorBatchResonanceEvaluator` is an isolated Java 26 Vector API implementation for sufficiently
+large batches. `AdaptiveBatchResonanceEvaluator`, returned by
+`BatchResonanceEvaluator.defaultEvaluator()`, uses that backend from 64 pairs onward only when the
+runtime can resolve the incubating module and supports multi-lane vectors; otherwise it routes to
+the scalar backend.
+
+Vector API types remain outside the cognitive-domain contracts. A caller that does not resolve
+`jdk.incubator.vector` continues through the scalar path, while the evaluation distribution adds
+the module explicitly so its SIMD baseline can run. ADR 0013 records the capability boundary,
+numerical-equivalence rules, and lifecycle of this experimental backend.
 
 ## Current Deterministic Graph Runtime
 

@@ -11,6 +11,7 @@ import monada.neuron.evolution.AdaptationPolicy;
 import monada.neuron.memory.ResonanceMemoryCognitiveStage;
 import monada.neuron.memory.ResonanceMemoryPort;
 import monada.neuron.model.FrequencyState;
+import monada.neuron.resonance.FrequencyStateBatch;
 import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
 import monada.neuron.monad.AeonCognitiveStage;
@@ -85,6 +86,39 @@ public final class DeterministicWorkloadGenerator {
             pairs.add(new FrequencyStatePair(first, second));
         }
         return List.copyOf(pairs);
+    }
+
+    /**
+     * Generates a pair of contiguous {@link FrequencyStateBatch} instances for batch resonance benchmarking.
+     *
+     * @param pairCount number of pairs to generate
+     * @return record containing the first and second contiguous batches
+     */
+    public FrequencyStateBatchPair generateFrequencyStateBatches(int pairCount) {
+        if (pairCount <= 0) {
+            throw new IllegalArgumentException("pairCount must be positive, got: " + pairCount);
+        }
+        var random = new Random(seed);
+        double[] a1 = new double[pairCount];
+        double[] f1 = new double[pairCount];
+        double[] p1 = new double[pairCount];
+        double[] a2 = new double[pairCount];
+        double[] f2 = new double[pairCount];
+        double[] p2 = new double[pairCount];
+
+        for (int i = 0; i < pairCount; i++) {
+            a1[i] = 0.05 + random.nextDouble() * 0.95;
+            f1[i] = random.nextDouble() * 100.0;
+            p1[i] = random.nextDouble() * 2.0 * StrictMath.PI;
+
+            a2[i] = 0.05 + random.nextDouble() * 0.95;
+            f2[i] = random.nextDouble() * 100.0;
+            p2[i] = random.nextDouble() * 2.0 * StrictMath.PI;
+        }
+
+        var first = FrequencyStateBatch.of(a1, f1, p1);
+        var second = FrequencyStateBatch.of(a2, f2, p2);
+        return new FrequencyStateBatchPair(first, second);
     }
 
     /**
@@ -172,7 +206,7 @@ public final class DeterministicWorkloadGenerator {
      *   <li>{@link UUID}: 32 bytes (header + two 64-bit longs).</li>
      *   <li>{@link FrequencyState}: 32 bytes (header + three 64-bit doubles).</li>
      *   <li>{@link java.util.Collections#unmodifiableSet}: 24 bytes wrapper.</li>
-     *   <li>{@link java.util.HashSet} & backing {@link java.util.HashMap}: ~80 bytes base + table array (~4 bytes/entry).</li>
+     *   <li>{@link java.util.HashSet} and backing {@link java.util.HashMap}: ~80 bytes base + table array (~4 bytes/entry).</li>
      *   <li>Adjacency entries: 32 bytes per {@code HashMap$Node} edge entry.</li>
      * </ul>
      * Total per node base: ~216 bytes. Total per directed edge: ~32 bytes.
@@ -298,6 +332,21 @@ public final class DeterministicWorkloadGenerator {
         public FrequencyStatePair {
             Objects.requireNonNull(first, "first must not be null");
             Objects.requireNonNull(second, "second must not be null");
+        }
+    }
+
+    /** Pair of contiguous frequency state batches for SIMD batch resonance evaluation. */
+    public record FrequencyStateBatchPair(FrequencyStateBatch first, FrequencyStateBatch second) {
+        public FrequencyStateBatchPair {
+            Objects.requireNonNull(first, "first must not be null");
+            Objects.requireNonNull(second, "second must not be null");
+            if (first.size() != second.size()) {
+                throw new IllegalArgumentException("batches must have equal sizes");
+            }
+        }
+
+        public int size() {
+            return first.size();
         }
     }
 

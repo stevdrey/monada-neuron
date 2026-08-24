@@ -19,8 +19,11 @@ import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator.Cognitiv
 import monada.neuron.evolution.AdaptationConfig;
 import monada.neuron.evolution.DeterministicBaselineAdaptationPolicy;
 import monada.neuron.evolution.NoOpAdaptationPolicy;
-import monada.neuron.memory.ResonanceMemoryPort;
+import monada.neuron.resonance.BatchResonanceEvaluator;
+import monada.neuron.resonance.FrequencyStateBatch;
+import monada.neuron.resonance.ScalarBatchResonanceEvaluator;
 import monada.neuron.resonance.ScalarResonanceMetric;
+import monada.neuron.resonance.VectorBatchResonanceEvaluator;
 import monada.neuron.runtime.graph.DeterministicSignalPropagationEngine;
 import monada.neuron.runtime.graph.PropagationConfig;
 import monada.neuron.runtime.graph.ResonanceThresholdRoutingPolicy;
@@ -101,6 +104,9 @@ public final class CognitiveBaselineRunner {
         // 1. Scalar Resonance Batches
         results.addAll(benchmarkScalarResonance());
 
+        // 1b. Batch Resonance (Scalar vs Vector SIMD on Contiguous SoA)
+        results.addAll(benchmarkBatchResonance());
+
         // 2. Sparse Graph Propagation
         results.addAll(benchmarkGraphPropagation());
 
@@ -152,6 +158,60 @@ public final class CognitiveBaselineRunner {
                             "pairCount", String.valueOf(scale),
                             "formula", "amplitudeSimilarity * frequencySimilarity * phaseSimilarity"));
             results.add(result);
+        }
+        return results;
+    }
+
+    private List<BenchmarkRunResult> benchmarkBatchResonance() {
+        var scalarEvaluator = ScalarBatchResonanceEvaluator.INSTANCE;
+        var vectorEvaluator = VectorBatchResonanceEvaluator.INSTANCE;
+        int[] scales = quickMode ? new int[]{100, 1000} : new int[]{100, 1_000, 10_000, 100_000};
+        int warmups = quickMode ? 2 : 5;
+        int iterations = quickMode ? 5 : 20;
+
+        var results = new ArrayList<BenchmarkRunResult>(scales.length * 2);
+        for (int scale : scales) {
+            var batchPair = generator.generateFrequencyStateBatches(scale);
+            var resultsBuffer = new double[scale];
+
+            // 1. Scalar Batch on Contiguous SoA
+            results.add(collector.measure(
+                    "ScalarBatchResonance.SoA",
+                    scale + " pairs",
+                    warmups,
+                    iterations,
+                    scale,
+                    () -> {
+                        scalarEvaluator.scoreBatch(batchPair.first(), batchPair.second(), resultsBuffer, 0, scale);
+                        if (Double.isNaN(resultsBuffer[0])) {
+                            throw new IllegalStateException("NaN score encountered");
+                        }
+                    },
+                    Map.of(
+                            "backend", "ScalarBatchResonanceEvaluator",
+                            "layout", "Structure-of-Arrays (SoA)",
+                            "pairCount", String.valueOf(scale))));
+
+            // 2. Vector SIMD Batch on Contiguous SoA
+            results.add(collector.measure(
+                    "VectorBatchResonance.SoA",
+                    scale + " pairs",
+                    warmups,
+                    iterations,
+                    scale,
+                    () -> {
+                        vectorEvaluator.scoreBatch(batchPair.first(), batchPair.second(), resultsBuffer, 0, scale);
+                        if (Double.isNaN(resultsBuffer[0])) {
+                            throw new IllegalStateException("NaN score encountered");
+                        }
+                    },
+                    Map.of(
+                            "backend", "VectorBatchResonanceEvaluator",
+                            "layout", "Structure-of-Arrays (SoA)",
+                            "pairCount", String.valueOf(scale),
+                            "vectorApiAvailable", String.valueOf(vectorEvaluator.isAvailable()),
+                            "vectorWidth", String.valueOf(vectorEvaluator.vectorWidth()),
+                            "vectorSpecies", String.valueOf(vectorEvaluator.species()))));
         }
         return results;
     }

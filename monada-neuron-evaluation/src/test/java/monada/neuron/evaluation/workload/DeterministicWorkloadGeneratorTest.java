@@ -28,6 +28,19 @@ class DeterministicWorkloadGeneratorTest {
     }
 
     @Test
+    void generatesDeterministicFrequencyStateBatchesFromSeed() {
+        var gen1 = new DeterministicWorkloadGenerator(12345L);
+        var gen2 = new DeterministicWorkloadGenerator(12345L);
+
+        var batches1 = gen1.generateFrequencyStateBatches(100);
+        var batches2 = gen2.generateFrequencyStateBatches(100);
+
+        assertEquals(100, batches1.size());
+        assertEquals(batches1.first(), batches2.first());
+        assertEquals(batches1.second(), batches2.second());
+    }
+
+    @Test
     void generatesDeterministicSignals() {
         var gen1 = new DeterministicWorkloadGenerator(42L);
         var gen2 = new DeterministicWorkloadGenerator(42L);
