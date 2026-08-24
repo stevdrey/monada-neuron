@@ -24,6 +24,8 @@ import monada.neuron.resonance.FrequencyStateBatch;
 import monada.neuron.resonance.ScalarBatchResonanceEvaluator;
 import monada.neuron.resonance.ScalarResonanceMetric;
 import monada.neuron.resonance.VectorBatchResonanceEvaluator;
+import monada.neuron.runtime.graph.CompactGraphSnapshot;
+import monada.neuron.runtime.graph.CompactSignalPropagationEngine;
 import monada.neuron.runtime.graph.DeterministicSignalPropagationEngine;
 import monada.neuron.runtime.graph.PropagationConfig;
 import monada.neuron.runtime.graph.ResonanceThresholdRoutingPolicy;
@@ -242,16 +244,30 @@ public final class CognitiveBaselineRunner {
 
         for (var config : configs) {
             var topology = generator.generateGraph(config.nodes(), config.degree());
+            var compactSnapshot = CompactGraphSnapshot.compile(topology.nodes());
+            var compactEngine = new CompactSignalPropagationEngine(compactSnapshot);
             var routeAllConfig = PropagationConfig.routeAll(config.maxSteps(), config.maxHops());
             var thresholdConfig = new PropagationConfig(config.maxSteps(), config.maxHops(), resonancePolicy);
 
             // Sample propagation runs to record exact work volume diagnostics
             var sampleRouteAll = engine.propagate(topology.entryNode(), initialSignal, processor, routeAllConfig);
             var sampleThreshold = engine.propagate(topology.entryNode(), initialSignal, processor, thresholdConfig);
+            var compactRouteAll = compactEngine.propagate(
+                    topology.entryNode(), initialSignal, processor, routeAllConfig);
+            var compactThreshold = compactEngine.propagate(
+                    topology.entryNode(), initialSignal, processor, thresholdConfig);
+            if (!sampleRouteAll.equals(compactRouteAll) || !sampleThreshold.equals(compactThreshold)) {
+                throw new IllegalStateException("compact graph propagation diverged from reference result");
+            }
 
             long estimatedRetainedBytes = DeterministicWorkloadGenerator.estimateRetainedHeapBytes(
                     config.nodes(),
                     topology.totalEdges());
+            long compactSnapshotEstimatedBytes =
+                    DeterministicWorkloadGenerator.estimateCompactSnapshotHeapBytes(
+                            config.nodes(), topology.totalEdges());
+            long combinedEstimatedBytes = Math.addExact(
+                    estimatedRetainedBytes, compactSnapshotEstimatedBytes);
 
             // Unbounded (RouteAll) Policy
             results.add(collector.measure(
@@ -308,6 +324,88 @@ public final class CognitiveBaselineRunner {
                             "stepLimitReached", String.valueOf(sampleThreshold.stepLimitReached()),
                             "hopLimitReached", String.valueOf(sampleThreshold.hopLimitReached()),
                             "routingPolicy", "ResonanceThresholdRoutingPolicy")));
+
+            results.add(collector.measure(
+                    "CompactGraphPropagation.RouteAll",
+                    config.name() + " (" + config.nodes() + " nodes, deg " + config.degree() + ")",
+                    warmups,
+                    iterations,
+                    () -> {
+                        var res = compactEngine.propagate(
+                                topology.entryNode(),
+                                initialSignal,
+                                processor,
+                                routeAllConfig);
+                        if (res.emittedSignals().isEmpty()) {
+                            throw new IllegalStateException("empty compact propagation");
+                        }
+                    },
+                    Map.ofEntries(
+                            Map.entry("backend", "CompactSignalPropagationEngine"),
+                            Map.entry("representation", "CSR snapshot"),
+                            Map.entry("nodeCount", String.valueOf(config.nodes())),
+                            Map.entry("totalEdges", String.valueOf(topology.totalEdges())),
+                            Map.entry("objectTopologyEstimatedRetainedBytes", String.valueOf(estimatedRetainedBytes)),
+                            Map.entry("compactSnapshotEstimatedRetainedBytes", String.valueOf(compactSnapshotEstimatedBytes)),
+                            Map.entry("combinedEstimatedRetainedBytes", String.valueOf(combinedEstimatedBytes)),
+                            Map.entry("maxSteps", String.valueOf(config.maxSteps())),
+                            Map.entry("maxHops", String.valueOf(config.maxHops())),
+                            Map.entry("processedSteps", String.valueOf(compactRouteAll.processedSteps())),
+                            Map.entry("emittedSignals", String.valueOf(compactRouteAll.emittedSignals().size())),
+                            Map.entry("stepLimitReached", String.valueOf(compactRouteAll.stepLimitReached())),
+                            Map.entry("hopLimitReached", String.valueOf(compactRouteAll.hopLimitReached())),
+                            Map.entry("routingPolicy", "RouteAll"))));
+
+            results.add(collector.measure(
+                    "CompactGraphPropagation.ThresholdRouting",
+                    config.name() + " (" + config.nodes() + " nodes, deg " + config.degree() + ")",
+                    warmups,
+                    iterations,
+                    () -> {
+                        var res = compactEngine.propagate(
+                                topology.entryNode(),
+                                initialSignal,
+                                processor,
+                                thresholdConfig);
+                        if (res.emittedSignals().isEmpty()) {
+                            throw new IllegalStateException("empty compact propagation");
+                        }
+                    },
+                    Map.ofEntries(
+                            Map.entry("backend", "CompactSignalPropagationEngine"),
+                            Map.entry("representation", "CSR snapshot"),
+                            Map.entry("nodeCount", String.valueOf(config.nodes())),
+                            Map.entry("totalEdges", String.valueOf(topology.totalEdges())),
+                            Map.entry("objectTopologyEstimatedRetainedBytes", String.valueOf(estimatedRetainedBytes)),
+                            Map.entry("compactSnapshotEstimatedRetainedBytes", String.valueOf(compactSnapshotEstimatedBytes)),
+                            Map.entry("combinedEstimatedRetainedBytes", String.valueOf(combinedEstimatedBytes)),
+                            Map.entry("maxSteps", String.valueOf(config.maxSteps())),
+                            Map.entry("maxHops", String.valueOf(config.maxHops())),
+                            Map.entry("processedSteps", String.valueOf(compactThreshold.processedSteps())),
+                            Map.entry("emittedSignals", String.valueOf(compactThreshold.emittedSignals().size())),
+                            Map.entry("stepLimitReached", String.valueOf(compactThreshold.stepLimitReached())),
+                            Map.entry("hopLimitReached", String.valueOf(compactThreshold.hopLimitReached())),
+                            Map.entry("routingPolicy", "ResonanceThresholdRoutingPolicy"))));
+
+            results.add(collector.measure(
+                    "CompactGraphCompilation",
+                    config.name() + " (" + config.nodes() + " nodes, deg " + config.degree() + ")",
+                    warmups,
+                    iterations,
+                    () -> {
+                        var compiled = CompactGraphSnapshot.compile(topology.nodes());
+                        if (compiled.edgeCount() != topology.totalEdges()) {
+                            throw new IllegalStateException("compact snapshot edge count mismatch");
+                        }
+                    },
+                    Map.ofEntries(
+                            Map.entry("backend", "CompactGraphSnapshot"),
+                            Map.entry("operation", "compile"),
+                            Map.entry("nodeCount", String.valueOf(config.nodes())),
+                            Map.entry("totalEdges", String.valueOf(topology.totalEdges())),
+                            Map.entry("objectTopologyEstimatedRetainedBytes", String.valueOf(estimatedRetainedBytes)),
+                            Map.entry("compactSnapshotEstimatedRetainedBytes", String.valueOf(compactSnapshotEstimatedBytes)),
+                            Map.entry("combinedEstimatedRetainedBytes", String.valueOf(combinedEstimatedBytes)))));
         }
         return results;
     }

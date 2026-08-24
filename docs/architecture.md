@@ -158,6 +158,30 @@ topology concurrently. It has no dependency on external orchestration frameworks
 memory. ADR 0007 records the complete reference semantics that future compact or parallel backends
 must preserve.
 
+## Optional Compact Graph Runtime
+
+`CompactGraphSnapshot` is an explicit compiled runtime view for a stable, closed collection of
+canonical Nodes. Compilation sorts the Node UUIDs once, assigns dense internal indices, and stores
+directed adjacency as CSR `offsets` and `targets` primitive arrays. It retains canonical Node
+references so a `NodeProcessor` and `SignalRoutingPolicy` continue to observe the current domain
+state rather than a copied physical state representation.
+
+`Node` exposes a topology version that changes only after a successful connect or disconnect.
+`CompactSignalPropagationEngine` validates that every compiled Node still has its captured version
+before and after direct propagation; a stale snapshot fails clearly and requires explicit
+recompilation. Frequency-state and energy transitions remain visible without invalidating the
+snapshot. The compact engine uses a primitive parallel-array FIFO and does not sort adjacency or
+look up UUIDs in its traversal hot path. Its direct behavior is checked against the deterministic
+object engine; it is never selected implicitly.
+
+The compact snapshot is not persistence and does not replace Node ownership. Because both the
+object graph and snapshot coexist, retained-footprint evaluation reports the object topology, the
+incremental CSR snapshot, and their combined structural estimate separately. Context-aware
+propagation remains delegated to `DeterministicSignalPropagationEngine` so shared cognitive-budget
+and trace semantics keep their established implementation. The compact path is sequential and
+inherits the existing prohibition on concurrent topology mutation. ADR 0014 records this lifecycle
+and fallback boundary.
+
 ## Current Aeon Domain and Coordination
 
 `Aeon` owns the identity, cognitive-purpose classification, and deterministic membership of one

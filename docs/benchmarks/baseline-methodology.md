@@ -42,8 +42,9 @@ To guarantee reliable and reproducible baselines, the harness enforces five key 
    - `CognitiveCycleBenchmark` provides a non-mutating 5-stage full cycle baseline (`benchmarkCognitiveCycleNoOp`, ~74.4 µs/op) and an isolated baseline cycle with fresh setup per invocation (`benchmarkCognitiveCycleBaseline`, ~65.4 µs/op).
 
 4. **Retained Graph Footprint Modeling**:
-   - Represents the 64-bit HotSpot JVM heap layout for Phase-1 `Node` object graphs (~216 bytes/node base + ~32 bytes/directed edge).
-   - Exported directly in benchmark diagnostics for future comparisons against CSR and FFM contiguous off-heap layouts.
+   - Represents the 64-bit HotSpot JVM heap layout for the current `Node` object graph (~224 bytes/node base + ~32 bytes/directed edge, including the topology-version counter).
+   - The CSR experiment separately estimates the incremental snapshot arrays (`Node[]`, topology-version `long[]`, CSR offsets and targets) and the combined structural footprint while both representations coexist.
+   - This prevents a snapshot-only number from being presented as a reduction in total live heap; temporary traversal queues and emitted results remain allocation metrics, not retained-topology metrics.
 
 5. **Explicit Allocation Telemetry Semantics**:
    - `AllocationMetrics` explicitly records `AllocationSource` (`THREAD_MX_BEAN` vs `UNAVAILABLE`).
@@ -52,11 +53,15 @@ To guarantee reliable and reproducible baselines, the harness enforces five key 
 
 ## Representative Graph Retained Footprint
 
-| Topology Scale | Node Count | Average Degree | Total Directed Edges | Estimated Retained Heap |
-| :--- | :--- | :--- | :--- | :--- |
-| **Small** | 50 | 3 | 143 | **15.38 KB** |
-| **Medium** | 500 | 5 | 2,468 | **186.98 KB** |
-| **Large** | 2,000 | 8 | 15,913 | **941.22 KB** |
+| Topology Scale | Node Count | Average Degree | Directed Edges | Object Topology | CSR Snapshot Incremental | Combined Structural |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Small** | 50 | 3 | 143 | **15.78 KB** | **1.48 KB** | **17.26 KB** |
+| **Medium** | 500 | 5 | 2,468 | **190.98 KB** | **17.98 KB** | **208.95 KB** |
+| **Large** | 2,000 | 8 | 15,913 | **957.22 KB** | **95.76 KB** | **1,052.98 KB** |
+
+The CSR column is an incremental execution-view estimate on a 64-bit HotSpot JVM with compressed
+references. It excludes the shared Node object graph by design; the combined column makes the
+coexistence cost explicit.
 
 ## Reproducible Workloads
 
@@ -67,9 +72,10 @@ All synthetic workloads are generated deterministically from configurable seeds 
    - Evaluates `amplitudeSimilarity * frequencySimilarity * phaseSimilarity` calculation costs.
 
 2. **Sparse Directed Graph Propagation**:
-   - Evaluates `DeterministicSignalPropagationEngine` on sparse topologies at multiple scales (Small, Medium, Large).
+   - Evaluates `DeterministicSignalPropagationEngine` and opt-in `CompactSignalPropagationEngine` on the same sparse topologies at Small, Medium, and Large scales.
+   - Measures compact snapshot compilation separately from repeated direct traversal.
    - Evaluates both unbounded routing (`RouteAll`) and gated routing (`ResonanceThresholdRoutingPolicy` at 0.5 threshold).
-   - Diagnostics capture actual processed steps, emitted signals, retained footprint, and limit triggers.
+   - Diagnostics capture actual processed steps, emitted signals, limit triggers, object-topology storage, incremental CSR storage, and combined structural estimates.
 
 3. **Aeon Coordination**:
    - Evaluates `DeterministicAeonCoordinator` under direct mode vs. contextual mode under identical work bounds.
@@ -239,9 +245,29 @@ From the empirical evidence gathered by the baseline harness and the completion 
 - **Retention evidence**: The controlled three-fork GC/JFR study above meets the 105% allocation gate at 1,000, 10,000, and 100,000 pairs and selects a four-pair crossover. On the large SoA sizes, Vector is approximately 6.2x to 6.7x faster than Scalar. Numerical equivalence with `ScalarResonanceMetric` remains protected within $10^{-12}$ tolerance.
 
 ### 2. Compact Graph Representation (CSR / Compact Integer Adjacency)
-- **Observation**: `GraphPropagation.RouteAll` on 2,000 nodes allocates ~4.98 MB per run and retains ~941 KB in heap due to `Node` UUID set iterations, sorting UUIDs, and allocating intermediate `Signal` and `NodeProcessingResult` lists.
-- **Proposed Experiment**: Design a compact integer ID layout with Compressed Sparse Row (CSR) adjacency indexing and primitive state arrays.
-- **Target Metric**: >75% allocation reduction and >2x traversal throughput improvement on graphs $\ge 500$ nodes.
+- **Implementation**: Issue #26 adds an opt-in `CompactGraphSnapshot` with UUID-sorted dense indices, CSR adjacency, topology-version invalidation, and a parallel-array BFS queue. Compilation is measured separately; `Node` remains the live domain model and reference engine.
+- **Controlled command**:
+  ```bash
+  ./gradlew :monada-neuron-evaluation:jmh \
+    -PjmhArgs="-f 1 -wi 3 -i 5 -prof gc SignalPropagation"
+  ```
+- **JMH steady state (average time, RouteAll)**: The same 2026-08-24 environment produced the following single-fork results. They exclude compilation from traversal and use one thread; allocation remains end-to-end with the benchmark processor's Signal and result creation.
+
+  | Scale | Reference | CSR | Speedup | Reference alloc/op | CSR alloc/op | Allocation reduction | CSR compilation |
+  | :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+  | 50 nodes | 21.932 µs | 15.047 µs | 1.46x | 46,320 B | 24,704 B | 46.7% | 6.498 µs |
+  | 500 nodes | 364.346 µs | 153.544 µs | 2.37x | 701,563 B | 242,457 B | 65.4% | 147.138 µs |
+  | 2,000 nodes | 3.759 ms | 948.257 µs | 3.96x | 4.420 MB | 1.286 MB | 70.9% | 902.356 µs |
+
+- **Fresh end-to-end baseline**: Run on 2026-08-24 with Temurin 26+35, Linux amd64, four available processors, G1 GC, seed `42`, five warmups and fifteen measured iterations per graph operation. The compact and reference paths produced identical `PropagationResult` values before measurement.
+
+  | RouteAll scale | Reference mean | CSR mean | Throughput improvement | Reference alloc/op | CSR alloc/op | Allocation reduction | CSR compilation mean |
+  | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+  | Small (50, degree 3) | 1.04 ms | 432.10 µs | 2.41x | 60.86 KB | 33.51 KB | 44.9% | 314.82 µs |
+  | Medium (500, degree 5) | 3.12 ms | 1.01 ms | 3.09x | 841.37 KB | 330.52 KB | 60.7% | 1.59 ms |
+  | Large (2,000, degree 8) | 6.17 ms | 1.95 ms | 3.16x | 4.55 MB | 1.54 MB | 66.2% | 3.52 ms |
+
+- **Decision**: Both JMH and the end-to-end baseline exceed the RouteAll throughput hypothesis at 2,000 nodes; JMH also exceeds it at 500 nodes. Neither JMH workload reaches the required 75% allocation reduction (65.4% and 70.9%), so the complete target is not met. Threshold-routed workloads are slower with CSR because they do too little traversal to amortize snapshot validation and queue setup. This is a reproducible negative result for the full target; CSR remains explicit and is not selected as a default backend.
 
 ### 3. FFM / Off-Heap Storage for Large-Scale Topologies
 - **Observation**: Phase-1 `Node` objects incur standard Java object header overhead (16–24 bytes per node/state reference plus GC pointer tracking).
