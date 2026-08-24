@@ -72,6 +72,14 @@ public final class Node implements NodeView {
     /** Unmodifiable view over {@link #connections} returned by {@link #getConnections()}. */
     private final Set<Node> connectionsView;
 
+    /**
+     * Monotonic structural version for runtime snapshots of {@link #connections}.
+     *
+     * <p>The value changes only after a successful connection addition or removal. It is not a
+     * concurrency primitive: callers must still keep topology mutation and traversal sequential.
+     */
+    private long topologyVersion;
+
     // -------------------------------------------------------------------------
     // Constructor (package-private; use Builder)
     // -------------------------------------------------------------------------
@@ -83,6 +91,7 @@ public final class Node implements NodeView {
         this.type = builder.type;
         this.connections = new HashSet<>(builder.connections);
         this.connectionsView = Collections.unmodifiableSet(this.connections);
+        this.topologyVersion = 0L;
         // History is not pre-populated; only future transitions are recorded.
         this.history = null;
     }
@@ -128,6 +137,16 @@ public final class Node implements NodeView {
      */
     public Set<Node> getConnections() {
         return connectionsView;
+    }
+
+    /**
+     * Returns the version of this node's directed connection set.
+     *
+     * <p>A compact runtime snapshot uses this value to detect that its compiled adjacency is no
+     * longer current. Frequency-state and energy changes intentionally do not affect it.
+     */
+    public long getTopologyVersion() {
+        return topologyVersion;
     }
 
     // -------------------------------------------------------------------------
@@ -179,7 +198,15 @@ public final class Node implements NodeView {
         if (target.id.equals(this.id)) {
             throw new IllegalArgumentException("A node cannot connect to itself (UUID: " + this.id + ")");
         }
-        return connections.add(target);
+        if (connections.contains(target)) {
+            return false;
+        }
+        requireTopologyVersionCapacity();
+        boolean connected = connections.add(target);
+        if (connected) {
+            topologyVersion++;
+        }
+        return connected;
     }
 
     /**
@@ -190,7 +217,15 @@ public final class Node implements NodeView {
      */
     public boolean disconnect(Node target) {
         Objects.requireNonNull(target, "target must not be null");
-        return connections.remove(target);
+        if (!connections.contains(target)) {
+            return false;
+        }
+        requireTopologyVersionCapacity();
+        boolean disconnected = connections.remove(target);
+        if (disconnected) {
+            topologyVersion++;
+        }
+        return disconnected;
     }
 
     // -------------------------------------------------------------------------
@@ -203,6 +238,12 @@ public final class Node implements NodeView {
             history = new ArrayList<>();
         }
         history.add(state);
+    }
+
+    private void requireTopologyVersionCapacity() {
+        if (topologyVersion == Long.MAX_VALUE) {
+            throw new IllegalStateException("topology version cannot advance beyond Long.MAX_VALUE");
+        }
     }
 
     // -------------------------------------------------------------------------

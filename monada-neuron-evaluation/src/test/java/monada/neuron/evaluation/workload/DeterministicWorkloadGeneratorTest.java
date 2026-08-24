@@ -99,4 +99,18 @@ class DeterministicWorkloadGeneratorTest {
         assertThrows(IllegalArgumentException.class, () -> generator.generateGraph(0, 0));
         assertThrows(IllegalArgumentException.class, () -> generator.generateGraph(10, 10));
     }
+
+    @Test
+    void estimatesCompactSnapshotStorageSeparatelyFromTheSharedObjectGraph() {
+        long empty = DeterministicWorkloadGenerator.estimateCompactSnapshotHeapBytes(0, 0);
+        long small = DeterministicWorkloadGenerator.estimateCompactSnapshotHeapBytes(50, 143);
+        long large = DeterministicWorkloadGenerator.estimateCompactSnapshotHeapBytes(2_000, 15_913);
+
+        assertAll(
+                () -> assertEquals(0L, empty),
+                () -> assertTrue(small > 0L),
+                () -> assertTrue(large > small),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> DeterministicWorkloadGenerator.estimateCompactSnapshotHeapBytes(1, -1)));
+    }
 }

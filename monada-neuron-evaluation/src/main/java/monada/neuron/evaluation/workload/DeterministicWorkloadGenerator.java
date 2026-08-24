@@ -202,14 +202,15 @@ public final class DeterministicWorkloadGenerator {
      *
      * <p>Footprint model on 64-bit HotSpot JVM with Compressed OOPs (-XX:+UseCompressedOops):
      * <ul>
-     *   <li>{@link Node} instance: 48 bytes (header + references + primitive fields).</li>
+     *   <li>{@link Node} instance: 56 bytes (header + references + primitive fields, including
+     *       the topology-version counter).</li>
      *   <li>{@link UUID}: 32 bytes (header + two 64-bit longs).</li>
      *   <li>{@link FrequencyState}: 32 bytes (header + three 64-bit doubles).</li>
      *   <li>{@link java.util.Collections#unmodifiableSet}: 24 bytes wrapper.</li>
      *   <li>{@link java.util.HashSet} and backing {@link java.util.HashMap}: ~80 bytes base + table array (~4 bytes/entry).</li>
      *   <li>Adjacency entries: 32 bytes per {@code HashMap$Node} edge entry.</li>
      * </ul>
-     * Total per node base: ~216 bytes. Total per directed edge: ~32 bytes.
+     * Total per node base: ~224 bytes. Total per directed edge: ~32 bytes.
      *
      * @param nodeCount number of nodes in the graph
      * @param totalEdges total directed edges across all nodes
@@ -219,7 +220,45 @@ public final class DeterministicWorkloadGenerator {
         if (nodeCount <= 0) {
             return 0L;
         }
-        return ((long) nodeCount * 216L) + ((long) totalEdges * 32L);
+        return ((long) nodeCount * 224L) + ((long) totalEdges * 32L);
+    }
+
+    /**
+     * Estimates the incremental retained heap of one compact CSR execution snapshot.
+     *
+     * <p>The estimate models the snapshot object, its canonical {@code Node[]} references,
+     * topology-version {@code long[]}, CSR {@code offsets} and {@code targets} arrays on a
+     * 64-bit HotSpot JVM with compressed references. It deliberately excludes the shared Node
+     * object graph, which remains live because a compact snapshot is a runtime view rather than a
+     * domain-model replacement.
+     *
+     * @param nodeCount number of canonical Nodes
+     * @param totalEdges total directed CSR entries
+     * @return approximate incremental bytes retained by the compact snapshot
+     */
+    public static long estimateCompactSnapshotHeapBytes(int nodeCount, int totalEdges) {
+        if (nodeCount <= 0) {
+            return 0L;
+        }
+        if (totalEdges < 0) {
+            throw new IllegalArgumentException("totalEdges must be non-negative, got: " + totalEdges);
+        }
+        long snapshotObject = 32L;
+        long nodeReferences = alignedArrayBytes(Integer.BYTES, nodeCount);
+        long topologyVersions = alignedArrayBytes(Long.BYTES, nodeCount);
+        long offsets = alignedArrayBytes(Integer.BYTES, nodeCount + 1L);
+        long targets = alignedArrayBytes(Integer.BYTES, totalEdges);
+        return snapshotObject + nodeReferences + topologyVersions + offsets + targets;
+    }
+
+    private static long alignedArrayBytes(int elementBytes, long length) {
+        long rawBytes;
+        try {
+            rawBytes = Math.addExact(16L, Math.multiplyExact(elementBytes, length));
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException("array size exceeds supported footprint estimate", exception);
+        }
+        return (rawBytes + 7L) & ~7L;
     }
 
 
