@@ -9,7 +9,7 @@ import java.util.Objects;
  *
  * <p>Automatically routes batch evaluation requests to {@link VectorBatchResonanceEvaluator} when
  * the Java 26 Vector API is available and the batch size amortizes SIMD dispatch overhead
- * (default: &ge; 64 pairs). Otherwise routes to {@link ScalarBatchResonanceEvaluator}.
+ * (default: &ge; 4 pairs). Otherwise routes to {@link ScalarBatchResonanceEvaluator}.
  *
  * <p>Vector API linkage is deferred dynamically so runtimes without the incubator module degrade
  * gracefully to the scalar reference backend without {@link NoClassDefFoundError}. Backend
@@ -18,7 +18,7 @@ import java.util.Objects;
 public final class AdaptiveBatchResonanceEvaluator implements BatchResonanceEvaluator {
 
     /** Default crossover threshold below which the scalar backend is preferred. */
-    public static final int DEFAULT_CROSSOVER_THRESHOLD = 64;
+    public static final int DEFAULT_CROSSOVER_THRESHOLD = 4;
 
     /** Singleton instance with default crossover threshold. */
     public static final AdaptiveBatchResonanceEvaluator INSTANCE = new AdaptiveBatchResonanceEvaluator(DEFAULT_CROSSOVER_THRESHOLD);

@@ -36,7 +36,7 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Benchmark)
 public class ScalarResonanceBenchmark {
 
-    @Param({"64", "256", "1000", "10000", "100000"})
+    @Param({"1", "4", "8", "16", "32", "64", "128", "256", "1000", "10000", "100000"})
     private int batchSize;
 
     private ScalarResonanceMetric scalarMetric;

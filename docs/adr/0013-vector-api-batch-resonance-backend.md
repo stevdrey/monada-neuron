@@ -38,21 +38,46 @@ Because resonance computation is purely mathematical and element-wise independen
 4. **Capability Detection & Adaptive Fallback**:
    - Implement `AdaptiveBatchResonanceEvaluator` as the default system evaluator (`BatchResonanceEvaluator.defaultEvaluator()`).
    - Dynamically checks `VectorBatchResonanceEvaluator.isAvailable()`.
-   - Dispatches workloads with $batchSize \ge 64$ pairs to the Vector API backend and routes smaller workloads or environments lacking incubator flags to `ScalarBatchResonanceEvaluator`.
+   - Dispatches workloads with $batchSize \ge 4$ pairs to the Vector API backend and routes smaller workloads or environments lacking incubator flags to `ScalarBatchResonanceEvaluator`.
 
 ## Empirical Evidence
 
-Benchmarks executed on Linux x86_64 with Java 26 (Temurin-26+35, Intel Core i7-6500U with 256-bit AVX2, `DoubleVector.SPECIES_PREFERRED` length = 4):
+The review-before-merge study was executed on Linux x86_64 with Java 26
+(Temurin-26+35), Intel Core i7-6500U (AVX2), four available CPUs, and
+`DoubleVector.SPECIES_PREFERRED` length `4`. It used one JMH thread, two
+one-second warmups, three one-second measurement iterations, three forks,
+`avgt`, and `-prof gc`. `docs/benchmarks/baseline-methodology.md` records the
+reproducible commands and profiler evidence.
 
-### JMH Microbenchmarks (Steady-State JIT Latency per Batch)
+The table gives mean batch latency in ns and JMH `gc.alloc.rate.norm` in bytes
+per pair. Adaptive results were measured after setting its threshold to `4`.
 
-| Batch Size | Scalar Batch SoA (`avgt`) | Vector Batch SoA (`avgt`) | Vector SoA Speedup | Vector Batch AoO (`avgt`) | Vector AoO Speedup |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **64 pairs** | ~4,064.9 ns (~63.5 ns/pair) | **~759.5 ns** (~11.8 ns/pair) | **5.35x** | ~1,927.7 ns (~30.1 ns/pair) | **3.64x** |
-| **256 pairs** | ~15,939.6 ns (~62.2 ns/pair) | **~2,908.4 ns** (~11.3 ns/pair) | **5.48x** | ~5,568.1 ns (~21.7 ns/pair) | **5.63x** |
-| **1,000 pairs** | ~72,254.5 ns (~72.2 ns/pair) | **~11,597.2 ns** (~11.5 ns/pair) | **6.23x** | ~19,896.3 ns (~19.8 ns/pair) | **7.17x** |
-| **10,000 pairs** | ~905,926.4 ns (~90.5 ns/pair) | **~119,157.9 ns** (~11.9 ns/pair) | **7.60x** | ~212,724.9 ns (~21.2 ns/pair) | **7.27x** |
-| **100,000 pairs** | ~9,000,716.9 ns (~90.0 ns/pair) | **~1,384,585.6 ns** (~13.8 ns/pair) | **6.50x** | ~2,875,397.1 ns (~28.7 ns/pair) | **7.00x** |
+| Pairs | Scalar ns / B-pair | Vector ns / B-pair | Adaptive ns / B-pair |
+| :--- | ---: | ---: | ---: |
+| 1 | 94.05 / 32.000658 | 92.11 / 32.000642 | 90.97 / 32.000637 |
+| 4 | 319.97 / 32.000558 | 77.09 / 0.000134 | 85.44 / 0.000149 |
+| 8 | 644.04 / 32.000562 | 127.65 / 0.000111 | 131.41 / 0.000114 |
+| 16 | 1,290.07 / 32.000563 | 222.93 / 0.000097 | 219.49 / 0.000095 |
+| 32 | 3,310.88 / 32.000722 | 424.88 / 0.000093 | 429.79 / 0.000093 |
+| 64 | 6,859.80 / 32.000750 | 904.86 / 0.000098 | 789.44 / 0.000086 |
+| 128 | 23,883.53 / 32.001301 | 1,606.12 / 0.000087 | 1,598.69 / 0.000087 |
+| 256 | 16,402.92 / 32.000451 | 3,308.66 / 0.000090 | 3,193.23 / 0.000087 |
+| 1,000 | 78,002.71 / 32.000547 | 12,620.64 / 0.000088 | 12,641.00 / 0.000089 |
+| 10,000 | 956,206.48 / 32.000670 | 142,138.04 / 0.000099 | 122,491.23 / 0.000085 |
+| 100,000 | 9,287,027.59 / 32.000650 | 1,405,598.31 / 0.000098 | 1,383,684.78 / 0.000096 |
+
+The allocation gate is satisfied at every representative size: at 1,000,
+10,000, and 100,000 pairs, Vector and Adaptive are below `0.0001 B/pair`,
+well within the required 105% of Scalar's approximately `32.0006 B/pair`.
+An allocation-enabled JFR capture of Vector SoA at 100,000 pairs recorded only
+JFR/JMH support allocations (two `byte[]` drain buffers, one `char[]`, and one
+JFR `StringPool` table); it recorded no allocation stack in Monada code or the
+Vector API hot path.
+
+The minimum tested size where Vector was at least 5% faster than Scalar in
+each of the three forks, and remained so for every larger tested size, was
+four pairs. At one pair, one fork was slower than Scalar, so it is not a valid
+crossover. `DEFAULT_CROSSOVER_THRESHOLD` is therefore `4`.
 
 ### Equivalence & Precision
 
@@ -61,8 +86,8 @@ Benchmarks executed on Linux x86_64 with Java 26 (Temurin-26+35, Intel Core i7-6
 
 ## Consequences
 
-- Bulk resonance scoring achieves **5.3x to 7.6x speedup** on AVX2 hardware without altering cognitive semantics.
-- Throughput exceeds **72M pairs/second** on contiguous SoA layouts.
+- The SIMD backend is retained: it satisfies the pre-merge allocation gate and preserves scalar-oracle equivalence.
+- On the representative 1,000 to 100,000-pair SoA workloads, Vector completes batches in approximately 1.4 ms or less and is 6.2x to 6.7x faster than Scalar in this study.
 - Incubator module dependency is isolated: callers running without `--add-modules jdk.incubator.vector` continue executing portably via the scalar backend.
 - Core domain model remains independent of hardware-specific types.
 
@@ -81,7 +106,7 @@ Benchmarks executed on Linux x86_64 with Java 26 (Temurin-26+35, Intel Core i7-6
 
 ## Follow-up Work
 
-- Revalidate numerical equivalence, vector availability, crossover behavior, and JMH evidence when
+- Revalidate numerical equivalence, vector availability, crossover behavior, allocation evidence, and JMH evidence when
   upgrading the JDK or when the incubating Vector API changes status, packaging, or semantics.
 - Migrate the isolated backend and its module configuration if the Vector API becomes standard or
   changes incompatibly; keep `ScalarBatchResonanceEvaluator` available throughout that migration.
