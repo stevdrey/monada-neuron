@@ -4,6 +4,7 @@ import monada.neuron.aeon.Aeon;
 import monada.neuron.aeon.AeonCoordinationResult;
 import monada.neuron.aeon.AeonInput;
 import monada.neuron.aeon.AeonPurpose;
+import monada.neuron.aeon.BoundedParallelAeonCoordinator;
 import monada.neuron.aeon.DeterministicAeonCoordinator;
 import monada.neuron.context.CognitiveBudget;
 import monada.neuron.context.CognitiveContext;
@@ -11,7 +12,6 @@ import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator;
 import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator.GraphTopology;
 import monada.neuron.runtime.graph.DeterministicSignalPropagationEngine;
 import monada.neuron.runtime.graph.PropagationConfig;
-import monada.neuron.runtime.graph.SignalRoutingPolicy;
 import monada.neuron.signal.NodeProcessingResult;
 import monada.neuron.signal.NodeProcessor;
 import monada.neuron.signal.Signal;
@@ -27,6 +27,7 @@ import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
@@ -34,7 +35,8 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * JMH microbenchmark for {@link DeterministicAeonCoordinator}.
+ * JMH microbenchmark comparing sequential {@link DeterministicAeonCoordinator} and
+ * bounded parallel {@link BoundedParallelAeonCoordinator} across input counts.
  */
 @BenchmarkMode({Mode.Throughput, Mode.AverageTime})
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
@@ -44,10 +46,11 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Benchmark)
 public class AeonCoordinationBenchmark {
 
-    @Param({"5", "20"})
+    @Param({"5", "10", "32", "128"})
     private int inputCount;
 
-    private DeterministicAeonCoordinator coordinator;
+    private DeterministicAeonCoordinator sequentialCoordinator;
+    private BoundedParallelAeonCoordinator parallelCoordinator;
     private Aeon aeon;
     private List<AeonInput> inputs;
     private NodeProcessor processor;
@@ -55,7 +58,10 @@ public class AeonCoordinationBenchmark {
 
     @Setup(Level.Trial)
     public void setup() {
-        coordinator = new DeterministicAeonCoordinator(new DeterministicSignalPropagationEngine());
+        var engine = new DeterministicSignalPropagationEngine();
+        sequentialCoordinator = new DeterministicAeonCoordinator(engine);
+        parallelCoordinator = new BoundedParallelAeonCoordinator(engine);
+
         var generator = new DeterministicWorkloadGenerator();
         GraphTopology topology = generator.generateGraph(50, 3);
         aeon = generator.generateAeon(AeonPurpose.REASONING, topology);
@@ -69,9 +75,16 @@ public class AeonCoordinationBenchmark {
         config = PropagationConfig.routeAll(200, 4);
     }
 
+    @TearDown(Level.Trial)
+    public void tearDown() {
+        if (parallelCoordinator != null) {
+            parallelCoordinator.close();
+        }
+    }
+
     @Benchmark
-    public void benchmarkDirectCoordination(Blackhole blackhole) {
-        AeonCoordinationResult result = coordinator.coordinate(
+    public void benchmarkSequentialDirect(Blackhole blackhole) {
+        AeonCoordinationResult result = sequentialCoordinator.coordinate(
                 aeon,
                 inputs,
                 processor,
@@ -80,11 +93,38 @@ public class AeonCoordinationBenchmark {
     }
 
     @Benchmark
-    public void benchmarkContextualCoordination(Blackhole blackhole) {
-        var budget = new CognitiveBudget(2_000, 2_000, 5_000);
+    public void benchmarkParallelDirect(Blackhole blackhole) {
+        AeonCoordinationResult result = parallelCoordinator.coordinate(
+                aeon,
+                inputs,
+                processor,
+                config);
+        blackhole.consume(result);
+    }
+
+    @Benchmark
+    public void benchmarkSequentialContextual(Blackhole blackhole) {
+        var budget = new CognitiveBudget(50_000, 50_000, 50_000);
         var context = new CognitiveContext(budget);
         try {
-            AeonCoordinationResult result = coordinator.coordinate(
+            AeonCoordinationResult result = sequentialCoordinator.coordinate(
+                    aeon,
+                    inputs,
+                    processor,
+                    config,
+                    context);
+            blackhole.consume(result);
+        } finally {
+            context.close();
+        }
+    }
+
+    @Benchmark
+    public void benchmarkParallelContextual(Blackhole blackhole) {
+        var budget = new CognitiveBudget(50_000, 50_000, 50_000);
+        var context = new CognitiveContext(budget);
+        try {
+            AeonCoordinationResult result = parallelCoordinator.coordinate(
                     aeon,
                     inputs,
                     processor,
