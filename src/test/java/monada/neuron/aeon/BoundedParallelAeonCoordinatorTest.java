@@ -13,6 +13,7 @@ import monada.neuron.signal.NodeProcessingResult;
 import monada.neuron.signal.NodeProcessor;
 import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -34,6 +35,11 @@ class BoundedParallelAeonCoordinatorTest {
     private final SignalPropagationEngine graphEngine = new DeterministicSignalPropagationEngine();
     private final DeterministicAeonCoordinator sequentialCoordinator = new DeterministicAeonCoordinator(graphEngine);
     private final BoundedParallelAeonCoordinator parallelCoordinator = new BoundedParallelAeonCoordinator(graphEngine, 4, 2);
+
+    @AfterEach
+    void tearDown() {
+        parallelCoordinator.close();
+    }
 
     @Test
     void emptyInputSucceedsWithoutCallingTheEngine() {

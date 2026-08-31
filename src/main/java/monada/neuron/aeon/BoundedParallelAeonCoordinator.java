@@ -25,6 +25,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.ThreadFactory;
 
 /**
  * Bounded parallel implementation of {@link CognitiveAeonCoordinator} that executes independent
@@ -32,7 +33,7 @@ import java.util.concurrent.ForkJoinPool;
  *
  * <p>Caller-visible results strictly preserve the declared input order. In contextual mode, the
  * shared {@link CognitiveContext} is never mutated concurrently: worker threads record isolated
- * execution logs, and the coordinator reconciles events, step/signal budgets, and trace entries
+ * execution logs in bounded waves, and the coordinator reconciles events, step/signal budgets, and trace entries
  * sequentially on the calling thread in exact input index order.
  *
  * <p>If any input task encounters an exception, sibling tasks are cancelled and the exception
@@ -77,7 +78,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
             int parallelismThreshold) {
         this(
                 propagationEngine,
-                Executors.newFixedThreadPool(validateParallelism(maxParallelism)),
+                Executors.newFixedThreadPool(validateParallelism(maxParallelism), daemonThreadFactory()),
                 maxParallelism,
                 parallelismThreshold,
                 AeonParallelEligibility.INDEPENDENT_READ_ONLY,
@@ -226,65 +227,108 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
 
         var confinedConfig = confinedConfig(aeon, config);
         int inputCount = stableInputs.size();
-        var logs = new InputExecutionLog[inputCount];
-        var failures = new Throwable[inputCount];
-        var futures = new CompletableFuture<?>[inputCount];
+        int waveSize = Math.max(parallelismThreshold, maxParallelism);
+        var inputResults = new ArrayList<AeonInputResult>(inputCount);
 
         int budgetMaxSteps = context.budget().maxSteps();
         int budgetMaxSignals = context.budget().maxSignals();
 
-        for (int i = 0; i < inputCount; i++) {
-            final int index = i;
-            futures[index] = CompletableFuture.runAsync(() -> {
-                try {
-                    logs[index] = recordExecution(
-                            startNodes.get(index),
-                            stableInputs.get(index).signal(),
-                            processor,
-                            confinedConfig,
-                            budgetMaxSteps,
-                            budgetMaxSignals);
-                } catch (Throwable t) {
-                    failures[index] = t;
+        for (int waveStart = 0; waveStart < inputCount; waveStart += waveSize) {
+            int waveEnd = Math.min(inputCount, waveStart + waveSize);
+            int waveLength = waveEnd - waveStart;
+
+            if (!context.hasRemainingStepCapacity()) {
+                for (int i = waveStart; i < waveEnd; i++) {
+                    var input = stableInputs.get(i);
+                    boolean stepBudgetExhaustedBefore = context.stepBudgetExhausted();
+                    boolean signalBudgetExhaustedBefore = context.signalBudgetExhausted();
+                    context.recordAeonInputStarted(aeon.getId(), input.startNodeId());
+
+                    var emptyResult = new PropagationResult(List.of(), 0, false, false);
+                    var inputResult = new AeonInputResult(input, emptyResult);
+                    inputResults.add(inputResult);
+
+                    boolean contextLimitReached = (!stepBudgetExhaustedBefore && context.stepBudgetExhausted())
+                            || (!signalBudgetExhaustedBefore && context.signalBudgetExhausted())
+                            || (context.stepBudgetExhausted() || context.signalBudgetExhausted());
+
+                    context.recordAeonInputCompleted(
+                            aeon.getId(),
+                            input.startNodeId(),
+                            0,
+                            false,
+                            false,
+                            contextLimitReached);
                 }
-            }, executor);
+                continue;
+            }
+
+            var waveLogs = new InputExecutionLog[waveLength];
+            var waveFailures = new Throwable[waveLength];
+            var waveFutures = new CompletableFuture<?>[waveLength];
+
+            for (int w = 0; w < waveLength; w++) {
+                final int waveIndex = w;
+                final int inputIndex = waveStart + w;
+                waveFutures[waveIndex] = CompletableFuture.runAsync(() -> {
+                    try {
+                        waveLogs[waveIndex] = recordExecution(
+                                startNodes.get(inputIndex),
+                                stableInputs.get(inputIndex).signal(),
+                                processor,
+                                confinedConfig,
+                                budgetMaxSteps,
+                                budgetMaxSignals);
+                    } catch (Throwable t) {
+                        waveFailures[waveIndex] = t;
+                    }
+                }, executor);
+            }
+
+            CompletableFuture.allOf(waveFutures).join();
+
+            reconcileContextualWave(
+                    aeon,
+                    stableInputs,
+                    waveStart,
+                    waveLength,
+                    confinedConfig,
+                    context,
+                    waveLogs,
+                    waveFailures,
+                    inputResults);
         }
 
-        CompletableFuture.allOf(futures).join();
-
-        return reconcileContextualResults(
-                aeon,
-                stableInputs,
-                confinedConfig,
-                context,
-                logs,
-                failures);
+        return new AeonCoordinationResult(inputResults);
     }
 
-    private AeonCoordinationResult reconcileContextualResults(
+    private void reconcileContextualWave(
             Aeon aeon,
             List<AeonInput> stableInputs,
+            int waveStart,
+            int waveLength,
             PropagationConfig confinedConfig,
             CognitiveContext context,
-            InputExecutionLog[] logs,
-            Throwable[] failures) {
-        int inputCount = stableInputs.size();
-        var inputResults = new ArrayList<AeonInputResult>(inputCount);
-
-        for (int i = 0; i < inputCount; i++) {
-            var input = stableInputs.get(i);
+            InputExecutionLog[] waveLogs,
+            Throwable[] waveFailures,
+            List<AeonInputResult> inputResults) {
+        for (int w = 0; w < waveLength; w++) {
+            int inputIndex = waveStart + w;
+            var input = stableInputs.get(inputIndex);
             boolean stepBudgetExhaustedBefore = context.stepBudgetExhausted();
             boolean signalBudgetExhaustedBefore = context.signalBudgetExhausted();
             context.recordAeonInputStarted(aeon.getId(), input.startNodeId());
 
-            if (failures[i] != null) {
+            if (waveFailures[w] != null) {
                 if (context.hasRemainingStepCapacity()) {
                     context.tryRecordInputSignal(input.startNodeId(), input.signal());
                 }
-                rethrowDeterministicFailure(i, failures);
+                rethrowDeterministicFailure(w, waveFailures);
             }
 
-            var log = logs[i];
+            var log = waveLogs[w];
+            waveLogs[w] = null;
+
             if (!context.hasRemainingStepCapacity()) {
                 var emptyResult = new PropagationResult(List.of(), 0, false, false);
                 var inputResult = new AeonInputResult(input, emptyResult);
@@ -409,8 +453,6 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                     effectiveResult.hopLimitReached(),
                     contextLimitReached);
         }
-
-        return new AeonCoordinationResult(inputResults);
     }
 
     private InputExecutionLog recordExecution(
@@ -441,8 +483,8 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
 
             var work = pending.removeFirst();
             NodeProcessingResult processingResult = Objects.requireNonNull(
-                    processor.process(work.node(), work.signal()),
-                    "processor result must not be null");
+                processor.process(work.node(), work.signal()),
+                "processor result must not be null");
             processedSteps++;
 
             var outputs = processingResult.emittedSignals();
@@ -575,6 +617,14 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
             throw error;
         }
         throw new RuntimeException(primary);
+    }
+
+    private static ThreadFactory daemonThreadFactory() {
+        return runnable -> {
+            var thread = new Thread(runnable, "bounded-parallel-aeon-worker");
+            thread.setDaemon(true);
+            return thread;
+        };
     }
 
     private static int validateParallelism(int parallelism) {

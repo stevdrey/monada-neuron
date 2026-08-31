@@ -15,6 +15,7 @@ import monada.neuron.signal.NodeProcessingResult;
 import monada.neuron.signal.NodeProcessor;
 import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -35,6 +36,11 @@ class BoundedParallelAeonCoordinatorContextTest {
     private final DeterministicSignalPropagationEngine engine = new DeterministicSignalPropagationEngine();
     private final DeterministicAeonCoordinator sequentialCoordinator = new DeterministicAeonCoordinator(engine);
     private final BoundedParallelAeonCoordinator parallelCoordinator = new BoundedParallelAeonCoordinator(engine, 4, 2);
+
+    @AfterEach
+    void tearDown() {
+        parallelCoordinator.close();
+    }
 
     @Test
     void contextualEquivalenceAcrossRandomizedWorkloads() {
@@ -272,6 +278,46 @@ class BoundedParallelAeonCoordinatorContextTest {
             assertAll(
                     () -> assertTrue(failure.getMessage().contains("CognitiveSignalPropagationEngine")),
                     () -> assertEquals(0, calls.get()));
+        }
+    }
+
+    @Test
+    void multiWaveContextualCoordinationPreservesEquivalenceAndBypassesExhaustedWaves() {
+        var root1 = node(1);
+        var child1 = node(2);
+        root1.connect(child1);
+
+        var aeon = aeonWith(root1, child1);
+
+        var inputs = new ArrayList<AeonInput>();
+        for (int i = 0; i < 20; i++) {
+            inputs.add(new AeonInput(root1.getId(), signal(i + 1.0)));
+        }
+
+        NodeProcessor processor = (node, input) -> new NodeProcessingResult(List.of(input));
+        var config = PropagationConfig.routeAll(10, 2);
+
+        // Budget allows only 6 steps (exhausts during input 2 in wave 1)
+        var budget = new CognitiveBudget(6, 50, 100);
+
+        try (var customParallelCoordinator = new BoundedParallelAeonCoordinator(engine, 2, 2)) {
+            var seqContext = new CognitiveContext(budget);
+            var seqResult = sequentialCoordinator.coordinate(aeon, inputs, processor, config, seqContext);
+            var seqSnapshot = seqContext.complete(CognitiveCycleOutcome.SUCCESS);
+
+            var parContext = new CognitiveContext(budget);
+            var parResult = customParallelCoordinator.coordinate(aeon, inputs, processor, config, parContext);
+            var parSnapshot = parContext.complete(CognitiveCycleOutcome.SUCCESS);
+
+            assertAll(
+                    () -> assertEquals(seqResult, parResult),
+                    () -> assertEquals(20, parResult.inputResults().size()),
+                    () -> assertEquals(seqSnapshot.processedSteps(), parSnapshot.processedSteps()),
+                    () -> assertEquals(seqSnapshot.stepBudgetExhausted(), parSnapshot.stepBudgetExhausted()),
+                    () -> assertTrue(parSnapshot.stepBudgetExhausted()),
+                    () -> assertEquals(seqSnapshot.aeonResults(), parSnapshot.aeonResults()),
+                    () -> assertEquals(seqSnapshot.traceEntries(), parSnapshot.traceEntries()),
+                    () -> assertEquals(seqSnapshot, parSnapshot));
         }
     }
 
