@@ -53,3 +53,10 @@ Rejected based on empirical evidence. In sequential and random reads, `HeapNodeS
 - The cognitive core remains 100% portable and independent of native platform flags or off-heap memory requirements.
 - Future memory compaction efforts can adopt the on-heap SoA layout (`HeapNodeStateStore`) as a proven performance improvement for state storage.
 - Benchmarks and cognitive baseline tools maintain reproducible, side-by-side comparison evidence across Object, Heap SoA, and FFM layouts.
+
+## Follow-up Work
+
+- Re-evaluate FFM if GC pressure or total heap occupancy becomes material at larger production scales or memory-constrained deployments.
+- Compare `Arena.ofShared()` only when parallel state access and cross-thread mutation become necessary.
+- Keep `HeapNodeStateStore` as the preferred compact state candidate until FFM shows a measurable end-to-end advantage.
+- Re-benchmark on future JDK upgrades or material FFM implementation and compiler optimization changes.
