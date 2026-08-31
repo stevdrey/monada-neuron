@@ -64,6 +64,24 @@ public class NodeStateLayoutBenchmark {
         ffmSnapshot = NodeStateSnapshot.compileOffHeap(Arrays.asList(objectNodes));
     }
 
+    @Setup(Level.Invocation)
+    public void resetMutatedNodes() {
+        if (fixture == null || objectNodes == null) {
+            return;
+        }
+        int updateCount = fixture.updateStates().length;
+        for (int i = 0; i < updateCount; i++) {
+            int index = i % objectNodes.length;
+            Node source = fixture.nodes().get(index);
+            objectNodes[index] = new Node.Builder()
+                    .id(source.getId())
+                    .type(source.getType())
+                    .frequencyState(source.getFrequencyState())
+                    .energy(source.getEnergy())
+                    .build();
+        }
+    }
+
     @TearDown(Level.Iteration)
     public void releaseState() {
         closeSnapshots();
@@ -133,6 +151,12 @@ public class NodeStateLayoutBenchmark {
         return randomRead(ffmSnapshot.stateStore());
     }
 
+    /**
+     * Benchmarks bounded state updates using domain {@link Node#transition(FrequencyState)} semantics.
+     *
+     * <p>Each invocation updates target nodes reset to fresh state, capturing exactly one history
+     * transition per node and updating its energy level.
+     */
     @Benchmark
     public double benchmarkObjectBoundedUpdate() {
         double checksum = 0.0;
@@ -146,11 +170,21 @@ public class NodeStateLayoutBenchmark {
         return checksum;
     }
 
+    /**
+     * Benchmarks bounded physical in-place Structure-of-Arrays updates on {@link HeapNodeStateStore}.
+     *
+     * <p>Overwrites the 4 primitive channels without recording history.
+     */
     @Benchmark
     public double benchmarkHeapBoundedUpdate() {
         return boundedUpdate(heapSnapshot.stateStore());
     }
 
+    /**
+     * Benchmarks bounded physical in-place Structure-of-Arrays updates on {@link FfmNodeStateStore}.
+     *
+     * <p>Overwrites the 4 off-heap native channels without recording history.
+     */
     @Benchmark
     public double benchmarkFfmBoundedUpdate() {
         return boundedUpdate(ffmSnapshot.stateStore());

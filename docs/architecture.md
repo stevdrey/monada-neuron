@@ -414,7 +414,8 @@ variants each use 32 logical bytes per node; UUIDs, node type, history, and grap
 the canonical `Node`. The FFM variant owns four native-order, eight-byte-aligned segments through
 one confined `Arena`, is single-thread owned, and has no implicit synchronization or write-back.
 It is an evaluation-only API: runtime selection, CSR traversal, and the reference `Node` model are
-unchanged until a later measured decision promotes a backend.
+unchanged until a later measured decision promotes a backend. ADR 0015 records the experimental
+layout, ownership lifecycle, and empirical non-promotion rationale.
 
 ## SIMD
 
