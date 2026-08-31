@@ -121,6 +121,9 @@ public final class CognitiveBaselineRunner {
         // 5. Adaptation Policy Comparison (with Per-Iteration State Isolation)
         results.addAll(benchmarkAdaptationComparison());
 
+        // 6. Isolated object / heap-SoA / FFM state-layout comparison
+        results.addAll(new NodeStateLayoutExperiment(seed, quickMode, collector).run());
+
         var runConfig = quickMode
                 ? RunConfiguration.defaultQuick(seed)
                 : RunConfiguration.defaultFull(seed);

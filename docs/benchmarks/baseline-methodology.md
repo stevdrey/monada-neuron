@@ -4,7 +4,7 @@
 
 Monada Neuron requires measurable, reproducible behavior prior to introducing hardware-specific, SIMD, off-heap, or accelerator-backed optimizations (as specified in [ADR 0003](../adr/0003-performance-first-java26-and-heterogeneous-compute.md) and [Issue #14](https://github.com/stevdrey/monada-neuron/issues/14)).
 
-The `:monada-neuron-evaluation` subproject provides an isolated benchmarking and evaluation harness measuring both semantic correctness and resource characteristics (latency distributions, throughput, memory allocation rate, and GC activity).
+The `:monada-neuron-evaluation` subproject provides an isolated benchmarking and evaluation harness measuring both semantic correctness and resource characteristics (latency distributions, throughput, thread allocation rate, GC activity, committed off-heap bytes, and Linux process RSS when available).
 
 ## Architecture & Module Isolation
 
@@ -50,6 +50,12 @@ To guarantee reliable and reproducible baselines, the harness enforces five key 
    - `AllocationMetrics` explicitly records `AllocationSource` (`THREAD_MX_BEAN` vs `UNAVAILABLE`).
    - If thread allocation tracking is unavailable, allocation metrics report as unavailable (`N/A` / `null`) rather than substituting net heap growth.
    - GC deltas capture JVM-wide cumulative GC activity across the entire measurement phase.
+   - `ProcessResidentSetMetrics` reads `VmRSS` from `/proc/self/status` on Linux and reports `UNAVAILABLE` on other platforms; it never substitutes heap usage for RSS.
+
+6. **State-layout Snapshot Isolation**:
+   - `NodeStateSnapshot` sorts a non-empty canonical `Node` collection by UUID, retains the dense index mapping, and copies only amplitude, frequency, phase, and energy into the selected store.
+   - Both the heap SoA control and FFM store use four `double` channels: 32 logical bytes per node. The FFM store reports those bytes as explicitly committed off-heap state while it is open.
+   - The snapshots neither synchronize with nor write back to their source Nodes. FFM owns a confined arena and is intentionally single-threaded.
 
 ## Representative Graph Retained Footprint
 
@@ -86,6 +92,11 @@ All synthetic workloads are generated deterministically from configurable seeds 
 5. **Adaptation Policy A/B Comparison**:
    - Measures cycle overhead with `NoOpAdaptationPolicy` (no-op baseline) versus `DeterministicBaselineAdaptationPolicy` (in-place bounded frequency state and energy updates) from pristine node states.
 
+6. **Node State Layout (Issue #27)**:
+   - Compares canonical object state with copied heap SoA and FFM SoA state at 100,000 and 1,000,000 Nodes.
+   - Covers construction/population, sequential reads, random reads against a precomputed schedule, and bounded updates. The baseline additionally measures CSR plus state snapshot compilation as an integration cost only.
+   - Propagation stays on the existing reference or explicit CSR paths; no benchmark routes signals through FFM state.
+
 ## Verification & Benchmark Commands
 
 ### Run Full Baseline Suite
@@ -112,6 +123,22 @@ Runs JMH microbenchmarks for hot primitives (`ScalarResonanceBenchmark`, `Signal
 Pass custom JMH arguments:
 ```bash
 ./gradlew :monada-neuron-evaluation:jmh -PjmhArgs="-f 1 -wi 1 -i 1 -r 1s AdaptationPolicyBenchmark CognitiveCycleBenchmark ScalarResonanceBenchmark"
+```
+
+Run the Issue #27 layout comparison with GC telemetry:
+
+```bash
+./gradlew :monada-neuron-evaluation:jmh \
+  -PjmhArgs="-f 1 -wi 3 -i 5 -prof gc NodeStateLayout"
+```
+
+For a shorter recorded comparison, used for the results below, constrain JMH to average time,
+two warmups, three one-second measurements, and write JSON outside the repository:
+
+```bash
+./gradlew :monada-neuron-evaluation:jmh \
+  -PjmhArgs="-bm avgt -f 1 -wi 2 -i 3 -r 1s -prof gc -rf json \
+  -rff /tmp/issue-27-node-state-jmh.json NodeStateLayoutBenchmark"
 ```
 
 ### PR #35 Vector API allocation and crossover study
@@ -270,9 +297,36 @@ From the empirical evidence gathered by the baseline harness and the completion 
 - **Decision**: Both JMH and the end-to-end baseline exceed the RouteAll throughput hypothesis at 2,000 nodes; JMH also exceeds it at 500 nodes. Neither JMH workload reaches the required 75% allocation reduction (65.4% and 70.9%), so the complete target is not met. Threshold-routed workloads are slower with CSR because they do too little traversal to amortize snapshot validation and queue setup. This is a reproducible negative result for the full target; CSR remains explicit and is not selected as a default backend.
 
 ### 3. FFM / Off-Heap Storage for Large-Scale Topologies
-- **Observation**: Phase-1 `Node` objects incur standard Java object header overhead (16–24 bytes per node/state reference plus GC pointer tracking).
-- **Proposed Experiment**: Evaluate `java.lang.foreign.MemorySegment` contiguous off-heap layout for large state buffers ($> 100,000$ nodes).
-- **Target Metric**: Zero GC overhead for node state storage and measurable cache locality improvements.
+- **Implementation**: Issue #27 adds an evaluation-only `NodeStateSnapshot`, with an object control,
+  a four-`double[]` heap SoA control, and four FFM `MemorySegment` channels managed by one confined
+  `Arena`. It preserves the UUID-sorted dense mapping, copies no topology or history, validates
+  values and indices, and rejects every data access after idempotent close.
+- **Physical contract**: each snapshot stores exactly four native-order `double` channels,
+  or 32 logical bytes per Node. At 100,000 Nodes, the FFM snapshot explicitly commits 3.20 MB
+  off heap; UUIDs, types, histories, edges, and the source Nodes still coexist on heap.
+- **Fresh full baseline (2026-08-31)**: Temurin 26+35, Linux amd64, four available processors,
+  G1 GC, seed `42`, three warmups and eight measured iterations for this experiment. Latencies
+  below are complete operation means; allocation and RSS are emitted in the JSON/Markdown report,
+  whose RSS source is `/proc/self/status` on Linux.
+
+  | Operation (100,000 Nodes) | Object `Node` | Heap SoA snapshot | FFM snapshot |
+  | :--- | ---: | ---: | ---: |
+  | Construction / population | 98.19 ms | 31.45 ms | 24.17 ms |
+  | Sequential read | 3.98 ms | 2.38 ms | 2.88 ms |
+  | Random read | 2.63 ms | 1.55 ms | 2.13 ms |
+  | Bounded update (10,000 states) | 1.72 ms | 1.20 ms | 2.14 ms |
+  | CSR + state snapshot compilation | N/A | 107.03 ms | 81.95 ms |
+
+- **JMH cross-check**: the shorter one-thread GC-profiled run described above exercised all four
+  operations at 100,000 and 1,000,000 Nodes. It recorded the expected state-size scales
+  (3.20 MB and 32.00 MB off heap) but had high variance in the million-Node construction paths,
+  including GC during snapshot setup. Its raw JSON is therefore reproducible evidence rather than
+  a promotion gate.
+- **Decision**: FFM reduces the selected mutable state's on-heap payload but does not eliminate
+  the source `Node` graph, and this isolated study does not establish an end-to-end runtime win.
+  FFM remains experimental with no automatic backend selection and no change to Node, CSR, or
+  propagation. A later decision would need stable multi-fork measurements and a lifecycle design
+  for replacing, rather than coexisting with, the selected state.
 
 ### 4. Bounded Parallelism for Multi-Input Aeon Dispatch
 - **Observation**: Multi-input Aeon coordination is currently sequential. Contextual coordination on 10 inputs costs ~6.8 ms vs 2.9 ms direct due to single-threaded sequential signal tracking and trace entries.

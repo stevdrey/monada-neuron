@@ -108,11 +108,14 @@ class EvaluationMetricsCollectorTest {
         assertTrue(json.contains("\"source\": \"UNAVAILABLE\""));
         assertTrue(json.contains("\"heapUsedBeforeBytes\": 1000"));
         assertTrue(json.contains("\"heapUsedAfterBytes\": 2024"));
+        assertTrue(json.contains("\"residentSet\": {"));
+        assertTrue(json.contains("\"source\": \"UNAVAILABLE\""));
         assertTrue(json.contains("\"throughputOpsPerSec\":"));
 
         assertNotNull(markdown);
         assertTrue(markdown.contains("`SampleBench`"));
         assertTrue(markdown.contains("`UnavailBench`"));
+        assertTrue(markdown.contains("RSS delta"));
         assertTrue(markdown.contains("N/A"));
         assertTrue(markdown.contains("Run Configuration"));
         assertTrue(markdown.contains("Environment Metadata"));
