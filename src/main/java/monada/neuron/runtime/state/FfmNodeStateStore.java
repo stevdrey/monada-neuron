@@ -114,8 +114,8 @@ public final class FfmNodeStateStore implements NodeStateStore {
         if (!open) {
             return;
         }
-        open = false;
         arena.close();
+        open = false;
     }
 
     private void requireOpenIndex(int index) {

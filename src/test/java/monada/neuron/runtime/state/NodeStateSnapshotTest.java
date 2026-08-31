@@ -120,6 +120,33 @@ class NodeStateSnapshotTest {
         assertClosedAccess(new FfmNodeStateStore(1));
     }
 
+    @Test
+    void retainsOpenStateWhenCloseFailsOnNonOwnerThreadAndAllowsOwnerCleanup() throws Exception {
+        var store = new FfmNodeStateStore(4);
+        var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+
+        Thread worker = new Thread(() -> {
+            try {
+                store.close();
+            } catch (Throwable throwable) {
+                failure.set(throwable);
+            }
+        });
+        worker.start();
+        worker.join();
+
+        assertAll(
+                () -> assertTrue(failure.get() instanceof WrongThreadException),
+                () -> assertTrue(store.isOpen()),
+                () -> assertEquals(4, store.size()),
+                () -> assertEquals(4L * NodeStateStoreSupport.BYTES_PER_NODE, store.offHeapCommittedBytes()),
+                () -> {
+                    store.close();
+                    assertFalse(store.isOpen());
+                    assertThrows(IllegalStateException.class, store::size);
+                });
+    }
+
     private void assertClosedAccess(NodeStateStore store) {
         store.close();
         store.close();
