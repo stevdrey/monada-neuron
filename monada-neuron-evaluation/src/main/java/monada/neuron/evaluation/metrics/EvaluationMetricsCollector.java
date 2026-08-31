@@ -3,9 +3,13 @@ package monada.neuron.evaluation.metrics;
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadMXBean;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.OptionalLong;
 
 /**
  * Metric collector harness that executes target workloads, collects latency distributions,
@@ -110,6 +114,7 @@ public final class EvaluationMetricsCollector {
         long gcCountBefore = totalGcCount();
         long gcTimeBefore = totalGcTime();
         long heapBefore = currentHeapUsedBytes();
+        OptionalLong residentSetBefore = currentResidentSetBytes();
 
         long[] sampleNanos = new long[measurementIterations];
         long totalAllocatedInIntervals = 0L;
@@ -137,11 +142,15 @@ public final class EvaluationMetricsCollector {
         long gcCountAfter = totalGcCount();
         long gcTimeAfter = totalGcTime();
         long heapAfter = currentHeapUsedBytes();
+        OptionalLong residentSetAfter = currentResidentSetBytes();
 
         LatencyDistribution latency = LatencyDistribution.fromSamples(sampleNanos, operationsPerIteration);
 
         long gcCountDelta = Math.max(0L, gcCountAfter - gcCountBefore);
         long gcTimeDelta = Math.max(0L, gcTimeAfter - gcTimeBefore);
+        ProcessResidentSetMetrics residentSet = ProcessResidentSetMetrics.fromReadings(
+                residentSetBefore,
+                residentSetAfter);
 
         AllocationMetrics allocation;
         if (trackingSucceeded && threadAllocatedMemorySupported) {
@@ -152,13 +161,15 @@ public final class EvaluationMetricsCollector {
                     gcCountDelta,
                     gcTimeDelta,
                     heapBefore,
-                    heapAfter);
+                    heapAfter,
+                    residentSet);
         } else {
             allocation = AllocationMetrics.unavailable(
                     gcCountDelta,
                     gcTimeDelta,
                     heapBefore,
-                    heapAfter);
+                    heapAfter,
+                    residentSet);
         }
 
         return new BenchmarkRunResult(
@@ -184,6 +195,27 @@ public final class EvaluationMetricsCollector {
 
     private long currentHeapUsedBytes() {
         return Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
+    }
+
+    private OptionalLong currentResidentSetBytes() {
+        if (!System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("linux")) {
+            return OptionalLong.empty();
+        }
+        try {
+            for (String line : Files.readAllLines(Path.of("/proc/self/status"))) {
+                if (!line.startsWith("VmRSS:")) {
+                    continue;
+                }
+                String[] tokens = line.trim().split("\\s+");
+                if (tokens.length < 2) {
+                    return OptionalLong.empty();
+                }
+                return OptionalLong.of(Math.multiplyExact(Long.parseLong(tokens[1]), 1024L));
+            }
+        } catch (IOException | NumberFormatException | ArithmeticException ignored) {
+            // RSS is optional platform telemetry; do not substitute heap usage when unavailable.
+        }
+        return OptionalLong.empty();
     }
 
     private long totalGcCount() {

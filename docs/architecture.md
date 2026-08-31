@@ -408,6 +408,14 @@ The Foreign Function & Memory API may be used for:
 
 Memory ownership, `Arena` lifetime, alignment, endianness, concurrency, and failure behavior must be explicit. Off-heap memory is not automatically faster than heap memory; its use requires evidence or a clear interoperability requirement.
 
+The Issue #27 state-layout experiment provides `NodeStateSnapshot` as an explicit, copied view of
+the four mutable numeric channels (amplitude, frequency, phase, and energy). Its heap SoA and FFM
+variants each use 32 logical bytes per node; UUIDs, node type, history, and graph edges remain on
+the canonical `Node`. The FFM variant owns four native-order, eight-byte-aligned segments through
+one confined `Arena`, is single-thread owned, and has no implicit synchronization or write-back.
+It is an evaluation-only API: runtime selection, CSR traversal, and the reference `Node` model are
+unchanged until a later measured decision promotes a backend.
+
 ## SIMD
 
 The Java 26 Vector API is an incubating API and may be used for vectorizable numeric hotspots such as bulk signal transforms, similarity operations, normalization, or activation updates.

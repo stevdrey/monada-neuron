@@ -123,7 +123,17 @@ public record EvaluationReport(
             sb.append("        \"gcCountDelta\": ").append(r.allocation().gcCountDelta()).append(",\n");
             sb.append("        \"gcTimeMillisDelta\": ").append(r.allocation().gcTimeMillisDelta()).append(",\n");
             sb.append("        \"heapUsedBeforeBytes\": ").append(r.allocation().heapUsedBeforeBytes()).append(",\n");
-            sb.append("        \"heapUsedAfterBytes\": ").append(r.allocation().heapUsedAfterBytes()).append("\n");
+            sb.append("        \"heapUsedAfterBytes\": ").append(r.allocation().heapUsedAfterBytes()).append(",\n");
+            sb.append("        \"residentSet\": {\n");
+            sb.append("          \"source\": \"").append(r.allocation().residentSet().source().name()).append("\",\n");
+            if (r.allocation().residentSet().isAvailable()) {
+                sb.append("          \"beforeBytes\": ").append(r.allocation().residentSet().beforeBytes()).append(",\n");
+                sb.append("          \"afterBytes\": ").append(r.allocation().residentSet().afterBytes()).append("\n");
+            } else {
+                sb.append("          \"beforeBytes\": null,\n");
+                sb.append("          \"afterBytes\": null\n");
+            }
+            sb.append("        }\n");
             sb.append("      },\n");
             sb.append("      \"diagnostics\": {\n");
             var sortedDiagnostics = new TreeMap<>(r.diagnostics());
@@ -175,16 +185,19 @@ public record EvaluationReport(
         sb.append("| **Active GCs** | `").append(String.join(", ", environment.garbageCollectors())).append("` |\n\n");
 
         sb.append("## Workload Benchmark Results\n\n");
-        sb.append("| Benchmark | Scale | Mean Latency | Median (p50) | p95 | p99 | Throughput | Alloc / Op |\n");
-        sb.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n");
+        sb.append("| Benchmark | Scale | Mean Latency | Median (p50) | p95 | p99 | Throughput | Alloc / Op | RSS delta |\n");
+        sb.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n");
 
         for (var r : results) {
             String allocStr = (r.allocation().source() == AllocationMetrics.AllocationSource.THREAD_MX_BEAN)
                     ? formatBytes(r.allocation().bytesPerOp())
                     : "N/A";
+            String residentSetDelta = r.allocation().residentSet().isAvailable()
+                    ? formatSignedBytes(r.allocation().residentSet().deltaBytes())
+                    : "N/A";
             sb.append(String.format(
                     Locale.ROOT,
-                    "| `%s` | %s | %s | %s | %s | %s | %,.0f ops/s | %s |\n",
+                    "| `%s` | %s | %s | %s | %s | %s | %,.0f ops/s | %s | %s |\n",
                     r.benchmarkName(),
                     r.workloadScale(),
                     formatNanos(r.latency().meanNanos()),
@@ -192,7 +205,8 @@ public record EvaluationReport(
                     formatNanos(r.latency().p95Nanos()),
                     formatNanos(r.latency().p99Nanos()),
                     r.latency().throughputOpsPerSec(),
-                    allocStr));
+                    allocStr,
+                    residentSetDelta));
         }
 
 
@@ -233,6 +247,14 @@ public record EvaluationReport(
         } else {
             return String.format(Locale.ROOT, "%.2f MB", bytes / (1024.0 * 1024.0));
         }
+    }
+
+    private static String formatSignedBytes(long bytes) {
+        if (bytes == 0L) {
+            return "0 B";
+        }
+        String sign = bytes < 0L ? "-" : "+";
+        return sign + formatBytes(Math.abs((double) bytes));
     }
 
     private static String escapeJson(String s) {

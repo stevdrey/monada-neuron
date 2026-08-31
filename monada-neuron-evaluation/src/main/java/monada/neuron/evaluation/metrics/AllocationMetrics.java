@@ -12,7 +12,8 @@ public record AllocationMetrics(
         long gcCountDelta,
         long gcTimeMillisDelta,
         long heapUsedBeforeBytes,
-        long heapUsedAfterBytes) {
+        long heapUsedAfterBytes,
+        ProcessResidentSetMetrics residentSet) {
 
     public enum AllocationSource {
         THREAD_MX_BEAN,
@@ -21,6 +22,7 @@ public record AllocationMetrics(
 
     public AllocationMetrics {
         Objects.requireNonNull(source, "source must not be null");
+        Objects.requireNonNull(residentSet, "residentSet must not be null");
     }
 
     public static AllocationMetrics ofThreadAllocated(
@@ -37,7 +39,27 @@ public record AllocationMetrics(
                 gcCountDelta,
                 gcTimeMillisDelta,
                 heapUsedBeforeBytes,
-                heapUsedAfterBytes);
+                heapUsedAfterBytes,
+                ProcessResidentSetMetrics.unavailable());
+    }
+
+    public static AllocationMetrics ofThreadAllocated(
+            long totalAllocatedBytes,
+            double bytesPerOp,
+            long gcCountDelta,
+            long gcTimeMillisDelta,
+            long heapUsedBeforeBytes,
+            long heapUsedAfterBytes,
+            ProcessResidentSetMetrics residentSet) {
+        return new AllocationMetrics(
+                AllocationSource.THREAD_MX_BEAN,
+                totalAllocatedBytes,
+                bytesPerOp,
+                gcCountDelta,
+                gcTimeMillisDelta,
+                heapUsedBeforeBytes,
+                heapUsedAfterBytes,
+                residentSet);
     }
 
     public static AllocationMetrics unavailable(
@@ -52,7 +74,25 @@ public record AllocationMetrics(
                 gcCountDelta,
                 gcTimeMillisDelta,
                 heapUsedBeforeBytes,
-                heapUsedAfterBytes);
+                heapUsedAfterBytes,
+                ProcessResidentSetMetrics.unavailable());
+    }
+
+    public static AllocationMetrics unavailable(
+            long gcCountDelta,
+            long gcTimeMillisDelta,
+            long heapUsedBeforeBytes,
+            long heapUsedAfterBytes,
+            ProcessResidentSetMetrics residentSet) {
+        return new AllocationMetrics(
+                AllocationSource.UNAVAILABLE,
+                -1L,
+                -1.0,
+                gcCountDelta,
+                gcTimeMillisDelta,
+                heapUsedBeforeBytes,
+                heapUsedAfterBytes,
+                residentSet);
     }
 
     public static AllocationMetrics empty() {

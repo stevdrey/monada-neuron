@@ -28,6 +28,8 @@ class CognitiveBaselineRunnerTest {
         boolean hasAeon = report.results().stream().anyMatch(r -> r.benchmarkName().contains("AeonCoordinator"));
         boolean hasCycle = report.results().stream().anyMatch(r -> r.benchmarkName().contains("DeterministicCognitiveCycle"));
         boolean hasAdaptation = report.results().stream().anyMatch(r -> r.benchmarkName().contains("CognitiveCycle.Adaptation"));
+        boolean hasNodeStateLayout = report.results().stream()
+                .anyMatch(r -> r.benchmarkName().contains("NodeStateLayout"));
 
         assertTrue(hasResonance, "Should contain ScalarResonanceMetric benchmark");
         assertTrue(hasBatchResonance, "Should contain VectorBatchResonance benchmark");
@@ -37,5 +39,6 @@ class CognitiveBaselineRunnerTest {
         assertTrue(hasAeon, "Should contain AeonCoordinator benchmark");
         assertTrue(hasCycle, "Should contain DeterministicCognitiveCycle benchmark");
         assertTrue(hasAdaptation, "Should contain Adaptation comparison benchmark");
+        assertTrue(hasNodeStateLayout, "Should contain the FFM state-layout experiment");
     }
 }
