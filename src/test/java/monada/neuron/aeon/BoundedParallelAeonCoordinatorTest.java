@@ -20,7 +20,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
@@ -212,6 +216,7 @@ class BoundedParallelAeonCoordinatorTest {
 
         var firstFailure = new IllegalStateException("input 1 failed");
         var secondFailure = new IllegalArgumentException("input 3 failed");
+        var failuresReady = new CountDownLatch(2);
 
         var inputs = List.of(
                 new AeonInput(root.getId(), signal(0.0)),
@@ -221,9 +226,11 @@ class BoundedParallelAeonCoordinatorTest {
 
         NodeProcessor processor = (node, input) -> {
             if (input.frequencyState().amplitude() == 1.0) {
+                await(failuresReady);
                 throw firstFailure;
             }
             if (input.frequencyState().amplitude() == 3.0) {
+                await(failuresReady);
                 throw secondFailure;
             }
             return NodeProcessingResult.noOutput();
@@ -236,6 +243,112 @@ class BoundedParallelAeonCoordinatorTest {
         assertSame(firstFailure, actual);
         assertEquals(1, actual.getSuppressed().length);
         assertSame(secondFailure, actual.getSuppressed()[0]);
+    }
+
+    @Test
+    void suppliedExecutorNeverExceedsConfiguredParallelism() throws Exception {
+        ExecutorService suppliedExecutor = Executors.newFixedThreadPool(8);
+        try (var boundedCoordinator = new BoundedParallelAeonCoordinator(
+                graphEngine,
+                suppliedExecutor,
+                2,
+                1,
+                AeonParallelEligibility.INDEPENDENT_READ_ONLY)) {
+            var root = node(uuid(1));
+            var aeon = aeonWith(root);
+            var activeTasks = new AtomicInteger();
+            var peakTasks = new AtomicInteger();
+
+            var inputs = List.of(
+                    new AeonInput(root.getId(), signal(1.0)),
+                    new AeonInput(root.getId(), signal(2.0)),
+                    new AeonInput(root.getId(), signal(3.0)),
+                    new AeonInput(root.getId(), signal(4.0)),
+                    new AeonInput(root.getId(), signal(5.0)),
+                    new AeonInput(root.getId(), signal(6.0)));
+
+            var result = boundedCoordinator.coordinate(
+                    aeon,
+                    inputs,
+                    (node, input) -> {
+                        int active = activeTasks.incrementAndGet();
+                        peakTasks.accumulateAndGet(active, Math::max);
+                        try {
+                            try {
+                                Thread.sleep(50);
+                            } catch (InterruptedException interrupted) {
+                                Thread.currentThread().interrupt();
+                                throw new AssertionError(interrupted);
+                            }
+                            return NodeProcessingResult.noOutput();
+                        } finally {
+                            activeTasks.decrementAndGet();
+                        }
+                    },
+                    PropagationConfig.routeAll(1, 0));
+
+            assertAll(
+                    () -> assertEquals(inputs.size(), result.inputResults().size()),
+                    () -> assertEquals(2, peakTasks.get()),
+                    () -> assertFalse(suppliedExecutor.isShutdown()));
+        } finally {
+            suppliedExecutor.shutdownNow();
+            assertTrue(suppliedExecutor.awaitTermination(1, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void cancelsInterruptibleSiblingAfterEarliestFailure() throws Exception {
+        ExecutorService suppliedExecutor = Executors.newFixedThreadPool(2);
+        try (var boundedCoordinator = new BoundedParallelAeonCoordinator(
+                graphEngine,
+                suppliedExecutor,
+                2,
+                1,
+                AeonParallelEligibility.INDEPENDENT_READ_ONLY)) {
+            var root = node(uuid(1));
+            var aeon = aeonWith(root);
+            var slowTaskStarted = new CountDownLatch(1);
+            var slowTaskInterrupted = new CountDownLatch(1);
+            var failure = new IllegalStateException("first input failed");
+
+            var actual = assertThrows(
+                    IllegalStateException.class,
+                    () -> boundedCoordinator.coordinate(
+                            aeon,
+                            List.of(
+                                    new AeonInput(root.getId(), signal(1.0)),
+                                    new AeonInput(root.getId(), signal(2.0))),
+                            (node, input) -> {
+                                if (input.frequencyState().amplitude() == 1.0) {
+                                    try {
+                                        assertTrue(slowTaskStarted.await(1, TimeUnit.SECONDS));
+                                    } catch (InterruptedException interrupted) {
+                                        Thread.currentThread().interrupt();
+                                        throw new AssertionError(interrupted);
+                                    }
+                                    throw failure;
+                                }
+
+                                slowTaskStarted.countDown();
+                                try {
+                                    new CountDownLatch(1).await();
+                                    throw new AssertionError("slow task unexpectedly completed");
+                                } catch (InterruptedException interrupted) {
+                                    slowTaskInterrupted.countDown();
+                                    Thread.currentThread().interrupt();
+                                    throw new IllegalStateException("slow task interrupted", interrupted);
+                                }
+                            },
+                            PropagationConfig.routeAll(1, 0)));
+
+            assertAll(
+                    () -> assertSame(failure, actual),
+                    () -> assertTrue(slowTaskInterrupted.await(1, TimeUnit.SECONDS)));
+        } finally {
+            suppliedExecutor.shutdownNow();
+            assertTrue(suppliedExecutor.awaitTermination(1, TimeUnit.SECONDS));
+        }
     }
 
     @Test
@@ -273,5 +386,15 @@ class BoundedParallelAeonCoordinatorTest {
 
     private UUID uuid(long value) {
         return new UUID(0L, value);
+    }
+
+    private void await(CountDownLatch latch) {
+        latch.countDown();
+        try {
+            assertTrue(latch.await(1, TimeUnit.SECONDS));
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(interrupted);
+        }
     }
 }

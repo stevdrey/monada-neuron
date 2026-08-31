@@ -22,7 +22,9 @@ deterministic semantics require:
 
 1. **`BoundedParallelAeonCoordinator`**: Implement an optional bounded parallel coordinator implementing
    `CognitiveAeonCoordinator` and `AutoCloseable`. It bounds concurrency by a configurable `maxParallelism`
-   (defaulting to available CPU processors) and a `parallelismThreshold` (defaulting to 2).
+   (defaulting to available CPU processors) and a `parallelismThreshold` (defaulting to 2). The coordinator
+   submits at most `maxParallelism` propagation tasks at once, including when a caller supplies a larger executor;
+   supplied executors remain caller-owned.
 2. **Parallel Eligibility**: An explicit `AeonParallelEligibility` strategy evaluates whether a coordination
    request is eligible for concurrent execution. Workloads with input count below the threshold, single-worker
    configurations, or policies declaring non-independence (e.g. `SEQUENTIAL_ONLY` or active node-mutating
@@ -36,9 +38,12 @@ deterministic semantics require:
      input index order ($0 \dots N-1$), applying step/signal budget limits, event sequences, and trace entries
      deterministically.
    - Any input that exceeds remaining cycle capacity is cleanly truncated to match the exact sequential oracle state.
+     A speculative worker failure is retained with its execution position and is discarded when that invocation is
+     outside the admitted sequential prefix.
 5. **Deterministic Multi-Failure Semantics**: If any input task encounters an exception, sibling tasks are cancelled.
    The coordinator rethrows the exception belonging to the earliest input index in original order, attaching any
-   subsequent concurrent exceptions as suppressed (`addSuppressed`).
+   subsequent completed concurrent exceptions as suppressed (`addSuppressed`). Cancellation interrupts cooperative
+   processors but cannot forcibly stop a processor that ignores interruption.
 6. **Reference Oracle**: `DeterministicAeonCoordinator` remains the semantic oracle and fallback.
 
 ## Alternatives Considered

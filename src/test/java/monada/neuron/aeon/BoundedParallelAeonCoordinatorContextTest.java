@@ -321,6 +321,151 @@ class BoundedParallelAeonCoordinatorContextTest {
         }
     }
 
+    @Test
+    void suppressesFailureFromWorkBeyondTheAdmittedStepBudget() {
+        var root = node(1);
+        var aeon = aeonWith(root);
+        var inputs = List.of(
+                new AeonInput(root.getId(), signal(1.0)),
+                new AeonInput(root.getId(), signal(2.0)));
+        var failure = new IllegalStateException("unadmitted failure");
+        NodeProcessor processor = (node, input) -> {
+            if (input.frequencyState().amplitude() == 2.0) {
+                throw failure;
+            }
+            return NodeProcessingResult.noOutput();
+        };
+
+        var budget = new CognitiveBudget(1, 10, 20);
+        var sequentialContext = new CognitiveContext(budget);
+        var sequentialResult = sequentialCoordinator.coordinate(
+                aeon, inputs, processor, PropagationConfig.routeAll(1, 0), sequentialContext);
+        var sequentialSnapshot = sequentialContext.complete(CognitiveCycleOutcome.SUCCESS);
+
+        var parallelContext = new CognitiveContext(budget);
+        var parallelResult = parallelCoordinator.coordinate(
+                aeon, inputs, processor, PropagationConfig.routeAll(1, 0), parallelContext);
+        var parallelSnapshot = parallelContext.complete(CognitiveCycleOutcome.SUCCESS);
+
+        assertAll(
+                () -> assertEquals(sequentialResult, parallelResult),
+                () -> assertEquals(sequentialSnapshot, parallelSnapshot));
+    }
+
+    @Test
+    void suppressesFailureFromWorkBeyondTheAdmittedSignalBudget() {
+        var seed = node(1);
+        var root = node(2);
+        var child = node(3);
+        root.connect(child);
+        var aeon = aeonWith(seed, root, child);
+        var inputs = List.of(
+                new AeonInput(seed.getId(), signal(1.0)),
+                new AeonInput(root.getId(), signal(2.0)));
+        var failure = new IllegalStateException("unadmitted signal-path failure");
+        NodeProcessor processor = (node, input) -> {
+            if (node.getId().equals(child.getId())) {
+                throw failure;
+            }
+            return new NodeProcessingResult(List.of(input));
+        };
+
+        var budget = new CognitiveBudget(10, 4, 30);
+        var sequentialContext = new CognitiveContext(budget);
+        var sequentialResult = sequentialCoordinator.coordinate(
+                aeon, inputs, processor, PropagationConfig.routeAll(2, 1), sequentialContext);
+        var sequentialSnapshot = sequentialContext.complete(CognitiveCycleOutcome.SUCCESS);
+
+        var parallelContext = new CognitiveContext(budget);
+        var parallelResult = parallelCoordinator.coordinate(
+                aeon, inputs, processor, PropagationConfig.routeAll(2, 1), parallelContext);
+        var parallelSnapshot = parallelContext.complete(CognitiveCycleOutcome.SUCCESS);
+
+        assertAll(
+                () -> assertEquals(sequentialResult, parallelResult),
+                () -> assertEquals(sequentialSnapshot, parallelSnapshot));
+    }
+
+    @Test
+    void preservesFullEmissionCountWhenSignalBudgetTruncatesWorkerLog() {
+        var root = node(1);
+        var aeon = aeonWith(root);
+        var inputs = List.of(
+                new AeonInput(root.getId(), signal(1.0)),
+                new AeonInput(root.getId(), signal(2.0)));
+        NodeProcessor processor = (node, input) -> input.frequencyState().amplitude() == 1.0
+                ? NodeProcessingResult.noOutput()
+                : new NodeProcessingResult(List.of(input, input, input));
+
+        assertContextualEquivalence(
+                aeon,
+                inputs,
+                processor,
+                PropagationConfig.routeAll(1, 0),
+                new CognitiveBudget(2, 3, 20));
+    }
+
+    @Test
+    void admitsAllFinalStepEmissionsAfterStepBudgetExhaustion() {
+        var root = node(1);
+        var child = node(2);
+        root.connect(child);
+        var aeon = aeonWith(root, child);
+        var inputs = List.of(
+                new AeonInput(root.getId(), signal(1.0)),
+                new AeonInput(child.getId(), signal(2.0)));
+        NodeProcessor processor = (node, input) -> node.getId().equals(root.getId())
+                ? new NodeProcessingResult(List.of(input, input))
+                : NodeProcessingResult.noOutput();
+
+        assertContextualEquivalence(
+                aeon,
+                inputs,
+                processor,
+                PropagationConfig.routeAll(2, 1),
+                new CognitiveBudget(1, 6, 20));
+    }
+
+    @Test
+    void derivesHopLimitOnlyFromAdmittedSteps() {
+        var seed = node(1);
+        var root = node(2);
+        var child = node(3);
+        var grandChild = node(4);
+        root.connect(child);
+        child.connect(grandChild);
+        var aeon = aeonWith(seed, root, child, grandChild);
+        var inputs = List.of(
+                new AeonInput(seed.getId(), signal(1.0)),
+                new AeonInput(root.getId(), signal(2.0)));
+
+        assertContextualEquivalence(
+                aeon,
+                inputs,
+                (node, input) -> new NodeProcessingResult(List.of(input)),
+                PropagationConfig.routeAll(2, 1),
+                new CognitiveBudget(2, 10, 30));
+    }
+
+    private void assertContextualEquivalence(
+            Aeon aeon,
+            List<AeonInput> inputs,
+            NodeProcessor processor,
+            PropagationConfig config,
+            CognitiveBudget budget) {
+        var sequentialContext = new CognitiveContext(budget);
+        var sequentialResult = sequentialCoordinator.coordinate(aeon, inputs, processor, config, sequentialContext);
+        var sequentialSnapshot = sequentialContext.complete(CognitiveCycleOutcome.SUCCESS);
+
+        var parallelContext = new CognitiveContext(budget);
+        var parallelResult = parallelCoordinator.coordinate(aeon, inputs, processor, config, parallelContext);
+        var parallelSnapshot = parallelContext.complete(CognitiveCycleOutcome.SUCCESS);
+
+        assertAll(
+                () -> assertEquals(sequentialResult, parallelResult),
+                () -> assertEquals(sequentialSnapshot, parallelSnapshot));
+    }
+
     private Aeon aeonWith(Node... nodes) {
         var aeon = new Aeon(uuid(100), AeonPurpose.REASONING);
         for (var node : nodes) {
