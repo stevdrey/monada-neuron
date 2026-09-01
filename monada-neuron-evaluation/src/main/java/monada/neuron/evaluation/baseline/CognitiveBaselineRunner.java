@@ -2,8 +2,11 @@ package monada.neuron.evaluation.baseline;
 
 import monada.neuron.action.ActionCapability;
 import monada.neuron.aeon.AeonCoordinationResult;
+import monada.neuron.aeon.AeonParallelEligibility;
 import monada.neuron.aeon.AeonPurpose;
+import monada.neuron.aeon.BoundedParallelAeonCoordinator;
 import monada.neuron.aeon.CognitiveAeonCoordinator;
+import monada.neuron.aeon.ContextualParallelism;
 import monada.neuron.aeon.DeterministicAeonCoordinator;
 import monada.neuron.context.CognitiveBudget;
 import monada.neuron.context.CognitiveContext;
@@ -43,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ForkJoinPool;
 
 /**
  * Main baseline runner that executes deterministic, reproducible cognitive workloads
@@ -414,7 +418,15 @@ public final class CognitiveBaselineRunner {
     }
 
     private List<BenchmarkRunResult> benchmarkAeonCoordination() {
-        var coordinator = new DeterministicAeonCoordinator(new DeterministicSignalPropagationEngine());
+        var engine = new DeterministicSignalPropagationEngine();
+        var sequentialCoordinator = new DeterministicAeonCoordinator(engine);
+        var parallelCoordinator = new BoundedParallelAeonCoordinator(
+                engine,
+                ForkJoinPool.commonPool(),
+                Math.max(1, Runtime.getRuntime().availableProcessors()),
+                1,
+                AeonParallelEligibility.INDEPENDENT_READ_ONLY,
+                ContextualParallelism.EXPERIMENTAL_PARALLEL);
         int warmups = quickMode ? 2 : 5;
         int iterations = quickMode ? 5 : 15;
 
@@ -428,14 +440,19 @@ public final class CognitiveBaselineRunner {
         var propConfig = PropagationConfig.routeAll(500, 6);
         NodeProcessor processor = (node, input) -> new NodeProcessingResult(List.of(input));
 
-        // Ensure both runs have equal global step capacity (budget >= 10 * 500 = 5,000 steps, > 25,000 signals/traces)
+        // Ensure all runs have equal global step capacity (budget >= 10 * 500 = 5,000 steps, > 25,000 signals/traces)
         var cognitiveBudget = new CognitiveBudget(50_000, 100_000, 100_000);
 
-        // Pre-validate semantic equivalence of work volume
-        var directSample = coordinator.coordinate(aeon, inputs, processor, propConfig);
+        // Pre-validate semantic equivalence of work volume across coordinators
+        var directSample = sequentialCoordinator.coordinate(aeon, inputs, processor, propConfig);
         var testContext = new CognitiveContext(cognitiveBudget);
-        var contextualSample = coordinator.coordinate(aeon, inputs, processor, propConfig, testContext);
+        var contextualSample = sequentialCoordinator.coordinate(aeon, inputs, processor, propConfig, testContext);
         testContext.close();
+
+        var parallelDirectSample = parallelCoordinator.coordinate(aeon, inputs, processor, propConfig);
+        var parTestContext = new CognitiveContext(cognitiveBudget);
+        var parallelContextualSample = parallelCoordinator.coordinate(aeon, inputs, processor, propConfig, parTestContext);
+        parTestContext.close();
 
         int directTotalSteps = directSample.inputResults().stream()
                 .mapToInt(ir -> ir.propagationResult().processedSteps())
@@ -453,9 +470,11 @@ public final class CognitiveBaselineRunner {
 
         if (directTotalSteps != contextualTotalSteps
                 || directTotalEmitted != contextualTotalEmitted
-                || directSample.inputResults().size() != contextualSample.inputResults().size()) {
+                || directSample.inputResults().size() != contextualSample.inputResults().size()
+                || !directSample.equals(parallelDirectSample)
+                || !contextualSample.equals(parallelContextualSample)) {
             throw new IllegalStateException(String.format(
-                    "Workload equivalence violation between Direct and Contextual Aeon coordination: "
+                    "Workload equivalence violation between Direct, Contextual, Sequential, and Parallel Aeon coordination: "
                             + "steps=(%d vs %d), emitted=(%d vs %d), results=(%d vs %d)",
                     directTotalSteps, contextualTotalSteps,
                     directTotalEmitted, contextualTotalEmitted,
@@ -471,7 +490,7 @@ public final class CognitiveBaselineRunner {
                 warmups,
                 iterations,
                 () -> {
-                    var res = coordinator.coordinate(
+                    var res = sequentialCoordinator.coordinate(
                             aeon,
                             inputs,
                             processor,
@@ -498,7 +517,7 @@ public final class CognitiveBaselineRunner {
                 () -> {
                     var context = new CognitiveContext(cognitiveBudget);
                     try {
-                        var res = coordinator.coordinate(
+                        var res = sequentialCoordinator.coordinate(
                                 aeon,
                                 inputs,
                                 processor,
@@ -517,6 +536,65 @@ public final class CognitiveBaselineRunner {
                         "totalProcessedSteps", String.valueOf(contextualTotalSteps),
                         "totalEmittedSignals", String.valueOf(contextualTotalEmitted),
                         "inputResultCount", String.valueOf(contextualSample.inputResults().size()),
+                        "workloadEquivalent", "true",
+                        "contextBudgetExhausted", "false",
+                        "contextual", "true")));
+
+        // Bounded Parallel Aeon Coordination (Direct)
+        results.add(collector.measure(
+                "BoundedParallelAeonCoordinator.Direct",
+                inputs.size() + " inputs, 100 members",
+                warmups,
+                iterations,
+                () -> {
+                    var res = parallelCoordinator.coordinate(
+                            aeon,
+                            inputs,
+                            processor,
+                            propConfig);
+                    if (res.inputResults().isEmpty()) {
+                        throw new IllegalStateException("empty parallel coordination");
+                    }
+                },
+                Map.of(
+                        "backend", "BoundedParallelAeonCoordinator",
+                        "inputCount", String.valueOf(inputs.size()),
+                        "memberCount", String.valueOf(topology.nodes().size()),
+                        "totalProcessedSteps", String.valueOf(directTotalSteps),
+                        "totalEmittedSignals", String.valueOf(directTotalEmitted),
+                        "inputResultCount", String.valueOf(parallelDirectSample.inputResults().size()),
+                        "workloadEquivalent", "true",
+                        "contextual", "false")));
+
+        // Bounded Parallel Cognitive Aeon Coordination (Contextual)
+        results.add(collector.measure(
+                "BoundedParallelAeonCoordinator.Contextual",
+                inputs.size() + " inputs, 100 members",
+                warmups,
+                iterations,
+                () -> {
+                    var context = new CognitiveContext(cognitiveBudget);
+                    try {
+                        var res = parallelCoordinator.coordinate(
+                                aeon,
+                                inputs,
+                                processor,
+                                propConfig,
+                                context);
+                        if (res.inputResults().isEmpty()) {
+                            throw new IllegalStateException("empty parallel coordination");
+                        }
+                    } finally {
+                        context.close();
+                    }
+                },
+                Map.of(
+                        "backend", "BoundedParallelAeonCoordinator",
+                        "inputCount", String.valueOf(inputs.size()),
+                        "memberCount", String.valueOf(topology.nodes().size()),
+                        "totalProcessedSteps", String.valueOf(contextualTotalSteps),
+                        "totalEmittedSignals", String.valueOf(contextualTotalEmitted),
+                        "inputResultCount", String.valueOf(parallelContextualSample.inputResults().size()),
                         "workloadEquivalent", "true",
                         "contextBudgetExhausted", "false",
                         "contextual", "true")));
