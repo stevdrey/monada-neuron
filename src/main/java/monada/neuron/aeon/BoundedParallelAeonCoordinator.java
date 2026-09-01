@@ -41,12 +41,18 @@ import java.util.concurrent.ThreadFactory;
  *
  * <p>If any input task encounters an exception, sibling tasks are cancelled and the exception
  * belonging to the earliest input index in original order is thrown, with any concurrent exceptions
- * attached as suppressed. Workloads that do not satisfy independence or meet the parallelism
- * threshold automatically fall back to the sequential reference path.
+ * attached as suppressed. Direct workloads that do not satisfy independence or meet an explicitly
+ * configured parallelism threshold automatically fall back to the sequential reference path.
+ * Contextual coordination uses the sequential reference path unless
+ * {@link ContextualParallelism#EXPERIMENTAL_PARALLEL} is explicitly selected.
  */
 public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordinator, AutoCloseable {
 
-    public static final int DEFAULT_PARALLELISM_THRESHOLD = 2;
+    /**
+     * Conservative threshold that disables automatic parallel selection until a measured runtime
+     * policy is available.
+     */
+    public static final int DEFAULT_PARALLELISM_THRESHOLD = Integer.MAX_VALUE;
 
     private static final Comparator<Node> NODE_ID_ORDER = Comparator.comparing(Node::getId);
 
@@ -56,9 +62,15 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
     private final int maxParallelism;
     private final int parallelismThreshold;
     private final AeonParallelEligibility eligibility;
+    private final ContextualParallelism contextualParallelism;
     private final boolean ownsExecutor;
 
-    /** Creates a parallel coordinator using default CPU core bounds and the shared ForkJoin pool. */
+    /**
+     * Creates a coordinator using default CPU core bounds and the shared ForkJoin pool.
+     *
+     * <p>The default threshold disables automatic direct parallel coordination. Contextual
+     * coordination always uses the sequential oracle.
+     */
     public BoundedParallelAeonCoordinator(SignalPropagationEngine propagationEngine) {
         this(
                 propagationEngine,
@@ -66,15 +78,23 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                 Math.max(1, Runtime.getRuntime().availableProcessors()),
                 DEFAULT_PARALLELISM_THRESHOLD,
                 AeonParallelEligibility.INDEPENDENT_READ_ONLY,
+                ContextualParallelism.SEQUENTIAL_ORACLE,
                 false);
     }
 
-    /** Creates a parallel coordinator with explicit maximum CPU parallelism. */
+    /**
+     * Creates a coordinator with explicit maximum CPU parallelism and conservative default policy.
+     *
+     * <p>Use a constructor with an explicit threshold to opt into direct parallel coordination.
+     */
     public BoundedParallelAeonCoordinator(SignalPropagationEngine propagationEngine, int maxParallelism) {
         this(propagationEngine, maxParallelism, DEFAULT_PARALLELISM_THRESHOLD);
     }
 
-    /** Creates a parallel coordinator with explicit maximum CPU parallelism and threshold. */
+    /**
+     * Creates a coordinator with explicit maximum CPU parallelism and direct parallel threshold.
+     * Contextual coordination remains sequential unless explicitly configured otherwise.
+     */
     public BoundedParallelAeonCoordinator(
             SignalPropagationEngine propagationEngine,
             int maxParallelism,
@@ -85,6 +105,28 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                 maxParallelism,
                 parallelismThreshold,
                 AeonParallelEligibility.INDEPENDENT_READ_ONLY,
+                ContextualParallelism.SEQUENTIAL_ORACLE,
+                true);
+    }
+
+    /**
+     * Creates a coordinator with explicit direct and contextual execution policies.
+     *
+     * <p>{@link ContextualParallelism#EXPERIMENTAL_PARALLEL} is intended for controlled
+     * experiments; it is not selected by the default constructors.
+     */
+    public BoundedParallelAeonCoordinator(
+            SignalPropagationEngine propagationEngine,
+            int maxParallelism,
+            int parallelismThreshold,
+            ContextualParallelism contextualParallelism) {
+        this(
+                propagationEngine,
+                Executors.newFixedThreadPool(validateParallelism(maxParallelism), daemonThreadFactory()),
+                maxParallelism,
+                parallelismThreshold,
+                AeonParallelEligibility.INDEPENDENT_READ_ONLY,
+                contextualParallelism,
                 true);
     }
 
@@ -106,6 +148,30 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                 maxParallelism,
                 parallelismThreshold,
                 eligibility,
+                ContextualParallelism.SEQUENTIAL_ORACLE,
+                false);
+    }
+
+    /**
+     * Creates a coordinator with caller-owned executor, explicit eligibility, and contextual mode.
+     *
+     * <p>The supplied executor remains caller-owned. This coordinator submits no more than
+     * {@code maxParallelism} propagation tasks at once, regardless of that executor's capacity.
+     */
+    public BoundedParallelAeonCoordinator(
+            SignalPropagationEngine propagationEngine,
+            Executor executor,
+            int maxParallelism,
+            int parallelismThreshold,
+            AeonParallelEligibility eligibility,
+            ContextualParallelism contextualParallelism) {
+        this(
+                propagationEngine,
+                executor,
+                maxParallelism,
+                parallelismThreshold,
+                eligibility,
+                contextualParallelism,
                 false);
     }
 
@@ -115,6 +181,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
             int maxParallelism,
             int parallelismThreshold,
             AeonParallelEligibility eligibility,
+            ContextualParallelism contextualParallelism,
             boolean ownsExecutor) {
         this.propagationEngine = Objects.requireNonNull(
                 propagationEngine,
@@ -124,6 +191,9 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
         this.maxParallelism = validateParallelism(maxParallelism);
         this.parallelismThreshold = validateThreshold(parallelismThreshold);
         this.eligibility = Objects.requireNonNull(eligibility, "eligibility must not be null");
+        this.contextualParallelism = Objects.requireNonNull(
+                contextualParallelism,
+                "contextualParallelism must not be null");
         this.ownsExecutor = ownsExecutor;
     }
 
@@ -137,7 +207,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
         return maxParallelism;
     }
 
-    /** Returns the minimum input count required to trigger parallel execution. */
+    /** Returns the minimum input count required to trigger direct parallel execution. */
     public int parallelismThreshold() {
         return parallelismThreshold;
     }
@@ -145,6 +215,11 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
     /** Returns the active parallel eligibility policy. */
     public AeonParallelEligibility eligibility() {
         return eligibility;
+    }
+
+    /** Returns the configured contextual execution mode. */
+    public ContextualParallelism contextualParallelism() {
+        return contextualParallelism;
     }
 
     @Override
@@ -164,7 +239,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
         }
 
         var startNodes = resolveStartNodes(aeon, stableInputs);
-        if (!isParallelEligible(aeon, stableInputs, processor, config)) {
+        if (!isDirectParallelEligible(aeon, stableInputs, processor, config)) {
             return sequentialFallback.coordinate(aeon, stableInputs, processor, config);
         }
 
@@ -248,7 +323,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                     "propagationEngine must implement CognitiveSignalPropagationEngine");
         }
 
-        if (!isParallelEligible(aeon, stableInputs, processor, config)) {
+        if (!isContextualParallelEligible(aeon, stableInputs, processor, config)) {
             return sequentialFallback.coordinate(aeon, stableInputs, processor, config, context);
         }
 
@@ -678,14 +753,24 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                 .toList();
     }
 
-    private boolean isParallelEligible(
+    private boolean isDirectParallelEligible(
             Aeon aeon,
             List<AeonInput> inputs,
             NodeProcessor processor,
             PropagationConfig config) {
-        return inputs.size() >= parallelismThreshold
+        return parallelismThreshold != DEFAULT_PARALLELISM_THRESHOLD
+                && inputs.size() >= parallelismThreshold
                 && maxParallelism > 1
                 && eligibility.isEligible(aeon, inputs, processor, config);
+    }
+
+    private boolean isContextualParallelEligible(
+            Aeon aeon,
+            List<AeonInput> inputs,
+            NodeProcessor processor,
+            PropagationConfig config) {
+        return contextualParallelism == ContextualParallelism.EXPERIMENTAL_PARALLEL
+                && isDirectParallelEligible(aeon, inputs, processor, config);
     }
 
     private List<Node> resolveStartNodes(Aeon aeon, List<AeonInput> inputs) {

@@ -2,9 +2,11 @@ package monada.neuron.evaluation.baseline;
 
 import monada.neuron.action.ActionCapability;
 import monada.neuron.aeon.AeonCoordinationResult;
+import monada.neuron.aeon.AeonParallelEligibility;
 import monada.neuron.aeon.AeonPurpose;
-import monada.neuron.aeon.CognitiveAeonCoordinator;
 import monada.neuron.aeon.BoundedParallelAeonCoordinator;
+import monada.neuron.aeon.CognitiveAeonCoordinator;
+import monada.neuron.aeon.ContextualParallelism;
 import monada.neuron.aeon.DeterministicAeonCoordinator;
 import monada.neuron.context.CognitiveBudget;
 import monada.neuron.context.CognitiveContext;
@@ -44,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ForkJoinPool;
 
 /**
  * Main baseline runner that executes deterministic, reproducible cognitive workloads
@@ -417,7 +420,13 @@ public final class CognitiveBaselineRunner {
     private List<BenchmarkRunResult> benchmarkAeonCoordination() {
         var engine = new DeterministicSignalPropagationEngine();
         var sequentialCoordinator = new DeterministicAeonCoordinator(engine);
-        var parallelCoordinator = new BoundedParallelAeonCoordinator(engine);
+        var parallelCoordinator = new BoundedParallelAeonCoordinator(
+                engine,
+                ForkJoinPool.commonPool(),
+                Math.max(1, Runtime.getRuntime().availableProcessors()),
+                1,
+                AeonParallelEligibility.INDEPENDENT_READ_ONLY,
+                ContextualParallelism.EXPERIMENTAL_PARALLEL);
         int warmups = quickMode ? 2 : 5;
         int iterations = quickMode ? 5 : 15;
 

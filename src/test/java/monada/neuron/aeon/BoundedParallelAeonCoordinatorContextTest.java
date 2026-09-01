@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
@@ -35,7 +36,11 @@ class BoundedParallelAeonCoordinatorContextTest {
 
     private final DeterministicSignalPropagationEngine engine = new DeterministicSignalPropagationEngine();
     private final DeterministicAeonCoordinator sequentialCoordinator = new DeterministicAeonCoordinator(engine);
-    private final BoundedParallelAeonCoordinator parallelCoordinator = new BoundedParallelAeonCoordinator(engine, 4, 1);
+    private final BoundedParallelAeonCoordinator parallelCoordinator = new BoundedParallelAeonCoordinator(
+            engine,
+            4,
+            1,
+            ContextualParallelism.EXPERIMENTAL_PARALLEL);
 
     @AfterEach
     void tearDown() {
@@ -67,6 +72,66 @@ class BoundedParallelAeonCoordinatorContextTest {
                     () -> assertEquals(sequentialDirect, parallelDirect, seedMessage + " direct result"),
                     () -> assertEquals(sequentialContextual, parallelContextual, seedMessage + " contextual result"),
                     () -> assertEquals(sequentialSnapshot, parallelSnapshot, seedMessage + " context snapshot"));
+        }
+    }
+
+    @Test
+    void contextualParallelismRequiresExplicitExperimentalOptIn() {
+        var root = node(1);
+        var aeon = aeonWith(root);
+        var inputs = List.of(
+                new AeonInput(root.getId(), signal(1.0)),
+                new AeonInput(root.getId(), signal(2.0)));
+        var config = PropagationConfig.routeAll(2, 0);
+        NodeProcessor processor = (node, input) -> new NodeProcessingResult(List.of(input));
+        var submittedTasks = new AtomicInteger();
+        Executor trackingExecutor = task -> {
+            submittedTasks.incrementAndGet();
+            task.run();
+        };
+
+        try (var defaultCoordinator = new BoundedParallelAeonCoordinator(
+                engine,
+                trackingExecutor,
+                4,
+                1,
+                AeonParallelEligibility.INDEPENDENT_READ_ONLY);
+             var experimentalCoordinator = new BoundedParallelAeonCoordinator(
+                     engine,
+                     trackingExecutor,
+                     4,
+                     1,
+                     AeonParallelEligibility.INDEPENDENT_READ_ONLY,
+                     ContextualParallelism.EXPERIMENTAL_PARALLEL)) {
+            var sequentialContext = new CognitiveContext(new CognitiveBudget(10, 20, 20));
+            var expected = sequentialCoordinator.coordinate(aeon, inputs, processor, config, sequentialContext);
+            var expectedSnapshot = sequentialContext.complete(CognitiveCycleOutcome.SUCCESS);
+
+            var defaultContext = new CognitiveContext(new CognitiveBudget(10, 20, 20));
+            var defaultResult = defaultCoordinator.coordinate(aeon, inputs, processor, config, defaultContext);
+            var defaultSnapshot = defaultContext.complete(CognitiveCycleOutcome.SUCCESS);
+
+            int submissionsBeforeExperimentalOptIn = submittedTasks.get();
+            var experimentalContext = new CognitiveContext(new CognitiveBudget(10, 20, 20));
+            var experimentalResult = experimentalCoordinator.coordinate(
+                    aeon,
+                    inputs,
+                    processor,
+                    config,
+                    experimentalContext);
+            var experimentalSnapshot = experimentalContext.complete(CognitiveCycleOutcome.SUCCESS);
+
+            assertAll(
+                    () -> assertEquals(ContextualParallelism.SEQUENTIAL_ORACLE,
+                            defaultCoordinator.contextualParallelism()),
+                    () -> assertEquals(ContextualParallelism.EXPERIMENTAL_PARALLEL,
+                            experimentalCoordinator.contextualParallelism()),
+                    () -> assertEquals(0, submissionsBeforeExperimentalOptIn),
+                    () -> assertEquals(inputs.size(), submittedTasks.get()),
+                    () -> assertEquals(expected, defaultResult),
+                    () -> assertEquals(expectedSnapshot, defaultSnapshot),
+                    () -> assertEquals(expected, experimentalResult),
+                    () -> assertEquals(expectedSnapshot, experimentalSnapshot));
         }
     }
 
@@ -335,7 +400,11 @@ class BoundedParallelAeonCoordinatorContextTest {
         // Budget allows only 6 steps (exhausts during input 2 in wave 1)
         var budget = new CognitiveBudget(6, 50, 100);
 
-        try (var customParallelCoordinator = new BoundedParallelAeonCoordinator(engine, 2, 2)) {
+        try (var customParallelCoordinator = new BoundedParallelAeonCoordinator(
+                engine,
+                2,
+                2,
+                ContextualParallelism.EXPERIMENTAL_PARALLEL)) {
             var seqContext = new CognitiveContext(budget);
             var seqResult = sequentialCoordinator.coordinate(aeon, inputs, processor, config, seqContext);
             var seqSnapshot = seqContext.complete(CognitiveCycleOutcome.SUCCESS);

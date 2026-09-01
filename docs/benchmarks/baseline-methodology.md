@@ -220,8 +220,9 @@ the SIMD retention decision by this controlled JMH and JFR evidence.
 ### PR #38 bounded Aeon coordination validation gate
 
 `AeonCoordinationBenchmark` compares the deterministic sequential coordinator with the bounded parallel coordinator
-for direct and contextual work. It fixes the parallel benchmark threshold at one so every configured shape measures the
-parallel implementation; this is independent from the production default threshold.
+for direct and contextual work. It fixes the parallel benchmark threshold at one and explicitly selects
+`ContextualParallelism.EXPERIMENTAL_PARALLEL` so every configured shape measures the parallel implementation; both
+choices are independent from the production default policy.
 
 The benchmark parameters are:
 
@@ -252,9 +253,9 @@ The worker-and-scale matrix uses representative input sizes:
 ```
 
 For allocation evidence at a candidate threshold and at 128 inputs, repeat the matching command with `-prof gc`.
-The retained default must be the maximum direct/contextual crossover, and only when parallel is at least 10% faster
+An automatic selection policy requires a measured direct/contextual crossover where parallel is at least 10% faster
 than sequential in every fork for every input at or above that threshold. If either mode fails at 128, no universal
-threshold in this matrix is eligible.
+automatic policy in this matrix is eligible.
 
 The current PR #38 gate is **not met**. On Linux x86_64, four available processors, Temurin 26.0.2.1+1, and the medium
 graph with four workers and 128 inputs, the non-GC three-fork contextual result was:
@@ -275,8 +276,10 @@ The `-prof gc` repetition recorded the following allocation evidence across its 
 
 The contextual parallel allocation increase is 39.4%. The direct time result in the GC run was too variable to support
 a crossover claim. Since the contextual non-GC result fails at the maximum sampled input count, the matrix cannot
-select a universal default and the PR remains not ready to merge. Raw JSON is retained under `/tmp/pr38-aeon-*.json`
-for this validation run.
+select an automatic default. The runtime therefore defaults to the sequential oracle for contextual coordination and
+uses `Integer.MAX_VALUE` as the conservative direct threshold; direct and contextual parallel execution require
+explicit configuration, pending Issue #29's evidence-driven backend-selection policy. Raw JSON is retained under
+`/tmp/pr38-aeon-*.json` for this validation run.
 
 ### Run Unit and Harness Tests
 

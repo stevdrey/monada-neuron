@@ -211,6 +211,40 @@ class BoundedParallelAeonCoordinatorTest {
     }
 
     @Test
+    void defaultThresholdKeepsDirectCoordinationSequentialUntilExplicitlyConfigured() {
+        var root = node(uuid(1));
+        var aeon = aeonWith(root);
+        var inputs = List.of(
+                new AeonInput(root.getId(), signal(1.0)),
+                new AeonInput(root.getId(), signal(2.0)));
+        var submittedTasks = new AtomicInteger();
+        Executor trackingExecutor = task -> submittedTasks.incrementAndGet();
+
+        try (var coordinator = new BoundedParallelAeonCoordinator(
+                graphEngine,
+                trackingExecutor,
+                4,
+                BoundedParallelAeonCoordinator.DEFAULT_PARALLELISM_THRESHOLD,
+                AeonParallelEligibility.INDEPENDENT_READ_ONLY)) {
+            var result = coordinator.coordinate(
+                    aeon,
+                    inputs,
+                    (node, input) -> new NodeProcessingResult(List.of(input)),
+                    PropagationConfig.routeAll(2, 0));
+            var reference = sequentialCoordinator.coordinate(
+                    aeon,
+                    inputs,
+                    (node, input) -> new NodeProcessingResult(List.of(input)),
+                    PropagationConfig.routeAll(2, 0));
+
+            assertAll(
+                    () -> assertEquals(Integer.MAX_VALUE, coordinator.parallelismThreshold()),
+                    () -> assertEquals(reference, result),
+                    () -> assertEquals(0, submittedTasks.get()));
+        }
+    }
+
+    @Test
     void multiFailurePrioritizesLowestIndexExceptionAndSuppressesOthers() {
         var root = node(uuid(1));
         var aeon = aeonWith(root);
@@ -430,7 +464,13 @@ class BoundedParallelAeonCoordinatorTest {
                 () -> assertThrows(NullPointerException.class,
                         () -> new BoundedParallelAeonCoordinator(graphEngine, null, 4, 2, AeonParallelEligibility.INDEPENDENT_READ_ONLY)),
                 () -> assertThrows(NullPointerException.class,
-                        () -> new BoundedParallelAeonCoordinator(graphEngine, ForkJoinPool.commonPool(), 4, 2, null)));
+                        () -> new BoundedParallelAeonCoordinator(graphEngine, ForkJoinPool.commonPool(), 4, 2, null)),
+                () -> assertThrows(NullPointerException.class,
+                        () -> new BoundedParallelAeonCoordinator(
+                                graphEngine,
+                                4,
+                                2,
+                                null)));
     }
 
     private Aeon aeonWith(Node... nodes) {

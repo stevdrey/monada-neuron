@@ -5,6 +5,7 @@ import monada.neuron.aeon.AeonCoordinationResult;
 import monada.neuron.aeon.AeonInput;
 import monada.neuron.aeon.AeonPurpose;
 import monada.neuron.aeon.BoundedParallelAeonCoordinator;
+import monada.neuron.aeon.ContextualParallelism;
 import monada.neuron.aeon.DeterministicAeonCoordinator;
 import monada.neuron.context.CognitiveBudget;
 import monada.neuron.context.CognitiveContext;
@@ -71,7 +72,11 @@ public class AeonCoordinationBenchmark {
     public void setup() {
         var engine = new DeterministicSignalPropagationEngine();
         sequentialCoordinator = new DeterministicAeonCoordinator(engine);
-        parallelCoordinator = new BoundedParallelAeonCoordinator(engine, workerCount, 1);
+        parallelCoordinator = new BoundedParallelAeonCoordinator(
+                engine,
+                workerCount,
+                1,
+                ContextualParallelism.EXPERIMENTAL_PARALLEL);
 
         var generator = new DeterministicWorkloadGenerator();
         GraphTopology topology = graphTopology(generator);
