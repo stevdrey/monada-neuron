@@ -25,6 +25,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -304,6 +305,60 @@ class BoundedParallelAeonCoordinatorTest {
                     () -> assertFalse(suppliedExecutor.isShutdown()));
         } finally {
             suppliedExecutor.shutdownNow();
+            assertTrue(suppliedExecutor.awaitTermination(1, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void refillsTheDirectWindowWhenAnyTaskCompletes() throws Exception {
+        ExecutorService suppliedExecutor = Executors.newFixedThreadPool(2);
+        ExecutorService callerExecutor = Executors.newSingleThreadExecutor();
+        var firstTaskStarted = new CountDownLatch(1);
+        var releaseFirstTask = new CountDownLatch(1);
+        var thirdTaskStarted = new CountDownLatch(1);
+        Future<AeonCoordinationResult> coordination = null;
+        try (var coordinator = new BoundedParallelAeonCoordinator(
+                graphEngine,
+                suppliedExecutor,
+                2,
+                1,
+                AeonParallelEligibility.INDEPENDENT_READ_ONLY)) {
+            var root = node(uuid(1));
+            var aeon = aeonWith(root);
+            coordination = callerExecutor.submit(() -> coordinator.coordinate(
+                    aeon,
+                    List.of(
+                            new AeonInput(root.getId(), signal(1.0)),
+                            new AeonInput(root.getId(), signal(2.0)),
+                            new AeonInput(root.getId(), signal(3.0))),
+                    (node, input) -> {
+                        if (input.frequencyState().amplitude() == 1.0) {
+                            firstTaskStarted.countDown();
+                            try {
+                                assertTrue(releaseFirstTask.await(1, TimeUnit.SECONDS));
+                            } catch (InterruptedException interrupted) {
+                                Thread.currentThread().interrupt();
+                                throw new AssertionError(interrupted);
+                            }
+                        }
+                        if (input.frequencyState().amplitude() == 3.0) {
+                            thirdTaskStarted.countDown();
+                        }
+                        return NodeProcessingResult.noOutput();
+                    },
+                    PropagationConfig.routeAll(1, 0)));
+
+            assertAll(
+                    () -> assertTrue(firstTaskStarted.await(1, TimeUnit.SECONDS)),
+                    () -> assertTrue(thirdTaskStarted.await(1, TimeUnit.SECONDS)));
+
+            releaseFirstTask.countDown();
+            assertEquals(3, coordination.get(1, TimeUnit.SECONDS).inputResults().size());
+        } finally {
+            releaseFirstTask.countDown();
+            callerExecutor.shutdownNow();
+            suppliedExecutor.shutdownNow();
+            assertTrue(callerExecutor.awaitTermination(1, TimeUnit.SECONDS));
             assertTrue(suppliedExecutor.awaitTermination(1, TimeUnit.SECONDS));
         }
     }

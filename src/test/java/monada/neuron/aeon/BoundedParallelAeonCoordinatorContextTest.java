@@ -176,6 +176,30 @@ class BoundedParallelAeonCoordinatorContextTest {
     }
 
     @Test
+    void preservesAlreadyQueuedStepsAfterSignalBudgetExhaustion() {
+        var seed = node(1);
+        var root = node(2);
+        var first = node(3);
+        var second = node(4);
+        root.connect(first);
+        root.connect(second);
+        var aeon = aeonWith(seed, root, first, second);
+        var inputs = List.of(
+                new AeonInput(seed.getId(), signal(1.0)),
+                new AeonInput(root.getId(), signal(2.0)));
+        NodeProcessor processor = (node, input) -> node.getId().equals(root.getId())
+                ? new NodeProcessingResult(List.of(input, input))
+                : NodeProcessingResult.noOutput();
+
+        assertContextualEquivalence(
+                aeon,
+                inputs,
+                processor,
+                PropagationConfig.routeAll(10, 1),
+                new CognitiveBudget(10, 6, 30));
+    }
+
+    @Test
     void ignoresSpeculativeSignalBudgetExhaustionAfterStepBudgetTruncation() {
         var seed = node(1);
         var root = node(2);
