@@ -22,7 +22,7 @@ deterministic semantics require:
 
 1. **`BoundedParallelAeonCoordinator`**: Implement an optional bounded parallel coordinator implementing
    `CognitiveAeonCoordinator` and `AutoCloseable`. It bounds concurrency by a configurable `maxParallelism`
-   (defaulting to available CPU processors) and a `parallelismThreshold` (defaulting to 2). The coordinator
+   (defaulting to available CPU processors) and a `parallelismThreshold` (currently 2, pending validation). The coordinator
    submits at most `maxParallelism` propagation tasks at once, including when a caller supplies a larger executor;
    supplied executors remain caller-owned.
 2. **Parallel Eligibility**: An explicit `AeonParallelEligibility` strategy evaluates whether a coordination
@@ -71,13 +71,30 @@ coarsely and efficiently.
 
 ## Consequences
 
-- Independent multi-input Aeon workloads can achieve linear CPU speedups across available cores without altering
-  observable cognitive semantics.
+- Independent multi-input Aeon workloads may achieve CPU speedups across available cores without altering
+  observable cognitive semantics; retention of a default threshold requires measured end-to-end benefit in both
+  direct and contextual modes.
 - `CognitiveContext` retains its sequential, single-threaded invariants and deterministic diagnostic traces.
 - Workloads that cannot prove independence safely fall back to the sequential oracle without runtime failures.
 - Multi-failure exception handling is strictly deterministic and matches the failure point of the sequential oracle.
 
 ## Follow-Up
 
-Measure multi-input benchmarks across 5, 10, 32, and 128 inputs to identify the exact crossover point where scheduling
-overhead is amortized by parallel execution.
+Measure direct and contextual coordination across the complete input boundary matrix, worker counts, and graph scales.
+Select a universal production threshold only when the parallel path is at least 10% faster in every fork for both
+modes, including the largest sampled input count. The threshold must be the more conservative crossover of the two
+modes.
+
+### PR #38 validation status (2026-09-01)
+
+The first three-fork validation on the representative medium graph (200 nodes, degree 5), four workers, and 128
+inputs did not satisfy the contextual gate: sequential coordination measured `18,714.734 +/- 2,515.497 us/op`, while
+parallel coordination measured `25,905.557 +/- 2,978.765 us/op`. The 99.9% intervals do not overlap and the parallel
+path was 38.4% slower. GC profiling of the same shape also increased contextual allocation from `24,348,705.752 B/op`
+to `33,932,152.739 B/op` (39.4%).
+
+Because a universal threshold at or below 128 would select this non-beneficial contextual path, no threshold in the
+tested range is eligible for production selection. `DEFAULT_PARALLELISM_THRESHOLD` remains `2` for compatibility only;
+it is not validated as a performance recommendation. PR #38 is not ready to merge until a redesigned or remeasured
+parallel contextual path satisfies the gate. The executable matrix and raw-result conventions are documented in the
+benchmark methodology.

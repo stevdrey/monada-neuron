@@ -406,8 +406,6 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                 if (signalBudgetReachedDuring) {
                     continue;
                 }
-                admittedHopLimitReached |= step.hopLimitReached();
-
                 boolean canEnqueueMoreWork = true;
 
                 for (var emission : step.emissions()) {
@@ -419,6 +417,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                     seqMap[(int) emission.emissionSequence()] = emittedSeq.getAsLong();
                     admittedSequences[(int) emission.emissionSequence()] = true;
                     admittedSignals.add(emission.signal());
+                    admittedHopLimitReached |= emission.hopLimitReached();
 
                     if (canEnqueueMoreWork) {
                         for (var delivery : emission.deliveries()) {
@@ -564,7 +563,6 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
 
             var outputs = processingResult.emittedSignals();
             var emissionLogs = new ArrayList<EmissionLog>(outputs.size());
-            boolean stepHopLimitReached = false;
             boolean deliveryStepBudgetReached = false;
             SignalBudgetAttempt signalBudgetAttempt = null;
 
@@ -582,6 +580,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                     long emittedSequence = nextSignalSequence++;
                     emittedSignals.add(output);
                     var deliveryLogs = new ArrayList<DeliveryLog>();
+                    boolean emissionHopLimitReached = false;
 
                     if (canEnqueueMoreWork) {
                         for (var target : targets) {
@@ -590,7 +589,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                             }
                             if (work.hop() == config.maxHops()) {
                                 hopLimitReached = true;
-                                stepHopLimitReached = true;
+                                emissionHopLimitReached = true;
                                 continue;
                             }
                             if (processedSteps >= maxBudgetSteps) {
@@ -609,7 +608,11 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                             pending.addLast(new RecordedWork(target, output, work.hop() + 1, deliveredSequence));
                         }
                     }
-                    emissionLogs.add(new EmissionLog(emittedSequence, output, deliveryLogs));
+                    emissionLogs.add(new EmissionLog(
+                            emittedSequence,
+                            output,
+                            deliveryLogs,
+                            emissionHopLimitReached));
                     if (signalBudgetReached) {
                         break;
                     }
@@ -620,7 +623,6 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                     work.node().getId(),
                     work.inputSignalSequence(),
                     outputs.size(),
-                    stepHopLimitReached,
                     deliveryStepBudgetReached,
                     signalBudgetAttempt,
                     emissionLogs));
@@ -860,12 +862,15 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
             UUID nodeId,
             long inputSequence,
             int emittedSignalCount,
-            boolean hopLimitReached,
             boolean deliveryStepBudgetReached,
             SignalBudgetAttempt signalBudgetAttempt,
             List<EmissionLog> emissions) {}
 
-    private record EmissionLog(long emissionSequence, Signal signal, List<DeliveryLog> deliveries) {}
+    private record EmissionLog(
+            long emissionSequence,
+            Signal signal,
+            List<DeliveryLog> deliveries,
+            boolean hopLimitReached) {}
 
     private record DeliveryLog(long deliverySequence, UUID targetNodeId, Signal signal) {}
 

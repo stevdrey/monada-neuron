@@ -217,6 +217,67 @@ at every larger sampled size; one pair failed that condition in one fork.
 The former approximate `70.3 B/pair` Vector end-to-end row is superseded for
 the SIMD retention decision by this controlled JMH and JFR evidence.
 
+### PR #38 bounded Aeon coordination validation gate
+
+`AeonCoordinationBenchmark` compares the deterministic sequential coordinator with the bounded parallel coordinator
+for direct and contextual work. It fixes the parallel benchmark threshold at one so every configured shape measures the
+parallel implementation; this is independent from the production default threshold.
+
+The benchmark parameters are:
+
+| Parameter | Values |
+| :--- | :--- |
+| `inputCount` | 1, 2, 3, 4, 5, 8, 10, 16, 32, 64, 128 |
+| `graphProfile` | `small` (50 nodes, degree 3), `medium` (200, 5), `large` (1,000, 4) |
+| `workerCount` | 1, 2, 4 |
+
+Use average time, three forks, three one-second warmups, and five one-second measurements. Persist JSON outside the
+repository. The threshold matrix holds the medium graph and four workers constant:
+
+```bash
+./gradlew :monada-neuron-evaluation:jmh \
+  -PjmhArgs="-bm avgt -f 3 -wi 3 -i 5 -r 1s \
+  -p graphProfile=medium -p workerCount=4 -rf json \
+  -rff /tmp/pr38-aeon-threshold.json AeonCoordinationBenchmark"
+```
+
+The worker-and-scale matrix uses representative input sizes:
+
+```bash
+./gradlew :monada-neuron-evaluation:jmh \
+  -PjmhArgs="-bm avgt -f 3 -wi 3 -i 5 -r 1s \
+  -p inputCount=10,32,128 -p graphProfile=small,medium,large \
+  -p workerCount=1,2,4 -rf json \
+  -rff /tmp/pr38-aeon-scale.json AeonCoordinationBenchmark"
+```
+
+For allocation evidence at a candidate threshold and at 128 inputs, repeat the matching command with `-prof gc`.
+The retained default must be the maximum direct/contextual crossover, and only when parallel is at least 10% faster
+than sequential in every fork for every input at or above that threshold. If either mode fails at 128, no universal
+threshold in this matrix is eligible.
+
+The current PR #38 gate is **not met**. On Linux x86_64, four available processors, Temurin 26.0.2.1+1, and the medium
+graph with four workers and 128 inputs, the non-GC three-fork contextual result was:
+
+| Mode | Average time | 99.9% interval | Decision |
+| :--- | ---: | ---: | :--- |
+| Sequential contextual | 18,714.734 us/op | 16,199.237-21,230.231 | Reference |
+| Parallel contextual | 25,905.557 us/op | 22,926.791-28,884.322 | 38.4% slower |
+
+The `-prof gc` repetition recorded the following allocation evidence across its fifteen measurement iterations:
+
+| Mode | Allocation | GC count | GC time |
+| :--- | ---: | ---: | ---: |
+| Sequential direct | 10,245,517.559 B/op | 28 | 90 ms |
+| Parallel direct | 10,268,673.028 B/op | 31 | 125 ms |
+| Sequential contextual | 24,348,705.752 B/op | 46 | 628 ms |
+| Parallel contextual | 33,932,152.739 B/op | 61 | 482 ms |
+
+The contextual parallel allocation increase is 39.4%. The direct time result in the GC run was too variable to support
+a crossover claim. Since the contextual non-GC result fails at the maximum sampled input count, the matrix cannot
+select a universal default and the PR remains not ready to merge. Raw JSON is retained under `/tmp/pr38-aeon-*.json`
+for this validation run.
+
 ### Run Unit and Harness Tests
 
 ```bash

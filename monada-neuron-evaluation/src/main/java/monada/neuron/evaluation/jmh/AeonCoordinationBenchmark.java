@@ -36,18 +36,29 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * JMH microbenchmark comparing sequential {@link DeterministicAeonCoordinator} and
- * bounded parallel {@link BoundedParallelAeonCoordinator} across input counts.
+ * bounded parallel {@link BoundedParallelAeonCoordinator} across independent input counts,
+ * graph scales, and worker bounds.
+ *
+ * <p>The parallel coordinator uses a threshold of one so this benchmark measures the parallel
+ * implementation at every configured input count. Production threshold selection is based on the
+ * resulting crossover study rather than the coordinator's current default.
  */
-@BenchmarkMode({Mode.Throughput, Mode.AverageTime})
+@BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
-@Warmup(iterations = 2, time = 1, timeUnit = TimeUnit.SECONDS)
-@Measurement(iterations = 3, time = 1, timeUnit = TimeUnit.SECONDS)
-@Fork(1)
+@Warmup(iterations = 3, time = 1, timeUnit = TimeUnit.SECONDS)
+@Measurement(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
+@Fork(3)
 @State(Scope.Benchmark)
 public class AeonCoordinationBenchmark {
 
-    @Param({"5", "10", "32", "128"})
+    @Param({"1", "2", "3", "4", "5", "8", "10", "16", "32", "64", "128"})
     private int inputCount;
+
+    @Param({"small", "medium", "large"})
+    private String graphProfile;
+
+    @Param({"1", "2", "4"})
+    private int workerCount;
 
     private DeterministicAeonCoordinator sequentialCoordinator;
     private BoundedParallelAeonCoordinator parallelCoordinator;
@@ -60,10 +71,10 @@ public class AeonCoordinationBenchmark {
     public void setup() {
         var engine = new DeterministicSignalPropagationEngine();
         sequentialCoordinator = new DeterministicAeonCoordinator(engine);
-        parallelCoordinator = new BoundedParallelAeonCoordinator(engine);
+        parallelCoordinator = new BoundedParallelAeonCoordinator(engine, workerCount, 1);
 
         var generator = new DeterministicWorkloadGenerator();
-        GraphTopology topology = generator.generateGraph(50, 3);
+        GraphTopology topology = graphTopology(generator);
         aeon = generator.generateAeon(AeonPurpose.REASONING, topology);
 
         var signals = generator.generateSignals(inputCount);
@@ -104,7 +115,7 @@ public class AeonCoordinationBenchmark {
 
     @Benchmark
     public void benchmarkSequentialContextual(Blackhole blackhole) {
-        var budget = new CognitiveBudget(50_000, 50_000, 50_000);
+        var budget = new CognitiveBudget(100_000, 500_000, 500_000);
         var context = new CognitiveContext(budget);
         try {
             AeonCoordinationResult result = sequentialCoordinator.coordinate(
@@ -121,7 +132,7 @@ public class AeonCoordinationBenchmark {
 
     @Benchmark
     public void benchmarkParallelContextual(Blackhole blackhole) {
-        var budget = new CognitiveBudget(50_000, 50_000, 50_000);
+        var budget = new CognitiveBudget(100_000, 500_000, 500_000);
         var context = new CognitiveContext(budget);
         try {
             AeonCoordinationResult result = parallelCoordinator.coordinate(
@@ -134,5 +145,14 @@ public class AeonCoordinationBenchmark {
         } finally {
             context.close();
         }
+    }
+
+    private GraphTopology graphTopology(DeterministicWorkloadGenerator generator) {
+        return switch (graphProfile) {
+            case "small" -> generator.generateGraph(50, 3);
+            case "medium" -> generator.generateGraph(200, 5);
+            case "large" -> generator.generateGraph(1_000, 4);
+            default -> throw new IllegalArgumentException("unknown graphProfile: " + graphProfile);
+        };
     }
 }

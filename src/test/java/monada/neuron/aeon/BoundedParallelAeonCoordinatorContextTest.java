@@ -3,14 +3,15 @@ package monada.neuron.aeon;
 import monada.neuron.context.CognitiveBudget;
 import monada.neuron.context.CognitiveContext;
 import monada.neuron.context.CognitiveCycleOutcome;
-import monada.neuron.context.CognitiveSignalOccurrence;
-import monada.neuron.context.CognitiveTraceEvent;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
+import monada.neuron.resonance.ScalarResonanceMetric;
 import monada.neuron.runtime.graph.DeterministicSignalPropagationEngine;
 import monada.neuron.runtime.graph.PropagationConfig;
+import monada.neuron.runtime.graph.ResonanceThresholdRoutingPolicy;
 import monada.neuron.runtime.graph.SignalPropagationEngine;
+import monada.neuron.runtime.graph.SignalRoutingPolicy;
 import monada.neuron.signal.NodeProcessingResult;
 import monada.neuron.signal.NodeProcessor;
 import monada.neuron.signal.Signal;
@@ -20,13 +21,12 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -35,7 +35,7 @@ class BoundedParallelAeonCoordinatorContextTest {
 
     private final DeterministicSignalPropagationEngine engine = new DeterministicSignalPropagationEngine();
     private final DeterministicAeonCoordinator sequentialCoordinator = new DeterministicAeonCoordinator(engine);
-    private final BoundedParallelAeonCoordinator parallelCoordinator = new BoundedParallelAeonCoordinator(engine, 4, 2);
+    private final BoundedParallelAeonCoordinator parallelCoordinator = new BoundedParallelAeonCoordinator(engine, 4, 1);
 
     @AfterEach
     void tearDown() {
@@ -44,47 +44,30 @@ class BoundedParallelAeonCoordinatorContextTest {
 
     @Test
     void contextualEquivalenceAcrossRandomizedWorkloads() {
-        var root1 = node(1);
-        var child1 = node(2);
-        var grandChild1 = node(3);
-        root1.connect(child1);
-        child1.connect(grandChild1);
+        for (long seed = 1; seed <= 20; seed++) {
+            var workload = randomizedWorkload(seed);
 
-        var root2 = node(4);
-        var child2 = node(5);
-        root2.connect(child2);
+            var sequentialDirect = sequentialCoordinator.coordinate(
+                    workload.aeon(), workload.inputs(), workload.processor(), workload.config());
+            var parallelDirect = parallelCoordinator.coordinate(
+                    workload.aeon(), workload.inputs(), workload.processor(), workload.config());
 
-        var aeon = aeonWith(root1, child1, grandChild1, root2, child2);
+            var sequentialContext = new CognitiveContext(workload.budget());
+            var sequentialContextual = sequentialCoordinator.coordinate(
+                    workload.aeon(), workload.inputs(), workload.processor(), workload.config(), sequentialContext);
+            var sequentialSnapshot = sequentialContext.complete(CognitiveCycleOutcome.SUCCESS);
 
-        var inputs = new ArrayList<AeonInput>();
-        for (int i = 0; i < 32; i++) {
-            UUID startId = (i % 2 == 0) ? root1.getId() : root2.getId();
-            inputs.add(new AeonInput(startId, signal(i + 1.0)));
+            var parallelContext = new CognitiveContext(workload.budget());
+            var parallelContextual = parallelCoordinator.coordinate(
+                    workload.aeon(), workload.inputs(), workload.processor(), workload.config(), parallelContext);
+            var parallelSnapshot = parallelContext.complete(CognitiveCycleOutcome.SUCCESS);
+
+            String seedMessage = "seed=" + seed;
+            assertAll(
+                    () -> assertEquals(sequentialDirect, parallelDirect, seedMessage + " direct result"),
+                    () -> assertEquals(sequentialContextual, parallelContextual, seedMessage + " contextual result"),
+                    () -> assertEquals(sequentialSnapshot, parallelSnapshot, seedMessage + " context snapshot"));
         }
-
-        NodeProcessor processor = (node, input) -> new NodeProcessingResult(List.of(input));
-        var config = PropagationConfig.routeAll(10, 3);
-        var budget = new CognitiveBudget(5_000, 5_000, 10_000);
-
-        var seqContext = new CognitiveContext(budget);
-        var seqResult = sequentialCoordinator.coordinate(aeon, inputs, processor, config, seqContext);
-        var seqSnapshot = seqContext.complete(CognitiveCycleOutcome.SUCCESS);
-
-        var parContext = new CognitiveContext(budget);
-        var parResult = parallelCoordinator.coordinate(aeon, inputs, processor, config, parContext);
-        var parSnapshot = parContext.complete(CognitiveCycleOutcome.SUCCESS);
-
-        assertAll(
-                () -> assertEquals(seqResult, parResult),
-                () -> assertEquals(seqSnapshot.processedSteps(), parSnapshot.processedSteps()),
-                () -> assertEquals(seqSnapshot.acceptedSignals(), parSnapshot.acceptedSignals()),
-                () -> assertEquals(seqSnapshot.stepBudgetExhausted(), parSnapshot.stepBudgetExhausted()),
-                () -> assertEquals(seqSnapshot.signalBudgetExhausted(), parSnapshot.signalBudgetExhausted()),
-                () -> assertEquals(seqSnapshot.traceBudgetExhausted(), parSnapshot.traceBudgetExhausted()),
-                () -> assertEquals(seqSnapshot.signalOccurrences(), parSnapshot.signalOccurrences()),
-                () -> assertEquals(seqSnapshot.aeonResults(), parSnapshot.aeonResults()),
-                () -> assertEquals(seqSnapshot.traceEntries(), parSnapshot.traceEntries()),
-                () -> assertEquals(seqSnapshot, parSnapshot));
     }
 
     @Test
@@ -516,6 +499,68 @@ class BoundedParallelAeonCoordinatorContextTest {
         assertAll(
                 () -> assertEquals(sequentialResult, parallelResult),
                 () -> assertEquals(sequentialSnapshot, parallelSnapshot));
+    }
+
+    private RandomizedWorkload randomizedWorkload(long seed) {
+        var random = new Random(seed);
+        int nodeCount = 3 + random.nextInt(10);
+        var nodes = new ArrayList<Node>(nodeCount);
+        for (int index = 0; index < nodeCount; index++) {
+            nodes.add(new Node.Builder()
+                    .id(new UUID(seed, index + 1L))
+                    .type(NodeType.PROCESSOR)
+                    .frequencyState(new FrequencyState(
+                            1.0 + random.nextDouble(),
+                            1.0 + random.nextDouble() * 20.0,
+                            random.nextDouble() * StrictMath.PI))
+                    .build());
+        }
+        for (int sourceIndex = 0; sourceIndex < nodeCount; sourceIndex++) {
+            int connectionCount = random.nextInt(4);
+            for (int connection = 0; connection < connectionCount; connection++) {
+                int targetIndex = random.nextInt(nodeCount);
+                if (targetIndex != sourceIndex) {
+                    nodes.get(sourceIndex).connect(nodes.get(targetIndex));
+                }
+            }
+        }
+
+        var aeon = aeonWith(nodes.toArray(Node[]::new));
+        int inputCount = 1 + random.nextInt(16);
+        var inputs = new ArrayList<AeonInput>(inputCount);
+        for (int index = 0; index < inputCount; index++) {
+            int emissionVariant = random.nextInt(3);
+            var signal = new Signal(
+                    SignalKind.INTERMEDIATE,
+                    new FrequencyState(
+                            emissionVariant + 1.0,
+                            1.0 + random.nextDouble() * 20.0,
+                            random.nextDouble() * StrictMath.PI));
+            inputs.add(new AeonInput(nodes.get(random.nextInt(nodeCount)).getId(), signal));
+        }
+
+        var routingPolicy = random.nextBoolean()
+                ? SignalRoutingPolicy.routeAll()
+                : new ResonanceThresholdRoutingPolicy(new ScalarResonanceMetric(), random.nextDouble());
+        var config = new PropagationConfig(1 + random.nextInt(16), random.nextInt(4), routingPolicy);
+        var budget = new CognitiveBudget(
+                1 + random.nextInt(32),
+                1 + random.nextInt(64),
+                random.nextInt(65));
+        NodeProcessor processor = (node, input) -> switch ((int) input.frequencyState().amplitude() - 1) {
+            case 0 -> NodeProcessingResult.noOutput();
+            case 1 -> new NodeProcessingResult(List.of(input));
+            default -> new NodeProcessingResult(List.of(input, input));
+        };
+        return new RandomizedWorkload(aeon, List.copyOf(inputs), processor, config, budget);
+    }
+
+    private record RandomizedWorkload(
+            Aeon aeon,
+            List<AeonInput> inputs,
+            NodeProcessor processor,
+            PropagationConfig config,
+            CognitiveBudget budget) {
     }
 
     private Aeon aeonWith(Node... nodes) {

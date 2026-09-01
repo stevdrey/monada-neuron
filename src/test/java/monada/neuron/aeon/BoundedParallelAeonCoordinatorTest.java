@@ -17,7 +17,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -398,7 +397,9 @@ class BoundedParallelAeonCoordinatorTest {
 
                                 slowTaskStarted.countDown();
                                 try {
-                                    new CountDownLatch(1).await();
+                                    if (!new CountDownLatch(1).await(5, TimeUnit.SECONDS)) {
+                                        throw new AssertionError("slow task was not interrupted");
+                                    }
                                     throw new AssertionError("slow task unexpectedly completed");
                                 } catch (InterruptedException interrupted) {
                                     slowTaskInterrupted.countDown();
