@@ -424,14 +424,25 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                     break;
                 }
 
+                var signalBudgetAttempt = step.signalBudgetAttempt();
+                if (signalBudgetAttempt != null && !stepBudgetReachedDuring) {
+                    OptionalLong rejectedSequence = signalBudgetAttempt.targetNodeId() == null
+                            ? context.tryRecordEmittedSignal(
+                                    signalBudgetAttempt.sourceNodeId(), signalBudgetAttempt.signal())
+                            : context.tryRecordDeliveredSignal(
+                                    signalBudgetAttempt.sourceNodeId(),
+                                    signalBudgetAttempt.targetNodeId(),
+                                    signalBudgetAttempt.signal());
+                    if (rejectedSequence.isPresent()) {
+                        throw new IllegalStateException(
+                                "worker signal budget did not match contextual reconciliation");
+                    }
+                }
+
                 if (step.deliveryStepBudgetReached()) {
                     context.hasRemainingStepCapacity();
                     stepBudgetReachedDuring = true;
                 }
-            }
-
-            if (log.attemptedExhaustedSignal() != null && !signalBudgetReachedDuring) {
-                context.tryRecordEmittedSignal(log.startNodeId(), log.attemptedExhaustedSignal());
             }
 
             if (log.failure() != null
@@ -495,8 +506,6 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
         int processedSteps = 0;
         boolean hopLimitReached = false;
         int maxStepsLimit = Math.min(config.maxSteps(), maxBudgetSteps);
-        Signal attemptedExhaustedSignal = null;
-
         while (!pending.isEmpty() && processedSteps < maxStepsLimit) {
             if (processedSteps >= maxBudgetSteps) {
                 break;
@@ -519,7 +528,6 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                         config,
                         nextSignalSequence,
                         !pending.isEmpty(),
-                        attemptedExhaustedSignal,
                         failure);
             }
             processedSteps++;
@@ -528,6 +536,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
             var emissionLogs = new ArrayList<EmissionLog>(outputs.size());
             boolean stepHopLimitReached = false;
             boolean deliveryStepBudgetReached = false;
+            SignalBudgetAttempt signalBudgetAttempt = null;
 
             if (!outputs.isEmpty()) {
                 boolean canEnqueueMoreWork = true;
@@ -537,7 +546,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                 for (var output : outputs) {
                     if (nextSignalSequence >= maxBudgetSignals) {
                         signalBudgetReached = true;
-                        attemptedExhaustedSignal = output;
+                        signalBudgetAttempt = new SignalBudgetAttempt(work.node().getId(), null, output);
                         break;
                     }
                     long emittedSequence = nextSignalSequence++;
@@ -561,7 +570,8 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                             }
                             if (nextSignalSequence >= maxBudgetSignals) {
                                 signalBudgetReached = true;
-                                attemptedExhaustedSignal = output;
+                                signalBudgetAttempt = new SignalBudgetAttempt(
+                                        work.node().getId(), target.getId(), output);
                                 break;
                             }
                             long deliveredSequence = nextSignalSequence++;
@@ -582,6 +592,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                     outputs.size(),
                     stepHopLimitReached,
                     deliveryStepBudgetReached,
+                    signalBudgetAttempt,
                     emissionLogs));
         }
 
@@ -595,7 +606,6 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                 config,
                 nextSignalSequence,
                 !pending.isEmpty(),
-                attemptedExhaustedSignal,
                 null);
     }
 
@@ -609,7 +619,6 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
             PropagationConfig config,
             long nextSignalSequence,
             boolean hasPendingWork,
-            Signal attemptedExhaustedSignal,
             Throwable failure) {
         return new InputExecutionLog(
                 startNode.getId(),
@@ -622,7 +631,6 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                         hopLimitReached),
                 (int) nextSignalSequence,
                 hasPendingWork,
-                attemptedExhaustedSignal,
                 failure);
     }
 
@@ -809,11 +817,14 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
             int emittedSignalCount,
             boolean hopLimitReached,
             boolean deliveryStepBudgetReached,
+            SignalBudgetAttempt signalBudgetAttempt,
             List<EmissionLog> emissions) {}
 
     private record EmissionLog(long emissionSequence, Signal signal, List<DeliveryLog> deliveries) {}
 
     private record DeliveryLog(long deliverySequence, UUID targetNodeId, Signal signal) {}
+
+    private record SignalBudgetAttempt(UUID sourceNodeId, UUID targetNodeId, Signal signal) {}
 
     private record InputExecutionLog(
             UUID startNodeId,
@@ -822,7 +833,6 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
             PropagationResult propagationResult,
             int totalSignalSequences,
             boolean hasPendingWork,
-            Signal attemptedExhaustedSignal,
             Throwable failure) {}
 
     private record TaskOutcome<T>(T result, Throwable failure) {}

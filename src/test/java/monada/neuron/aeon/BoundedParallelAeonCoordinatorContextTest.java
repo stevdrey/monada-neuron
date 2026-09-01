@@ -176,6 +176,34 @@ class BoundedParallelAeonCoordinatorContextTest {
     }
 
     @Test
+    void ignoresSpeculativeSignalBudgetExhaustionAfterStepBudgetTruncation() {
+        var seed = node(1);
+        var root = node(2);
+        var child = node(3);
+        root.connect(child);
+        var aeon = aeonWith(seed, root, child);
+        var inputs = List.of(
+                new AeonInput(seed.getId(), signal(1.0)),
+                new AeonInput(root.getId(), signal(2.0)));
+        NodeProcessor processor = (node, input) -> {
+            if (node.getId().equals(root.getId())) {
+                return new NodeProcessingResult(List.of(input));
+            }
+            if (node.getId().equals(child.getId())) {
+                return new NodeProcessingResult(List.of(input, input));
+            }
+            return NodeProcessingResult.noOutput();
+        };
+
+        assertContextualEquivalence(
+                aeon,
+                inputs,
+                processor,
+                PropagationConfig.routeAll(2, 1),
+                new CognitiveBudget(2, 4, 30));
+    }
+
+    @Test
     void traceBudgetExhaustionDoesNotChangeCognitionOrResults() {
         var root = node(1);
         var child = node(2);

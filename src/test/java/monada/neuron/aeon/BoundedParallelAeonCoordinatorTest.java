@@ -21,6 +21,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
@@ -216,33 +217,43 @@ class BoundedParallelAeonCoordinatorTest {
 
         var firstFailure = new IllegalStateException("input 1 failed");
         var secondFailure = new IllegalArgumentException("input 3 failed");
-        var failuresReady = new CountDownLatch(2);
+        var submittedTasks = new ArrayList<Runnable>();
+        Executor reverseExecutor = task -> {
+            submittedTasks.add(task);
+            if (submittedTasks.size() == 2) {
+                submittedTasks.getLast().run();
+                submittedTasks.getFirst().run();
+            }
+        };
 
         var inputs = List.of(
-                new AeonInput(root.getId(), signal(0.0)),
                 new AeonInput(root.getId(), signal(1.0)),
-                new AeonInput(root.getId(), signal(2.0)),
                 new AeonInput(root.getId(), signal(3.0)));
 
         NodeProcessor processor = (node, input) -> {
             if (input.frequencyState().amplitude() == 1.0) {
-                await(failuresReady);
                 throw firstFailure;
             }
             if (input.frequencyState().amplitude() == 3.0) {
-                await(failuresReady);
                 throw secondFailure;
             }
             return NodeProcessingResult.noOutput();
         };
 
-        var actual = assertThrows(
-                IllegalStateException.class,
-                () -> parallelCoordinator.coordinate(aeon, inputs, processor, PropagationConfig.routeAll(2, 0)));
+        try (var coordinator = new BoundedParallelAeonCoordinator(
+                graphEngine,
+                reverseExecutor,
+                2,
+                1,
+                AeonParallelEligibility.INDEPENDENT_READ_ONLY)) {
+            var actual = assertThrows(
+                    IllegalStateException.class,
+                    () -> coordinator.coordinate(aeon, inputs, processor, PropagationConfig.routeAll(2, 0)));
 
-        assertSame(firstFailure, actual);
-        assertEquals(1, actual.getSuppressed().length);
-        assertSame(secondFailure, actual.getSuppressed()[0]);
+            assertSame(firstFailure, actual);
+            assertEquals(1, actual.getSuppressed().length);
+            assertSame(secondFailure, actual.getSuppressed()[0]);
+        }
     }
 
     @Test
@@ -388,13 +399,4 @@ class BoundedParallelAeonCoordinatorTest {
         return new UUID(0L, value);
     }
 
-    private void await(CountDownLatch latch) {
-        latch.countDown();
-        try {
-            assertTrue(latch.await(1, TimeUnit.SECONDS));
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new AssertionError(interrupted);
-        }
-    }
 }
