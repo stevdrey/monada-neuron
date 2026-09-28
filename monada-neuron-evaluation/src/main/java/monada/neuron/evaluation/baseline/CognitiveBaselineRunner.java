@@ -733,6 +733,7 @@ public final class CognitiveBaselineRunner {
         var refSelector = RuntimeBackendSelector.referenceSelector();
         int warmups = quickMode ? 2 : 5;
         int iterations = quickMode ? 5 : 20;
+        int operationsPerIteration = quickMode ? 1_000 : 10_000;
 
         var topology = generator.generateGraph(50, 3);
         var snapshot = CompactGraphSnapshot.compile(topology.nodes());
@@ -745,10 +746,13 @@ public final class CognitiveBaselineRunner {
                 "100 pairs",
                 warmups,
                 iterations,
+                operationsPerIteration,
                 () -> {
-                    var sel = autoSelector.selectResonance(100);
-                    if (sel.backend() == null) {
-                        throw new IllegalStateException("null backend");
+                    for (int i = 0; i < operationsPerIteration; i++) {
+                        var sel = autoSelector.selectResonance(100);
+                        if (sel.backend() == null) {
+                            throw new IllegalStateException("null backend");
+                        }
                     }
                 },
                 Map.of(
@@ -762,10 +766,13 @@ public final class CognitiveBaselineRunner {
                 "100 pairs",
                 warmups,
                 iterations,
+                operationsPerIteration,
                 () -> {
-                    var sel = refSelector.selectResonance(100);
-                    if (sel.backend() == null) {
-                        throw new IllegalStateException("null backend");
+                    for (int i = 0; i < operationsPerIteration; i++) {
+                        var sel = refSelector.selectResonance(100);
+                        if (sel.backend() == null) {
+                            throw new IllegalStateException("null backend");
+                        }
                     }
                 },
                 Map.of(
@@ -780,10 +787,13 @@ public final class CognitiveBaselineRunner {
                 "50 nodes",
                 warmups,
                 iterations,
+                operationsPerIteration,
                 () -> {
-                    var sel = autoSelector.selectGraphPropagation(snapshot, false);
-                    if (sel.backend() == null) {
-                        throw new IllegalStateException("null backend");
+                    for (int i = 0; i < operationsPerIteration; i++) {
+                        var sel = autoSelector.selectGraphPropagation(snapshot, false);
+                        if (sel.backend() == null) {
+                            throw new IllegalStateException("null backend");
+                        }
                     }
                 },
                 Map.of(
@@ -797,10 +807,13 @@ public final class CognitiveBaselineRunner {
                 "10 inputs",
                 warmups,
                 iterations,
+                operationsPerIteration,
                 () -> {
-                    var sel = autoSelector.selectAeonCoordinator(10, false, true);
-                    if (sel.backend() == null) {
-                        throw new IllegalStateException("null backend");
+                    for (int i = 0; i < operationsPerIteration; i++) {
+                        var sel = autoSelector.selectAeonCoordinator(10, false, true);
+                        if (sel.backend() == null) {
+                            throw new IllegalStateException("null backend");
+                        }
                     }
                 },
                 Map.of(

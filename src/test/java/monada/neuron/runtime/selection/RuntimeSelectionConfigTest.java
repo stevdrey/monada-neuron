@@ -133,10 +133,25 @@ final class RuntimeSelectionConfigTest {
 
         assertThrows(IllegalArgumentException.class, () ->
                 new AeonSelectionConfig(
+                    ExecutionPreference.EXPLICIT,
+                    4,
+                    10,
+                    ContextualParallelism.SEQUENTIAL_ORACLE,
+                    Optional.empty()));
+    }
+
+    @Test
+    @DisplayName("rejects EXPLICIT overallPreference at master configuration level")
+    void rejectsExplicitOverallPreferenceAtMasterLevel() {
+        assertThrows(IllegalArgumentException.class, () ->
+                new RuntimeSelectionConfig(
                         ExecutionPreference.EXPLICIT,
-                        4,
-                        10,
-                        ContextualParallelism.SEQUENTIAL_ORACLE,
-                        Optional.empty()));
+                        FallbackPolicy.FALLBACK_TO_REFERENCE,
+                        ResonanceSelectionConfig.reference(),
+                        GraphSelectionConfig.reference(),
+                        AeonSelectionConfig.reference()));
+
+        assertThrows(IllegalArgumentException.class, () ->
+                RuntimeSelectionConfig.builder().overallPreference(ExecutionPreference.EXPLICIT));
     }
 }

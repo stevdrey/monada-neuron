@@ -41,8 +41,8 @@ final class BackendEquivalenceTest {
         int[] batchSizes = {1, 3, 4, 7, 16, 64, 256};
 
         var referenceEvaluator = ScalarBatchResonanceEvaluator.INSTANCE;
-        var autoEvaluator = BatchResonanceEvaluator.selecting(RuntimeSelectionConfig.autoDefault());
-        var forcedReferenceEvaluator = BatchResonanceEvaluator.selecting(RuntimeSelectionConfig.forcedReference());
+        var autoEvaluator = new SelectingBatchResonanceEvaluator(RuntimeSelectionConfig.autoDefault());
+        var forcedReferenceEvaluator = new SelectingBatchResonanceEvaluator(RuntimeSelectionConfig.forcedReference());
 
         for (int size : batchSizes) {
             double[] a1 = new double[size];

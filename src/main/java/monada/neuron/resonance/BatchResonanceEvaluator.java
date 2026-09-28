@@ -1,8 +1,6 @@
 package monada.neuron.resonance;
 
 import monada.neuron.model.FrequencyState;
-import monada.neuron.runtime.selection.RuntimeSelectionConfig;
-import monada.neuron.runtime.selection.SelectingBatchResonanceEvaluator;
 
 import java.util.Objects;
 
@@ -132,16 +130,6 @@ public interface BatchResonanceEvaluator {
      */
     static BatchResonanceEvaluator adaptive() {
         return AdaptiveBatchResonanceEvaluator.INSTANCE;
-    }
-
-    /**
-     * Returns a dynamic batch evaluator backed by runtime selection policy.
-     *
-     * @param config runtime selection configuration
-     * @return dynamic batch evaluator
-     */
-    static BatchResonanceEvaluator selecting(RuntimeSelectionConfig config) {
-        return new SelectingBatchResonanceEvaluator(config);
     }
 
     /**

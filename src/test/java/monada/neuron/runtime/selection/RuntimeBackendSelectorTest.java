@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ForkJoinPool;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -216,8 +217,9 @@ final class RuntimeBackendSelectorTest {
     @DisplayName("aeon direct coordination selects BOUNDED_PARALLEL when threshold configured and met")
     void aeonDirectParallelThresholdSelection() {
         int processors = Runtime.getRuntime().availableProcessors();
-        if (processors <= 1) {
-            return; // Single-processor environment cannot test multi-worker parallelism
+        int poolParallelism = ForkJoinPool.commonPool().getParallelism();
+        if (processors <= 1 || poolParallelism <= 1) {
+            return; // Single-worker or single-processor environment cannot test multi-worker parallelism
         }
 
         var config = RuntimeSelectionConfig.builder()

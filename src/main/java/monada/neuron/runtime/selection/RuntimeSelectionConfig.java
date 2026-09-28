@@ -25,6 +25,11 @@ public record RuntimeSelectionConfig(
         Objects.requireNonNull(resonance, "resonance must not be null");
         Objects.requireNonNull(graph, "graph must not be null");
         Objects.requireNonNull(aeon, "aeon must not be null");
+        if (overallPreference == ExecutionPreference.EXPLICIT) {
+            throw new IllegalArgumentException(
+                    "overallPreference cannot be EXPLICIT at master configuration level; "
+                            + "explicit backends must be configured per component (resonance, graph, aeon)");
+        }
     }
 
     /**
@@ -82,6 +87,11 @@ public record RuntimeSelectionConfig(
 
         public Builder overallPreference(ExecutionPreference preference) {
             this.overallPreference = Objects.requireNonNull(preference, "preference must not be null");
+            if (preference == ExecutionPreference.EXPLICIT) {
+                throw new IllegalArgumentException(
+                        "overallPreference cannot be EXPLICIT at master configuration level; "
+                                + "explicit backends must be configured per component (resonance, graph, aeon)");
+            }
             return this;
         }
 
