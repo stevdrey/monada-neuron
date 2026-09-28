@@ -29,12 +29,41 @@ public final class CompactSignalPropagationEngine implements CognitiveSignalProp
         this.contextualFallback = new DeterministicSignalPropagationEngine();
     }
 
+    /** Returns the underlying compact graph snapshot. */
+    public CompactGraphSnapshot snapshot() {
+        return snapshot;
+    }
+
     /**
-     * Propagates through compact CSR adjacency while preserving the reference engine's observable
-     * direct traversal semantics.
+     * Validates that the compiled snapshot is current with respect to live topology versions.
+     *
+     * @throws IllegalStateException if any node's topology version has advanced
+     */
+    public void validateFreshness() {
+        snapshot.requireCurrent();
+    }
+
+    /**
+     * Propagates through compact CSR adjacency while validating that the snapshot is current.
      */
     @Override
     public PropagationResult propagate(
+            Node startNode,
+            Signal input,
+            NodeProcessor processor,
+            PropagationConfig config) {
+        validateFreshness();
+        return propagatePrevalidated(startNode, input, processor, config);
+    }
+
+    /**
+     * Propagates through compact CSR adjacency assuming pre-traversal snapshot freshness has already
+     * been verified by the caller.
+     *
+     * <p>A post-traversal freshness check is retained to detect concurrent topology mutations that
+     * occurred during execution.
+     */
+    public PropagationResult propagatePrevalidated(
             Node startNode,
             Signal input,
             NodeProcessor processor,
@@ -44,7 +73,6 @@ public final class CompactSignalPropagationEngine implements CognitiveSignalProp
         Objects.requireNonNull(processor, "processor must not be null");
         Objects.requireNonNull(config, "config must not be null");
 
-        snapshot.requireCurrent();
         int startIndex = snapshot.requireCanonicalIndex(startNode);
         var pending = new CompactPropagationQueue(config.maxSteps());
         var emittedSignals = new ArrayList<Signal>();

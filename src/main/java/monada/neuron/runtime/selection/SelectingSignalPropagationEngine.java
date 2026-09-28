@@ -4,11 +4,13 @@ import monada.neuron.context.CognitiveContext;
 import monada.neuron.model.Node;
 import monada.neuron.runtime.graph.CognitiveSignalPropagationEngine;
 import monada.neuron.runtime.graph.CompactGraphSnapshot;
+import monada.neuron.runtime.graph.CompactSignalPropagationEngine;
 import monada.neuron.runtime.graph.PropagationConfig;
 import monada.neuron.runtime.graph.PropagationResult;
 import monada.neuron.signal.NodeProcessor;
 import monada.neuron.signal.Signal;
 
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -69,6 +71,28 @@ public final class SelectingSignalPropagationEngine implements CognitiveSignalPr
         var snapshot = snapshotSupplier.get();
         var selection = selector.selectGraphPropagation(snapshot, startNode, false);
         this.lastDiagnostic = selection.diagnostic();
+
+        if (selection.diagnostic().selectedBackendId() == GraphBackendId.COMPACT_CSR) {
+            var compactEngine = (CompactSignalPropagationEngine) selection.backend();
+            if (!compactEngine.snapshot().isCurrent()) {
+                String msg = "Compact CSR execution requires an up-to-date snapshot, but snapshot is stale";
+                if (selector.config().fallbackPolicy() == FallbackPolicy.FAIL_FAST) {
+                    throw new BackendIneligibleException(GraphBackendId.COMPACT_CSR, msg);
+                }
+                this.lastDiagnostic = new SelectionDiagnostic<>(
+                        GraphBackendId.DETERMINISTIC_OBJECT,
+                        SelectionReason.FALLBACK_INELIGIBLE,
+                        compactEngine.snapshot().nodeCount(),
+                        true,
+                        Optional.of(msg),
+                        Map.of(
+                                "attemptedBackend", GraphBackendId.COMPACT_CSR.name(),
+                                "failureReason", msg));
+                return selector.referencePropagationEngine().propagate(startNode, input, processor, config);
+            }
+            return compactEngine.propagatePrevalidated(startNode, input, processor, config);
+        }
+
         return selection.backend().propagate(startNode, input, processor, config);
     }
 

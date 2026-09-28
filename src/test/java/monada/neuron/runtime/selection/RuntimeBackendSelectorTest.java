@@ -442,8 +442,8 @@ final class RuntimeBackendSelectorTest {
     }
 
     @Test
-    @DisplayName("selectGraphPropagation directly validates start node canonicality and stale snapshot")
-    void selectGraphPropagationValidatesStartNodeCanonicalityAndStaleness() {
+    @DisplayName("selectGraphPropagation directly validates start node canonicality in O(log N) without O(N) staleness scan")
+    void selectGraphPropagationValidatesStartNodeCanonicalityWithoutStalenessScan() {
         var node1 = createNode();
         var node2 = createNode();
         var snapshot = CompactGraphSnapshot.compile(List.of(node1, node2));
@@ -470,17 +470,53 @@ final class RuntimeBackendSelectorTest {
         assertTrue(fallbackSelection.diagnostic().isFallback());
         assertTrue(fallbackSelection.diagnostic().metadata().containsKey("missingStartNode"));
 
-        // Stale snapshot after topology mutation
+        // Selection does not perform O(N) staleness scan, leaving it to engine preflight
+        node1.connect(node2);
+        assertFalse(snapshot.isCurrent());
+        var selectionStale = selectorFallback.selectGraphPropagation(snapshot, node1, false);
+        assertEquals(GraphBackendId.COMPACT_CSR, selectionStale.diagnostic().selectedBackendId());
+    }
+
+    @Test
+    @DisplayName("SelectingSignalPropagationEngine validates snapshot staleness at preflight before callbacks")
+    void selectingSignalPropagationEngineValidatesStalenessAtPreflight() {
+        var node1 = createNode();
+        var node2 = createNode();
+        var snapshot = CompactGraphSnapshot.compile(List.of(node1, node2));
+        var signal = new Signal(SignalKind.OBSERVATION, new FrequencyState(1.0, 10.0, 0.0));
+
+        // Mutate topology to make snapshot stale
         node1.connect(node2);
         assertFalse(snapshot.isCurrent());
 
-        assertThrows(BackendIneligibleException.class, () ->
-                selectorFailFast.selectGraphPropagation(snapshot, node1, false));
+        // FAIL_FAST throws BackendIneligibleException before invoking processor
+        var selectorFailFast = new RuntimeBackendSelector(RuntimeSelectionConfig.builder()
+                .overallPreference(ExecutionPreference.AUTO)
+                .fallbackPolicy(FallbackPolicy.FAIL_FAST)
+                .graph(GraphSelectionConfig.explicit(GraphBackendId.COMPACT_CSR))
+                .build());
+        var engineFailFast = new SelectingSignalPropagationEngine(selectorFailFast, snapshot);
+        var callbackExecuted = new java.util.concurrent.atomic.AtomicBoolean(false);
 
-        var staleFallback = selectorFallback.selectGraphPropagation(snapshot, node1, false);
-        assertEquals(GraphBackendId.DETERMINISTIC_OBJECT, staleFallback.diagnostic().selectedBackendId());
-        assertEquals(SelectionReason.FALLBACK_INELIGIBLE, staleFallback.diagnostic().reason());
-        assertTrue(staleFallback.diagnostic().isFallback());
+        assertThrows(BackendIneligibleException.class, () ->
+                engineFailFast.propagate(node1, signal, (n, s) -> {
+                    callbackExecuted.set(true);
+                    return new NodeProcessingResult(List.of());
+                }, PropagationConfig.routeAll(10, 2)));
+        assertFalse(callbackExecuted.get(), "Callbacks must not be invoked on stale snapshot fail-fast");
+
+        // FALLBACK_TO_REFERENCE routes safely to reference engine
+        var selectorFallback = new RuntimeBackendSelector(RuntimeSelectionConfig.builder()
+                .overallPreference(ExecutionPreference.AUTO)
+                .fallbackPolicy(FallbackPolicy.FALLBACK_TO_REFERENCE)
+                .graph(GraphSelectionConfig.explicit(GraphBackendId.COMPACT_CSR))
+                .build());
+        var engineFallback = new SelectingSignalPropagationEngine(selectorFallback, snapshot);
+
+        engineFallback.propagate(node1, signal, (n, s) -> new NodeProcessingResult(List.of()), PropagationConfig.routeAll(10, 2));
+        assertEquals(GraphBackendId.DETERMINISTIC_OBJECT, engineFallback.lastDiagnostic().orElseThrow().selectedBackendId());
+        assertEquals(SelectionReason.FALLBACK_INELIGIBLE, engineFallback.lastDiagnostic().orElseThrow().reason());
+        assertTrue(engineFallback.lastDiagnostic().orElseThrow().isFallback());
     }
 
     @Test

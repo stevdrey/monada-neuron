@@ -328,22 +328,6 @@ public final class RuntimeBackendSelector {
                                 ATTEMPTED_CSR_METADATA));
             }
 
-            if (!snapshot.isCurrent()) {
-                String msg = "Compact CSR execution requires an up-to-date snapshot, but snapshot is stale";
-                if (config.fallbackPolicy() == FallbackPolicy.FAIL_FAST) {
-                    throw new BackendIneligibleException(GraphBackendId.COMPACT_CSR, msg);
-                }
-                return new BackendSelection<>(
-                        referencePropagationEngine,
-                        new SelectionDiagnostic<>(
-                                GraphBackendId.DETERMINISTIC_OBJECT,
-                                SelectionReason.FALLBACK_INELIGIBLE,
-                                scale,
-                                true,
-                                Optional.of(msg),
-                                ATTEMPTED_CSR_METADATA));
-            }
-
             if (startNode != null && !snapshot.containsCanonical(startNode)) {
                 String msg = "Start node " + startNode.getId() + " is not contained in canonical snapshot topology";
                 if (config.fallbackPolicy() == FallbackPolicy.FAIL_FAST) {
