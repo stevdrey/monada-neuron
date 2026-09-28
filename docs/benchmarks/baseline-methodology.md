@@ -281,6 +281,32 @@ uses `Integer.MAX_VALUE` as the conservative direct threshold; direct and contex
 explicit configuration, pending Issue #29's evidence-driven backend-selection policy. Raw JSON is retained under
 `/tmp/pr38-aeon-*.json` for this validation run.
 
+### PR #29 Runtime Backend Selection and Dispatch Overhead Benchmark
+
+`BackendSelectionBenchmark` measures the control-plane selection latency of `RuntimeBackendSelector`
+across execution preferences (REFERENCE vs AUTO), as well as the overhead of dynamic dispatch adapters
+(`SelectingBatchResonanceEvaluator`) relative to direct execution:
+
+```bash
+./gradlew :monada-neuron-evaluation:jmh \
+  -PjmhArgs="-f 1 -wi 2 -i 3 -r 1s BackendSelectionBenchmark"
+```
+
+The review-before-merge study was executed on Linux x86_64 with Java 26 (Temurin 26.0.2.1+1, Intel AVX2):
+
+| Benchmark Operation | Workload Scale | Average Latency | Decision / Status |
+| :--- | ---: | ---: | :--- |
+| `benchmarkResonanceSelectionAuto` | 4 pairs | 18.7 ns | `VECTOR_API` (`AUTO_THRESHOLD_MET`) |
+| `benchmarkResonanceSelectionAuto` | 64 pairs | 22.7 ns | `VECTOR_API` (`AUTO_THRESHOLD_MET`) |
+| `benchmarkResonanceSelectionAuto` | 1,000 pairs | 22.8 ns | `VECTOR_API` (`AUTO_THRESHOLD_MET`) |
+| `benchmarkResonanceSelectionReference` | 1,000 pairs | 36.9 ns | `SCALAR` (`FORCED_REFERENCE`) |
+| `benchmarkGraphSelection` | 50 nodes | 67.6 ns | `DETERMINISTIC_OBJECT` (`REFERENCE_DEFAULT`) |
+| `benchmarkAeonSelection` | 64 inputs | 95.9 ns | `DETERMINISTIC_SEQUENTIAL` (`AUTO_BELOW_THRESHOLD`) |
+| `benchmarkDirectScalarBatch` | 1,000 pairs | 73,382.1 ns | Direct scalar reference |
+| `benchmarkSelectingBatch` | 1,000 pairs | 15,515.2 ns | Dynamically selected SIMD (4.7x speedup) |
+
+Selection control-plane latency is strictly under 100 ns across all paths and introduces zero hot-path allocations.
+
 ### Run Unit and Harness Tests
 
 ```bash

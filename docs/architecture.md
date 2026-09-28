@@ -121,7 +121,7 @@ array-of-objects representation is already available.
 and preserves `ScalarResonanceMetric` semantics, so it remains the correctness oracle and fallback.
 `VectorBatchResonanceEvaluator` is an isolated Java 26 Vector API implementation for sufficiently
 large batches. `AdaptiveBatchResonanceEvaluator`, returned by
-`BatchResonanceEvaluator.defaultEvaluator()`, uses that backend from 64 pairs onward only when the
+`BatchResonanceEvaluator.defaultEvaluator()`, uses that backend from 4 pairs onward only when the
 runtime can resolve the incubating module and supports multi-lane vectors; otherwise it routes to
 the scalar backend.
 
@@ -210,6 +210,44 @@ processed, while `NodeProcessingResult.noOutput()` ends only that propagation br
 and routing failures propagate without a partial result. Membership, Node state, and topology must
 not change during coordination; the Phase-1 Aeon and graph runtime are sequential and not
 thread-safe. ADR 0008 records these ownership and execution semantics.
+
+## Runtime Backend Selection and Fallback
+
+Monada Neuron provides an explicit, deterministic, and inspectable runtime selection layer
+under `monada.neuron.runtime.selection`. The layer decouples high-level cognitive contracts from
+hardware-specific and experimental implementations, ensuring that portable reference implementations
+remain the first-class safety baseline while selecting optimized backends when beneficial.
+
+The layer defines:
+
+- `BackendId`: sealed hierarchy of strongly typed backend identifiers across runtime cognitive
+  components:
+  - `ResonanceBackendId`: `SCALAR` (reference oracle), `VECTOR_API` (Java 26 Vector API SIMD).
+  - `GraphBackendId`: `DETERMINISTIC_OBJECT` (reference BFS), `COMPACT_CSR` (CSR adjacency view).
+  - `AeonBackendId`: `DETERMINISTIC_SEQUENTIAL` (reference sequential oracle), `BOUNDED_PARALLEL`.
+  - `StateBackendId`: `HEAP_OBJECT` (reference), `HEAP_SOA`, `FFM_OFF_HEAP` (experimental).
+- `RuntimeSelectionConfig`: immutable configuration record with safe reference defaults
+  (`referenceDefault()`), benchmark-driven automatic selection (`autoDefault()`), and explicit
+  forced-reference mode (`forcedReference()`) for testing.
+- `FallbackPolicy`: explicit failure or fallback behavior (`FALLBACK_TO_REFERENCE` vs `FAIL_FAST`).
+  When an explicitly requested backend is unavailable or semantically ineligible, the runtime never
+  silently guesses: it either fails immediately or records structured diagnostic fallback rationale.
+- `SelectionDiagnostic`: inspectable record detailing the selected backend identifier, selection reason
+  (`SelectionReason`), relevant workload scale, fallback indicator, and diagnostic metadata.
+- `RuntimeBackendSelector`: control-plane selector caching static JVM/hardware capabilities
+  (`BackendCapabilities`) to ensure selection decisions execute in $O(1)$ with negligible overhead
+  (18–97 ns in JMH microbenchmarks) and zero hot-loop allocation.
+
+The supported backend matrix in `AUTO` mode is derived strictly from empirical benchmark evidence:
+
+| Component | Default `AUTO` Backend | Crossover / Gate Constraint | Empirical Rationale |
+| :--- | :--- | :--- | :--- |
+| **Resonance** | `VECTOR_API` | $batchSize \ge 4$ pairs | ADR 0013: 6.2x–6.7x speedup, $< 0.0001$ B/pair allocation |
+| **Graph Propagation** | `DETERMINISTIC_OBJECT` | Opt-in snapshot only | ADR 0014: CSR failed 75% allocation gate; slower on threshold routing |
+| **Aeon Coordination** | `DETERMINISTIC_SEQUENTIAL` | Contextual always sequential | ADR 0016: Parallel contextual was 38.4% slower and 39.4% more allocation |
+| **Node State Layout** | `HEAP_OBJECT` | Heap object reference | ADR 0015: FFM retained as experimental layout; not promoted |
+
+ADR 0017 records the selection semantics, capability detection rules, and fallback lifecycle.
 
 ## Current Cognitive Context and Cycle Trace
 
