@@ -242,3 +242,9 @@ The long-term research direction is to explore whether an artificial intelligent
 ## Guiding Statement
 
 > **Monada Neuron is a modular artificial intelligence system built around signals, Aeons, resonance, adaptation, and evolution. It may use LLMs, LangChain, or external tools, but it must not become dependent on them as its core architecture.**
+
+## License
+
+Monada Neuron is licensed under the [Apache License 2.0](LICENSE).
+
+This license permits use, modification, distribution, and commercial integration while preserving attribution and patent protections.
