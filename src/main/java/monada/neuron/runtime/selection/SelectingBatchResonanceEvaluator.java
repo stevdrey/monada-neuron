@@ -15,22 +15,23 @@ import java.util.Optional;
  */
 public final class SelectingBatchResonanceEvaluator implements BatchResonanceEvaluator {
 
+    private record CachedRegime(
+            int regime,
+            BackendSelection<BatchResonanceEvaluator, ResonanceBackendId> selection) {}
+
     private final RuntimeBackendSelector selector;
     private final boolean isDynamicAuto;
     private final int primitiveThreshold;
     private final int objectThreshold;
 
     private volatile SelectionDiagnostic<ResonanceBackendId> lastDiagnostic;
-    private volatile BackendSelection<BatchResonanceEvaluator, ResonanceBackendId> cachedPrimitiveSelection;
-    private volatile BackendSelection<BatchResonanceEvaluator, ResonanceBackendId> cachedObjectSelection;
-    private volatile int lastPrimitiveRegime = -1;
-    private volatile int lastObjectRegime = -1;
+    private volatile CachedRegime cachedPrimitive;
+    private volatile CachedRegime cachedObject;
 
     public SelectingBatchResonanceEvaluator(RuntimeBackendSelector selector) {
         this.selector = Objects.requireNonNull(selector, "selector must not be null");
         this.isDynamicAuto = selector.config().overallPreference() != ExecutionPreference.REFERENCE
-                && selector.config().resonance().preference() == ExecutionPreference.AUTO
-                && selector.capabilities().isVectorApiAvailable();
+                && selector.config().resonance().preference() == ExecutionPreference.AUTO;
         this.primitiveThreshold = Math.max(
                 selector.config().resonance().vectorCrossoverThreshold(),
                 selector.capabilities().vectorLaneWidth());
@@ -65,15 +66,15 @@ public final class SelectingBatchResonanceEvaluator implements BatchResonanceEva
             int offset,
             int length) {
         int regime = isDynamicAuto ? (length >= primitiveThreshold ? 1 : 0) : 0;
-        var selection = cachedPrimitiveSelection;
-        if (selection == null || lastPrimitiveRegime != regime) {
-            selection = selector.selectResonance(length, false);
+        var cached = cachedPrimitive;
+        if (cached == null || cached.regime() != regime) {
+            var selection = selector.selectResonance(length, false);
             this.lastDiagnostic = selection.diagnostic();
-            this.cachedPrimitiveSelection = selection;
-            this.lastPrimitiveRegime = regime;
+            cached = new CachedRegime(regime, selection);
+            this.cachedPrimitive = cached;
         }
 
-        selection.backend().scoreBatch(
+        cached.selection().backend().scoreBatch(
                 firstAmplitudes,
                 firstFrequencies,
                 firstPhases,
@@ -93,15 +94,15 @@ public final class SelectingBatchResonanceEvaluator implements BatchResonanceEva
             int offset,
             int length) {
         int regime = isDynamicAuto ? (length >= objectThreshold ? 1 : 0) : 0;
-        var selection = cachedObjectSelection;
-        if (selection == null || lastObjectRegime != regime) {
-            selection = selector.selectResonance(length, true);
+        var cached = cachedObject;
+        if (cached == null || cached.regime() != regime) {
+            var selection = selector.selectResonance(length, true);
             this.lastDiagnostic = selection.diagnostic();
-            this.cachedObjectSelection = selection;
-            this.lastObjectRegime = regime;
+            cached = new CachedRegime(regime, selection);
+            this.cachedObject = cached;
         }
 
-        selection.backend().scoreBatch(first, second, results, offset, length);
+        cached.selection().backend().scoreBatch(first, second, results, offset, length);
     }
 
     @Override

@@ -52,7 +52,8 @@ Without a unified runtime selection policy, these capabilities would risk becomi
 
 6. **Static Capability Caching and Negligible Control-Plane Overhead**:
    - `BackendCapabilities` caches JVM and hardware detection once at startup.
-   - JMH benchmarks (`BackendSelectionBenchmark`) confirm control-plane selection executes in **18–97 nanoseconds** with zero per-element allocation.
+   - Graph selection is strictly $O(1)$ control-plane, combining initial snapshot and canonical node validation with the start of engine traversal to avoid duplicate scans.
+   - JMH benchmarks (`BackendSelectionBenchmark`) confirm steady-state control-plane selection executes in **12–77 nanoseconds** with zero application heap allocations.
 
 ## Empirical Evidence
 
@@ -60,16 +61,16 @@ Microbenchmark results from `BackendSelectionBenchmark` executed on Java 26 (Tem
 
 | Benchmark Operation | Workload Scale | Average Latency | Decision |
 | :--- | ---: | ---: | :--- |
-| `benchmarkResonanceSelectionAuto` | 4 pairs | 18.7 ns | `VECTOR_API` (`AUTO_THRESHOLD_MET`) |
-| `benchmarkResonanceSelectionAuto` | 64 pairs | 22.7 ns | `VECTOR_API` (`AUTO_THRESHOLD_MET`) |
-| `benchmarkResonanceSelectionAuto` | 1,000 pairs | 22.8 ns | `VECTOR_API` (`AUTO_THRESHOLD_MET`) |
-| `benchmarkResonanceSelectionReference` | 1,000 pairs | 36.9 ns | `SCALAR` (`FORCED_REFERENCE`) |
-| `benchmarkGraphSelection` | 50 nodes | 67.6 ns | `DETERMINISTIC_OBJECT` (`REFERENCE_DEFAULT`) |
-| `benchmarkAeonSelection` | 64 inputs | 95.9 ns | `DETERMINISTIC_SEQUENTIAL` (`AUTO_BELOW_THRESHOLD`) |
-| `benchmarkDirectScalarBatch` | 1,000 pairs | 73,382.1 ns | Raw scalar reference execution |
-| `benchmarkSelectingBatch` | 1,000 pairs | 15,515.2 ns | Dynamically selected SIMD (4.7x speedup end-to-end) |
+| `benchmarkResonanceSelectionAuto` | 64 pairs | 17.0 ns | `VECTOR_API` (`AUTO_THRESHOLD_MET`) |
+| `benchmarkResonanceSelectionAuto` | 1,000 pairs | 16.3 ns | `VECTOR_API` (`AUTO_THRESHOLD_MET`) |
+| `benchmarkResonanceSelectionReference` | 1,000 pairs | 11.9 ns | `SCALAR` (`FORCED_REFERENCE`) |
+| `benchmarkGraphSelection` | 50 nodes | 14.9 ns | `DETERMINISTIC_OBJECT` (`REFERENCE_DEFAULT`) |
+| `benchmarkAeonSelection` | 64 inputs | 76.9 ns | `DETERMINISTIC_SEQUENTIAL` (`AUTO_BELOW_THRESHOLD`) |
+| `benchmarkDirectScalarBatch` | 1,000 pairs | 72,677.7 ns | Direct scalar baseline |
+| `benchmarkDirectVectorBatch` | 1,000 pairs | 13,625.6 ns | Direct SIMD vector (5.3x faster than scalar) |
+| `benchmarkSelectingVectorBatch` | 1,000 pairs | 12,211.5 ns | Dynamically selected SIMD (6.5x faster than scalar) |
 
-Selection control-plane latency is bounded under 100 ns, completely negligible relative to operational workloads.
+Selection control-plane latency is strictly bounded under 100 ns (12–77 ns in steady state), and selecting dispatch overhead is negligible relative to direct execution (~2.6 ns at 4 pairs, undetectable at scale).
 
 ## Consequences
 

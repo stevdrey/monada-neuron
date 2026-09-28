@@ -46,7 +46,7 @@ public final class BackendCapabilities {
         if (vectorInitializationFailure != null) {
             map.put("vectorInitializationFailure", vectorInitializationFailure.toString());
         }
-        this.diagnosticSummary = Collections.unmodifiableMap(map);
+        this.diagnosticSummary = Map.copyOf(map);
     }
 
     /** Returns the cached capability snapshot of the current JVM runtime. */

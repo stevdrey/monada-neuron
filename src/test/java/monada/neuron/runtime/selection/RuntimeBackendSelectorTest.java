@@ -5,6 +5,10 @@ import monada.neuron.model.FrequencyState;
 import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
 import monada.neuron.runtime.graph.CompactGraphSnapshot;
+import monada.neuron.runtime.graph.PropagationConfig;
+import monada.neuron.signal.NodeProcessingResult;
+import monada.neuron.signal.Signal;
+import monada.neuron.signal.SignalKind;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -48,14 +52,17 @@ final class RuntimeBackendSelectorTest {
         var selector = RuntimeBackendSelector.autoSelector();
         boolean vectorAvailable = selector.capabilities().isVectorApiAvailable();
 
-        // Workload below default threshold 4
-        var below = selector.selectResonance(3);
+        int laneWidth = selector.capabilities().vectorLaneWidth();
+        int effectiveThreshold = Math.max(4, laneWidth);
+
+        // Workload below effective threshold
+        var below = selector.selectResonance(effectiveThreshold - 1);
         assertEquals(ResonanceBackendId.SCALAR, below.diagnostic().selectedBackendId());
         assertEquals(SelectionReason.AUTO_BELOW_THRESHOLD, below.diagnostic().reason());
-        assertEquals(3, below.diagnostic().workloadScale());
+        assertEquals(effectiveThreshold - 1, below.diagnostic().workloadScale());
 
-        // Workload at threshold 4
-        var at = selector.selectResonance(4);
+        // Workload at effective threshold
+        var at = selector.selectResonance(effectiveThreshold);
         if (vectorAvailable) {
             assertEquals(ResonanceBackendId.VECTOR_API, at.diagnostic().selectedBackendId());
             assertEquals(SelectionReason.AUTO_THRESHOLD_MET, at.diagnostic().reason());
@@ -66,7 +73,7 @@ final class RuntimeBackendSelectorTest {
         }
 
         // Workload well above threshold
-        var above = selector.selectResonance(100);
+        var above = selector.selectResonance(Math.max(100, effectiveThreshold * 2));
         if (vectorAvailable) {
             assertEquals(ResonanceBackendId.VECTOR_API, above.diagnostic().selectedBackendId());
             assertEquals(SelectionReason.AUTO_THRESHOLD_MET, above.diagnostic().reason());
@@ -136,16 +143,18 @@ final class RuntimeBackendSelectorTest {
         assertEquals(SelectionReason.FALLBACK_INELIGIBLE, nullResult.diagnostic().reason());
         assertTrue(nullResult.diagnostic().isFallback());
 
-        // Stale snapshot
+        // Stale snapshot triggers fallback during propagation
         var node1 = createNode();
         var node2 = createNode();
         var snapshot = CompactGraphSnapshot.compile(List.of(node1, node2));
         node1.connect(node2); // mutates topology, invalidates snapshot
 
-        var staleResult = selectorFallback.selectGraphPropagation(snapshot, false);
-        assertEquals(GraphBackendId.DETERMINISTIC_OBJECT, staleResult.diagnostic().selectedBackendId());
-        assertEquals(SelectionReason.FALLBACK_INELIGIBLE, staleResult.diagnostic().reason());
-        assertTrue(staleResult.diagnostic().isFallback());
+        var signal = new Signal(SignalKind.OBSERVATION, new FrequencyState(1.0, 10.0, 0.0));
+        var engineFallback = new SelectingSignalPropagationEngine(selectorFallback, snapshot);
+        engineFallback.propagate(node1, signal, (n, s) -> new NodeProcessingResult(List.of()), PropagationConfig.routeAll(10, 2));
+        assertEquals(GraphBackendId.DETERMINISTIC_OBJECT, engineFallback.lastDiagnostic().orElseThrow().selectedBackendId());
+        assertEquals(SelectionReason.FALLBACK_INELIGIBLE, engineFallback.lastDiagnostic().orElseThrow().reason());
+        assertTrue(engineFallback.lastDiagnostic().orElseThrow().isFallback());
 
         // Fallback policy: FAIL_FAST
         var configFailFast = RuntimeSelectionConfig.builder()
@@ -158,8 +167,9 @@ final class RuntimeBackendSelectorTest {
         assertThrows(BackendIneligibleException.class, () ->
                 selectorFailFast.selectGraphPropagation(null, false));
 
+        var engineFailFast = new SelectingSignalPropagationEngine(selectorFailFast, snapshot);
         assertThrows(BackendIneligibleException.class, () ->
-                selectorFailFast.selectGraphPropagation(snapshot, false));
+                engineFailFast.propagate(node1, signal, (n, s) -> new NodeProcessingResult(List.of()), PropagationConfig.routeAll(10, 2)));
     }
 
     @Test
@@ -357,8 +367,8 @@ final class RuntimeBackendSelectorTest {
         var node1 = createNode();
         var node2 = createNode();
         var snapshot = CompactGraphSnapshot.compile(List.of(node1, node2));
-
         var nonCanonicalNode = createNode();
+        var signal = new Signal(SignalKind.OBSERVATION, new FrequencyState(1.0, 10.0, 0.0));
 
         // FAIL_FAST
         var configFailFast = RuntimeSelectionConfig.builder()
@@ -367,9 +377,10 @@ final class RuntimeBackendSelectorTest {
                 .graph(GraphSelectionConfig.explicit(GraphBackendId.COMPACT_CSR))
                 .build();
         var selectorFailFast = new RuntimeBackendSelector(configFailFast);
+        var engineFailFast = new SelectingSignalPropagationEngine(selectorFailFast, snapshot);
 
         assertThrows(BackendIneligibleException.class, () ->
-                selectorFailFast.selectGraphPropagation(snapshot, nonCanonicalNode, false));
+                engineFailFast.propagate(nonCanonicalNode, signal, (n, s) -> new NodeProcessingResult(List.of()), PropagationConfig.routeAll(10, 2)));
 
         // FALLBACK_TO_REFERENCE
         var configFallback = RuntimeSelectionConfig.builder()
@@ -378,17 +389,17 @@ final class RuntimeBackendSelectorTest {
                 .graph(GraphSelectionConfig.explicit(GraphBackendId.COMPACT_CSR))
                 .build();
         var selectorFallback = new RuntimeBackendSelector(configFallback);
+        var engineFallback = new SelectingSignalPropagationEngine(selectorFallback, snapshot);
 
-        var result = selectorFallback.selectGraphPropagation(snapshot, nonCanonicalNode, false);
-        assertEquals(GraphBackendId.DETERMINISTIC_OBJECT, result.diagnostic().selectedBackendId());
-        assertEquals(SelectionReason.FALLBACK_INELIGIBLE, result.diagnostic().reason());
-        assertTrue(result.diagnostic().isFallback());
-        assertEquals(nonCanonicalNode.getId().toString(), result.diagnostic().metadata().get("noncanonicalStartNode"));
+        engineFallback.propagate(nonCanonicalNode, signal, (n, s) -> new NodeProcessingResult(List.of()), PropagationConfig.routeAll(10, 2));
+        assertEquals(GraphBackendId.DETERMINISTIC_OBJECT, engineFallback.lastDiagnostic().orElseThrow().selectedBackendId());
+        assertEquals(SelectionReason.FALLBACK_INELIGIBLE, engineFallback.lastDiagnostic().orElseThrow().reason());
+        assertTrue(engineFallback.lastDiagnostic().orElseThrow().isFallback());
 
-        // Canonical start node succeeds
-        var canonicalResult = selectorFallback.selectGraphPropagation(snapshot, node1, false);
-        assertEquals(GraphBackendId.COMPACT_CSR, canonicalResult.diagnostic().selectedBackendId());
-        assertEquals(SelectionReason.EXPLICIT_SELECTION, canonicalResult.diagnostic().reason());
+        // Canonical start node succeeds with COMPACT_CSR
+        engineFallback.propagate(node1, signal, (n, s) -> new NodeProcessingResult(List.of()), PropagationConfig.routeAll(10, 2));
+        assertEquals(GraphBackendId.COMPACT_CSR, engineFallback.lastDiagnostic().orElseThrow().selectedBackendId());
+        assertEquals(SelectionReason.EXPLICIT_SELECTION, engineFallback.lastDiagnostic().orElseThrow().reason());
     }
 
     @Test

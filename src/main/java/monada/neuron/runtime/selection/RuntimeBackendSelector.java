@@ -40,6 +40,14 @@ public final class RuntimeBackendSelector {
             Map.of("coordinator", "DeterministicAeonCoordinator");
     private static final Map<String, String> ATTEMPTED_PARALLEL_METADATA =
             Map.of("attemptedBackend", AeonBackendId.BOUNDED_PARALLEL.name());
+    private static final Map<String, String> AUTO_PRIMITIVE_BELOW_METADATA =
+            Map.of("inputLayout", "PRIMITIVE_SOA", "reason", "belowThreshold");
+    private static final Map<String, String> AUTO_OBJECT_BELOW_METADATA =
+            Map.of("inputLayout", "OBJECT_ARRAY", "reason", "belowThreshold");
+    private static final Map<String, String> AUTO_UNAVAILABLE_VECTOR_METADATA =
+            Map.of("attemptedBackend", ResonanceBackendId.VECTOR_API.name(), "reason", "unavailable");
+    private static final Map<String, String> CSR_ENGINE_METADATA =
+            Map.of("backend", GraphBackendId.COMPACT_CSR.name());
 
     private static final RuntimeBackendSelector REFERENCE_SELECTOR =
             new RuntimeBackendSelector(RuntimeSelectionConfig.referenceDefault());
@@ -195,10 +203,7 @@ public final class RuntimeBackendSelector {
                             batchSize,
                             false,
                             Optional.empty(),
-                            Map.of(
-                                    "threshold", String.valueOf(effectiveThreshold),
-                                    "batchSize", String.valueOf(batchSize),
-                                    "inputLayout", isObjectArray ? "OBJECT_ARRAY" : "PRIMITIVE_SOA")));
+                            isObjectArray ? AUTO_OBJECT_BELOW_METADATA : AUTO_PRIMITIVE_BELOW_METADATA));
         }
 
         if (capabilities.isVectorApiAvailable() && vectorEvaluator != null) {
@@ -221,7 +226,7 @@ public final class RuntimeBackendSelector {
                         batchSize,
                         true,
                         Optional.of("Vector API incubator module unavailable; routed to scalar reference oracle"),
-                        Map.of("threshold", String.valueOf(effectiveThreshold))));
+                        AUTO_UNAVAILABLE_VECTOR_METADATA));
     }
 
     /**
@@ -299,10 +304,8 @@ public final class RuntimeBackendSelector {
                                 ATTEMPTED_CSR_METADATA));
             }
 
-            if (snapshot == null || !snapshot.isCurrent()) {
-                String msg = snapshot == null
-                        ? "Compact CSR execution requires a non-null CompactGraphSnapshot"
-                        : "Compact graph snapshot is stale; topology was mutated after compilation";
+            if (snapshot == null) {
+                String msg = "Compact CSR execution requires a non-null CompactGraphSnapshot";
                 if (config.fallbackPolicy() == FallbackPolicy.FAIL_FAST) {
                     throw new BackendIneligibleException(GraphBackendId.COMPACT_CSR, msg);
                 }
@@ -317,24 +320,6 @@ public final class RuntimeBackendSelector {
                                 ATTEMPTED_CSR_METADATA));
             }
 
-            if (startNode != null && !snapshot.containsCanonical(startNode)) {
-                String msg = "Start node is not a canonical member of the compact graph snapshot: " + startNode.getId();
-                if (config.fallbackPolicy() == FallbackPolicy.FAIL_FAST) {
-                    throw new BackendIneligibleException(GraphBackendId.COMPACT_CSR, msg);
-                }
-                return new BackendSelection<>(
-                        referencePropagationEngine,
-                        new SelectionDiagnostic<>(
-                                GraphBackendId.DETERMINISTIC_OBJECT,
-                                SelectionReason.FALLBACK_INELIGIBLE,
-                                scale,
-                                true,
-                                Optional.of(msg),
-                                Map.of(
-                                        "attemptedBackend", GraphBackendId.COMPACT_CSR.name(),
-                                        "noncanonicalStartNode", startNode.getId().toString())));
-            }
-
             return new BackendSelection<>(
                     new CompactSignalPropagationEngine(snapshot),
                     new SelectionDiagnostic<>(
@@ -343,7 +328,7 @@ public final class RuntimeBackendSelector {
                             scale,
                             false,
                             Optional.empty(),
-                            Map.of("nodeCount", String.valueOf(snapshot.nodeCount()), "edgeCount", String.valueOf(snapshot.edgeCount()))));
+                            CSR_ENGINE_METADATA));
         }
 
         // AUTO preference: ADR 0014 showed CSR did not meet the 75% allocation reduction gate and was slower on threshold routing.
@@ -552,6 +537,11 @@ public final class RuntimeBackendSelector {
                 1,
                 AeonParallelEligibility.INDEPENDENT_READ_ONLY,
                 contextualMode);
+    }
+
+    /** Returns the shared deterministic reference propagation engine instance. */
+    public DeterministicSignalPropagationEngine referencePropagationEngine() {
+        return referencePropagationEngine;
     }
 
     private ExecutionPreference effectivePreference(ExecutionPreference componentPreference) {

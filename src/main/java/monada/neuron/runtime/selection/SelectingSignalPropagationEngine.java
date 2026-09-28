@@ -9,6 +9,7 @@ import monada.neuron.runtime.graph.PropagationResult;
 import monada.neuron.signal.NodeProcessor;
 import monada.neuron.signal.Signal;
 
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -66,9 +67,27 @@ public final class SelectingSignalPropagationEngine implements CognitiveSignalPr
             Signal input,
             NodeProcessor processor,
             PropagationConfig config) {
-        var selection = selector.selectGraphPropagation(snapshotSupplier.get(), startNode, false);
+        var snapshot = snapshotSupplier.get();
+        var selection = selector.selectGraphPropagation(snapshot, startNode, false);
         this.lastDiagnostic = selection.diagnostic();
-        return selection.backend().propagate(startNode, input, processor, config);
+        try {
+            return selection.backend().propagate(startNode, input, processor, config);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            if (selection.diagnostic().selectedBackendId() == GraphBackendId.COMPACT_CSR) {
+                if (selector.config().fallbackPolicy() == FallbackPolicy.FAIL_FAST) {
+                    throw new BackendIneligibleException(GraphBackendId.COMPACT_CSR, e.getMessage(), e);
+                }
+                this.lastDiagnostic = new SelectionDiagnostic<>(
+                        GraphBackendId.DETERMINISTIC_OBJECT,
+                        SelectionReason.FALLBACK_INELIGIBLE,
+                        snapshot != null ? snapshot.nodeCount() : 0,
+                        true,
+                        Optional.of(e.getMessage()),
+                        Map.of("attemptedBackend", GraphBackendId.COMPACT_CSR.name(), "failureReason", e.getMessage()));
+                return selector.referencePropagationEngine().propagate(startNode, input, processor, config);
+            }
+            throw e;
+        }
     }
 
     @Override
@@ -78,8 +97,26 @@ public final class SelectingSignalPropagationEngine implements CognitiveSignalPr
             NodeProcessor processor,
             PropagationConfig config,
             CognitiveContext context) {
-        var selection = selector.selectGraphPropagation(snapshotSupplier.get(), startNode, true);
+        var snapshot = snapshotSupplier.get();
+        var selection = selector.selectGraphPropagation(snapshot, startNode, true);
         this.lastDiagnostic = selection.diagnostic();
-        return selection.backend().propagate(startNode, input, processor, config, context);
+        try {
+            return selection.backend().propagate(startNode, input, processor, config, context);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            if (selection.diagnostic().selectedBackendId() == GraphBackendId.COMPACT_CSR) {
+                if (selector.config().fallbackPolicy() == FallbackPolicy.FAIL_FAST) {
+                    throw new BackendIneligibleException(GraphBackendId.COMPACT_CSR, e.getMessage(), e);
+                }
+                this.lastDiagnostic = new SelectionDiagnostic<>(
+                        GraphBackendId.DETERMINISTIC_OBJECT,
+                        SelectionReason.FALLBACK_INELIGIBLE,
+                        snapshot != null ? snapshot.nodeCount() : 0,
+                        true,
+                        Optional.of(e.getMessage()),
+                        Map.of("attemptedBackend", GraphBackendId.COMPACT_CSR.name(), "failureReason", e.getMessage()));
+                return selector.referencePropagationEngine().propagate(startNode, input, processor, config, context);
+            }
+            throw e;
+        }
     }
 }
