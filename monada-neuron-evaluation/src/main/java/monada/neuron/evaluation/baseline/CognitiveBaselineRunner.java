@@ -32,6 +32,7 @@ import monada.neuron.runtime.graph.CompactSignalPropagationEngine;
 import monada.neuron.runtime.graph.DeterministicSignalPropagationEngine;
 import monada.neuron.runtime.graph.PropagationConfig;
 import monada.neuron.runtime.graph.ResonanceThresholdRoutingPolicy;
+import monada.neuron.runtime.selection.RuntimeBackendSelector;
 import monada.neuron.signal.NodeProcessingResult;
 import monada.neuron.signal.NodeProcessor;
 import monada.neuron.signal.Signal;
@@ -127,6 +128,9 @@ public final class CognitiveBaselineRunner {
 
         // 6. Isolated object / heap-SoA / FFM state-layout comparison
         results.addAll(new NodeStateLayoutExperiment(seed, quickMode, collector).run());
+
+        // 7. Runtime Backend Selection Control-Plane Diagnostics
+        results.addAll(benchmarkBackendSelection());
 
         var runConfig = quickMode
                 ? RunConfiguration.defaultQuick(seed)
@@ -720,6 +724,102 @@ public final class CognitiveBaselineRunner {
                         "targetNodeCount", "50",
                         "learningRate", String.valueOf(AdaptationConfig.DEFAULT.learningRate()),
                         "stateResetPerIteration", "true")));
+
+        return results;
+    }
+
+    private List<BenchmarkRunResult> benchmarkBackendSelection() {
+        var autoSelector = RuntimeBackendSelector.autoSelector();
+        var refSelector = RuntimeBackendSelector.referenceSelector();
+        int warmups = quickMode ? 2 : 5;
+        int iterations = quickMode ? 5 : 20;
+        int operationsPerIteration = quickMode ? 1_000 : 10_000;
+
+        var topology = generator.generateGraph(50, 3);
+        var snapshot = CompactGraphSnapshot.compile(topology.nodes());
+
+        var results = new ArrayList<BenchmarkRunResult>();
+
+        // Resonance Selection (AUTO vs REFERENCE)
+        results.add(collector.measure(
+                "RuntimeBackendSelector.Resonance.Auto",
+                "100 pairs",
+                warmups,
+                iterations,
+                operationsPerIteration,
+                () -> {
+                    for (int i = 0; i < operationsPerIteration; i++) {
+                        var sel = autoSelector.selectResonance(100);
+                        if (sel.backend() == null) {
+                            throw new IllegalStateException("null backend");
+                        }
+                    }
+                },
+                Map.of(
+                        "preference", "AUTO",
+                        "scale", "100",
+                        "selectedBackend", autoSelector.selectResonance(100).diagnostic().selectedBackendId().name(),
+                        "reason", autoSelector.selectResonance(100).diagnostic().reason().name())));
+
+        results.add(collector.measure(
+                "RuntimeBackendSelector.Resonance.Reference",
+                "100 pairs",
+                warmups,
+                iterations,
+                operationsPerIteration,
+                () -> {
+                    for (int i = 0; i < operationsPerIteration; i++) {
+                        var sel = refSelector.selectResonance(100);
+                        if (sel.backend() == null) {
+                            throw new IllegalStateException("null backend");
+                        }
+                    }
+                },
+                Map.of(
+                        "preference", "REFERENCE",
+                        "scale", "100",
+                        "selectedBackend", refSelector.selectResonance(100).diagnostic().selectedBackendId().name(),
+                        "reason", refSelector.selectResonance(100).diagnostic().reason().name())));
+
+        // Graph Selection (AUTO)
+        results.add(collector.measure(
+                "RuntimeBackendSelector.Graph.Auto",
+                "50 nodes",
+                warmups,
+                iterations,
+                operationsPerIteration,
+                () -> {
+                    for (int i = 0; i < operationsPerIteration; i++) {
+                        var sel = autoSelector.selectGraphPropagation(snapshot, false);
+                        if (sel.backend() == null) {
+                            throw new IllegalStateException("null backend");
+                        }
+                    }
+                },
+                Map.of(
+                        "preference", "AUTO",
+                        "selectedBackend", autoSelector.selectGraphPropagation(snapshot, false).diagnostic().selectedBackendId().name(),
+                        "reason", autoSelector.selectGraphPropagation(snapshot, false).diagnostic().reason().name())));
+
+        // Aeon Selection (AUTO)
+        results.add(collector.measure(
+                "RuntimeBackendSelector.Aeon.Auto",
+                "10 inputs",
+                warmups,
+                iterations,
+                operationsPerIteration,
+                () -> {
+                    for (int i = 0; i < operationsPerIteration; i++) {
+                        var sel = autoSelector.selectAeonCoordinator(10, false, true);
+                        if (sel.backend() == null) {
+                            throw new IllegalStateException("null backend");
+                        }
+                    }
+                },
+                Map.of(
+                        "preference", "AUTO",
+                        "selectedBackend", autoSelector.selectAeonCoordinator(10, false, true).diagnostic().selectedBackendId().name(),
+                        "reason", autoSelector.selectAeonCoordinator(10, false, true).diagnostic().reason().name())));
 
         return results;
     }

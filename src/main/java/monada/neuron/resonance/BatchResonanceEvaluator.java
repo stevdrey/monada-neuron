@@ -141,3 +141,4 @@ public interface BatchResonanceEvaluator {
         return adaptive();
     }
 }
+

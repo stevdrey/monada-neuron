@@ -102,6 +102,32 @@ public final class CompactGraphSnapshot {
                     "compact graph snapshot is stale; recompile after topology mutation");
         }
     }
+    /**
+     * Returns whether the specified node is the canonical instance present in this snapshot.
+     *
+     * @param node node to check
+     * @return {@code true} if present and canonical
+     */
+    public boolean containsCanonical(Node node) {
+        if (node == null) {
+            return false;
+        }
+        int low = 0;
+        int high = nodes.length - 1;
+        UUID id = node.getId();
+        while (low <= high) {
+            int middle = (low + high) >>> 1;
+            int comparison = nodes[middle].getId().compareTo(id);
+            if (comparison < 0) {
+                low = middle + 1;
+            } else if (comparison > 0) {
+                high = middle - 1;
+            } else {
+                return nodes[middle] == node;
+            }
+        }
+        return false;
+    }
 
     int requireCanonicalIndex(Node node) {
         Objects.requireNonNull(node, "startNode must not be null");
