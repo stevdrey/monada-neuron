@@ -21,6 +21,9 @@ public record ResonanceSelectionConfig(
     public ResonanceSelectionConfig {
         Objects.requireNonNull(preference, "preference must not be null");
         Objects.requireNonNull(explicitBackend, "explicitBackend must not be null");
+        if (preference == ExecutionPreference.EXPLICIT && explicitBackend.isEmpty()) {
+            throw new IllegalArgumentException("explicitBackend must be present when preference is EXPLICIT");
+        }
         if (vectorCrossoverThreshold < 0) {
             throw new IllegalArgumentException("vectorCrossoverThreshold must be non-negative: " + vectorCrossoverThreshold);
         }

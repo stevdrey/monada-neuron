@@ -1,6 +1,5 @@
 package monada.neuron.runtime.selection;
 
-import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -28,6 +27,6 @@ public record SelectionDiagnostic<B extends BackendId>(
         Objects.requireNonNull(selectedBackendId, "selectedBackendId must not be null");
         Objects.requireNonNull(reason, "reason must not be null");
         Objects.requireNonNull(fallbackReason, "fallbackReason must not be null");
-        metadata = metadata != null ? Collections.unmodifiableMap(metadata) : Collections.emptyMap();
+        metadata = metadata != null ? Map.copyOf(metadata) : Map.of();
     }
 }

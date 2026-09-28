@@ -46,8 +46,10 @@ public class BackendSelectionBenchmark {
 
     private RuntimeBackendSelector autoSelector;
     private RuntimeBackendSelector referenceSelector;
-    private SelectingBatchResonanceEvaluator selectingEvaluator;
+    private SelectingBatchResonanceEvaluator selectingAutoEvaluator;
+    private SelectingBatchResonanceEvaluator selectingReferenceEvaluator;
     private BatchResonanceEvaluator directScalarEvaluator;
+    private BatchResonanceEvaluator directVectorEvaluator;
 
     private FrequencyStateBatch firstBatch;
     private FrequencyStateBatch secondBatch;
@@ -58,8 +60,10 @@ public class BackendSelectionBenchmark {
     public void setup() {
         autoSelector = RuntimeBackendSelector.autoSelector();
         referenceSelector = RuntimeBackendSelector.referenceSelector();
-        selectingEvaluator = new SelectingBatchResonanceEvaluator(autoSelector);
+        selectingAutoEvaluator = new SelectingBatchResonanceEvaluator(autoSelector);
+        selectingReferenceEvaluator = new SelectingBatchResonanceEvaluator(referenceSelector);
         directScalarEvaluator = ScalarBatchResonanceEvaluator.INSTANCE;
+        directVectorEvaluator = loadVectorEvaluatorIfAvailable();
 
         var generator = new DeterministicWorkloadGenerator();
         var batchPair = generator.generateFrequencyStateBatches(batchSize);
@@ -69,6 +73,16 @@ public class BackendSelectionBenchmark {
 
         var topology = generator.generateGraph(50, 3);
         snapshot = CompactGraphSnapshot.compile(topology.nodes());
+    }
+
+    private static BatchResonanceEvaluator loadVectorEvaluatorIfAvailable() {
+        try {
+            Class<?> clazz = Class.forName("monada.neuron.resonance.VectorBatchResonanceEvaluator");
+            BatchResonanceEvaluator evaluator = (BatchResonanceEvaluator) clazz.getField("INSTANCE").get(null);
+            return evaluator.isAvailable() ? evaluator : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     @Benchmark
@@ -98,8 +112,22 @@ public class BackendSelectionBenchmark {
     }
 
     @Benchmark
-    public void benchmarkSelectingBatch(Blackhole blackhole) {
-        selectingEvaluator.scoreBatch(firstBatch, secondBatch, resultsBuffer, 0, batchSize);
+    public void benchmarkSelectingScalarBatch(Blackhole blackhole) {
+        selectingReferenceEvaluator.scoreBatch(firstBatch, secondBatch, resultsBuffer, 0, batchSize);
+        blackhole.consume(resultsBuffer);
+    }
+
+    @Benchmark
+    public void benchmarkDirectVectorBatch(Blackhole blackhole) {
+        if (directVectorEvaluator != null) {
+            directVectorEvaluator.scoreBatch(firstBatch, secondBatch, resultsBuffer, 0, batchSize);
+            blackhole.consume(resultsBuffer);
+        }
+    }
+
+    @Benchmark
+    public void benchmarkSelectingVectorBatch(Blackhole blackhole) {
+        selectingAutoEvaluator.scoreBatch(firstBatch, secondBatch, resultsBuffer, 0, batchSize);
         blackhole.consume(resultsBuffer);
     }
 }

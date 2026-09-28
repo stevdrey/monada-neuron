@@ -294,18 +294,28 @@ across execution preferences (REFERENCE vs AUTO), as well as the overhead of dyn
 
 The review-before-merge study was executed on Linux x86_64 with Java 26 (Temurin 26.0.2.1+1, Intel AVX2):
 
-| Benchmark Operation | Workload Scale | Average Latency | Decision / Status |
-| :--- | ---: | ---: | :--- |
-| `benchmarkResonanceSelectionAuto` | 4 pairs | 18.7 ns | `VECTOR_API` (`AUTO_THRESHOLD_MET`) |
-| `benchmarkResonanceSelectionAuto` | 64 pairs | 22.7 ns | `VECTOR_API` (`AUTO_THRESHOLD_MET`) |
-| `benchmarkResonanceSelectionAuto` | 1,000 pairs | 22.8 ns | `VECTOR_API` (`AUTO_THRESHOLD_MET`) |
-| `benchmarkResonanceSelectionReference` | 1,000 pairs | 36.9 ns | `SCALAR` (`FORCED_REFERENCE`) |
-| `benchmarkGraphSelection` | 50 nodes | 67.6 ns | `DETERMINISTIC_OBJECT` (`REFERENCE_DEFAULT`) |
-| `benchmarkAeonSelection` | 64 inputs | 95.9 ns | `DETERMINISTIC_SEQUENTIAL` (`AUTO_BELOW_THRESHOLD`) |
-| `benchmarkDirectScalarBatch` | 1,000 pairs | 73,382.1 ns | Direct scalar reference |
-| `benchmarkSelectingBatch` | 1,000 pairs | 15,515.2 ns | Dynamically selected SIMD (4.7x speedup) |
+| Benchmark Operation | Workload Scale | Average Latency | Steady-State Alloc | Decision / Status |
+| :--- | ---: | ---: | ---: | :--- |
+| `benchmarkResonanceSelectionAuto` | 4 pairs | 246.1 ns | 368 B/op | `VECTOR_API` (`AUTO_THRESHOLD_MET`) |
+| `benchmarkResonanceSelectionAuto` | 64 pairs | 866.4 ns | 368 B/op | `VECTOR_API` (`AUTO_THRESHOLD_MET`) |
+| `benchmarkResonanceSelectionAuto` | 1,000 pairs | 461.8 ns | 368 B/op | `VECTOR_API` (`AUTO_THRESHOLD_MET`) |
+| `benchmarkResonanceSelectionReference` | 1,000 pairs | 13.9 ns | 64 B/op | `SCALAR` (`FORCED_REFERENCE`) |
+| `benchmarkGraphSelection` | 50 nodes | 14.8 ns | 64 B/op | `DETERMINISTIC_OBJECT` (`REFERENCE_DEFAULT`) |
+| `benchmarkAeonSelection` | 64 inputs | 86.6 ns | 280 B/op | `DETERMINISTIC_SEQUENTIAL` (`AUTO_BELOW_THRESHOLD`) |
+| `benchmarkDirectScalarBatch` | 4 pairs | 274.0 ns | 128 B/op | Direct scalar baseline |
+| `benchmarkSelectingScalarBatch` | 4 pairs | 270.9 ns | 128 B/op | Selecting scalar adapter (overhead < 1 ns) |
+| `benchmarkDirectVectorBatch` | 4 pairs | 76.9 ns | 0.001 B/op | Direct SIMD vector (3.5x faster than scalar) |
+| `benchmarkSelectingVectorBatch` | 4 pairs | 77.7 ns | 0.001 B/op | Selecting SIMD adapter (overhead < 1 ns) |
+| `benchmarkDirectScalarBatch` | 64 pairs | 4,406.2 ns | 2,048 B/op | Direct scalar baseline |
+| `benchmarkSelectingScalarBatch` | 64 pairs | 4,305.5 ns | 2,048 B/op | Selecting scalar adapter |
+| `benchmarkDirectVectorBatch` | 64 pairs | 833.1 ns | 0.006 B/op | Direct SIMD vector (5.3x faster than scalar) |
+| `benchmarkSelectingVectorBatch` | 64 pairs | 792.9 ns | 0.006 B/op | Selecting SIMD adapter |
+| `benchmarkDirectScalarBatch` | 1,000 pairs | 76,488.2 ns | 32,000 B/op | Direct scalar baseline |
+| `benchmarkSelectingScalarBatch` | 1,000 pairs | 77,792.5 ns | 32,000 B/op | Selecting scalar adapter |
+| `benchmarkDirectVectorBatch` | 1,000 pairs | 13,178.3 ns | 125 B/op | Direct SIMD vector (5.8x faster than scalar) |
+| `benchmarkSelectingVectorBatch` | 1,000 pairs | 12,714.8 ns | 251 B/op | Selecting SIMD adapter (6.1x faster than scalar) |
 
-Selection control-plane latency is strictly under 100 ns across all paths and introduces zero hot-path allocations.
+Comparing direct and selecting variants demonstrates that adapter dispatch overhead is negligible (< 1 ns at 4 pairs, undetectable at larger sizes) and introduces zero extra heap allocation in the steady-state evaluation hot path.
 
 ### Run Unit and Harness Tests
 

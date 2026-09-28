@@ -242,8 +242,8 @@ The supported backend matrix in `AUTO` mode is derived strictly from empirical b
 
 | Component | Default `AUTO` Backend | Crossover / Gate Constraint | Empirical Rationale |
 | :--- | :--- | :--- | :--- |
-| **Resonance** | `VECTOR_API` | $batchSize \ge 4$ pairs | ADR 0013: 6.2x–6.7x speedup, $< 0.0001$ B/pair allocation |
-| **Graph Propagation** | `DETERMINISTIC_OBJECT` | Opt-in snapshot only | ADR 0014: CSR failed 75% allocation gate; slower on threshold routing |
+| **Resonance** | `VECTOR_API` | $batchSize \ge 4$ (primitive SoA, bounded by vector lane width) / $\ge 32$ (`FrequencyState[]` object arrays) | ADR 0013: 6.2x–6.7x speedup, $< 0.0001$ B/pair allocation; object arrays $< 32$ delegate to scalar oracle |
+| **Graph Propagation** | `DETERMINISTIC_OBJECT` | Opt-in snapshot only (`containsCanonical(startNode)`) | ADR 0014: CSR failed 75% allocation gate; slower on threshold routing; requires canonical start node |
 | **Aeon Coordination** | `DETERMINISTIC_SEQUENTIAL` | Contextual always sequential | ADR 0016: Parallel contextual was 38.4% slower and 39.4% more allocation |
 | **Node State Layout** | `HEAP_OBJECT` | Heap object reference | ADR 0015: FFM retained as experimental layout; not promoted |
 

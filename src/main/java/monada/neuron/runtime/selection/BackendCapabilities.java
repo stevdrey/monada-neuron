@@ -3,6 +3,7 @@ package monada.neuron.runtime.selection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Immutable, cached snapshot of platform and hardware capabilities relevant for runtime backend selection.
@@ -19,6 +20,7 @@ public final class BackendCapabilities {
     private final String vectorSpeciesDescription;
     private final int availableProcessors;
     private final boolean ffmAvailable;
+    private final Throwable vectorInitializationFailure;
     private final Map<String, String> diagnosticSummary;
 
     private BackendCapabilities(
@@ -26,12 +28,14 @@ public final class BackendCapabilities {
             int vectorLaneWidth,
             String vectorSpeciesDescription,
             int availableProcessors,
-            boolean ffmAvailable) {
+            boolean ffmAvailable,
+            Throwable vectorInitializationFailure) {
         this.vectorApiAvailable = vectorApiAvailable;
         this.vectorLaneWidth = vectorLaneWidth;
         this.vectorSpeciesDescription = vectorSpeciesDescription;
         this.availableProcessors = availableProcessors;
         this.ffmAvailable = ffmAvailable;
+        this.vectorInitializationFailure = vectorInitializationFailure;
 
         var map = new LinkedHashMap<String, String>();
         map.put("vectorApiAvailable", String.valueOf(vectorApiAvailable));
@@ -39,6 +43,9 @@ public final class BackendCapabilities {
         map.put("vectorSpecies", vectorSpeciesDescription);
         map.put("availableProcessors", String.valueOf(availableProcessors));
         map.put("ffmAvailable", String.valueOf(ffmAvailable));
+        if (vectorInitializationFailure != null) {
+            map.put("vectorInitializationFailure", vectorInitializationFailure.toString());
+        }
         this.diagnosticSummary = Collections.unmodifiableMap(map);
     }
 
@@ -51,6 +58,7 @@ public final class BackendCapabilities {
         boolean vectorAvailable = false;
         int laneWidth = 1;
         String speciesDesc = "none";
+        Throwable vectorInitFailure = null;
 
         try {
             Class<?> vectorEvaluatorClass = Class.forName(
@@ -68,11 +76,18 @@ public final class BackendCapabilities {
                 Object species = speciesMethod.invoke(instance);
                 speciesDesc = species != null ? species.toString() : "unknown";
             }
-        } catch (Throwable ignored) {
-            // Incubator module not resolved or reflection inaccessible
+        } catch (ClassNotFoundException | NoClassDefFoundError ignored) {
+            // Expected when jdk.incubator.vector module is not resolved
             vectorAvailable = false;
             laneWidth = 1;
             speciesDesc = "unavailable";
+        } catch (VirtualMachineError fatal) {
+            throw fatal;
+        } catch (Throwable failure) {
+            vectorAvailable = false;
+            laneWidth = 1;
+            speciesDesc = "failed: " + failure.getClass().getSimpleName();
+            vectorInitFailure = failure;
         }
 
         int processors = Math.max(1, Runtime.getRuntime().availableProcessors());
@@ -81,11 +96,15 @@ public final class BackendCapabilities {
         try {
             Class.forName("java.lang.foreign.Arena", false, BackendCapabilities.class.getClassLoader());
             ffm = true;
+        } catch (ClassNotFoundException | NoClassDefFoundError ignored) {
+            ffm = false;
+        } catch (VirtualMachineError fatal) {
+            throw fatal;
         } catch (Throwable ignored) {
             ffm = false;
         }
 
-        return new BackendCapabilities(vectorAvailable, laneWidth, speciesDesc, processors, ffm);
+        return new BackendCapabilities(vectorAvailable, laneWidth, speciesDesc, processors, ffm, vectorInitFailure);
     }
 
     /** Returns whether the Java 26 Vector API incubator module is loaded and multi-lane SIMD is supported. */
@@ -111,6 +130,11 @@ public final class BackendCapabilities {
     /** Returns whether the Foreign Function & Memory API is available. */
     public boolean isFfmAvailable() {
         return ffmAvailable;
+    }
+
+    /** Returns the initialization failure cause if Vector API detection encountered an error, or empty. */
+    public Optional<Throwable> vectorInitializationFailure() {
+        return Optional.ofNullable(vectorInitializationFailure);
     }
 
     /** Returns an immutable diagnostic map of detected capabilities. */

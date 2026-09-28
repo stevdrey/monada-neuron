@@ -34,20 +34,21 @@ Without a unified runtime selection policy, these capabilities would risk becomi
    - `RuntimeSelectionConfig.forcedReference()` provides an explicit forced reference mode for testing and numerical/semantic equivalence verification.
 
 3. **Deterministic, Benchmark-Derived `AUTO` Selection**:
-   - **Resonance**: Workloads with $batchSize \ge 4$ select `VECTOR_API` if the Java 26 Vector API incubator module is present; smaller workloads or environments lacking incubator flags route to `SCALAR`.
-   - **Graph Propagation**: In `AUTO`, graph propagation always routes to `DETERMINISTIC_OBJECT` (reference BFS). `COMPACT_CSR` remains explicit and opt-in per ADR 0014.
-   - **Aeon Coordination**: Contextual coordination in `AUTO` **always** selects `DETERMINISTIC_SEQUENTIAL`, strictly enforcing the negative empirical result from ADR 0016. Direct parallel coordination defaults to sequential unless the direct threshold is explicitly set below `Integer.MAX_VALUE` and $inputCount \ge threshold$.
+   - **Resonance**: Workloads with $batchSize \ge 4$ select `VECTOR_API` if the Java 26 Vector API incubator module is present; smaller workloads or environments lacking incubator flags route to `SCALAR`. For `FrequencyState[]` object arrays, the threshold is bounded at 32 pairs to reflect `VectorBatchResonanceEvaluator`'s internal chunking floor, avoiding scalar tail overhead on 4–31 element object batches. For primitive SoA arrays, the threshold is bounded by the detected CPU vector lane width.
+   - **Graph Propagation**: In `AUTO`, graph propagation always routes to `DETERMINISTIC_OBJECT` (reference BFS). `COMPACT_CSR` remains explicit and opt-in per ADR 0014, and validates that `startNode` is a canonical member of the compiled topology snapshot via `containsCanonical(Node)`.
+   - **Aeon Coordination**: Contextual coordination in `AUTO` **always** selects `DETERMINISTIC_SEQUENTIAL`, strictly enforcing the negative empirical result from ADR 0016. Direct parallel coordination defaults to sequential unless the direct threshold is explicitly set below `Integer.MAX_VALUE`, $inputCount \ge threshold$, workload is independent read-only, and available processors $> 1$.
    - **Node State**: Remembers `HEAP_OBJECT` as reference default; FFM is experimental and excluded from `AUTO`.
 
 4. **Predictable Fallback Semantics**:
    - If an explicitly requested backend is unavailable or semantically ineligible:
-     - Under `FallbackPolicy.FAIL_FAST`, throws `BackendUnavailableException` or `BackendIneligibleException`.
+     - Under `FallbackPolicy.FAIL_FAST`, throws `BackendUnavailableException` or `BackendIneligibleException`. Initialization failures (e.g. reflection or class loading defects) are preserved with their root causes rather than masked as absent capabilities.
      - Under `FallbackPolicy.FALLBACK_TO_REFERENCE`, safely falls back to the reference oracle while capturing the exact diagnostic reason in `SelectionDiagnostic`.
-   - Never silently guesses or swallows configuration defects.
+   - Never silently guesses or swallows configuration defects: `EXPLICIT` preference strictly requires a non-empty `explicitBackend`.
 
 5. **Inspectable Diagnostics (`SelectionDiagnostic`)**:
-   - Every selection emits an immutable `SelectionDiagnostic` detailing `selectedBackendId`, `reason` (`SelectionReason`), `workloadScale`, `isFallback`, `fallbackReason`, and component metadata.
+   - Every selection emits an immutable `SelectionDiagnostic` detailing `selectedBackendId`, `reason` (`SelectionReason`), `workloadScale`, `isFallback`, `fallbackReason`, and defensively copied component metadata (`Map.copyOf`).
    - Paired with operational instances via `BackendSelection<T, B>`.
+   - In data-plane adapters (`SelectingBatchResonanceEvaluator`), selection decisions and diagnostics are cached by threshold regime to eliminate allocation and volatile writes in hot loops.
 
 6. **Static Capability Caching and Negligible Control-Plane Overhead**:
    - `BackendCapabilities` caches JVM and hardware detection once at startup.

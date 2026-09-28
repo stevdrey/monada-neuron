@@ -16,6 +16,9 @@ public record GraphSelectionConfig(
     public GraphSelectionConfig {
         Objects.requireNonNull(preference, "preference must not be null");
         Objects.requireNonNull(explicitBackend, "explicitBackend must not be null");
+        if (preference == ExecutionPreference.EXPLICIT && explicitBackend.isEmpty()) {
+            throw new IllegalArgumentException("explicitBackend must be present when preference is EXPLICIT");
+        }
     }
 
     /** Creates a safe reference configuration. */

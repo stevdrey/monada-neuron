@@ -121,4 +121,22 @@ final class RuntimeSelectionConfigTest {
                         GraphSelectionConfig.reference(),
                         AeonSelectionConfig.reference()));
     }
+
+    @Test
+    @DisplayName("rejects explicit preference when explicitBackend is empty")
+    void rejectsExplicitPreferenceWithoutBackend() {
+        assertThrows(IllegalArgumentException.class, () ->
+                new ResonanceSelectionConfig(ExecutionPreference.EXPLICIT, 4, Optional.empty()));
+
+        assertThrows(IllegalArgumentException.class, () ->
+                new GraphSelectionConfig(ExecutionPreference.EXPLICIT, Optional.empty()));
+
+        assertThrows(IllegalArgumentException.class, () ->
+                new AeonSelectionConfig(
+                        ExecutionPreference.EXPLICIT,
+                        4,
+                        10,
+                        ContextualParallelism.SEQUENTIAL_ORACLE,
+                        Optional.empty()));
+    }
 }

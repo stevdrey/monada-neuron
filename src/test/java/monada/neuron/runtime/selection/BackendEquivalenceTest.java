@@ -27,6 +27,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @DisplayName("Backend Equivalence Specification")
 final class BackendEquivalenceTest {
@@ -163,6 +164,72 @@ final class BackendEquivalenceTest {
         AeonCoordinationResult parResult = parCoord.coordinate(aeon, inputs, processor, propConfig);
 
         assertEquals(refResult, parResult, "Bounded parallel Aeon coordination diverged from reference sequential");
+    }
+
+    @Test
+    @DisplayName("selected resonance paths match scalar oracle on FrequencyState[] object arrays")
+    void selectedResonanceObjectArrayMatchesScalarOracle() {
+        var random = new Random(99);
+        int[] batchSizes = {1, 10, 31, 32, 64};
+
+        var referenceEvaluator = ScalarBatchResonanceEvaluator.INSTANCE;
+        var autoSelecting = new SelectingBatchResonanceEvaluator(RuntimeSelectionConfig.autoDefault());
+
+        for (int size : batchSizes) {
+            var first = new FrequencyState[size];
+            var second = new FrequencyState[size];
+            for (int i = 0; i < size; i++) {
+                first[i] = new FrequencyState(random.nextDouble() * 2.0, random.nextDouble() * 50.0, 0.0);
+                second[i] = new FrequencyState(random.nextDouble() * 2.0, random.nextDouble() * 50.0, 0.0);
+            }
+
+            double[] expected = new double[size];
+            double[] actual = new double[size];
+
+            referenceEvaluator.scoreBatch(first, second, expected, 0, size);
+            autoSelecting.scoreBatch(first, second, actual, 0, size);
+
+            assertArrayEquals(expected, actual, TOLERANCE, "Object array mismatch at size " + size);
+
+            var diagnostic = autoSelecting.lastDiagnostic().orElseThrow();
+            if (size < 32) {
+                assertEquals(ResonanceBackendId.SCALAR, diagnostic.selectedBackendId());
+                assertEquals(SelectionReason.AUTO_BELOW_THRESHOLD, diagnostic.reason());
+            } else if (autoSelecting.selector().capabilities().isVectorApiAvailable()) {
+                assertEquals(ResonanceBackendId.VECTOR_API, diagnostic.selectedBackendId());
+                assertEquals(SelectionReason.AUTO_THRESHOLD_MET, diagnostic.reason());
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("SelectingSignalPropagationEngine cleanly falls back to reference for noncanonical start node")
+    void selectingGraphEngineFallsBackForNoncanonicalStartNode() {
+        var node1 = createNode(10.0);
+        var node2 = createNode(20.0);
+        node1.connect(node2);
+        var snapshot = CompactGraphSnapshot.compile(List.of(node1, node2));
+
+        var fallbackConfig = RuntimeSelectionConfig.builder()
+                .overallPreference(ExecutionPreference.AUTO)
+                .fallbackPolicy(FallbackPolicy.FALLBACK_TO_REFERENCE)
+                .graph(GraphSelectionConfig.explicit(GraphBackendId.COMPACT_CSR))
+                .build();
+
+        var engine = new SelectingSignalPropagationEngine(fallbackConfig, snapshot);
+        var nonCanonicalNode = createNode(10.0);
+
+        var signal = new Signal(SignalKind.OBSERVATION, new FrequencyState(1.0, 10.0, 0.0));
+        NodeProcessor processor = (node, input) -> new NodeProcessingResult(List.of(
+                new Signal(SignalKind.INTERMEDIATE, input.frequencyState())));
+        var propConfig = PropagationConfig.routeAll(20, 3);
+
+        // Propagate with noncanonical node triggers fallback without exception
+        var result = engine.propagate(nonCanonicalNode, signal, processor, propConfig);
+        var diag = engine.lastDiagnostic().orElseThrow();
+        assertEquals(GraphBackendId.DETERMINISTIC_OBJECT, diag.selectedBackendId());
+        assertEquals(SelectionReason.FALLBACK_INELIGIBLE, diag.reason());
+        assertTrue(diag.isFallback());
     }
 
     private static Node createNode(double frequency) {

@@ -8,7 +8,9 @@ import monada.neuron.runtime.graph.CompactGraphSnapshot;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -232,6 +234,7 @@ final class RuntimeBackendSelectorTest {
         // Above threshold but not independent
         var nonIndependent = selector.selectAeonCoordinator(10, false, false);
         assertEquals(AeonBackendId.DETERMINISTIC_SEQUENTIAL, nonIndependent.diagnostic().selectedBackendId());
+        assertEquals(SelectionReason.AUTO_INELIGIBLE, nonIndependent.diagnostic().reason());
     }
 
     @Test
@@ -264,6 +267,152 @@ final class RuntimeBackendSelectorTest {
         assertEquals(AeonBackendId.DETERMINISTIC_SEQUENTIAL, fallbackResult.diagnostic().selectedBackendId());
         assertEquals(SelectionReason.FALLBACK_INELIGIBLE, fallbackResult.diagnostic().reason());
         assertTrue(fallbackResult.diagnostic().isFallback());
+    }
+
+    @Test
+    @DisplayName("aeon parallel coordination rejects single worker configuration")
+    void aeonParallelRejectsSingleWorker() {
+        var configFailFast = RuntimeSelectionConfig.builder()
+                .overallPreference(ExecutionPreference.AUTO)
+                .fallbackPolicy(FallbackPolicy.FAIL_FAST)
+                .aeon(new AeonSelectionConfig(
+                        ExecutionPreference.EXPLICIT,
+                        1,
+                        4,
+                        ContextualParallelism.SEQUENTIAL_ORACLE,
+                        Optional.of(AeonBackendId.BOUNDED_PARALLEL)))
+                .build();
+        var selectorFailFast = new RuntimeBackendSelector(configFailFast);
+
+        assertThrows(BackendIneligibleException.class, () ->
+                selectorFailFast.selectAeonCoordinator(10, false, true));
+
+        var configFallback = RuntimeSelectionConfig.builder()
+                .overallPreference(ExecutionPreference.AUTO)
+                .fallbackPolicy(FallbackPolicy.FALLBACK_TO_REFERENCE)
+                .aeon(new AeonSelectionConfig(
+                        ExecutionPreference.EXPLICIT,
+                        1,
+                        4,
+                        ContextualParallelism.SEQUENTIAL_ORACLE,
+                        Optional.of(AeonBackendId.BOUNDED_PARALLEL)))
+                .build();
+        var selectorFallback = new RuntimeBackendSelector(configFallback);
+        var res = selectorFallback.selectAeonCoordinator(10, false, true);
+        assertEquals(AeonBackendId.DETERMINISTIC_SEQUENTIAL, res.diagnostic().selectedBackendId());
+        assertEquals(SelectionReason.FALLBACK_INELIGIBLE, res.diagnostic().reason());
+
+        // In AUTO mode with maxParallelism = 1
+        var configAutoSingle = RuntimeSelectionConfig.builder()
+                .overallPreference(ExecutionPreference.AUTO)
+                .aeon(new AeonSelectionConfig(
+                        ExecutionPreference.AUTO,
+                        1,
+                        4,
+                        ContextualParallelism.SEQUENTIAL_ORACLE,
+                        Optional.empty()))
+                .build();
+        var selectorAutoSingle = new RuntimeBackendSelector(configAutoSingle);
+        var autoRes = selectorAutoSingle.selectAeonCoordinator(10, false, true);
+        assertEquals(AeonBackendId.DETERMINISTIC_SEQUENTIAL, autoRes.diagnostic().selectedBackendId());
+        assertEquals(SelectionReason.AUTO_INELIGIBLE, autoRes.diagnostic().reason());
+    }
+
+    @Test
+    @DisplayName("resonance AUTO accounts for object array vs primitive layout threshold")
+    void resonanceAutoLayoutAwareBehavior() {
+        var selector = RuntimeBackendSelector.autoSelector();
+        boolean vectorAvailable = selector.capabilities().isVectorApiAvailable();
+
+        // Object array with length between 4 and 31: VectorBatchResonanceEvaluator delegates to scalar
+        // Therefore selector must report SCALAR with AUTO_BELOW_THRESHOLD
+        var objBelow = selector.selectResonance(10, true);
+        assertEquals(ResonanceBackendId.SCALAR, objBelow.diagnostic().selectedBackendId());
+        assertEquals(SelectionReason.AUTO_BELOW_THRESHOLD, objBelow.diagnostic().reason());
+        assertEquals("OBJECT_ARRAY", objBelow.diagnostic().metadata().get("inputLayout"));
+
+        // Object array with length >= 32
+        var objAbove = selector.selectResonance(32, true);
+        if (vectorAvailable) {
+            assertEquals(ResonanceBackendId.VECTOR_API, objAbove.diagnostic().selectedBackendId());
+            assertEquals(SelectionReason.AUTO_THRESHOLD_MET, objAbove.diagnostic().reason());
+        } else {
+            assertEquals(ResonanceBackendId.SCALAR, objAbove.diagnostic().selectedBackendId());
+            assertEquals(SelectionReason.AUTO_UNAVAILABLE, objAbove.diagnostic().reason());
+        }
+
+        // Primitive SoA with length 10: meets default threshold 4 and lane width
+        var primAbove = selector.selectResonance(10, false);
+        if (vectorAvailable) {
+            assertEquals(ResonanceBackendId.VECTOR_API, primAbove.diagnostic().selectedBackendId());
+            assertEquals(SelectionReason.AUTO_THRESHOLD_MET, primAbove.diagnostic().reason());
+        } else {
+            assertEquals(ResonanceBackendId.SCALAR, primAbove.diagnostic().selectedBackendId());
+        }
+    }
+
+    @Test
+    @DisplayName("graph explicit COMPACT_CSR validates canonical start node")
+    void graphExplicitCompactCsrValidatesCanonicalStartNode() {
+        var node1 = createNode();
+        var node2 = createNode();
+        var snapshot = CompactGraphSnapshot.compile(List.of(node1, node2));
+
+        var nonCanonicalNode = createNode();
+
+        // FAIL_FAST
+        var configFailFast = RuntimeSelectionConfig.builder()
+                .overallPreference(ExecutionPreference.AUTO)
+                .fallbackPolicy(FallbackPolicy.FAIL_FAST)
+                .graph(GraphSelectionConfig.explicit(GraphBackendId.COMPACT_CSR))
+                .build();
+        var selectorFailFast = new RuntimeBackendSelector(configFailFast);
+
+        assertThrows(BackendIneligibleException.class, () ->
+                selectorFailFast.selectGraphPropagation(snapshot, nonCanonicalNode, false));
+
+        // FALLBACK_TO_REFERENCE
+        var configFallback = RuntimeSelectionConfig.builder()
+                .overallPreference(ExecutionPreference.AUTO)
+                .fallbackPolicy(FallbackPolicy.FALLBACK_TO_REFERENCE)
+                .graph(GraphSelectionConfig.explicit(GraphBackendId.COMPACT_CSR))
+                .build();
+        var selectorFallback = new RuntimeBackendSelector(configFallback);
+
+        var result = selectorFallback.selectGraphPropagation(snapshot, nonCanonicalNode, false);
+        assertEquals(GraphBackendId.DETERMINISTIC_OBJECT, result.diagnostic().selectedBackendId());
+        assertEquals(SelectionReason.FALLBACK_INELIGIBLE, result.diagnostic().reason());
+        assertTrue(result.diagnostic().isFallback());
+        assertEquals(nonCanonicalNode.getId().toString(), result.diagnostic().metadata().get("noncanonicalStartNode"));
+
+        // Canonical start node succeeds
+        var canonicalResult = selectorFallback.selectGraphPropagation(snapshot, node1, false);
+        assertEquals(GraphBackendId.COMPACT_CSR, canonicalResult.diagnostic().selectedBackendId());
+        assertEquals(SelectionReason.EXPLICIT_SELECTION, canonicalResult.diagnostic().reason());
+    }
+
+    @Test
+    @DisplayName("SelectionDiagnostic defensively snapshots mutable metadata")
+    void selectionDiagnosticDefensivelySnapshotsMetadata() {
+        var mutableMap = new HashMap<String, String>();
+        mutableMap.put("key", "initialValue");
+
+        var diagnostic = new SelectionDiagnostic<>(
+                ResonanceBackendId.SCALAR,
+                SelectionReason.REFERENCE_DEFAULT,
+                10,
+                false,
+                Optional.empty(),
+                mutableMap);
+
+        assertEquals("initialValue", diagnostic.metadata().get("key"));
+
+        // Mutating the input map does not mutate the diagnostic
+        mutableMap.put("key", "modifiedValue");
+        mutableMap.put("newKey", "newValue");
+
+        assertEquals("initialValue", diagnostic.metadata().get("key"));
+        assertFalse(diagnostic.metadata().containsKey("newKey"));
     }
 
     @Test

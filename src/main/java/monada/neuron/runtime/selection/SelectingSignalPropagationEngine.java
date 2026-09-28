@@ -66,7 +66,7 @@ public final class SelectingSignalPropagationEngine implements CognitiveSignalPr
             Signal input,
             NodeProcessor processor,
             PropagationConfig config) {
-        var selection = selector.selectGraphPropagation(snapshotSupplier.get(), false);
+        var selection = selector.selectGraphPropagation(snapshotSupplier.get(), startNode, false);
         this.lastDiagnostic = selection.diagnostic();
         return selection.backend().propagate(startNode, input, processor, config);
     }
@@ -78,7 +78,7 @@ public final class SelectingSignalPropagationEngine implements CognitiveSignalPr
             NodeProcessor processor,
             PropagationConfig config,
             CognitiveContext context) {
-        var selection = selector.selectGraphPropagation(snapshotSupplier.get(), true);
+        var selection = selector.selectGraphPropagation(snapshotSupplier.get(), startNode, true);
         this.lastDiagnostic = selection.diagnostic();
         return selection.backend().propagate(startNode, input, processor, config, context);
     }
