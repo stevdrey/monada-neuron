@@ -218,6 +218,14 @@ public final class RuntimeBackendSelector {
                             capabilities.diagnosticSummary()));
         }
 
+        var initFailure = capabilities.vectorInitializationFailure();
+        String fallbackMsg = initFailure
+                .map(f -> "Java 26 Vector API initialization failed: " + f.getMessage())
+                .orElse("Vector API incubator module unavailable; routed to scalar reference oracle");
+        Map<String, String> fallbackMeta = initFailure.isPresent()
+                ? Map.of("attemptedBackend", ResonanceBackendId.VECTOR_API.name(), "failure", initFailure.get().toString())
+                : AUTO_UNAVAILABLE_VECTOR_METADATA;
+
         return new BackendSelection<>(
                 ScalarBatchResonanceEvaluator.INSTANCE,
                 new SelectionDiagnostic<>(
@@ -225,8 +233,8 @@ public final class RuntimeBackendSelector {
                         SelectionReason.AUTO_UNAVAILABLE,
                         batchSize,
                         true,
-                        Optional.of("Vector API incubator module unavailable; routed to scalar reference oracle"),
-                        AUTO_UNAVAILABLE_VECTOR_METADATA));
+                        Optional.of(fallbackMsg),
+                        fallbackMeta));
     }
 
     /**
@@ -320,6 +328,40 @@ public final class RuntimeBackendSelector {
                                 ATTEMPTED_CSR_METADATA));
             }
 
+            if (!snapshot.isCurrent()) {
+                String msg = "Compact CSR execution requires an up-to-date snapshot, but snapshot is stale";
+                if (config.fallbackPolicy() == FallbackPolicy.FAIL_FAST) {
+                    throw new BackendIneligibleException(GraphBackendId.COMPACT_CSR, msg);
+                }
+                return new BackendSelection<>(
+                        referencePropagationEngine,
+                        new SelectionDiagnostic<>(
+                                GraphBackendId.DETERMINISTIC_OBJECT,
+                                SelectionReason.FALLBACK_INELIGIBLE,
+                                scale,
+                                true,
+                                Optional.of(msg),
+                                ATTEMPTED_CSR_METADATA));
+            }
+
+            if (startNode != null && !snapshot.containsCanonical(startNode)) {
+                String msg = "Start node " + startNode.getId() + " is not contained in canonical snapshot topology";
+                if (config.fallbackPolicy() == FallbackPolicy.FAIL_FAST) {
+                    throw new BackendIneligibleException(GraphBackendId.COMPACT_CSR, msg);
+                }
+                return new BackendSelection<>(
+                        referencePropagationEngine,
+                        new SelectionDiagnostic<>(
+                                GraphBackendId.DETERMINISTIC_OBJECT,
+                                SelectionReason.FALLBACK_INELIGIBLE,
+                                scale,
+                                true,
+                                Optional.of(msg),
+                                Map.of(
+                                        "attemptedBackend", GraphBackendId.COMPACT_CSR.name(),
+                                        "missingStartNode", startNode.getId().toString())));
+            }
+
             return new BackendSelection<>(
                     new CompactSignalPropagationEngine(snapshot),
                     new SelectionDiagnostic<>(
@@ -389,9 +431,12 @@ public final class RuntimeBackendSelector {
             }
 
             // Target is BOUNDED_PARALLEL
-            if (config.aeon().maxParallelism() <= 1) {
-                String msg = "Bounded parallel coordination requires maxParallelism > 1, but configured maxParallelism is "
-                        + config.aeon().maxParallelism();
+            int maxParallelism = config.aeon().maxParallelism();
+            int poolParallelism = capabilities.commonPoolParallelism();
+            if (maxParallelism <= 1 || poolParallelism <= 1) {
+                String msg = maxParallelism <= 1
+                        ? "Bounded parallel coordination requires maxParallelism > 1, but configured maxParallelism is " + maxParallelism
+                        : "Bounded parallel coordination requires executor parallelism > 1, but ForkJoinPool.commonPool() parallelism is " + poolParallelism;
                 if (config.fallbackPolicy() == FallbackPolicy.FAIL_FAST) {
                     throw new BackendIneligibleException(AeonBackendId.BOUNDED_PARALLEL, msg);
                 }
@@ -491,6 +536,18 @@ public final class RuntimeBackendSelector {
                             true,
                             Optional.of("Parallel execution unavailable: runtime reports <= 1 available processor"),
                             Map.of("availableProcessors", String.valueOf(capabilities.availableProcessors()))));
+        }
+
+        if (capabilities.commonPoolParallelism() <= 1) {
+            return new BackendSelection<>(
+                    referenceAeonCoordinator,
+                    new SelectionDiagnostic<>(
+                            AeonBackendId.DETERMINISTIC_SEQUENTIAL,
+                            SelectionReason.AUTO_UNAVAILABLE,
+                            inputCount,
+                            true,
+                            Optional.of("Parallel execution unavailable: ForkJoinPool.commonPool() parallelism <= 1"),
+                            Map.of("commonPoolParallelism", String.valueOf(capabilities.commonPoolParallelism()))));
         }
 
         if (config.aeon().maxParallelism() <= 1) {

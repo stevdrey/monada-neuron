@@ -53,7 +53,7 @@ Without a unified runtime selection policy, these capabilities would risk becomi
 6. **Static Capability Caching and Negligible Control-Plane Overhead**:
    - `BackendCapabilities` caches JVM and hardware detection once at startup.
    - Graph selection is strictly $O(1)$ control-plane, combining initial snapshot and canonical node validation with the start of engine traversal to avoid duplicate scans.
-   - JMH benchmarks (`BackendSelectionBenchmark`) confirm steady-state control-plane selection executes in **12–77 nanoseconds** with zero application heap allocations.
+   - JMH benchmarks (`BackendSelectionBenchmark`) confirm steady-state control-plane selection executes in **12–77 nanoseconds** with minimal allocation (64–280 B/op for immutable `BackendSelection` and `SelectionDiagnostic` record creation), while data-plane execution (`scoreBatch` in `SelectingBatchResonanceEvaluator`) achieves **zero heap allocation** via threshold regime caching.
 
 ## Empirical Evidence
 

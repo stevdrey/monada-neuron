@@ -64,6 +64,10 @@ public class BackendSelectionBenchmark {
         selectingReferenceEvaluator = new SelectingBatchResonanceEvaluator(referenceSelector);
         directScalarEvaluator = ScalarBatchResonanceEvaluator.INSTANCE;
         directVectorEvaluator = loadVectorEvaluatorIfAvailable();
+        if (directVectorEvaluator == null) {
+            throw new IllegalStateException(
+                    "Vector API evaluator unavailable in benchmark environment; ensure jdk.incubator.vector is enabled");
+        }
 
         var generator = new DeterministicWorkloadGenerator();
         var batchPair = generator.generateFrequencyStateBatches(batchSize);
@@ -119,10 +123,8 @@ public class BackendSelectionBenchmark {
 
     @Benchmark
     public void benchmarkDirectVectorBatch(Blackhole blackhole) {
-        if (directVectorEvaluator != null) {
-            directVectorEvaluator.scoreBatch(firstBatch, secondBatch, resultsBuffer, 0, batchSize);
-            blackhole.consume(resultsBuffer);
-        }
+        directVectorEvaluator.scoreBatch(firstBatch, secondBatch, resultsBuffer, 0, batchSize);
+        blackhole.consume(resultsBuffer);
     }
 
     @Benchmark

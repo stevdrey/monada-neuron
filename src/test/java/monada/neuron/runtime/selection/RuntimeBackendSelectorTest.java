@@ -439,6 +439,113 @@ final class RuntimeBackendSelectorTest {
         }
     }
 
+    @Test
+    @DisplayName("selectGraphPropagation directly validates start node canonicality and stale snapshot")
+    void selectGraphPropagationValidatesStartNodeCanonicalityAndStaleness() {
+        var node1 = createNode();
+        var node2 = createNode();
+        var snapshot = CompactGraphSnapshot.compile(List.of(node1, node2));
+        var nonCanonicalNode = createNode();
+
+        // FAIL_FAST on non-canonical node
+        var selectorFailFast = new RuntimeBackendSelector(RuntimeSelectionConfig.builder()
+                .overallPreference(ExecutionPreference.AUTO)
+                .fallbackPolicy(FallbackPolicy.FAIL_FAST)
+                .graph(GraphSelectionConfig.explicit(GraphBackendId.COMPACT_CSR))
+                .build());
+        assertThrows(BackendIneligibleException.class, () ->
+                selectorFailFast.selectGraphPropagation(snapshot, nonCanonicalNode, false));
+
+        // FALLBACK_TO_REFERENCE on non-canonical node
+        var selectorFallback = new RuntimeBackendSelector(RuntimeSelectionConfig.builder()
+                .overallPreference(ExecutionPreference.AUTO)
+                .fallbackPolicy(FallbackPolicy.FALLBACK_TO_REFERENCE)
+                .graph(GraphSelectionConfig.explicit(GraphBackendId.COMPACT_CSR))
+                .build());
+        var fallbackSelection = selectorFallback.selectGraphPropagation(snapshot, nonCanonicalNode, false);
+        assertEquals(GraphBackendId.DETERMINISTIC_OBJECT, fallbackSelection.diagnostic().selectedBackendId());
+        assertEquals(SelectionReason.FALLBACK_INELIGIBLE, fallbackSelection.diagnostic().reason());
+        assertTrue(fallbackSelection.diagnostic().isFallback());
+        assertTrue(fallbackSelection.diagnostic().metadata().containsKey("missingStartNode"));
+
+        // Stale snapshot after topology mutation
+        node1.connect(node2);
+        assertFalse(snapshot.isCurrent());
+
+        assertThrows(BackendIneligibleException.class, () ->
+                selectorFailFast.selectGraphPropagation(snapshot, node1, false));
+
+        var staleFallback = selectorFallback.selectGraphPropagation(snapshot, node1, false);
+        assertEquals(GraphBackendId.DETERMINISTIC_OBJECT, staleFallback.diagnostic().selectedBackendId());
+        assertEquals(SelectionReason.FALLBACK_INELIGIBLE, staleFallback.diagnostic().reason());
+        assertTrue(staleFallback.diagnostic().isFallback());
+    }
+
+    @Test
+    @DisplayName("SelectingSignalPropagationEngine does not catch or retry processor exceptions")
+    void selectingSignalPropagationEngineDoesNotRetryOnProcessorException() {
+        var node1 = createNode();
+        var snapshot = CompactGraphSnapshot.compile(List.of(node1));
+        var signal = new Signal(SignalKind.OBSERVATION, new FrequencyState(1.0, 10.0, 0.0));
+
+        var selectorFallback = new RuntimeBackendSelector(RuntimeSelectionConfig.builder()
+                .overallPreference(ExecutionPreference.AUTO)
+                .fallbackPolicy(FallbackPolicy.FALLBACK_TO_REFERENCE)
+                .graph(GraphSelectionConfig.explicit(GraphBackendId.COMPACT_CSR))
+                .build());
+        var engine = new SelectingSignalPropagationEngine(selectorFallback, snapshot);
+
+        var callCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        assertThrows(IllegalStateException.class, () ->
+                engine.propagate(node1, signal, (n, s) -> {
+                    callCount.incrementAndGet();
+                    throw new IllegalStateException("Simulated processor failure");
+                }, PropagationConfig.routeAll(10, 2)));
+
+        assertEquals(1, callCount.get(), "Processor must be invoked exactly once and not retried on failure");
+    }
+
+    @Test
+    @DisplayName("SelectingBatchResonanceEvaluator publishes diagnostic on every scoreBatch invocation including cache hits")
+    void selectingBatchResonanceEvaluatorPublishesDiagnosticOnCacheHits() {
+        var selector = RuntimeBackendSelector.autoSelector();
+        var evaluator = new SelectingBatchResonanceEvaluator(selector);
+
+        // 1. Primitive batch below threshold (length 2) -> SCALAR
+        double[] fAmp = new double[2];
+        double[] fFreq = new double[2];
+        double[] fPhase = new double[2];
+        double[] sAmp = new double[2];
+        double[] sFreq = new double[2];
+        double[] sPhase = new double[2];
+        double[] results = new double[2];
+
+        evaluator.scoreBatch(fAmp, fFreq, fPhase, sAmp, sFreq, sPhase, results, 0, 2);
+        var diag1 = evaluator.lastDiagnostic().orElseThrow();
+        assertEquals(ResonanceBackendId.SCALAR, diag1.selectedBackendId());
+        assertEquals(SelectionReason.AUTO_BELOW_THRESHOLD, diag1.reason());
+
+        // 2. Object batch above threshold (length 64)
+        var state1 = new FrequencyState(1.0, 10.0, 0.0);
+        var state2 = new FrequencyState(1.0, 10.0, 0.0);
+        var states1 = new FrequencyState[64];
+        var states2 = new FrequencyState[64];
+        java.util.Arrays.fill(states1, state1);
+        java.util.Arrays.fill(states2, state2);
+        var resultsObj = new double[64];
+
+        evaluator.scoreBatch(states1, states2, resultsObj, 0, 64);
+        var diag2 = evaluator.lastDiagnostic().orElseThrow();
+        assertEquals(64, diag2.workloadScale());
+
+        // 3. Repeat primitive batch (length 2) -> cache hit must publish diag1 regime (SCALAR, scale 2)
+        evaluator.scoreBatch(fAmp, fFreq, fPhase, sAmp, sFreq, sPhase, results, 0, 2);
+        var diag3 = evaluator.lastDiagnostic().orElseThrow();
+        assertEquals(ResonanceBackendId.SCALAR, diag3.selectedBackendId());
+        assertEquals(2, diag3.workloadScale());
+        assertEquals(SelectionReason.AUTO_BELOW_THRESHOLD, diag3.reason());
+    }
+
     private static Node createNode() {
         return new Node.Builder()
                 .id(UUID.randomUUID())

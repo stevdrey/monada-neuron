@@ -19,6 +19,7 @@ public final class BackendCapabilities {
     private final int vectorLaneWidth;
     private final String vectorSpeciesDescription;
     private final int availableProcessors;
+    private final int commonPoolParallelism;
     private final boolean ffmAvailable;
     private final Throwable vectorInitializationFailure;
     private final Map<String, String> diagnosticSummary;
@@ -28,12 +29,14 @@ public final class BackendCapabilities {
             int vectorLaneWidth,
             String vectorSpeciesDescription,
             int availableProcessors,
+            int commonPoolParallelism,
             boolean ffmAvailable,
             Throwable vectorInitializationFailure) {
         this.vectorApiAvailable = vectorApiAvailable;
         this.vectorLaneWidth = vectorLaneWidth;
         this.vectorSpeciesDescription = vectorSpeciesDescription;
         this.availableProcessors = availableProcessors;
+        this.commonPoolParallelism = commonPoolParallelism;
         this.ffmAvailable = ffmAvailable;
         this.vectorInitializationFailure = vectorInitializationFailure;
 
@@ -42,6 +45,7 @@ public final class BackendCapabilities {
         map.put("vectorLaneWidth", String.valueOf(vectorLaneWidth));
         map.put("vectorSpecies", vectorSpeciesDescription);
         map.put("availableProcessors", String.valueOf(availableProcessors));
+        map.put("commonPoolParallelism", String.valueOf(commonPoolParallelism));
         map.put("ffmAvailable", String.valueOf(ffmAvailable));
         if (vectorInitializationFailure != null) {
             map.put("vectorInitializationFailure", vectorInitializationFailure.toString());
@@ -91,6 +95,7 @@ public final class BackendCapabilities {
         }
 
         int processors = Math.max(1, Runtime.getRuntime().availableProcessors());
+        int poolParallelism = java.util.concurrent.ForkJoinPool.commonPool().getParallelism();
 
         boolean ffm;
         try {
@@ -104,7 +109,7 @@ public final class BackendCapabilities {
             ffm = false;
         }
 
-        return new BackendCapabilities(vectorAvailable, laneWidth, speciesDesc, processors, ffm, vectorInitFailure);
+        return new BackendCapabilities(vectorAvailable, laneWidth, speciesDesc, processors, poolParallelism, ffm, vectorInitFailure);
     }
 
     /** Returns whether the Java 26 Vector API incubator module is loaded and multi-lane SIMD is supported. */
@@ -125,6 +130,11 @@ public final class BackendCapabilities {
     /** Returns the number of available CPU processors reported by the runtime. */
     public int availableProcessors() {
         return availableProcessors;
+    }
+
+    /** Returns the effective parallelism of the common ForkJoinPool. */
+    public int commonPoolParallelism() {
+        return commonPoolParallelism;
     }
 
     /** Returns whether the Foreign Function & Memory API is available. */

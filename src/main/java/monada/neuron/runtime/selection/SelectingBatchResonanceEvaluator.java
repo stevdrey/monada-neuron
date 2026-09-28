@@ -49,7 +49,13 @@ public final class SelectingBatchResonanceEvaluator implements BatchResonanceEva
         return selector;
     }
 
-    /** Returns the diagnostic record from the most recent batch evaluation, if any. */
+    /**
+     * Returns the diagnostic record from the most recent batch evaluation, if any.
+     *
+     * <p>This diagnostic is updated via a volatile reference write on every {@code scoreBatch}
+     * invocation, ensuring that callers observing {@code lastDiagnostic()} always receive the
+     * diagnostic corresponding to the latest executed evaluation regime without incurring heap allocation.
+     */
     public Optional<SelectionDiagnostic<ResonanceBackendId>> lastDiagnostic() {
         return Optional.ofNullable(lastDiagnostic);
     }
@@ -69,10 +75,10 @@ public final class SelectingBatchResonanceEvaluator implements BatchResonanceEva
         var cached = cachedPrimitive;
         if (cached == null || cached.regime() != regime) {
             var selection = selector.selectResonance(length, false);
-            this.lastDiagnostic = selection.diagnostic();
             cached = new CachedRegime(regime, selection);
             this.cachedPrimitive = cached;
         }
+        this.lastDiagnostic = cached.selection().diagnostic();
 
         cached.selection().backend().scoreBatch(
                 firstAmplitudes,
@@ -97,10 +103,10 @@ public final class SelectingBatchResonanceEvaluator implements BatchResonanceEva
         var cached = cachedObject;
         if (cached == null || cached.regime() != regime) {
             var selection = selector.selectResonance(length, true);
-            this.lastDiagnostic = selection.diagnostic();
             cached = new CachedRegime(regime, selection);
             this.cachedObject = cached;
         }
+        this.lastDiagnostic = cached.selection().diagnostic();
 
         cached.selection().backend().scoreBatch(first, second, results, offset, length);
     }
