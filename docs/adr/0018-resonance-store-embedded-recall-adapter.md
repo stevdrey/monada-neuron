@@ -40,7 +40,7 @@ Signal-to-text and text-to-Signal translation is injected through `SignalQueryEn
 deterministic interim placeholders with no semantic meaning; real deployments supply a domain codec.
 
 The store is consumed as a Gradle composite build (`includeBuild("../monada-resonance-store")`),
-included only when the sibling checkout exists, so core builds do not require it. Compatibility
+included, together with the adapter module itself, only when the sibling checkout exists, so core builds and `./gradlew test` do not require it. Compatibility
 expectation: the store's `monada-api` exposing `MonadaMemory.open(Path, MonadaMemoryOptions)` and
 `resonate(...).topK(...).threshold(...).execute()` returning finite-scored results, at the sibling
 checkout commit used to build; on-disk manifest versions (0.1-0.4) and encoding-profile
