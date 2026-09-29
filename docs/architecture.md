@@ -355,7 +355,7 @@ As the repository grows, prefer boundaries similar to:
 | `monada-neuron-signal` | Signal types, transformations, routing metadata, encoding boundaries. |
 | `monada-neuron-aeon` | Aeon coordination and cognitive capability composition. |
 | `monada-neuron-evolution` | Feedback, adaptation policies, strategy evolution and outcome learning. |
-| `monada-neuron-resonance-adapter` | Explicit protocol/adapter to Monada Resonance Store. |
+| `monada-neuron-resonance-adapter` | Embedded `ResonanceMemoryPort` adapter over the Monada Resonance Store `monada-api` (ADR 0018). |
 | `monada-neuron-action` | Tool/action contracts and execution boundaries. |
 | `monada-neuron-evaluation` | Cognitive benchmarks, diagnostics, reproducible experiments and regression baselines. |
 | optional adapters | LLM providers, LangChain/LangGraph, Spring AI, hardware accelerators, native libraries. |
@@ -378,6 +378,16 @@ Monada Resonance Store
 ```
 
 Neuron may hold ephemeral working state needed for an active cognitive cycle. Ephemeral state must not become an accidental second long-term memory subsystem.
+
+### Production Resonance Store adapter
+
+`monada-neuron-resonance-adapter` is the only module that sees both the Neuron memory contracts and
+Resonance Store API types; the core never depends on it (ADR 0018). It holds one long-lived
+`MonadaMemory`, runs one bounded `topK` store query per query Signal, merges deterministically, and
+translates store failures into `UNAVAILABLE`/`FAILED` responses. Signal-to-text encoding and
+recalled-content decoding are injected codecs with deterministic placeholder defaults. Verify with
+`./gradlew :monada-neuron-resonance-adapter:test`; it requires the sibling `monada-resonance-store`
+checkout, which core builds do not.
 
 `ResonanceMemoryPort` is a synchronous, transport-neutral capability contract. Its request, result,
 and response records use only Neuron Signals, an opaque adapter reference, a finite score, explicit
