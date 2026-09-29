@@ -6,6 +6,8 @@ Monada Neuron requires measurable, reproducible behavior prior to introducing ha
 
 The `:monada-neuron-evaluation` subproject provides an isolated benchmarking and evaluation harness measuring both semantic correctness and resource characteristics (latency distributions, throughput, thread allocation rate, GC activity, committed off-heap bytes, and Linux process RSS when available).
 
+For the end-to-end evaluation against a real Resonance Store, see [resonance-store-integration.md](resonance-store-integration.md).
+
 ## Architecture & Module Isolation
 
 Evaluation tooling is isolated in a separate Gradle subproject:

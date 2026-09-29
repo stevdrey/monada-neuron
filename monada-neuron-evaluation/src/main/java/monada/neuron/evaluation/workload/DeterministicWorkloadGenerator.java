@@ -298,6 +298,32 @@ public final class DeterministicWorkloadGenerator {
             AdaptationPolicy policy,
             ResonanceMemoryPort memoryPort,
             ActionCapability actionCapability) {
+        return generateFullCycleSetup(
+                perceptionTopology,
+                reasoningTopology,
+                policy,
+                memoryPort,
+                actionCapability,
+                PropagationConfig.routeAll(50, 4));
+    }
+
+    /**
+     * Generates a full cognitive cycle with an explicit per-Aeon propagation bound.
+     *
+     * <p>The default bound (50 steps, 4 hops) truncates the perception stage on the standard
+     * benchmark topologies, which ends the cycle before memory recall; callers that must reach later
+     * stages pass a larger bound.
+     *
+     * @param propagationConfig propagation limits shared by both Aeon stages
+     */
+    public CognitiveCycleSetup generateFullCycleSetup(
+            GraphTopology perceptionTopology,
+            GraphTopology reasoningTopology,
+            AdaptationPolicy policy,
+            ResonanceMemoryPort memoryPort,
+            ActionCapability actionCapability,
+            PropagationConfig propagationConfig) {
+        Objects.requireNonNull(propagationConfig, "propagationConfig must not be null");
         Objects.requireNonNull(perceptionTopology, "perceptionTopology must not be null");
         Objects.requireNonNull(reasoningTopology, "reasoningTopology must not be null");
         Objects.requireNonNull(policy, "policy must not be null");
@@ -314,7 +340,6 @@ public final class DeterministicWorkloadGenerator {
         monad.registerAeon(reasoningAeon);
 
         var coordinator = new DeterministicAeonCoordinator(new DeterministicSignalPropagationEngine());
-        var propagationConfig = PropagationConfig.routeAll(50, 4);
 
         NodeProcessor forwardingProcessor = (node, input) -> {
             var transformed = new Signal(

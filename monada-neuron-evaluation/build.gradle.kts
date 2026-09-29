@@ -63,6 +63,58 @@ tasks.test {
     jvmArgs("--add-modules", "jdk.incubator.vector")
 }
 
+// Real Resonance Store integration evaluation (Issue #31). The adapter module, and with it the
+// unpublished sibling store, is optional (ADR 0018), so this code lives in its own source set and the
+// baseline `main` code and `./gradlew test` never require the store.
+if (findProject(":monada-neuron-resonance-adapter") != null) {
+    val integration = sourceSets.create("integration") {
+        compileClasspath += sourceSets["main"].output
+        runtimeClasspath += sourceSets["main"].output
+    }
+    val integrationTestSet = sourceSets.create("integrationTest") {
+        compileClasspath += integration.output + sourceSets["main"].output
+        runtimeClasspath += integration.output + sourceSets["main"].output
+    }
+
+    configurations["integrationImplementation"].extendsFrom(configurations["implementation"])
+    configurations["integrationRuntimeOnly"].extendsFrom(configurations["runtimeOnly"])
+    configurations["integrationTestImplementation"].extendsFrom(configurations["integrationImplementation"])
+    configurations["integrationTestRuntimeOnly"].extendsFrom(configurations["integrationRuntimeOnly"])
+
+    dependencies {
+        "integrationImplementation"(project(":monada-neuron-resonance-adapter"))
+        "integrationImplementation"("com.monada:monada-api")
+        "integrationImplementation"("com.monada:monada-core")
+        "integrationTestImplementation"(platform("org.junit:junit-bom:5.10.0"))
+        "integrationTestImplementation"("org.junit.jupiter:junit-jupiter")
+        "integrationTestRuntimeOnly"("org.junit.platform:junit-platform-launcher")
+    }
+
+    tasks.register<JavaExec>("runResonanceStoreIntegration") {
+        group = "benchmark"
+        description = "Runs the end-to-end Neuron + Resonance Store cognitive evaluation over a temporary store"
+        classpath = integration.runtimeClasspath
+        mainClass.set("monada.neuron.evaluation.integration.ResonanceStoreIntegrationRunner")
+        systemProperty("monada.neuron.version", project.version.toString())
+        systemProperty("monada.resonance.store.dir", rootProject.file("../monada-resonance-store").absolutePath)
+        if (project.hasProperty("benchmarkArgs")) {
+            args(project.property("benchmarkArgs").toString().split(" "))
+        }
+    }
+
+    val integrationTest = tasks.register<Test>("integrationTest") {
+        group = "verification"
+        description = "Runs correctness tests against a real, isolated temporary Resonance Store"
+        testClassesDirs = integrationTestSet.output.classesDirs
+        classpath = integrationTestSet.runtimeClasspath
+        useJUnitPlatform()
+    }
+
+    tasks.test {
+        dependsOn(integrationTest)
+    }
+}
+
 tasks.withType<JavaCompile> {
     options.compilerArgs.addAll(listOf("--add-modules", "jdk.incubator.vector"))
 }
