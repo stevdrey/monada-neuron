@@ -62,3 +62,5 @@ Rejected because adapters could bypass the cycle-wide budget and retain unbounde
 Implement a production adapter only after selecting its concrete transport and proving which
 compatibility metadata it requires. Keep any blocking or virtual-thread policy in that adapter rather
 than in this core contract.
+
+The embedded production adapter is recorded in ADR 0018.
