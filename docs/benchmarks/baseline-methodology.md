@@ -462,7 +462,7 @@ When evaluating the comparative performance between the Java 26 reference number
    - Additionally, on the dual-core mobile host (`Intel Core i7-6500U`), sustained unisolated execution causes dynamic CPU frequency scaling (dropping clock speeds to ~51% of max frequency due to 15W TDP constraints), inflating single-process wall-clock durations.
 2. **Resolution Under Isolated Multi-Fork JMH Measurement**:
    - To definitively determine whether the large CLI runner deltas reflect an actual runtime regression or test harness/environment variance, isolated JMH benchmarks were executed with fresh forks (3 forks, 3 warmups, 5 measurement iterations) on the suspect workloads:
-     - **Aeon Coordination**: `benchmarkSequentialDirect` runs at **553.6 µs/op** (~0.55 ms) and `benchmarkSequentialContextual` at **1,012.7 µs/op** (~1.01 ms)—disproving the 9.27 ms and 12.04 ms unisolated CLI figures by an order of magnitude.
+     - **Aeon Coordination**: `benchmarkSequentialDirect` runs at **553.6 µs/op** (~0.55 ms) and `benchmarkSequentialContextual` at **1,012.7 µs/op** (~1.01 ms)—showing that the 9.27 ms and 12.04 ms CLI figures are not reproduced under isolated steady-state measurement (and run in under ~1.0 ms even across a 200-node topology).
      - **Adaptation Policy**: Non-mutating no-op runs in **10.05 ns/op** (vs ~12.5 ns in Java 26), arithmetic decision runs in **44.06 ns/op** (vs ~46.6 ns), and full adaptation on fresh nodes runs in **86.09 ns/op** (vs ~120.4 ns, a 28% improvement).
      - **Cognitive Cycle**: Full cycle with baseline adaptation runs in **42.62 µs/op** (vs ~110.4 µs in Java 26, a 61% improvement).
 3. **Core Conclusion**:
