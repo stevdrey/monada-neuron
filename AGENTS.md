@@ -66,9 +66,9 @@ Do not duplicate long-term memory, persisted recall, or ranking logic inside Mon
 - External models, frameworks, tools, and memory systems belong behind adapters.
 - Core cognition must remain usable without requiring LangChain, LangGraph, Spring AI, a remote LLM, or a specific vendor API.
 
-## Java 26 Rules
+## Java 27 Rules
 
-- Java 26 is the project toolchain and should be treated as the implementation baseline.
+- Java 27 is the project toolchain and should be treated as the implementation baseline.
 - Use current Java language and JDK capabilities when they make the design simpler, safer, or measurably more efficient.
 - Preview or incubating APIs are allowed when the benefit is concrete, isolated, documented, and covered by a fallback or migration strategy.
 - Treat `static` as a semantic design choice, not a convenience modifier. Behavioral helpers remain instance methods unless the operation is genuinely class-level.
@@ -113,12 +113,12 @@ Resource efficiency is a first-class architectural requirement.
 
 ## SIMD, Native Memory, and Heterogeneous Compute
 
-Java 26 capabilities and experimental OpenJDK work may be used when appropriate:
+Java 27 capabilities and experimental OpenJDK work may be used when appropriate:
 
 - Use the Vector API (`jdk.incubator.vector`) for CPU SIMD when profiling shows a vectorizable numeric hotspot and the resulting implementation is clearer or measurably faster.
 - Use the Foreign Function & Memory API (`java.lang.foreign`) for controlled off-heap memory, memory-mapped regions, native interop, or layouts that benefit from explicit lifetime/alignment management.
 - For native/shared-memory integration, isolate platform-specific behavior behind a narrow adapter and keep ownership/lifetime rules explicit.
-- GPU or accelerator execution must be optional and capability-driven. Java SE 26 does not provide a standard production GPU-offload API.
+- GPU or accelerator execution must be optional and capability-driven. Java SE 27 does not provide a standard production GPU-offload API.
 - OpenJDK Project Babylon/HAT may be evaluated for experimental GPU acceleration, including GPU shared-memory techniques, only behind an experimental boundary with a CPU reference implementation.
 - Native accelerator libraries may also be reached through FFM when justified, but vendor lock-in and deployment requirements must stay outside the cognitive core.
 - Always benchmark end-to-end cost, including data conversion, host/device transfer, compilation/warm-up, synchronization, and fallback behavior. Kernel-only speedups are insufficient evidence.
@@ -185,4 +185,4 @@ Implementation tasks should state:
 
 ## PR Review Workflow
 
-PR review should verify goal alignment, scope control, cognitive boundaries, data-structure choice, algorithmic complexity, Java 26 usage, allocation/resource behavior, concurrency safety, deterministic behavior, test quality, benchmark evidence where relevant, documentation, and merge safety.
+PR review should verify goal alignment, scope control, cognitive boundaries, data-structure choice, algorithmic complexity, Java 27 usage, allocation/resource behavior, concurrency safety, deterministic behavior, test quality, benchmark evidence where relevant, documentation, and merge safety.

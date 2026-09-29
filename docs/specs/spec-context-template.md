@@ -51,7 +51,7 @@ State whether the task is latency-, throughput-, memory-, allocation-, or I/O-se
 
 If performance is part of the goal, define the baseline workload and the metric to compare.
 
-## Java 26 / Experimental API Policy
+## Java 27 / Experimental API Policy
 
 State whether preview/incubator/native APIs are allowed for the task. If used, require isolation, documented flags, tests, and a fallback/migration strategy where practical.
 

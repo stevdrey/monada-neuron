@@ -69,9 +69,9 @@ Select an accelerated backend only when:
 
 Otherwise use the portable CPU path.
 
-## 8. Java 26 Is a Performance Platform, Not Only a Language Version
+## 8. Modern Java Is a Performance Platform, Not Only a Language Version
 
-Use Java 26 and modern JDK facilities deliberately.
+Use Java 27 and modern JDK facilities deliberately.
 
 Potential tools include:
 

@@ -112,7 +112,7 @@ public final class BackendCapabilities {
         return new BackendCapabilities(vectorAvailable, laneWidth, speciesDesc, processors, poolParallelism, ffm, vectorInitFailure);
     }
 
-    /** Returns whether the Java 26 Vector API incubator module is loaded and multi-lane SIMD is supported. */
+    /** Returns whether the Vector API incubator module is loaded and multi-lane SIMD is supported. */
     public boolean isVectorApiAvailable() {
         return vectorApiAvailable;
     }
@@ -137,7 +137,7 @@ public final class BackendCapabilities {
         return commonPoolParallelism;
     }
 
-    /** Returns whether the Foreign Function & Memory API is available. */
+    /** Returns whether the Foreign Function &amp; Memory API is available. */
     public boolean isFfmAvailable() {
         return ffmAvailable;
     }

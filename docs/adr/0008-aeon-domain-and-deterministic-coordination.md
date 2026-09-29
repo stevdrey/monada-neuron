@@ -49,7 +49,7 @@ is processed normally when reached. A successful `NodeProcessingResult.noOutput(
 branch according to ADR 0007.
 
 The Phase-1 Aeon is not thread-safe. Membership, Node state, and graph topology must not change
-during coordination. The reference coordinator is sequential and uses stable Java 26 APIs only.
+during coordination. The reference coordinator is sequential and uses stable Java APIs only.
 
 ## Alternatives Considered
 

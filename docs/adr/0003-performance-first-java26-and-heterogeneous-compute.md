@@ -1,8 +1,8 @@
-# ADR 0003: Java 26 Performance-First and Heterogeneous Compute Strategy
+# ADR 0003: Modern Java Performance-First and Heterogeneous Compute Strategy
 
 ## Status
 
-Accepted
+Accepted (Established on Java 26; updated to Java 27 as current toolchain baseline via Issue #43)
 
 ## Context
 
@@ -10,7 +10,7 @@ Monada Neuron is expected to process potentially large numbers of nodes, signals
 
 At the same time, premature dependence on specialized native or accelerator stacks would damage portability and make correctness harder to validate.
 
-Java 26 provides a strong CPU/JVM baseline plus APIs that can support advanced execution strategies. Relevant capabilities include the Foreign Function & Memory API and the incubating Vector API. Structured Concurrency remains preview in JDK 26. OpenJDK Project Babylon/HAT explores GPU and heterogeneous acceleration but is not a standard Java SE production API.
+Modern Java (Java 27 current toolchain baseline) provides a strong CPU/JVM baseline plus APIs that can support advanced execution strategies. Relevant capabilities include the Foreign Function &amp; Memory API and the incubating Vector API. Structured Concurrency remains preview in JDK 27. OpenJDK Project Babylon/HAT explores GPU and heterogeneous acceleration but is not a standard Java SE production API.
 
 ## Decision
 
@@ -97,7 +97,8 @@ Rejected because inefficient object/data models can become expensive architectur
 - Data layout becomes an explicit design consideration.
 - Accelerator backends must report availability and support graceful fallback.
 - Hardware-specific experiments can move quickly without turning the entire project into a hardware-specific codebase.
+- Toolchain baseline upgrades (e.g., from Java 26 to Java 27) apply this durable performance policy directly, ensuring backward compatibility, scalar fallbacks, and benchmark verification without requiring a new ADR for standard JDK release cadences.
 
 ## Follow-Up
 
-When the first large-scale node/signal workload is implemented, establish reproducible CPU scalar, SIMD, and allocation baselines before selecting more specialized execution paths.
+When the first large-scale node/signal workload is implemented, establish reproducible CPU scalar, SIMD, and allocation baselines before selecting more specialized execution paths. (Issue #43 migrated the project toolchain to Java 27 and confirmed stable performance, Vector API SIMD, and FFM equivalence).

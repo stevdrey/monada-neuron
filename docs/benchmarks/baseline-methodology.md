@@ -362,6 +362,117 @@ Captured on Linux x86_64 with Java 26 (Eclipse Adoptium OpenJDK 64-Bit Server VM
 | `CognitiveCycleBenchmark.benchmarkCognitiveCycleBaseline` | N/A | avgt | ~110.4 | µs/op |
 
 
+## Baseline Results (Java 27 Baseline)
+
+Captured on Linux x86_64 with Java 27 via Issue #43:
+
+- **Host & CPU**: Linux x86_64 (kernel 6.6.137+), `Intel(R) Core(TM) i7-6500U CPU @ 2.50GHz` (2 physical cores, 4 logical threads, AVX2).
+- **SIMD / Vector Species**: `DoubleVector.SPECIES_PREFERRED` is `DoubleVector.SPECIES_256` (256-bit lane width = 4 `double` values).
+- **Toolchain & JVM**: Azul Systems, Inc. Zulu OpenJDK 27+35 (build 27-ea+35-2431, 64-Bit Server VM).
+- **Memory & GC**: 16 GB physical RAM, default G1 GC.
+
+### End-to-End Suite Results (Java 27)
+
+| Benchmark | Workload Scale | Mean Latency | Median (p50) | p95 | Throughput | Alloc / Op |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: |
+| `ScalarResonanceMetric.score` | 100 pairs | 334.42 µs | 117.92 µs | 1.23 ms | ~299,000 pairs/s | 61.9 B |
+| `ScalarResonanceMetric.score` | 1,000 pairs | 994.32 µs | 536.12 µs | 3.63 ms | ~1,006,000 pairs/s | 62.1 B |
+| `ScalarResonanceMetric.score` | 10,000 pairs | 2.34 ms | 1.99 ms | 3.14 ms | ~4,273,000 pairs/s | 32.0 B |
+| `ScalarResonanceMetric.score` | 100,000 pairs | 14.88 ms | 15.70 ms | 16.59 ms | ~6,719,000 pairs/s | 32.0 B |
+| `ScalarBatchResonance.SoA` | 100,000 pairs | 18.56 ms | 17.93 ms | 29.68 ms | ~5,389,000 pairs/s | 32.0 B |
+| `VectorBatchResonance.SoA` | 100,000 pairs | 10.00 ms | 1.48 ms | 47.27 ms | ~9,997,000 pairs/s | 68.1 B |
+| `GraphPropagation.RouteAll` | Small (50 nodes, deg 3) | 1.41 ms | 1.34 ms | 2.03 ms | ~708 ops/s | 50.92 KB |
+| `GraphPropagation.ThresholdRouting` | Small (50 nodes, deg 3) | 15.66 µs | 13.17 µs | 32.16 µs | ~63,800 ops/s | 880.0 B |
+| `CompactGraphPropagation.RouteAll` | Small (50 nodes, deg 3) | 401.74 µs | 398.39 µs | 460.00 µs | ~2,489 ops/s | 27.19 KB |
+| `GraphPropagation.RouteAll` | Medium (500 nodes, deg 5) | 3.57 ms | 3.46 ms | 4.64 ms | ~280 ops/s | 744.33 KB |
+| `GraphPropagation.ThresholdRouting` | Medium (500 nodes, deg 5) | 26.41 µs | 19.83 µs | 57.31 µs | ~37,800 ops/s | 1.53 KB |
+| `CompactGraphPropagation.RouteAll` | Medium (500 nodes, deg 5) | 1.60 ms | 1.58 ms | 2.87 ms | ~624 ops/s | 267.94 KB |
+| `GraphPropagation.RouteAll` | Large (2,000 nodes, deg 8) | 11.75 ms | 13.16 ms | 16.75 ms | ~85 ops/s | 4.33 MB |
+| `GraphPropagation.ThresholdRouting` | Large (2,000 nodes, deg 8) | 38.60 µs | 8.12 µs | 158.95 µs | ~25,900 ops/s | 2.33 KB |
+| `CompactGraphPropagation.RouteAll` | Large (2,000 nodes, deg 8) | 2.90 ms | 2.71 ms | 4.17 ms | ~345 ops/s | 1.22 MB |
+| `AeonCoordinator.Direct` | 10 inputs, 100 members | 9.27 ms | 9.07 ms | 11.48 ms | ~108 ops/s | 1.49 MB |
+| `AeonCoordinator.Contextual` | 10 inputs, 100 members | 12.04 ms | 11.42 ms | 16.79 ms | ~83 ops/s | 4.88 MB |
+| `DeterministicCognitiveCycle.FullCycle` | 5 stages, 5 initial signals | 553.32 µs | 513.22 µs | 715.48 µs | ~1,807 ops/s | 231.72 KB |
+| `CognitiveCycle.Adaptation.NoOp` | 50 target nodes | 507.71 µs | 468.33 µs | 682.16 µs | ~1,970 ops/s | 231.72 KB |
+| `CognitiveCycle.Adaptation.BaselinePolicy` | 50 target nodes | 820.66 µs | 510.76 µs | 1.84 ms | ~1,219 ops/s | 231.72 KB |
+| `NodeStateLayout.ObjectConstruction` | 100,000 nodes | 60.65 ms | 59.52 ms | 66.65 ms | ~1,649,000 ops/s | 405.6 B |
+| `NodeStateLayout.HeapSoASnapshotConstruction` | 100,000 nodes | 19.08 ms | 16.09 ms | 33.49 ms | ~5,242,000 ops/s | 101.1 B |
+| `NodeStateLayout.FfmSnapshotConstruction` | 100,000 nodes | 17.95 ms | 17.25 ms | 22.74 ms | ~5,572,000 ops/s | 68.0 B |
+
+### JMH Microbenchmark Results (Java 27 Baseline)
+
+#### Steady-State Microbenchmarks: Adaptation Policy & Full Cognitive Cycle
+
+Measured with 3 forks, 3 warmups, and 5 measurement iterations (1 second each) on Azul Zulu JDK 27+35 (`avgt`):
+
+| Benchmark | Parameter | Java 26 Reference | Java 27 Score | Units | Variance / Status |
+| :--- | :--- | ---: | ---: | :--- | :--- |
+| `AdaptationPolicyBenchmark.benchmarkNoOpPolicy` | N/A | ~12.5 | 10.05 ± 1.26 | ns/op | ~20% faster |
+| `AdaptationPolicyBenchmark.benchmarkBaselinePolicyDecisionArithmetic` | N/A | ~46.6 | 44.06 ± 4.65 | ns/op | ~6% faster |
+| `AdaptationPolicyBenchmark.benchmarkBaselinePolicyFull` | N/A | ~120.4 | 86.09 ± 3.54 | ns/op | ~28% faster |
+| `CognitiveCycleBenchmark.benchmarkCognitiveCycleNoOp` | N/A | ~96.2 | 41.98 ± 1.28 | µs/op | ~56% faster |
+| `CognitiveCycleBenchmark.benchmarkCognitiveCycleBaseline` | N/A | ~110.4 | 42.62 ± 1.16 | µs/op | ~61% faster |
+
+#### Steady-State Microbenchmarks: Aeon Coordination (`AeonCoordinationBenchmark`)
+
+Measured with 3 forks, 3 warmups, and 5 measurement iterations (`avgt`, medium graph 200 nodes, 10 inputs, 4 workers) on Azul Zulu JDK 27+35:
+
+| Benchmark | Mode | Score (Java 27) | Error (99.9% CI) | Units | Equivalent CLI Time |
+| :--- | :--- | ---: | ---: | :--- | ---: |
+| `AeonCoordinationBenchmark.benchmarkSequentialDirect` | avgt | **553.64** | ± 13.83 | µs/op | ~0.55 ms |
+| `AeonCoordinationBenchmark.benchmarkSequentialContextual` | avgt | **1,012.66** | ± 60.21 | µs/op | ~1.01 ms |
+| `AeonCoordinationBenchmark.benchmarkParallelDirect` | avgt | **473.42** | ± 64.99 | µs/op | ~0.47 ms |
+| `AeonCoordinationBenchmark.benchmarkParallelContextual` | avgt | **1,279.32** | ± 198.61 | µs/op | ~1.28 ms |
+
+#### SIMD Crossover Study on Java 27 (`batchSize` = 1, 2, 4, 8)
+
+To empirically re-verify the crossover threshold between scalar and Vector API execution on Java 27, a dedicated JMH microbenchmark was executed across `batchSize` 1, 2, 4, and 8 on `ScalarResonanceBenchmark.benchmark(Scalar|Vector|Adaptive)BatchSoA`:
+
+| Batch Size | Scalar (`ns/op`) | Vector (`ns/op`) | Adaptive (`ns/op`) | Vector Speedup vs Scalar | Observation |
+| :--- | ---: | ---: | ---: | ---: | :--- |
+| **1 pair** | 95.362 ± 2.923 | 86.223 ± 2.766 | 82.805 ± 2.053 | ~1.10x | Within margin; vector offers no decisive win. |
+| **2 pairs** | 142.124 ± 7.420 | 140.038 ± 5.485 | 136.784 ± 4.908 | ~1.01x | Parity; vector and scalar latencies overlap. |
+| **4 pairs** | 268.490 ± 11.233 | 74.629 ± 1.849 | 74.372 ± 1.956 | **~3.60x** | **Inflection point**: SIMD delivers full 256-bit lane speedup. |
+| **8 pairs** | 503.441 ± 11.666 | 119.866 ± 4.673 | 130.222 ± 5.923 | **~4.20x** | Continuous linear scaling for vector operations. |
+
+**Conclusion**: The default crossover threshold of `4` (`DEFAULT_CROSSOVER_THRESHOLD = 4`) remains optimal and empirically justified on Java 27. At 1 and 2 pairs, SIMD vectorization exhibits no material advantage over scalar loops. At 4 pairs (matching the 4 `double` lanes of AVX2 / `SPECIES_256`), Vector API throughput is 3.6x faster than scalar, and `AdaptiveBatchResonanceEvaluator` matches direct vector performance without dispatch penalty.
+
+#### Control Plane & Dynamic Selection Overhead (`BackendSelectionBenchmark`)
+
+| Benchmark | Parameter | Mode | Score | Units |
+| :--- | :--- | :--- | ---: | :--- |
+| `BackendSelectionBenchmark.benchmarkDirectScalarBatch` | 4 pairs | avgt | ~308.6 | ns/op |
+| `BackendSelectionBenchmark.benchmarkDirectVectorBatch` | 4 pairs | avgt | ~94.7 | ns/op |
+| `BackendSelectionBenchmark.benchmarkDirectScalarBatch` | 64 pairs | avgt | ~4,449.4 | ns/op |
+| `BackendSelectionBenchmark.benchmarkDirectVectorBatch` | 64 pairs | avgt | ~874.9 | ns/op |
+| `BackendSelectionBenchmark.benchmarkDirectScalarBatch` | 1,000 pairs | avgt | ~79,322.7 | ns/op |
+| `BackendSelectionBenchmark.benchmarkDirectVectorBatch` | 1,000 pairs | avgt | ~24,535.6 | ns/op |
+| `BackendSelectionBenchmark.benchmarkResonanceSelectionAuto` | 64 pairs | avgt | ~20.5 | ns/op |
+| `BackendSelectionBenchmark.benchmarkResonanceSelectionAuto` | 1,000 pairs | avgt | ~16.5 | ns/op |
+| `BackendSelectionBenchmark.benchmarkGraphSelection` | 64 nodes | avgt | ~18.1 | ns/op |
+| `BackendSelectionBenchmark.benchmarkAeonSelection` | 64 inputs | avgt | ~96.0 | ns/op |
+
+### Comparability & Variance Analysis: Java 26 vs Java 27
+
+When evaluating the comparative performance between the Java 26 reference numbers and the Java 27 migration results, several apparent differences must be distinguished according to harness methodology and execution environment:
+
+1. **Harness Isolation vs. End-to-End Cumulative Runner**:
+   - Both Java 26 and Java 27 report end-to-end figures from `CognitiveBaselineRunner`. In this unified runner, all 17+ workloads execute sequentially within a single JVM process.
+   - Early workloads (such as 100,000-node object creation, CSR snapshot compilation, and multi-million scalar/vector evaluations) allocate hundreds of megabytes of ephemeral heap, prompting background G1 concurrent marking and garbage collection cycles that overlap with later micro-workloads (`AeonCoordinator` and `CognitiveCycle.Adaptation`).
+   - Additionally, on the dual-core mobile host (`Intel Core i7-6500U`), sustained unisolated execution causes dynamic CPU frequency scaling (dropping clock speeds to ~51% of max frequency due to 15W TDP constraints), inflating single-process wall-clock durations.
+2. **Resolution Under Isolated Multi-Fork JMH Measurement**:
+   - To definitively determine whether the large CLI runner deltas reflect an actual runtime regression or test harness/environment variance, isolated JMH benchmarks were executed with fresh forks (3 forks, 3 warmups, 5 measurement iterations) on the suspect workloads:
+     - **Aeon Coordination**: `benchmarkSequentialDirect` runs at **553.6 µs/op** (~0.55 ms) and `benchmarkSequentialContextual` at **1,012.7 µs/op** (~1.01 ms)—showing that the 9.27 ms and 12.04 ms CLI figures are not reproduced under isolated steady-state measurement (and run in under ~1.0 ms even across a 200-node topology).
+     - **Adaptation Policy**: Non-mutating no-op runs in **10.05 ns/op** (vs ~12.5 ns in Java 26), arithmetic decision runs in **44.06 ns/op** (vs ~46.6 ns), and full adaptation on fresh nodes runs in **86.09 ns/op** (vs ~120.4 ns, a 28% improvement).
+     - **Cognitive Cycle**: Full cycle with baseline adaptation runs in **42.62 µs/op** (vs ~110.4 µs in Java 26, a 61% improvement).
+3. **Core Conclusion**:
+   - **The large deltas in the unified runner were not reproduced under isolated JMH measurement and therefore are treated as harness/environment variance rather than evidence of a Java 27 runtime regression.**
+4. **Allocation and Invariant Integrity Preserved**:
+   - Memory allocation per operation is virtually identical between Java 26 and Java 27 across all workloads (`ScalarResonanceMetric.score` at 32.0 B, FFM layout at 68.0 B, Cognitive Cycle at ~231 KB vs ~255 KB).
+   - 100% of unit tests, architectural invariants, and deterministic oracle validations pass without degradation.
+   - Architectural decisions and thresholds (`DEFAULT_CROSSOVER_THRESHOLD = 4`) remain fully validated on Java 27.
+
+
 ## Analysis of Bottlenecks & Next Optimization Experiments
 
 From the empirical evidence gathered by the baseline harness and the completion of Experiment 1 (Vector API SIMD batch resonance):
