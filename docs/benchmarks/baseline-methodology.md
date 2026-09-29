@@ -362,6 +362,54 @@ Captured on Linux x86_64 with Java 26 (Eclipse Adoptium OpenJDK 64-Bit Server VM
 | `CognitiveCycleBenchmark.benchmarkCognitiveCycleBaseline` | N/A | avgt | ~110.4 | µs/op |
 
 
+## Baseline Results (Java 27 Baseline)
+
+Captured on Linux x86_64 with Java 27 (Azul Systems, Inc. Zulu OpenJDK 27+35, 4 processors, G1 GC) via Issue #43:
+
+### End-to-End Suite Results (Java 27)
+
+| Benchmark | Workload Scale | Mean Latency | Median (p50) | p95 | Throughput | Alloc / Op |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: |
+| `ScalarResonanceMetric.score` | 100 pairs | 334.42 µs | 117.92 µs | 1.23 ms | ~299,000 pairs/s | 61.9 B |
+| `ScalarResonanceMetric.score` | 1,000 pairs | 994.32 µs | 536.12 µs | 3.63 ms | ~1,006,000 pairs/s | 62.1 B |
+| `ScalarResonanceMetric.score` | 10,000 pairs | 2.34 ms | 1.99 ms | 3.14 ms | ~4,273,000 pairs/s | 32.0 B |
+| `ScalarResonanceMetric.score` | 100,000 pairs | 14.88 ms | 15.70 ms | 16.59 ms | ~6,719,000 pairs/s | 32.0 B |
+| `ScalarBatchResonance.SoA` | 100,000 pairs | 18.56 ms | 17.93 ms | 29.68 ms | ~5,389,000 pairs/s | 32.0 B |
+| `VectorBatchResonance.SoA` | 100,000 pairs | 10.00 ms | 1.48 ms | 47.27 ms | ~9,997,000 pairs/s | 68.1 B |
+| `GraphPropagation.RouteAll` | Small (50 nodes, deg 3) | 1.41 ms | 1.34 ms | 2.03 ms | ~708 ops/s | 50.92 KB |
+| `GraphPropagation.ThresholdRouting` | Small (50 nodes, deg 3) | 15.66 µs | 13.17 µs | 32.16 µs | ~63,800 ops/s | 880.0 B |
+| `CompactGraphPropagation.RouteAll` | Small (50 nodes, deg 3) | 401.74 µs | 398.39 µs | 460.00 µs | ~2,489 ops/s | 27.19 KB |
+| `GraphPropagation.RouteAll` | Medium (500 nodes, deg 5) | 3.57 ms | 3.46 ms | 4.64 ms | ~280 ops/s | 744.33 KB |
+| `GraphPropagation.ThresholdRouting` | Medium (500 nodes, deg 5) | 26.41 µs | 19.83 µs | 57.31 µs | ~37,800 ops/s | 1.53 KB |
+| `CompactGraphPropagation.RouteAll` | Medium (500 nodes, deg 5) | 1.60 ms | 1.58 ms | 2.87 ms | ~624 ops/s | 267.94 KB |
+| `GraphPropagation.RouteAll` | Large (2,000 nodes, deg 8) | 11.75 ms | 13.16 ms | 16.75 ms | ~85 ops/s | 4.33 MB |
+| `GraphPropagation.ThresholdRouting` | Large (2,000 nodes, deg 8) | 38.60 µs | 8.12 µs | 158.95 µs | ~25,900 ops/s | 2.33 KB |
+| `CompactGraphPropagation.RouteAll` | Large (2,000 nodes, deg 8) | 2.90 ms | 2.71 ms | 4.17 ms | ~345 ops/s | 1.22 MB |
+| `AeonCoordinator.Direct` | 10 inputs, 100 members | 9.27 ms | 9.07 ms | 11.48 ms | ~108 ops/s | 1.49 MB |
+| `AeonCoordinator.Contextual` | 10 inputs, 100 members | 12.04 ms | 11.42 ms | 16.79 ms | ~83 ops/s | 4.88 MB |
+| `DeterministicCognitiveCycle.FullCycle` | 5 stages, 5 initial signals | 553.32 µs | 513.22 µs | 715.48 µs | ~1,807 ops/s | 231.72 KB |
+| `CognitiveCycle.Adaptation.NoOp` | 50 target nodes | 507.71 µs | 468.33 µs | 682.16 µs | ~1,970 ops/s | 231.72 KB |
+| `CognitiveCycle.Adaptation.BaselinePolicy` | 50 target nodes | 820.66 µs | 510.76 µs | 1.84 ms | ~1,219 ops/s | 231.72 KB |
+| `NodeStateLayout.ObjectConstruction` | 100,000 nodes | 60.65 ms | 59.52 ms | 66.65 ms | ~1,649,000 ops/s | 405.6 B |
+| `NodeStateLayout.HeapSoASnapshotConstruction` | 100,000 nodes | 19.08 ms | 16.09 ms | 33.49 ms | ~5,242,000 ops/s | 101.1 B |
+| `NodeStateLayout.FfmSnapshotConstruction` | 100,000 nodes | 17.95 ms | 17.25 ms | 22.74 ms | ~5,572,000 ops/s | 68.0 B |
+
+### JMH Microbenchmark Results (Java 27 Baseline)
+
+| Benchmark | Parameter | Mode | Score | Units |
+| :--- | :--- | :--- | ---: | :--- |
+| `BackendSelectionBenchmark.benchmarkDirectScalarBatch` | 4 pairs | avgt | ~308.6 | ns/op |
+| `BackendSelectionBenchmark.benchmarkDirectVectorBatch` | 4 pairs | avgt | ~94.7 | ns/op |
+| `BackendSelectionBenchmark.benchmarkDirectScalarBatch` | 64 pairs | avgt | ~4,449.4 | ns/op |
+| `BackendSelectionBenchmark.benchmarkDirectVectorBatch` | 64 pairs | avgt | ~874.9 | ns/op |
+| `BackendSelectionBenchmark.benchmarkDirectScalarBatch` | 1,000 pairs | avgt | ~79,322.7 | ns/op |
+| `BackendSelectionBenchmark.benchmarkDirectVectorBatch` | 1,000 pairs | avgt | ~24,535.6 | ns/op |
+| `BackendSelectionBenchmark.benchmarkResonanceSelectionAuto` | 64 pairs | avgt | ~20.5 | ns/op |
+| `BackendSelectionBenchmark.benchmarkResonanceSelectionAuto` | 1,000 pairs | avgt | ~16.5 | ns/op |
+| `BackendSelectionBenchmark.benchmarkGraphSelection` | 64 nodes | avgt | ~18.1 | ns/op |
+| `BackendSelectionBenchmark.benchmarkAeonSelection` | 64 inputs | avgt | ~96.0 | ns/op |
+
+
 ## Analysis of Bottlenecks & Next Optimization Experiments
 
 From the empirical evidence gathered by the baseline harness and the completion of Experiment 1 (Vector API SIMD batch resonance):
