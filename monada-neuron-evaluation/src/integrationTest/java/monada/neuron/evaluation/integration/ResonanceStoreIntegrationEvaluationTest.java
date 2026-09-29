@@ -44,6 +44,7 @@ class ResonanceStoreIntegrationEvaluationTest {
                 "cycle.memory-only.signal-budget-truncates-recalled-prefix",
                 "cycle.full.stage-order-and-budget",
                 "cycle.full.deterministic-replay",
+                "cycle.full.replayed-response-equals-real",
                 "failure.closed-adapter-unavailable",
                 "failure.storage-loss-failed",
                 "failure.open-failure-translated",
@@ -63,7 +64,28 @@ class ResonanceStoreIntegrationEvaluationTest {
         assertEquals("recall", phases.get("ResonanceStore.Recall.Warm"));
         assertEquals("recall", phases.get("ResonanceStore.FirstRecall.FreshlyOpenedAdapter"));
         assertTrue(phases.containsKey("NeuronCycle.FullCycle.RealResonanceStore"));
-        assertTrue(phases.containsKey("NeuronCycle.FullCycle.DeterministicMemoryFixture"));
+        assertTrue(phases.containsKey("NeuronCycle.FullCycle.ReplayedMemoryResponse"));
+        assertFalse(phases.containsKey("Adapter.SignalTranslation.Only"));
+    }
+
+    @Test
+    void everyMeasuredRowRecordsItsOwnIterationCounts() {
+        for (var result : report.evaluation().results()) {
+            assertEquals(String.valueOf(result.iterations()), result.diagnostics().get("measurementIterations"), result.benchmarkName());
+            assertTrue(result.diagnostics().containsKey("warmupIterations"), result.benchmarkName());
+        }
+    }
+
+    @Test
+    void realAndReplayedCyclesDoIdenticalDownstreamWork() {
+        var byName = report.evaluation().results().stream()
+                .collect(Collectors.toMap(result -> result.benchmarkName(), result -> result.diagnostics()));
+        var real = byName.get("NeuronCycle.FullCycle.RealResonanceStore");
+        var replayed = byName.get("NeuronCycle.FullCycle.ReplayedMemoryResponse");
+
+        for (var key : List.of("processedSteps", "acceptedSignals", "termination", "memoryStageRecalledResults")) {
+            assertEquals(real.get(key), replayed.get(key), key);
+        }
     }
 
     @Test

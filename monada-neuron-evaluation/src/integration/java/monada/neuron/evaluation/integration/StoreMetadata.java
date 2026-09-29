@@ -37,20 +37,32 @@ final class StoreMetadata {
         if (checkout == null || !Files.isDirectory(checkout)) {
             return "unknown";
         }
+        Path capture = null;
         try {
+            capture = Files.createTempFile("monada-neuron-git-", ".txt");
             var process = new ProcessBuilder("git", "-C", checkout.toString(), "rev-parse", "--short", "HEAD")
                     .redirectErrorStream(true)
+                    .redirectOutput(capture.toFile())
                     .start();
-            var output = new String(process.getInputStream().readAllBytes()).trim();
-            if (!process.waitFor(5, TimeUnit.SECONDS) || process.exitValue() != 0 || output.isBlank()) {
+            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
                 return "unknown";
             }
-            return output;
+            var output = Files.readString(capture).trim();
+            return process.exitValue() == 0 && !output.isBlank() ? output : "unknown";
         } catch (IOException e) {
             return "unknown";
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return "unknown";
+        } finally {
+            if (capture != null) {
+                try {
+                    Files.deleteIfExists(capture);
+                } catch (IOException ignored) {
+                    // Temporary metadata capture only.
+                }
+            }
         }
     }
 }

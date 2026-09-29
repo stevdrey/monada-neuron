@@ -93,6 +93,17 @@ public final class TemporaryResonanceStore implements AutoCloseable {
         return adapter;
     }
 
+    /** Closes an adapter opened by this store and stops retaining it. */
+    public void release(ResonanceStoreMemoryAdapter adapter) {
+        adapter.close();
+        openedAdapters.remove(adapter);
+    }
+
+    /** Returns the number of adapters this store still retains. */
+    public int retainedAdapterCount() {
+        return openedAdapters.size();
+    }
+
     /** Returns the raw persisted manifest text for reporting, or an empty string when absent. */
     public String manifestJson() {
         try {

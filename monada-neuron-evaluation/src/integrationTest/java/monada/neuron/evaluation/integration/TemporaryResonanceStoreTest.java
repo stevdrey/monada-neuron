@@ -49,4 +49,19 @@ class TemporaryResonanceStoreTest {
 
         assertFalse(store.exists());
     }
+
+    @Test
+    void releasedAdaptersAreClosedAndNoLongerRetained() {
+        try (var store = TemporaryResonanceStore.seeded(codec)) {
+            var adapter = store.openAdapter();
+            assertEquals(1, store.retainedAdapterCount());
+
+            store.release(adapter);
+
+            assertEquals(0, store.retainedAdapterCount());
+            var response = adapter.recall(new ResonanceMemoryRequest(
+                    List.of(ResonanceStoreFixtureCorpus.query("ocean-tide").signal()), 1));
+            assertEquals(ResonanceMemoryStatus.UNAVAILABLE, response.status());
+        }
+    }
 }

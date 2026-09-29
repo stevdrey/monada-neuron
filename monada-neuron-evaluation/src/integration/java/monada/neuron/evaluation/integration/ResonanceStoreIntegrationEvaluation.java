@@ -6,7 +6,6 @@ import monada.neuron.evaluation.integration.ResonanceStoreFixtureCorpus.Query;
 import monada.neuron.evaluation.metrics.BenchmarkRunResult;
 import monada.neuron.evaluation.metrics.EvaluationMetricsCollector;
 import monada.neuron.evaluation.workload.DeterministicActionFixture;
-import monada.neuron.evaluation.workload.DeterministicMemoryFixture;
 import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator;
 import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator.CognitiveCycleSetup;
 import monada.neuron.evolution.AdaptationConfig;
@@ -248,14 +247,12 @@ public final class ResonanceStoreIntegrationEvaluation {
             require(first.equals(second), "independent replays over the same store must be equal");
             return "equal";
         });
-        check("cycle.full.stage-order-matches-reference-memory", () -> {
-            var real = executeFullCycle(adapter, inputs);
-            var reference = executeFullCycle(new DeterministicMemoryFixture(), inputs);
-            var realKinds = real.stageResults().stream().map(stage -> stage.kind()).toList();
-            var referenceKinds = reference.stageResults().stream().map(stage -> stage.kind()).toList();
-            require(realKinds.equals(referenceKinds), "real " + realKinds + " vs reference " + referenceKinds);
-            require(real.termination() == reference.termination(), "termination must match reference");
-            return "kinds and termination match the fixture-memory reference";
+        check("cycle.full.replayed-response-equals-real", () -> {
+            var recorder = new ReplayMemoryPort.Recorder(adapter);
+            var real = executeFullCycle(recorder, inputs);
+            var replayed = executeFullCycle(recorder.replay(), inputs);
+            require(real.equals(replayed), "cycle over replayed responses must equal the real cycle result");
+            return "identical cycle result with no-I/O replay of the recorded store responses";
         });
     }
 
@@ -319,28 +316,70 @@ public final class ResonanceStoreIntegrationEvaluation {
 
     // ---------------------------------------------------------------- measurements
 
+
+    private BenchmarkRunResult measure(
+            String name,
+            String scale,
+            int warmups,
+            int iterations,
+            int operations,
+            Runnable workload,
+            Map<String, String> diagnostics) {
+        return measure(name, scale, warmups, iterations, operations, null, workload, diagnostics);
+    }
+
+    private BenchmarkRunResult measure(
+            String name,
+            String scale,
+            int warmups,
+            int iterations,
+            int operations,
+            Runnable iterationSetup,
+            Runnable workload,
+            Map<String, String> diagnostics) {
+        var annotated = new TreeMap<>(diagnostics);
+        annotated.put("warmupIterations", String.valueOf(warmups));
+        annotated.put("measurementIterations", String.valueOf(iterations));
+        return collector.measure(name, scale, warmups, iterations, operations, iterationSetup, workload, annotated);
+    }
+
     private void measureSetup(TemporaryResonanceStore primary) {
         int warmups = quickMode ? 1 : 2;
         int iterations = quickMode ? 3 : 10;
-        var created = new ArrayList<TemporaryResonanceStore>();
-        results.add(collector.measure(
+        var created = new TemporaryResonanceStore[1];
+        results.add(measure(
                 "ResonanceStore.SeedFixtureCorpus",
                 ResonanceStoreFixtureCorpus.documents().size() + " documents",
                 warmups, iterations, 1,
-                () -> created.add(TemporaryResonanceStore.seeded(codec)),
+                () -> closeStore(created[0]),
+                () -> created[0] = TemporaryResonanceStore.seeded(codec),
                 Map.of("phase", "setup",
                         "measures", "temp directory creation, store open, and remembering every document",
                         "fixtureVersion", ResonanceStoreFixtureCorpus.VERSION,
                         "primaryStoreSeedNanos", String.valueOf(primary.seedNanos()))));
-        created.forEach(TemporaryResonanceStore::close);
+        closeStore(created[0]);
 
-        var opened = new ArrayList<ResonanceStoreMemoryAdapter>();
-        results.add(collector.measure(
+        var opened = new ResonanceStoreMemoryAdapter[1];
+        results.add(measure(
                 "ResonanceStore.OpenExistingStore",
                 ResonanceStoreFixtureCorpus.documents().size() + " documents",
                 warmups, iterations, 1,
-                () -> opened.add(primary.openAdapter()),
+                () -> releaseAdapter(primary, opened[0]),
+                () -> opened[0] = primary.openAdapter(),
                 Map.of("phase", "setup", "measures", "adapter open on a persisted store")));
+        releaseAdapter(primary, opened[0]);
+    }
+
+    private static void closeStore(TemporaryResonanceStore store) {
+        if (store != null) {
+            store.close();
+        }
+    }
+
+    private static void releaseAdapter(TemporaryResonanceStore store, ResonanceStoreMemoryAdapter adapter) {
+        if (adapter != null) {
+            store.release(adapter);
+        }
     }
 
     private void measureRecall(TemporaryResonanceStore store, ResonanceStoreMemoryAdapter warmAdapter) {
@@ -351,15 +390,19 @@ public final class ResonanceStoreIntegrationEvaluation {
         var sample = warmAdapter.recall(request);
         var adapterHolder = new ResonanceStoreMemoryAdapter[1];
 
-        results.add(collector.measure(
+        results.add(measure(
                 "ResonanceStore.FirstRecall.FreshlyOpenedAdapter",
                 signals.size() + " query signals, limit " + MEMORY_STAGE_LIMIT,
                 0, iterations, 1,
-                () -> adapterHolder[0] = store.openAdapter(),
+                () -> {
+                    releaseAdapter(store, adapterHolder[0]);
+                    adapterHolder[0] = store.openAdapter();
+                },
                 () -> requireComplete(adapterHolder[0].recall(request)),
                 recallDiagnostics("first recall on an adapter opened in the untimed iteration setup", sample)));
+        releaseAdapter(store, adapterHolder[0]);
 
-        results.add(collector.measure(
+        results.add(measure(
                 "ResonanceStore.Recall.Warm",
                 signals.size() + " query signals, limit " + MEMORY_STAGE_LIMIT,
                 warmups, iterations, 1,
@@ -368,7 +411,7 @@ public final class ResonanceStoreIntegrationEvaluation {
 
         var stage = new ResonanceMemoryCognitiveStage(warmAdapter, MEMORY_STAGE_LIMIT);
         var monad = new PrimaryMonad(new UUID(seed, 0xCAFEBABEL));
-        results.add(collector.measure(
+        results.add(measure(
                 "NeuronStage.MemoryRecall.Warm",
                 signals.size() + " input signals, limit " + MEMORY_STAGE_LIMIT,
                 warmups, iterations, 1,
@@ -379,34 +422,14 @@ public final class ResonanceStoreIntegrationEvaluation {
                     }
                 },
                 recallDiagnostics("ResonanceMemoryCognitiveStage over the real adapter", sample)));
-
-        var recalledContents = ResonanceStoreFixtureCorpus.documents().stream().map(d -> d.text()).limit(MEMORY_STAGE_LIMIT).toList();
-        results.add(collector.measure(
-                "Adapter.SignalTranslation.Only",
-                signals.size() + " encodes, " + recalledContents.size() + " decodes",
-                warmups, iterations, 1,
-                () -> {
-                    int length = 0;
-                    for (var signal : signals) {
-                        length += codec.encode(signal).length();
-                    }
-                    for (var content : recalledContents) {
-                        length += codec.decode(content).hashCode();
-                    }
-                    if (length == Integer.MIN_VALUE) {
-                        throw new IllegalStateException("unreachable sink guard");
-                    }
-                },
-                Map.of("phase", "recall",
-                        "measures", "fixture encoder and decoder only; store query, merge, and reference hashing excluded",
-                        "note", "adapter merge and SHA-256 reference cost are not isolated separately")));
     }
 
     private void measureCycles(ResonanceStoreMemoryAdapter adapter) {
         int warmups = quickMode ? 2 : 5;
         int iterations = quickMode ? 5 : 15;
         var inputs = fullCycleInputs();
-        var sample = executeFullCycle(adapter, inputs);
+        var recorder = new ReplayMemoryPort.Recorder(adapter);
+        var sample = executeFullCycle(recorder, inputs);
         var sampleMemory = memoryStage(sample);
         var diagnostics = new TreeMap<String, String>();
         diagnostics.put("stages", String.join(" -> ", sample.stageResults().stream().map(s -> s.kind().name()).toList()));
@@ -426,16 +449,13 @@ public final class ResonanceStoreIntegrationEvaluation {
         results.add(measureCycle("NeuronCycle.FullCycle.RealResonanceStore", adapter, inputs, warmups, iterations,
                 withMemory(diagnostics, "ResonanceStoreMemoryAdapter (embedded, real store)")));
 
-        var reference = new DeterministicMemoryFixture();
-        var referenceSample = executeFullCycle(reference, inputs);
-        var referenceDiagnostics = new TreeMap<>(diagnostics);
-        referenceDiagnostics.put("memoryStageRecalledResults",
-                String.valueOf(memoryStage(referenceSample).response().results().size()));
-        referenceDiagnostics.put("termination", referenceSample.termination().name());
-        referenceDiagnostics.put("processedSteps", String.valueOf(referenceSample.snapshot().processedSteps()));
-        referenceDiagnostics.put("acceptedSignals", String.valueOf(referenceSample.snapshot().acceptedSignals()));
-        results.add(measureCycle("NeuronCycle.FullCycle.DeterministicMemoryFixture", reference, inputs, warmups,
-                iterations, withMemory(referenceDiagnostics, "DeterministicMemoryFixture (Neuron-only reference)")));
+        var replay = recorder.replay();
+        var replayed = executeFullCycle(replay, inputs);
+        if (!replayed.equals(sample)) {
+            throw new IllegalStateException("replayed memory responses diverged from the real cycle result");
+        }
+        results.add(measureCycle("NeuronCycle.FullCycle.ReplayedMemoryResponse", replay, inputs, warmups, iterations,
+                withMemory(diagnostics, "ReplayMemoryPort (no I/O; responses recorded from the real store)")));
     }
 
     private BenchmarkRunResult measureCycle(
@@ -446,7 +466,7 @@ public final class ResonanceStoreIntegrationEvaluation {
             int iterations,
             Map<String, String> diagnostics) {
         var holder = new CognitiveCycleSetup[1];
-        return collector.measure(
+        return measure(
                 name,
                 "5 stages, " + inputs.size() + " initial signals",
                 warmups, iterations, 1,

@@ -73,7 +73,13 @@ public final class ResonanceStoreIntegrationRunner {
         var evaluation = new EvaluationReport(
                 Instant.now(),
                 EnvironmentMetadata.current(),
-                quick ? RunConfiguration.defaultQuick(seed) : RunConfiguration.defaultFull(seed),
+                new RunConfiguration(
+                        seed,
+                        quick,
+                        0,
+                        0,
+                        "Iteration counts differ per row: see warmupIterations and measurementIterations in each"
+                                + " row's diagnostics; 1 op per iteration"),
                 outcome.results(),
                 ResonanceStoreIntegrationReport.TITLE);
         return new ResonanceStoreIntegrationReport(evaluation, outcome.checks(), metadata);

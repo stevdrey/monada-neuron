@@ -88,13 +88,15 @@ Linux).
 | `ResonanceStore.FirstRecall.FreshlyOpenedAdapter` | first recall after an untimed adapter open, no warm-up |
 | `ResonanceStore.Recall.Warm` | repeated recall on one open adapter |
 | `NeuronStage.MemoryRecall.Warm` | `ResonanceMemoryCognitiveStage` over the real adapter |
-| `Adapter.SignalTranslation.Only` | fixture encode/decode only |
 | `NeuronCycle.FullCycle.RealResonanceStore` | full 5-stage cycle, fresh state per iteration |
-| `NeuronCycle.FullCycle.DeterministicMemoryFixture` | same cycle with the Neuron-only fixture memory |
+| `NeuronCycle.FullCycle.ReplayedMemoryResponse` | same cycle with a no-I/O port replaying the responses recorded from the real store, so downstream stages process identical Signals |
 
-Limits: adapter translation is isolated only for the codec; the adapter's bounded merge and SHA-256
-reference hashing are not measured separately. "Cold" means a freshly opened handle in a warmed JVM, not
-a cold OS page cache. Cycles use fresh `PrimaryMonad`/topology state per iteration.
+Limits: adapter translation overhead (codec, bounded merge, SHA-256 references) is **not** measured here: a
+wall-clock loop is not a reliable microbenchmark, so it is left to a JMH follow-up (ADR 0018). "Cold" means a freshly opened handle in a warmed JVM, not
+a cold OS page cache. Cycles use fresh `PrimaryMonad`/topology state per iteration. Adapters and stores opened per iteration
+are released in the untimed iteration setup, so they do not stay reachable into later rows. Warm-up and
+measurement counts differ per row and are recorded in each row's diagnostics (`warmupIterations`,
+`measurementIterations`); the report's run configuration does not advertise baseline defaults.
 
 ## Sample results (exploratory, not a gate)
 
@@ -103,23 +105,22 @@ JDK 27 (Zulu), Linux amd64, 4 processors, G1, default heap; store checkout `822b
 
 | Benchmark | Mean | p95 | Alloc / op |
 | :--- | :--- | :--- | :--- |
-| `ResonanceStore.SeedFixtureCorpus` (11 docs) | 16.9 ms | 23.8 ms | 803 KB |
-| `ResonanceStore.OpenExistingStore` | 2.5 ms | 6.3 ms | 56.7 KB |
-| `ResonanceStore.FirstRecall.FreshlyOpenedAdapter` (3 queries, K=5) | 10.9 ms | 13.8 ms | 420 KB |
-| `ResonanceStore.Recall.Warm` (3 queries, K=5) | 11.1 ms | 13.3 ms | 415 KB |
-| `NeuronStage.MemoryRecall.Warm` | 10.3 ms | 13.8 ms | 415 KB |
-| `Adapter.SignalTranslation.Only` | 20 µs | 38 µs | 119 B |
-| `NeuronCycle.FullCycle.RealResonanceStore` (2 inputs) | 9.8 ms | 13.4 ms | 311 KB |
-| `NeuronCycle.FullCycle.DeterministicMemoryFixture` | 0.67 ms | 0.91 ms | 28 KB |
+| `ResonanceStore.SeedFixtureCorpus` (11 docs) | 38.2 ms | 59.7 ms | 803 KB |
+| `ResonanceStore.OpenExistingStore` | 1.8 ms | 3.6 ms | 56.7 KB |
+| `ResonanceStore.FirstRecall.FreshlyOpenedAdapter` (3 queries, K=5) | 16.1 ms | 23.1 ms | 421 KB |
+| `ResonanceStore.Recall.Warm` (3 queries, K=5) | 10.8 ms | 14.7 ms | 415 KB |
+| `NeuronStage.MemoryRecall.Warm` | 12.0 ms | 18.7 ms | 416 KB |
+| `NeuronCycle.FullCycle.RealResonanceStore` (2 inputs) | 8.2 ms | 9.1 ms | 311 KB |
+| `NeuronCycle.FullCycle.ReplayedMemoryResponse` | 1.5 ms | 4.0 ms | 33 KB |
 
 Observations, not conclusions:
 
-- Recall is dominated by store queries (about 3.5 ms per query Signal here); adapter codec translation is
-  well under 1% of the stage.
+- The cycle with the real store costs several times the replayed cycle; the difference is the memory
+  port (store queries), since both process identical Signals. Single-run wall-clock deltas on a small
+  corpus are noisy (see the replay row's p95).
 - Opening the store once is cheap relative to a query, which supports ADR 0018's open-once design.
-- With real memory the cycle is about an order of magnitude slower than with the fixture, almost entirely
-  in the memory stage. Larger corpora, more query Signals per batch, and concurrency remain exploratory
-  follow-ups.
+- Larger corpora, more query Signals per batch, concurrency, and adapter translation overhead (JMH)
+  remain exploratory follow-ups.
 
 ## Reproducibility
 
