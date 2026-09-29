@@ -8,7 +8,7 @@ public enum ResonanceBackendId implements BackendId {
     /** Portable scalar reference evaluator (always available, zero incubator dependencies). */
     SCALAR(true, false),
 
-    /** Vector API SIMD batch evaluator (requires Java 26 incubator module). */
+    /** Vector API SIMD batch evaluator (requires incubator module). */
     VECTOR_API(false, false);
 
     private final boolean reference;

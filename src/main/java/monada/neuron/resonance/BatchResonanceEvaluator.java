@@ -103,7 +103,7 @@ public interface BatchResonanceEvaluator {
     }
 
     /**
-     * Returns the Java 26 Vector API SIMD batch evaluator, or the scalar reference evaluator if unavailable.
+     * Returns the Vector API SIMD batch evaluator, or the scalar reference evaluator if unavailable.
      *
      * @return vector batch evaluator if available, otherwise scalar evaluator
      */

@@ -15,9 +15,9 @@ Use this checklist when validating a Monada Neuron change.
 - Are external models/frameworks/tools behind adapters rather than defining core architecture?
 - Does the change require a new or updated ADR?
 
-## Java 26
+## Java 27
 
-- Does the code use Java 26 idioms where they improve clarity or efficiency?
+- Does the code use Java 27 idioms where they improve clarity or efficiency?
 - Are records, sealed types, pattern matching, scoped values, or other modern features used only where semantically appropriate?
 - Does every new `static` method have a genuine class-level reason?
 - Are normal imports/simple names used instead of unnecessary fully qualified type names?

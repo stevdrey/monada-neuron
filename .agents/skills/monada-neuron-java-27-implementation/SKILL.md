@@ -1,9 +1,9 @@
 ---
-name: monada-neuron-java-26-implementation
-description: Use when implementing or reviewing Java 26 code, APIs, domain models, concurrency, native memory, or tests for Monada Neuron.
+name: monada-neuron-java-27-implementation
+description: Use when implementing or reviewing Java 27 code, APIs, domain models, concurrency, native memory, or tests for Monada Neuron.
 ---
 
-# Monada Neuron Java 26 Implementation
+# Monada Neuron Java 27 Implementation
 
 ## Context
 
@@ -11,7 +11,7 @@ Read `AGENTS.md`, `build.gradle.kts`, `settings.gradle.kts`, affected source/tes
 
 ## Baseline
 
-- Java toolchain: Java 26.
+- Java toolchain: Java 27.
 - Build: Gradle Kotlin DSL.
 - Tests: JUnit 5.
 - Dependencies should remain minimal.
@@ -30,7 +30,7 @@ Prefer where appropriate:
 - local variable type inference when the initializer keeps the type obvious;
 - scoped values for immutable contextual data that must flow through call stacks or child tasks;
 - virtual threads for high-concurrency blocking I/O/orchestration;
-- Structured Concurrency when JDK 26 preview usage is accepted and coordinated lifecycle/cancellation benefits justify it;
+- Structured Concurrency when JDK 27 preview usage is accepted and coordinated lifecycle/cancellation benefits justify it;
 - Foreign Function & Memory API for explicit native/off-heap interoperability or layouts;
 - Vector API for measured SIMD-compatible hotspots.
 
@@ -111,7 +111,7 @@ Memory-mapped or native/shared-memory integrations should live behind narrow ada
 
 ## Vector API
 
-`jdk.incubator.vector` remains incubating in JDK 26.
+`jdk.incubator.vector` remains incubating in JDK 27.
 
 Use it when:
 
@@ -142,7 +142,7 @@ Hardware/native capability absence is different from corrupt input: optional acc
 
 Before considering Java work complete, verify:
 
-- Java 26 features are used intentionally rather than ceremonially.
+- Java 27 features are used intentionally rather than ceremonially.
 - Every new `static` method has class-level semantics.
 - Simple type names/imports are used wherever unambiguous.
 - Domain invariants and mutable ownership are explicit.
@@ -154,4 +154,4 @@ Before considering Java work complete, verify:
 
 ## Acceptance
 
-The implementation is idiomatic for Java 26, preserves project boundaries, uses modern APIs where they provide concrete value, and does not introduce accidental utility-style design, unnecessary qualification, or unmeasured performance complexity.
+The implementation is idiomatic for Java 27, preserves project boundaries, uses modern APIs where they provide concrete value, and does not introduce accidental utility-style design, unnecessary qualification, or unmeasured performance complexity.

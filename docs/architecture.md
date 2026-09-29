@@ -2,7 +2,7 @@
 
 ## Overview
 
-Monada Neuron is an experimental Java 26 cognitive system whose architecture separates cognition from long-term memory and from optional external AI/tool integrations.
+Monada Neuron is an experimental Java 27 cognitive system whose architecture separates cognition from long-term memory and from optional external AI/tool integrations.
 
 The current implementation is intentionally small. The repository presently contains the Phase-1
 Node model, immutable Signal and processing contracts, deterministic graph propagation, scalar
@@ -119,7 +119,7 @@ array-of-objects representation is already available.
 
 `ScalarBatchResonanceEvaluator` is the portable reference backend. It has no incubator dependency
 and preserves `ScalarResonanceMetric` semantics, so it remains the correctness oracle and fallback.
-`VectorBatchResonanceEvaluator` is an isolated Java 26 Vector API implementation for sufficiently
+`VectorBatchResonanceEvaluator` is an isolated Vector API implementation for sufficiently
 large batches. `AdaptiveBatchResonanceEvaluator`, returned by
 `BatchResonanceEvaluator.defaultEvaluator()`, uses that backend from 4 pairs onward only when the
 runtime can resolve the incubating module and supports multi-lane vectors; otherwise it routes to
@@ -222,7 +222,7 @@ The layer defines:
 
 - `BackendId`: sealed hierarchy of strongly typed backend identifiers across runtime cognitive
   components:
-  - `ResonanceBackendId`: `SCALAR` (reference oracle), `VECTOR_API` (Java 26 Vector API SIMD).
+  - `ResonanceBackendId`: `SCALAR` (reference oracle), `VECTOR_API` (Vector API SIMD).
   - `GraphBackendId`: `DETERMINISTIC_OBJECT` (reference BFS), `COMPACT_CSR` (CSR adjacency view).
   - `AeonBackendId`: `DETERMINISTIC_SEQUENTIAL` (reference sequential oracle), `BOUNDED_PARALLEL`.
   - `StateBackendId`: `HEAP_OBJECT` (reference), `HEAP_SOA`, `FFM_OFF_HEAP` (experimental).
@@ -457,7 +457,7 @@ layout, ownership lifecycle, and empirical non-promotion rationale.
 
 ## SIMD
 
-The Java 26 Vector API is an incubating API and may be used for vectorizable numeric hotspots such as bulk signal transforms, similarity operations, normalization, or activation updates.
+The Vector API (`jdk.incubator.vector`) is an incubating API in Java 27 and may be used for vectorizable numeric hotspots such as bulk signal transforms, similarity operations, normalization, or activation updates.
 
 Every SIMD implementation should have:
 

@@ -9,7 +9,7 @@ import monada.neuron.model.FrequencyState;
 import java.util.Objects;
 
 /**
- * SIMD batch resonance evaluator using the Java 26 Vector API ({@code jdk.incubator.vector}).
+ * SIMD batch resonance evaluator using the Vector API ({@code jdk.incubator.vector}).
  *
  * <p>Vectorizes amplitude, frequency, and phase similarity calculations using {@link DoubleVector}
  * and the preferred CPU vector species. Handles tail elements deterministically via scalar fallback

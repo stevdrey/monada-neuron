@@ -171,7 +171,7 @@ public class NodeStateLayoutBenchmark {
     }
 
     /**
-     * Benchmarks bounded physical in-place Structure-of-Arrays updates on {@link HeapNodeStateStore}.
+     * Benchmarks bounded physical in-place Structure-of-Arrays updates on {@code HeapNodeStateStore}.
      *
      * <p>Overwrites the 4 primitive channels without recording history.
      */
@@ -181,7 +181,7 @@ public class NodeStateLayoutBenchmark {
     }
 
     /**
-     * Benchmarks bounded physical in-place Structure-of-Arrays updates on {@link FfmNodeStateStore}.
+     * Benchmarks bounded physical in-place Structure-of-Arrays updates on {@code FfmNodeStateStore}.
      *
      * <p>Overwrites the 4 off-heap native channels without recording history.
      */

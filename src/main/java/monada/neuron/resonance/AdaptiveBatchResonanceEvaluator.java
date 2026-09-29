@@ -8,7 +8,7 @@ import java.util.Objects;
  * Capability-driven adaptive batch resonance evaluator.
  *
  * <p>Automatically routes batch evaluation requests to {@link VectorBatchResonanceEvaluator} when
- * the Java 26 Vector API is available and the batch size amortizes SIMD dispatch overhead
+ * the Vector API is available and the batch size amortizes SIMD dispatch overhead
  * (default: &ge; 4 pairs). Otherwise routes to {@link ScalarBatchResonanceEvaluator}.
  *
  * <p>Vector API linkage is deferred dynamically so runtimes without the incubator module degrade

@@ -7,7 +7,7 @@ description: Use when adding concurrency, SIMD, Foreign Function & Memory API us
 
 ## Context
 
-Read `AGENTS.md`, `docs/architecture.md`, ADR 0003, the Java 26 skill, the data-structures skill, and the performance skill before introducing specialized execution.
+Read `AGENTS.md`, `docs/architecture.md`, ADR 0003, the Java 27 skill, the data-structures skill, and the performance skill before introducing specialized execution.
 
 The portable Java CPU implementation is the reference path unless an accepted ADR says otherwise.
 
@@ -21,7 +21,7 @@ Prefer virtual threads when many independent blocking operations are expected an
 
 ### Coordinated concurrent tasks
 
-Consider Structured Concurrency when JDK 26 preview usage is acceptable and task lifetime, cancellation, failure propagation, or observability benefits are material.
+Consider Structured Concurrency when JDK 27 preview usage is acceptable and task lifetime, cancellation, failure propagation, or observability benefits are material.
 
 ### CPU-bound scalar work
 
@@ -49,7 +49,7 @@ Poor fits include launching one virtual thread per element in a CPU-heavy numeri
 
 ## Structured Concurrency
 
-JDK 26 Structured Concurrency is preview.
+JDK 27 Structured Concurrency is preview.
 
 If used:
 
@@ -61,7 +61,7 @@ If used:
 
 ## CPU SIMD with Vector API
 
-The Vector API is an incubating JDK API in Java 26.
+The Vector API is an incubating JDK API in Java 27.
 
 Use it for operations such as bulk normalization, dot products, element-wise transforms, signal energy updates, or other vectorizable kernels when benchmarks show value.
 
@@ -111,7 +111,7 @@ For GPU shared memory, keep its use inside accelerator kernels/backends and do n
 
 ## GPU and Other Accelerators
 
-Java SE 26 has no standard production GPU-offload API.
+Java SE 27 has no standard production GPU-offload API.
 
 Allowed approaches include controlled experiments with:
 

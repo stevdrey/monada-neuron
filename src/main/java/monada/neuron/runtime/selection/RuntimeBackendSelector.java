@@ -162,8 +162,8 @@ public final class RuntimeBackendSelector {
             // Unavailable or initialization failed
             var initFailure = capabilities.vectorInitializationFailure();
             String msg = initFailure
-                    .map(f -> "Java 26 Vector API initialization failed: " + f.getMessage())
-                    .orElse("Java 26 Vector API incubator module is unavailable on this runtime");
+                    .map(f -> "Vector API initialization failed: " + f.getMessage())
+                    .orElse("Vector API incubator module is unavailable on this runtime");
             if (config.fallbackPolicy() == FallbackPolicy.FAIL_FAST) {
                 if (initFailure.isPresent()) {
                     throw new BackendUnavailableException(ResonanceBackendId.VECTOR_API, msg, initFailure.get());
@@ -220,7 +220,7 @@ public final class RuntimeBackendSelector {
 
         var initFailure = capabilities.vectorInitializationFailure();
         String fallbackMsg = initFailure
-                .map(f -> "Java 26 Vector API initialization failed: " + f.getMessage())
+                .map(f -> "Vector API initialization failed: " + f.getMessage())
                 .orElse("Vector API incubator module unavailable; routed to scalar reference oracle");
         Map<String, String> fallbackMeta = initFailure.isPresent()
                 ? Map.of("attemptedBackend", ResonanceBackendId.VECTOR_API.name(), "failure", initFailure.get().toString())

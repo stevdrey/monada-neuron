@@ -26,7 +26,7 @@ A strong task should include:
 - architecture boundaries;
 - data-structure/algorithm expectations;
 - resource/performance expectations;
-- Java 26 or experimental API policy;
+- Java 27 or experimental API policy;
 - acceptance criteria;
 - verification commands;
 - documentation/ADR updates.
@@ -48,7 +48,7 @@ Check:
 - cognitive vs memory ownership;
 - module/package boundaries;
 - data structures and complexity;
-- Java 26 idioms;
+- Java 27 idioms;
 - allocation/resource behavior;
 - concurrency safety;
 - SIMD/native/GPU fallback and evidence when applicable;
