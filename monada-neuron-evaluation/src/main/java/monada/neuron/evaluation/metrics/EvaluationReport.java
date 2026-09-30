@@ -15,7 +15,11 @@ public record EvaluationReport(
         Instant timestamp,
         EnvironmentMetadata environment,
         RunConfiguration runConfiguration,
-        List<BenchmarkRunResult> results) {
+        List<BenchmarkRunResult> results,
+        String title) {
+
+    /** Title used by the deterministic cognitive baseline report. */
+    public static final String BASELINE_TITLE = "Monada Neuron Cognitive Baseline Report";
 
     public record RunConfiguration(
             long seed,
@@ -48,6 +52,15 @@ public record EvaluationReport(
         Objects.requireNonNull(environment, "environment must not be null");
         Objects.requireNonNull(runConfiguration, "runConfiguration must not be null");
         results = List.copyOf(Objects.requireNonNull(results, "results must not be null"));
+        Objects.requireNonNull(title, "title must not be null");
+    }
+
+    public EvaluationReport(
+            Instant timestamp,
+            EnvironmentMetadata environment,
+            RunConfiguration runConfiguration,
+            List<BenchmarkRunResult> results) {
+        this(timestamp, environment, runConfiguration, results, BASELINE_TITLE);
     }
 
     public EvaluationReport(Instant timestamp, EnvironmentMetadata environment, List<BenchmarkRunResult> results) {
@@ -162,7 +175,7 @@ public record EvaluationReport(
     /** Formats the evaluation report as a human-readable Markdown document. */
     public String toMarkdown() {
         var sb = new StringBuilder();
-        sb.append("# Monada Neuron Cognitive Baseline Report\n\n");
+        sb.append("# ").append(title).append("\n\n");
         sb.append("**Generated At:** `").append(timestamp.toString()).append("`\n\n");
         sb.append("## Run Configuration\n\n");
         sb.append("| Setting | Value |\n");

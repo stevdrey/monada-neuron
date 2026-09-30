@@ -6,6 +6,13 @@ Monada Neuron requires measurable, reproducible behavior prior to introducing ha
 
 The `:monada-neuron-evaluation` subproject provides an isolated benchmarking and evaluation harness measuring both semantic correctness and resource characteristics (latency distributions, throughput, thread allocation rate, GC activity, committed off-heap bytes, and Linux process RSS when available).
 
+For the end-to-end evaluation against a real Resonance Store, see [resonance-store-integration.md](resonance-store-integration.md).
+
+> **Caveat (found in Issue #31):** the `DeterministicCognitiveCycle.FullCycle` baseline uses
+> `PropagationConfig.routeAll(50, 4)`, which ends the perception stage with `STAGE_LIMIT_REACHED` on the
+> generated topologies. The cycle therefore stops before memory recall, so its numbers reflect the
+> perception stage only. The integration evaluation uses threshold routing so all five stages run.
+
 ## Architecture & Module Isolation
 
 Evaluation tooling is isolated in a separate Gradle subproject:
