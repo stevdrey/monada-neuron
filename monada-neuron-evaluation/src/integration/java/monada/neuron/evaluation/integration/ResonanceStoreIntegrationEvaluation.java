@@ -38,6 +38,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * End-to-end evaluation of a Primary Monad cycle recalling from a real, isolated Resonance Store.
@@ -99,31 +101,56 @@ public final class ResonanceStoreIntegrationEvaluation {
         this.generator = new DeterministicWorkloadGenerator(seed);
     }
 
-    /** Runs all semantic checks and measurements over fresh temporary stores. */
+    /**
+     * Runs all semantic checks and measurements over fresh temporary stores.
+     *
+     * <p>A failure in any phase is recorded as a failed check instead of aborting, so a diagnosable
+     * report is always produced.
+     */
     public Outcome run() {
         TemporaryResonanceStore primary = null;
         try {
             primary = TemporaryResonanceStore.seeded(codec);
-            var adapter = primary.openAdapter();
-            recordFixtureMetadata(primary);
+            var store = primary;
+            var adapter = store.openAdapter();
+            recordFixtureMetadata(store);
 
             recallChecks(adapter);
             memoryOnlyCycleChecks(adapter);
             fullCycleChecks(adapter);
             failureChecks();
 
-            measureSetup(primary);
-            measureRecall(primary, adapter);
-            measureCycles(adapter);
+            phase("measurement.setup", () -> measureSetup(store));
+            phase("measurement.recall", () -> measureRecall(store, adapter));
+            phase("measurement.cycles", () -> measureCycles(adapter));
+        } catch (RuntimeException failure) {
+            checks.add(new Check("evaluation.setup", false, describe(failure)));
         } finally {
             if (primary != null) {
-                primary.close();
-                var deleted = !primary.exists();
-                checks.add(new Check("temporary-store-cleanup", deleted,
-                        deleted ? "primary store directory deleted" : "directory still exists"));
+                try {
+                    primary.close();
+                    var deleted = !primary.exists();
+                    checks.add(new Check("temporary-store-cleanup", deleted,
+                            deleted ? "primary store directory deleted" : "directory still exists"));
+                } catch (RuntimeException failure) {
+                    checks.add(new Check("temporary-store-cleanup", false, describe(failure)));
+                }
             }
         }
         return new Outcome(checks, results, metadata);
+    }
+
+    private void phase(String name, Runnable body) {
+        try {
+            body.run();
+            checks.add(new Check(name, true, "completed; every measured iteration matched its verified sample"));
+        } catch (RuntimeException failure) {
+            checks.add(new Check(name, false, describe(failure)));
+        }
+    }
+
+    private static String describe(RuntimeException failure) {
+        return failure.getClass().getSimpleName() + ": " + failure.getMessage();
     }
 
     // ---------------------------------------------------------------- semantic checks
@@ -347,6 +374,46 @@ public final class ResonanceStoreIntegrationEvaluation {
         return collector.measure(name, scale, warmups, iterations, operations, iterationSetup, workload, annotated);
     }
 
+    /**
+     * Measures a workload whose result is validated outside the timed window.
+     *
+     * <p>The workload only keeps a reference to its result; the previous iteration's result is
+     * validated in the untimed iteration setup, and the last one after the row. A mismatch fails the run
+     * instead of timing a degraded path.
+     */
+    private <T> BenchmarkRunResult measureChecked(
+            String name,
+            String scale,
+            int warmups,
+            int iterations,
+            Runnable setup,
+            Supplier<T> workload,
+            Consumer<T> validator,
+            Map<String, String> diagnostics) {
+        @SuppressWarnings("unchecked")
+        T[] pending = (T[]) new Object[1];
+        Runnable iterationSetup = () -> {
+            validatePending(pending, validator);
+            if (setup != null) {
+                setup.run();
+            }
+        };
+        var annotated = new TreeMap<>(diagnostics);
+        annotated.put("validationInWindow", "false");
+        var result = measure(name, scale, warmups, iterations, 1, iterationSetup,
+                () -> pending[0] = workload.get(), annotated);
+        validatePending(pending, validator);
+        return result;
+    }
+
+    private static <T> void validatePending(T[] pending, Consumer<T> validator) {
+        if (pending[0] != null) {
+            var value = pending[0];
+            pending[0] = null;
+            validator.accept(value);
+        }
+    }
+
     private void measureSetup(TemporaryResonanceStore primary) {
         int warmups = quickMode ? 1 : 2;
         int iterations = quickMode ? 3 : 10;
@@ -399,33 +466,37 @@ public final class ResonanceStoreIntegrationEvaluation {
         requireSameResponse(sample, sample);
         var adapterHolder = new ResonanceStoreMemoryAdapter[1];
 
-        results.add(measure(
+        results.add(measureChecked(
                 "ResonanceStore.FirstRecall.FreshlyOpenedAdapter",
                 signals.size() + " query signals, limit " + MEMORY_STAGE_LIMIT,
-                0, iterations, 1,
+                0, iterations,
                 () -> {
                     releaseAdapter(store, adapterHolder);
                     adapterHolder[0] = store.openAdapter();
                 },
-                () -> requireSameResponse(adapterHolder[0].recall(request), sample),
+                () -> adapterHolder[0].recall(request),
+                response -> requireSameResponse(response, sample),
                 recallDiagnostics("first recall on an adapter opened in the untimed iteration setup", sample)));
         releaseAdapter(store, adapterHolder);
 
-        results.add(measure(
+        results.add(measureChecked(
                 "ResonanceStore.Recall.Warm",
                 signals.size() + " query signals, limit " + MEMORY_STAGE_LIMIT,
-                warmups, iterations, 1,
-                () -> requireSameResponse(warmAdapter.recall(request), sample),
+                warmups, iterations,
+                null,
+                () -> warmAdapter.recall(request),
+                response -> requireSameResponse(response, sample),
                 recallDiagnostics("repeated recall on one open adapter", sample)));
 
         var stage = new ResonanceMemoryCognitiveStage(warmAdapter, MEMORY_STAGE_LIMIT);
         var monad = new PrimaryMonad(new UUID(seed, 0xCAFEBABEL));
-        results.add(measure(
+        results.add(measureChecked(
                 "NeuronStage.MemoryRecall.Warm",
                 signals.size() + " input signals, limit " + MEMORY_STAGE_LIMIT,
-                warmups, iterations, 1,
-                () -> {
-                    var stageResult = stage.execute(monad, signals, new CognitiveContext(ROOMY_BUDGET));
+                warmups, iterations,
+                null,
+                () -> stage.execute(monad, signals, new CognitiveContext(ROOMY_BUDGET)),
+                stageResult -> {
                     requireSameResponse(stageResult.response(), sample);
                     if (stageResult.outputSignals().size() != signals.size() + sample.results().size()) {
                         throw new IllegalStateException("memory stage output size diverged from the sample");
@@ -477,15 +548,13 @@ public final class ResonanceStoreIntegrationEvaluation {
             int iterations,
             Map<String, String> diagnostics) {
         var holder = new CognitiveCycleSetup[1];
-        return measure(
+        return measureChecked(
                 name,
                 "5 stages, " + inputs.size() + " initial signals",
-                warmups, iterations, 1,
+                warmups, iterations,
                 () -> holder[0] = newFullCycleSetup(port),
-                () -> {
-                    var setup = holder[0];
-                    requireSameCycle(setup.cycle().execute(setup.monad(), inputs, FULL_CYCLE_BUDGET), sample);
-                },
+                () -> holder[0].cycle().execute(holder[0].monad(), inputs, FULL_CYCLE_BUDGET),
+                result -> requireSameCycle(result, sample),
                 diagnostics);
     }
 

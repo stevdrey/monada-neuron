@@ -31,14 +31,19 @@ public final class ResonanceStoreIntegrationRunner {
         var quick = false;
         var seed = DeterministicWorkloadGenerator.DEFAULT_SEED;
         var outputDir = Path.of("build/reports/benchmarks");
-        for (var i = 0; i < args.length; i++) {
-            if ("--quick".equals(args[i])) {
-                quick = true;
-            } else if ("--seed".equals(args[i]) && i + 1 < args.length) {
-                seed = Long.parseLong(args[++i]);
-            } else if ("--output-dir".equals(args[i]) && i + 1 < args.length) {
-                outputDir = Path.of(args[++i]);
+        try {
+            for (var i = 0; i < args.length; i++) {
+                switch (args[i]) {
+                    case "--quick" -> quick = true;
+                    case "--seed" -> seed = Long.parseLong(value(args, ++i, "--seed"));
+                    case "--output-dir" -> outputDir = Path.of(value(args, ++i, "--output-dir"));
+                    default -> throw new IllegalArgumentException("unknown argument: " + args[i]);
+                }
             }
+        } catch (IllegalArgumentException e) {
+            System.err.println(e.getMessage());
+            System.err.println("Usage: [--quick] [--seed <long>] [--output-dir <dir>]");
+            System.exit(2);
         }
 
         var report = run(seed, quick);
@@ -57,6 +62,13 @@ public final class ResonanceStoreIntegrationRunner {
             System.err.println("Semantic integration checks failed.");
             System.exit(1);
         }
+    }
+
+    private static String value(String[] args, int index, String option) {
+        if (index >= args.length) {
+            throw new IllegalArgumentException(option + " requires a value");
+        }
+        return args[index];
     }
 
     /** Runs the evaluation and assembles the report. */

@@ -87,7 +87,10 @@ Linux). Latency and thread-allocated bytes exclude the untimed setup; the JVM-wi
 and RSS do **not** (they span the whole measurement phase, including per-iteration setup such as adapter
 opens and topology construction). Rows with a setup hook say so in `gcTelemetryScope`. Every measured
 iteration must match the verified sample (status, results, cycle termination and work counts), otherwise
-the run fails instead of timing a degraded path. Commit ids in the report carry `+dirty` when the
+the run fails instead of timing a degraded path. Validation is **outside** the timed window: the workload
+only keeps its result, which is compared in the next iteration's untimed setup (and after the row); rows
+record `validationInWindow=false`. A failed phase is recorded as a failed check (`measurement.*`,
+`evaluation.setup`) and the report is still written; the exit status is then non-zero. Commit ids in the report carry `+dirty` when the
 checkout has uncommitted changes.
 
 | Row | Measures |
@@ -101,8 +104,8 @@ checkout has uncommitted changes.
 | `NeuronCycle.FullCycle.ReplayedMemoryResponse` | same cycle with a no-I/O port replaying the responses recorded from the real store, so downstream stages process identical Signals |
 
 Limits: adapter translation overhead (codec, bounded merge, SHA-256 references) is **not** measured here: a
-wall-clock loop is not a reliable microbenchmark, so it is left to a JMH follow-up (ADR 0018). "Cold" means a freshly opened handle in a warmed JVM, not
-a cold OS page cache. Cycles use fresh `PrimaryMonad`/topology state per iteration. Adapters and stores opened per iteration
+wall-clock loop is not a reliable microbenchmark, so it is left to a JMH follow-up (ADR 0018). "Cold" (`FirstRecall`) means a freshly opened handle in a warmed JVM: JIT and OS page cache are already
+warm from earlier checks, and only the first-touch cost of the handle is included. Cycles use fresh `PrimaryMonad`/topology state per iteration. Adapters and stores opened per iteration
 are released in the untimed iteration setup, so they do not stay reachable into later rows. Warm-up and
 measurement counts differ per row and are recorded in each row's diagnostics (`warmupIterations`,
 `measurementIterations`); the report's run configuration does not advertise baseline defaults.
@@ -127,8 +130,12 @@ Observations, not conclusions:
 - The cycle with the real store costs several times the replayed cycle; the difference is the memory
   port (store queries), since both process identical Signals. Single-run wall-clock deltas on a small
   corpus are noisy (see the replay row's p95).
-- Opening the store once is cheap relative to a query, which supports ADR 0018's open-once design.
-- Larger corpora, more query Signals per batch, concurrency, and adapter translation overhead (JMH)
+- Opening an adapter costs about 2 ms, but the first recall on a freshly opened adapter is several ms
+  slower than a warm recall, which suggests some store work is deferred to first use. Open-once
+  (ADR 0018) still avoids paying open plus that first-use cost per recall; this suite does not separate
+  the two components.
+- The 11-document corpus does not characterize scaling: per-query time here is mostly fixed overhead.
+  Larger corpora, more query Signals per batch, concurrency, and adapter translation overhead (JMH)
   remain exploratory follow-ups.
 
 ## Reproducibility

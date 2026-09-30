@@ -150,4 +150,19 @@ class IntegrationHardeningTest {
                     () -> ResonanceStoreIntegrationEvaluation.requireSameCycle(degraded, good));
         }
     }
+
+    @Test
+    void jsonEscapesEveryControlCharacter() {
+        var check = new Check("c", false, "tab\there \u0001 quote\" back\\slash");
+        var report = new ResonanceStoreIntegrationReport(
+                new EvaluationReport(Instant.EPOCH, EnvironmentMetadata.current(), List.of()),
+                List.of(check),
+                Map.of("k", "line\nbreak\u001f"));
+
+        var json = report.toJson();
+
+        assertTrue(json.contains("tab\\there \\u0001 quote\\\" back\\\\slash"), json);
+        assertTrue(json.contains("line\\nbreak\\u001f"), json);
+        assertFalse(json.chars().anyMatch(c -> c < 0x20 && c != '\n'), "raw control character in JSON");
+    }
 }

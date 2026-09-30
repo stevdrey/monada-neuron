@@ -8,6 +8,11 @@ The `:monada-neuron-evaluation` subproject provides an isolated benchmarking and
 
 For the end-to-end evaluation against a real Resonance Store, see [resonance-store-integration.md](resonance-store-integration.md).
 
+> **Caveat (found in Issue #31):** the `DeterministicCognitiveCycle.FullCycle` baseline uses
+> `PropagationConfig.routeAll(50, 4)`, which ends the perception stage with `STAGE_LIMIT_REACHED` on the
+> generated topologies. The cycle therefore stops before memory recall, so its numbers reflect the
+> perception stage only. The integration evaluation uses threshold routing so all five stages run.
+
 ## Architecture & Module Isolation
 
 Evaluation tooling is isolated in a separate Gradle subproject:
