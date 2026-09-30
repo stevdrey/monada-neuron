@@ -135,9 +135,10 @@ public final class TemporaryResonanceStore implements AutoCloseable {
         if (closed) {
             return;
         }
-        closed = true;
         openedAdapters.forEach(ResonanceStoreMemoryAdapter::close);
+        // Only a completed deletion marks the store closed, so a failed cleanup can be retried.
         deleteTree(directory);
+        closed = true;
     }
 
     private static Path createDirectory() {
@@ -149,6 +150,9 @@ public final class TemporaryResonanceStore implements AutoCloseable {
     }
 
     private static void deleteTree(Path root) {
+        if (Files.notExists(root)) {
+            return;
+        }
         try (Stream<Path> paths = Files.walk(root)) {
             for (var path : paths.sorted(Comparator.reverseOrder()).toList()) {
                 Files.deleteIfExists(path);

@@ -351,33 +351,39 @@ public final class ResonanceStoreIntegrationEvaluation {
                 "ResonanceStore.SeedFixtureCorpus",
                 ResonanceStoreFixtureCorpus.documents().size() + " documents",
                 warmups, iterations, 1,
-                () -> closeStore(created[0]),
+                () -> closeStore(created),
                 () -> created[0] = TemporaryResonanceStore.seeded(codec),
                 Map.of("phase", "setup",
                         "measures", "temp directory creation, store open, and remembering every document",
                         "fixtureVersion", ResonanceStoreFixtureCorpus.VERSION,
                         "primaryStoreSeedNanos", String.valueOf(primary.seedNanos()))));
-        closeStore(created[0]);
+        closeStore(created);
 
         var opened = new ResonanceStoreMemoryAdapter[1];
         results.add(measure(
                 "ResonanceStore.OpenExistingStore",
                 ResonanceStoreFixtureCorpus.documents().size() + " documents",
                 warmups, iterations, 1,
-                () -> releaseAdapter(primary, opened[0]),
+                () -> releaseAdapter(primary, opened),
                 () -> opened[0] = primary.openAdapter(),
                 Map.of("phase", "setup", "measures", "adapter open on a persisted store")));
-        releaseAdapter(primary, opened[0]);
+        releaseAdapter(primary, opened);
     }
 
-    private static void closeStore(TemporaryResonanceStore store) {
-        if (store != null) {
+    /** Closes the held store and clears the slot so no closed handle stays reachable. */
+    static void closeStore(TemporaryResonanceStore[] holder) {
+        if (holder[0] != null) {
+            var store = holder[0];
+            holder[0] = null;
             store.close();
         }
     }
 
-    private static void releaseAdapter(TemporaryResonanceStore store, ResonanceStoreMemoryAdapter adapter) {
-        if (adapter != null) {
+    /** Releases the held adapter and clears the slot so its store handle is not retained. */
+    static void releaseAdapter(TemporaryResonanceStore store, ResonanceStoreMemoryAdapter[] holder) {
+        if (holder[0] != null) {
+            var adapter = holder[0];
+            holder[0] = null;
             store.release(adapter);
         }
     }
@@ -388,6 +394,7 @@ public final class ResonanceStoreIntegrationEvaluation {
         var signals = probeSignals();
         var request = request(signals, MEMORY_STAGE_LIMIT);
         var sample = warmAdapter.recall(request);
+        requireSameResponse(sample, sample);
         var adapterHolder = new ResonanceStoreMemoryAdapter[1];
 
         results.add(measure(
@@ -395,18 +402,18 @@ public final class ResonanceStoreIntegrationEvaluation {
                 signals.size() + " query signals, limit " + MEMORY_STAGE_LIMIT,
                 0, iterations, 1,
                 () -> {
-                    releaseAdapter(store, adapterHolder[0]);
+                    releaseAdapter(store, adapterHolder);
                     adapterHolder[0] = store.openAdapter();
                 },
-                () -> requireComplete(adapterHolder[0].recall(request)),
+                () -> requireSameResponse(adapterHolder[0].recall(request), sample),
                 recallDiagnostics("first recall on an adapter opened in the untimed iteration setup", sample)));
-        releaseAdapter(store, adapterHolder[0]);
+        releaseAdapter(store, adapterHolder);
 
         results.add(measure(
                 "ResonanceStore.Recall.Warm",
                 signals.size() + " query signals, limit " + MEMORY_STAGE_LIMIT,
                 warmups, iterations, 1,
-                () -> requireComplete(warmAdapter.recall(request)),
+                () -> requireSameResponse(warmAdapter.recall(request), sample),
                 recallDiagnostics("repeated recall on one open adapter", sample)));
 
         var stage = new ResonanceMemoryCognitiveStage(warmAdapter, MEMORY_STAGE_LIMIT);
@@ -417,8 +424,9 @@ public final class ResonanceStoreIntegrationEvaluation {
                 warmups, iterations, 1,
                 () -> {
                     var stageResult = stage.execute(monad, signals, new CognitiveContext(ROOMY_BUDGET));
-                    if (stageResult.outputSignals().size() < signals.size()) {
-                        throw new IllegalStateException("memory stage dropped input signals");
+                    requireSameResponse(stageResult.response(), sample);
+                    if (stageResult.outputSignals().size() != signals.size() + sample.results().size()) {
+                        throw new IllegalStateException("memory stage output size diverged from the sample");
                     }
                 },
                 recallDiagnostics("ResonanceMemoryCognitiveStage over the real adapter", sample)));
@@ -565,9 +573,13 @@ public final class ResonanceStoreIntegrationEvaluation {
         }
     }
 
-    private static void requireComplete(ResonanceMemoryResponse response) {
+    /** Rejects a measured iteration whose response differs from the verified sample (status or results). */
+    static void requireSameResponse(ResonanceMemoryResponse response, ResonanceMemoryResponse sample) {
         if (response.status() != ResonanceMemoryStatus.COMPLETE) {
             throw new IllegalStateException("recall not complete: " + response.status());
+        }
+        if (!response.equals(sample)) {
+            throw new IllegalStateException("recall response diverged from the verified sample");
         }
     }
 

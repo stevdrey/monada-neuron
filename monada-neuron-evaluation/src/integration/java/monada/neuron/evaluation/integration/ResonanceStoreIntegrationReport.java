@@ -3,6 +3,7 @@ package monada.neuron.evaluation.integration;
 import monada.neuron.evaluation.integration.ResonanceStoreIntegrationEvaluation.Check;
 import monada.neuron.evaluation.metrics.EvaluationReport;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -24,7 +25,11 @@ public record ResonanceStoreIntegrationReport(
     public ResonanceStoreIntegrationReport {
         Objects.requireNonNull(evaluation, "evaluation must not be null");
         checks = List.copyOf(checks);
-        metadata = new TreeMap<>(metadata);
+        var sorted = new TreeMap<String, String>();
+        metadata.forEach((key, value) -> sorted.put(
+                Objects.requireNonNull(key, "metadata key must not be null"),
+                Objects.requireNonNull(value, "metadata value must not be null")));
+        metadata = Collections.unmodifiableSortedMap(sorted);
     }
 
     /** Returns whether every semantic check passed. */
