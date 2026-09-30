@@ -345,6 +345,25 @@ typed stage-failure trace event, complete a `FAILURE` snapshot, and propagate a
 prefix. The trace records stage start/completion/failure without retaining exceptions, timestamps,
 or external payloads.
 
+### Hypothesis and Evidence Boundary
+
+`REASONING -> Hypothesis/Evidence -> EVALUATION` is typed. A reasoning stage may return a
+`ReasoningCognitiveStageResult` that retains an immutable `HypothesisSet` next to its normal output
+signals. `Hypothesis` records carry a cycle-local `sequence` (no UUID), an opaque `Proposition`,
+and ordered `Evidence`: a sealed hierarchy of signal-occurrence references and opaque memory/action
+references with a `SUPPORTS`/`CONTRADICTS`/`NEUTRAL` relation and a finite weight in `(0, 1]`.
+`HypothesisLimits` bounds candidates and evidence per candidate; `HypothesisSetBuilder` reports
+exhaustion without throwing and merges equivalent propositions deterministically.
+
+The cycle passes each stage the cycle-normalized result of the preceding executed stage through a
+`default` `CognitiveStage.execute` overload, so `EVALUATION` reads hypotheses via
+`ReasoningCognitiveStageResult.hypothesesOf(previousResult)`. `Signal` is unchanged.
+
+Hypotheses are ephemeral cognitive artifacts of one cycle, not long-term memory, and are never
+persisted by Neuron. Evidence holds only compact ids and never retains signals, graphs, or
+Resonance Store/provider objects. Scoring and selection are not part of this boundary. See
+ADR 0019.
+
 ## Target Module Boundaries
 
 As the repository grows, prefer boundaries similar to:

@@ -1,0 +1,74 @@
+package monada.neuron.reasoning;
+
+import monada.neuron.model.FrequencyState;
+import monada.neuron.monad.CognitiveStageKind;
+import monada.neuron.monad.CognitiveStageResultSnapshot;
+import monada.neuron.monad.CognitiveStageStatus;
+import monada.neuron.signal.Signal;
+import monada.neuron.signal.SignalKind;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+class ReasoningCognitiveStageResultTest {
+
+    private final Signal first = signal(1.0);
+    private final Signal second = signal(2.0);
+    private final HypothesisSet hypotheses = hypothesisSet();
+
+    @Test
+    void reportsReasoningKindAndSnapshotsSignals() {
+        var result = new ReasoningCognitiveStageResult(
+                CognitiveStageStatus.COMPLETED, List.of(first), hypotheses);
+        assertEquals(CognitiveStageKind.REASONING, result.kind());
+    }
+
+    @Test
+    void admissionTrimsSignalsButKeepsHypotheses() {
+        var result = new ReasoningCognitiveStageResult(
+                CognitiveStageStatus.COMPLETED, List.of(first, second), hypotheses);
+        var admitted = assertInstanceOf(
+                ReasoningCognitiveStageResult.class,
+                result.withAdmittedOutputSignals(List.of(first)));
+        assertAll(
+                () -> assertEquals(List.of(first), admitted.outputSignals()),
+                () -> assertSame(hypotheses, admitted.hypotheses()));
+    }
+
+    @Test
+    void admissionRejectsNonPrefix() {
+        var result = new ReasoningCognitiveStageResult(
+                CognitiveStageStatus.COMPLETED, List.of(first, second), hypotheses);
+        assertThrows(IllegalArgumentException.class,
+                () -> result.withAdmittedOutputSignals(List.of(second)));
+    }
+
+    @Test
+    void hypothesesOfReturnsEmptyUnlessPreviousIsReasoning() {
+        var reasoning = new ReasoningCognitiveStageResult(
+                CognitiveStageStatus.COMPLETED, List.of(), hypotheses);
+        var other = new CognitiveStageResultSnapshot(
+                CognitiveStageKind.PERCEPTION, CognitiveStageStatus.COMPLETED, List.of());
+        assertAll(
+                () -> assertSame(hypotheses, ReasoningCognitiveStageResult.hypothesesOf(Optional.of(reasoning))),
+                () -> assertSame(HypothesisSet.EMPTY, ReasoningCognitiveStageResult.hypothesesOf(Optional.of(other))),
+                () -> assertSame(HypothesisSet.EMPTY, ReasoningCognitiveStageResult.hypothesesOf(Optional.empty())));
+    }
+
+    private static HypothesisSet hypothesisSet() {
+        var builder = new HypothesisSetBuilder(HypothesisLimits.DEFAULT);
+        builder.propose(new Proposition(0, 1));
+        return builder.build();
+    }
+
+    private static Signal signal(double amplitude) {
+        return new Signal(SignalKind.INTERMEDIATE, new FrequencyState(amplitude, 10.0, 0.0));
+    }
+}

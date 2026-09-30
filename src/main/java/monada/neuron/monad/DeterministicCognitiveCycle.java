@@ -11,6 +11,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Sequential reference lifecycle that executes optional stages in their canonical enum order.
@@ -96,7 +97,13 @@ public final class DeterministicCognitiveCycle implements CognitiveCycle {
 
                 context.recordCognitiveStageStarted(stage.kind());
                 var stageResult = Objects.requireNonNull(
-                        stage.execute(monad, stageInputs, context),
+                        stage.execute(
+                                monad,
+                                stageInputs,
+                                stageResults.isEmpty()
+                                        ? Optional.empty()
+                                        : Optional.of(stageResults.getLast()),
+                                context),
                         "cognitive stage result must not be null");
                 var candidateOutputs = validateStageResult(stage, stageResult);
                 if (!context.isActive()) {

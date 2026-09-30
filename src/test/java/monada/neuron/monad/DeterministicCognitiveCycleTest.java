@@ -15,6 +15,11 @@ import monada.neuron.evolution.NoOpAdaptationPolicy;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
+import monada.neuron.reasoning.HypothesisLimits;
+import monada.neuron.reasoning.HypothesisSet;
+import monada.neuron.reasoning.HypothesisSetBuilder;
+import monada.neuron.reasoning.Proposition;
+import monada.neuron.reasoning.ReasoningCognitiveStageResult;
 import monada.neuron.runtime.graph.DeterministicSignalPropagationEngine;
 import monada.neuron.runtime.graph.PropagationConfig;
 import monada.neuron.signal.NodeProcessingResult;
@@ -25,6 +30,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -599,6 +605,71 @@ class DeterministicCognitiveCycleTest {
                     assertEquals(targetNodeB.getId(), adaptedEvent.nodeId());
                     assertTrue(adaptedEvent.adapted());
                 });
+    }
+
+    @Test
+    void handsPreviousStageResultToNextStageIncludingTypedHypotheses() {
+        var hypotheses = new HypothesisSetBuilder(HypothesisLimits.DEFAULT);
+        hypotheses.propose(new Proposition(0, 42));
+        var produced = hypotheses.build();
+        var seenByReasoning = new ArrayList<Optional<CognitiveStageResult>>();
+        var seenByEvaluation = new ArrayList<HypothesisSet>();
+        CognitiveStage reasoning = new CognitiveStage() {
+            @Override
+            public CognitiveStageKind kind() {
+                return CognitiveStageKind.REASONING;
+            }
+
+            @Override
+            public CognitiveStageResult execute(
+                    PrimaryMonad monad, List<Signal> inputSignals, CognitiveContext context) {
+                throw new AssertionError("previous-result overload must be used");
+            }
+
+            @Override
+            public CognitiveStageResult execute(
+                    PrimaryMonad monad,
+                    List<Signal> inputSignals,
+                    Optional<CognitiveStageResult> previousResult,
+                    CognitiveContext context) {
+                seenByReasoning.add(previousResult);
+                return new ReasoningCognitiveStageResult(
+                        CognitiveStageStatus.COMPLETED, inputSignals, produced);
+            }
+        };
+        CognitiveStage evaluation = new CognitiveStage() {
+            @Override
+            public CognitiveStageKind kind() {
+                return CognitiveStageKind.EVALUATION;
+            }
+
+            @Override
+            public CognitiveStageResult execute(
+                    PrimaryMonad monad,
+                    List<Signal> inputSignals,
+                    Optional<CognitiveStageResult> previousResult,
+                    CognitiveContext context) {
+                seenByEvaluation.add(ReasoningCognitiveStageResult.hypothesesOf(previousResult));
+                return new TestStageResult(kind(), CognitiveStageStatus.COMPLETED, inputSignals);
+            }
+
+            @Override
+            public CognitiveStageResult execute(
+                    PrimaryMonad monad, List<Signal> inputSignals, CognitiveContext context) {
+                throw new AssertionError("previous-result overload must be used");
+            }
+        };
+
+        var result = new DeterministicCognitiveCycle(List.of(evaluation, reasoning)).execute(
+                new PrimaryMonad(uuid(1)),
+                List.of(signal(1.0)),
+                new CognitiveBudget(10, 10, 30));
+
+        assertAll(
+                () -> assertEquals(CognitiveCycleTermination.COMPLETED, result.termination()),
+                () -> assertEquals(List.of(Optional.empty()), seenByReasoning),
+                () -> assertEquals(1, seenByEvaluation.size()),
+                () -> assertEquals(produced, seenByEvaluation.getFirst()));
     }
 
     private record TestStageResult(
