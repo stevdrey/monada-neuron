@@ -5,8 +5,10 @@
 Does a complete Primary Monad cognitive cycle recall correctly from a **real** embedded Monada Resonance
 Store through the production adapter ([ADR 0018](../adr/0018-resonance-store-embedded-recall-adapter.md)),
 while preserving Neuron stage ordering, budget, and deterministic-replay semantics — and what does that
-integration cost compared with the Neuron-only fixture memory used by the
-[baseline](baseline-methodology.md)?
+memory port cost when the same cycle replays the store's recorded responses without I/O (see
+[Measurement method](#measurement-method))? This suite does not measure the baseline's
+`DeterministicMemoryFixture`: its recalled Signals differ, which would change downstream work (see the
+[baseline](baseline-methodology.md)).
 
 This is the integration oracle for the Neuron/Resonance Store boundary. It does **not** replace the
 Resonance Store's own protected evaluation datasets and does not change store retrieval or ranking.
