@@ -109,4 +109,45 @@ class IntegrationHardeningTest {
                     () -> ResonanceStoreIntegrationEvaluation.requireSameResponse(divergent, sample));
         }
     }
+
+    @Test
+    void failedCloseKeepsTheHolderSoCleanupCanRetry() throws IOException {
+        var store = TemporaryResonanceStore.seeded(codec);
+        var holder = new TemporaryResonanceStore[] {store};
+        var nested = store.path().resolve("vectors");
+        var posix = Files.getFileStore(nested).supportsFileAttributeView("posix");
+        var root = "root".equals(System.getProperty("user.name"));
+        if (!posix || root) {
+            store.close();
+        }
+        assumeTrue(posix && !root);
+        Files.setPosixFilePermissions(nested, PosixFilePermissions.fromString("r-xr-xr-x"));
+        try {
+            assertThrows(UncheckedIOException.class, () -> ResonanceStoreIntegrationEvaluation.closeStore(holder));
+            assertEquals(store, holder[0]);
+        } finally {
+            Files.setPosixFilePermissions(nested, PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
+
+        ResonanceStoreIntegrationEvaluation.closeStore(holder);
+
+        assertNull(holder[0]);
+        assertFalse(store.exists());
+    }
+
+    @Test
+    void cycleValidationRejectsADegradedMemoryResponse() {
+        var evaluation = new ResonanceStoreIntegrationEvaluation(42L, true);
+        try (var store = TemporaryResonanceStore.seeded(codec)) {
+            var adapter = store.openAdapter();
+            var inputs = List.of(ResonanceStoreFixtureCorpus.query("solar-energy").signal());
+            var good = evaluation.executeForTest(adapter, inputs);
+            adapter.close();
+            var degraded = evaluation.executeForTest(adapter, inputs);
+
+            assertDoesNotThrow(() -> ResonanceStoreIntegrationEvaluation.requireSameCycle(good, good));
+            assertThrows(IllegalStateException.class,
+                    () -> ResonanceStoreIntegrationEvaluation.requireSameCycle(degraded, good));
+        }
+    }
 }

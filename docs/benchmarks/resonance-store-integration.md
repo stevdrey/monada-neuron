@@ -20,6 +20,8 @@ Resonance Store's own protected evaluation datasets and does not change store re
 ./gradlew test                                                                             # includes integrationTest when the store is present
 ```
 
+Quote arguments containing spaces, e.g. `-PbenchmarkArgs='--quick --output-dir "/tmp/benchmark reports"'`.
+
 Options: `--quick`, `--seed <n>`, `--output-dir <dir>` (default `build/reports/benchmarks`). Outputs
 `resonance-store-integration.json` and `.md`. The process exits non-zero **only** when a semantic check
 fails; latency never affects the exit status or any test.
@@ -64,7 +66,7 @@ score) are asserted as sets, never by physical position.
 | :--- | :--- |
 | Recall | expected top-K per query; bounded prefix stability (limit 1 head = limit 3 head); multi-signal batch merge; deterministic repeat; zero-match and blank → `COMPLETE` + empty |
 | Memory-only cycle | inputs precede recalled Signals in adapter order; deterministic replay; a tight signal budget admits exactly the head of the unbounded response and ends `CONTEXT_BUDGET_EXHAUSTED` |
-| Full cycle | stage order PERCEPTION → MEMORY_RECALL → REASONING → ADAPTATION → ACTION, `COMPLETED`, budgets not exhausted, decodable recalled Signals, deterministic replay across independent setups, kinds/termination equal to the fixture-memory reference |
+| Full cycle | stage order PERCEPTION → MEMORY_RECALL → REASONING → ADAPTATION → ACTION, `COMPLETED`, budgets not exhausted, decodable recalled Signals, deterministic replay across independent setups, and a cycle over the responses recorded from the real store (no I/O replay) equal to the real cycle result |
 | Failure | closed adapter → `UNAVAILABLE` (inputs forwarded); deleted vector segments → `FAILED`, no results, no exception in the cycle; non-directory path and unsupported manifest → `ResonanceStoreAdapterException` at open |
 | Lifecycle | temporary store directory deleted on close |
 
@@ -79,7 +81,12 @@ explicit `PropagationConfig`; the original signature keeps its behavior.
 
 Setup is measured separately from recall and cycle windows, using the shared
 `EvaluationMetricsCollector` (per-iteration untimed setup hook, thread-allocated bytes, GC deltas, RSS on
-Linux).
+Linux). Latency and thread-allocated bytes exclude the untimed setup; the JVM-wide GC count/time deltas
+and RSS do **not** (they span the whole measurement phase, including per-iteration setup such as adapter
+opens and topology construction). Rows with a setup hook say so in `gcTelemetryScope`. Every measured
+iteration must match the verified sample (status, results, cycle termination and work counts), otherwise
+the run fails instead of timing a degraded path. Commit ids in the report carry `+dirty` when the
+checkout has uncommitted changes.
 
 | Row | Measures |
 | :--- | :--- |

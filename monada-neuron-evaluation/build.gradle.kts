@@ -98,7 +98,10 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
         systemProperty("monada.neuron.version", project.version.toString())
         systemProperty("monada.resonance.store.dir", rootProject.file("../monada-resonance-store").absolutePath)
         if (project.hasProperty("benchmarkArgs")) {
-            args(project.property("benchmarkArgs").toString().split(" "))
+            // Quote-aware so `--output-dir "/tmp/benchmark reports"` stays one argument.
+            args(Regex("\"([^\"]*)\"|(\\S+)").findAll(project.property("benchmarkArgs").toString())
+                .map { it.groups[1]?.value ?: it.groups[2]!!.value }
+                .toList())
         }
     }
 

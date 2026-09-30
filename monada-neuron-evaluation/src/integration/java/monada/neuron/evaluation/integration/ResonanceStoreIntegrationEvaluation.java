@@ -340,6 +340,10 @@ public final class ResonanceStoreIntegrationEvaluation {
         var annotated = new TreeMap<>(diagnostics);
         annotated.put("warmupIterations", String.valueOf(warmups));
         annotated.put("measurementIterations", String.valueOf(iterations));
+        if (iterationSetup != null) {
+            // Latency and thread-allocated bytes exclude setup; JVM-wide GC deltas do not.
+            annotated.put("gcTelemetryScope", "includes per-iteration setup");
+        }
         return collector.measure(name, scale, warmups, iterations, operations, iterationSetup, workload, annotated);
     }
 
@@ -370,21 +374,19 @@ public final class ResonanceStoreIntegrationEvaluation {
         releaseAdapter(primary, opened);
     }
 
-    /** Closes the held store and clears the slot so no closed handle stays reachable. */
+    /** Closes the held store; the slot is cleared only after success so a failed cleanup stays retryable. */
     static void closeStore(TemporaryResonanceStore[] holder) {
         if (holder[0] != null) {
-            var store = holder[0];
+            holder[0].close();
             holder[0] = null;
-            store.close();
         }
     }
 
-    /** Releases the held adapter and clears the slot so its store handle is not retained. */
+    /** Releases the held adapter; the slot is cleared only after success so its handle is never lost on failure. */
     static void releaseAdapter(TemporaryResonanceStore store, ResonanceStoreMemoryAdapter[] holder) {
         if (holder[0] != null) {
-            var adapter = holder[0];
+            store.release(holder[0]);
             holder[0] = null;
-            store.release(adapter);
         }
     }
 
@@ -454,7 +456,7 @@ public final class ResonanceStoreIntegrationEvaluation {
         diagnostics.put("acceptedSignals", String.valueOf(sample.snapshot().acceptedSignals()));
         diagnostics.put("stateResetPerIteration", "true");
 
-        results.add(measureCycle("NeuronCycle.FullCycle.RealResonanceStore", adapter, inputs, warmups, iterations,
+        results.add(measureCycle("NeuronCycle.FullCycle.RealResonanceStore", adapter, inputs, sample, warmups, iterations,
                 withMemory(diagnostics, "ResonanceStoreMemoryAdapter (embedded, real store)")));
 
         var replay = recorder.replay();
@@ -462,7 +464,7 @@ public final class ResonanceStoreIntegrationEvaluation {
         if (!replayed.equals(sample)) {
             throw new IllegalStateException("replayed memory responses diverged from the real cycle result");
         }
-        results.add(measureCycle("NeuronCycle.FullCycle.ReplayedMemoryResponse", replay, inputs, warmups, iterations,
+        results.add(measureCycle("NeuronCycle.FullCycle.ReplayedMemoryResponse", replay, inputs, sample, warmups, iterations,
                 withMemory(diagnostics, "ReplayMemoryPort (no I/O; responses recorded from the real store)")));
     }
 
@@ -470,6 +472,7 @@ public final class ResonanceStoreIntegrationEvaluation {
             String name,
             ResonanceMemoryPort port,
             List<Signal> inputs,
+            CognitiveCycleResult sample,
             int warmups,
             int iterations,
             Map<String, String> diagnostics) {
@@ -481,10 +484,7 @@ public final class ResonanceStoreIntegrationEvaluation {
                 () -> holder[0] = newFullCycleSetup(port),
                 () -> {
                     var setup = holder[0];
-                    var result = setup.cycle().execute(setup.monad(), inputs, FULL_CYCLE_BUDGET);
-                    if (result.snapshot().traceEntries().isEmpty()) {
-                        throw new IllegalStateException("empty cycle snapshot");
-                    }
+                    requireSameCycle(setup.cycle().execute(setup.monad(), inputs, FULL_CYCLE_BUDGET), sample);
                 },
                 diagnostics);
     }
@@ -515,6 +515,11 @@ public final class ResonanceStoreIntegrationEvaluation {
                 port,
                 new DeterministicActionFixture(),
                 PROPAGATION);
+    }
+
+    /** Runs one full cycle for validation tests. */
+    CognitiveCycleResult executeForTest(ResonanceMemoryPort port, List<Signal> inputs) {
+        return executeFullCycle(port, inputs);
     }
 
     private CognitiveCycleResult executeFullCycle(ResonanceMemoryPort port, List<Signal> inputs) {
@@ -570,6 +575,21 @@ public final class ResonanceStoreIntegrationEvaluation {
             previous = result.score();
             require(references.add(result.reference()), "duplicate reference");
             require(codec.labelOf(result.signal()).isPresent(), "unknown decoded signal");
+        }
+    }
+
+    /**
+     * Rejects a measured cycle whose termination, memory response, or work counts differ from the verified
+     * sample, so a degraded iteration cannot be timed as if it did the same downstream work.
+     */
+    static void requireSameCycle(CognitiveCycleResult result, CognitiveCycleResult sample) {
+        if (result.termination() != sample.termination()) {
+            throw new IllegalStateException("cycle termination diverged: " + result.termination());
+        }
+        requireSameResponse(memoryStage(result).response(), memoryStage(sample).response());
+        if (result.snapshot().processedSteps() != sample.snapshot().processedSteps()
+                || result.snapshot().acceptedSignals() != sample.snapshot().acceptedSignals()) {
+            throw new IllegalStateException("cycle work counts diverged from the verified sample");
         }
     }
 

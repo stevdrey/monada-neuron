@@ -3,6 +3,8 @@ package monada.neuron.evaluation.integration;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -32,29 +34,40 @@ final class StoreMetadata {
         return fields;
     }
 
-    /** Returns the short git commit of a checkout directory, or {@code unknown}. */
+    /** Returns the short git commit, suffixed {@code +dirty} for uncommitted changes, or {@code unknown}. */
     static String gitCommit(Path checkout) {
         if (checkout == null || !Files.isDirectory(checkout)) {
             return "unknown";
         }
+        var commit = git(checkout, "rev-parse", "--short", "HEAD");
+        var status = git(checkout, "status", "--porcelain");
+        if (commit == null || commit.isBlank() || status == null) {
+            return "unknown";
+        }
+        return status.isBlank() ? commit : commit + "+dirty";
+    }
+
+    /** Runs git with a bounded wait and returns trimmed output, or {@code null} on any failure. */
+    private static String git(Path checkout, String... arguments) {
         Path capture = null;
         try {
             capture = Files.createTempFile("monada-neuron-git-", ".txt");
-            var process = new ProcessBuilder("git", "-C", checkout.toString(), "rev-parse", "--short", "HEAD")
+            var command = new ArrayList<String>(List.of("git", "-C", checkout.toString()));
+            command.addAll(List.of(arguments));
+            var process = new ProcessBuilder(command)
                     .redirectErrorStream(true)
                     .redirectOutput(capture.toFile())
                     .start();
             if (!process.waitFor(5, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
-                return "unknown";
+                return null;
             }
-            var output = Files.readString(capture).trim();
-            return process.exitValue() == 0 && !output.isBlank() ? output : "unknown";
+            return process.exitValue() == 0 ? Files.readString(capture).trim() : null;
         } catch (IOException e) {
-            return "unknown";
+            return null;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return "unknown";
+            return null;
         } finally {
             if (capture != null) {
                 try {
