@@ -4,9 +4,8 @@ import java.util.Objects;
 
 /**
  * Selector that keeps the best K candidates in a primitive min-heap: O(N log K), K ints of
- * working memory, no boxing. The heap root is always the worst retained candidate. Scores are
- * ordered with {@link Double#compare}, exactly like {@link FullSortSelector}, so {@code +0.0}
- * ranks before {@code -0.0}.
+ * working memory, no boxing. The heap root is always the worst retained candidate. Candidates are
+ * ordered by {@code HypothesisRanking}, the same rule {@link FullSortSelector} uses.
  */
 public final class BoundedHeapSelector implements HypothesisSelector {
 
@@ -18,17 +17,22 @@ public final class BoundedHeapSelector implements HypothesisSelector {
         }
         var size = Math.min(k, scores.length);
         if (size == 0) {
+            HypothesisRanking.requireNoNaN(scores);
             return new int[0];
         }
         var heap = new int[size];
         var count = 0;
         for (var i = 0; i < scores.length; i++) {
             if (count < size) {
+                HypothesisRanking.requireNotNaN(scores[i], i);
                 heap[count] = i;
                 siftUp(heap, scores, count);
                 count++;
-            } else if (Double.compare(scores[i], scores[heap[0]]) > 0) {
-                // Indices ascend, so an equal score is always worse than the root: strict > suffices.
+            } else if (HypothesisRanking.compare(scores[i], i, scores[heap[0]], heap[0]) < 0) {
+                // Indices ascend, so an equal score always ranks after the root: strictly-before suffices.
+                // NaN compares greater than every number, so it always reaches this branch: checking
+                // only on insertion rejects a NaN anywhere without a separate O(N) pass.
+                HypothesisRanking.requireNotNaN(scores[i], i);
                 heap[0] = i;
                 siftDown(heap, scores, 0, size);
             }
@@ -75,8 +79,7 @@ public final class BoundedHeapSelector implements HypothesisSelector {
 
     /** Returns whether candidate {@code a} ranks after {@code b}. */
     private boolean worse(double[] scores, int a, int b) {
-        var byScore = Double.compare(scores[a], scores[b]);
-        return byScore < 0 || (byScore == 0 && a > b);
+        return HypothesisRanking.compare(scores[a], a, scores[b], b) > 0;
     }
 
     private void swap(int[] heap, int first, int second) {

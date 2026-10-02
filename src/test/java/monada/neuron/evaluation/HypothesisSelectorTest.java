@@ -57,6 +57,23 @@ class HypothesisSelectorTest {
 
     @ParameterizedTest
     @MethodSource("selectors")
+    void rejectsNaNAnywhereInTheScores(HypothesisSelector selector) {
+        assertThrows(IllegalArgumentException.class,
+                () -> selector.select(new double[] {0.5, Double.NaN, 0.1}, 2));
+        assertThrows(IllegalArgumentException.class,
+                () -> selector.select(new double[] {Double.NaN}, 0));
+    }
+
+    @ParameterizedTest
+    @MethodSource("selectors")
+    void ranksInfinitiesNormally(HypothesisSelector selector) {
+        var scores = new double[] {Double.NEGATIVE_INFINITY, 0.5, Double.POSITIVE_INFINITY};
+        assertArrayEquals(new int[] {2, 1, 0}, selector.select(scores, 3));
+        assertArrayEquals(new int[] {2}, selector.select(scores, 1));
+    }
+
+    @ParameterizedTest
+    @MethodSource("selectors")
     void doesNotMutateTheScores(HypothesisSelector selector) {
         var scores = new double[] {0.3, 0.7, 0.1, 0.7};
         var copy = scores.clone();

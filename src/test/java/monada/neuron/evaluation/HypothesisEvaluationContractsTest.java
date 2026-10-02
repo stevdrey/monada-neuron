@@ -41,6 +41,35 @@ class HypothesisEvaluationContractsTest {
     }
 
     @Test
+    void breakdownRejectsInconsistentMassAndCount() {
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new HypothesisScoreBreakdown(0.5, 0.0, 0.0, 0, 0, 0, 0.0, 0.1)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new HypothesisScoreBreakdown(0.0, 0.5, 0.0, 0, 0, 0, 0.0, 0.1)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new HypothesisScoreBreakdown(0.0, 0.0, 0.5, 0, 0, 0, 0.0, 0.1)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new HypothesisScoreBreakdown(0.0, 0.0, 0.0, 1, 0, 0, 0.0, 0.1)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new HypothesisScoreBreakdown(0.0, 0.0, 0.0, 0, 1, 0, 0.0, 0.1)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new HypothesisScoreBreakdown(0.0, 0.0, 0.0, 0, 0, 1, 0.0, 0.1)));
+    }
+
+    @Test
+    void breakdownRejectsMassAboveCount() {
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new HypothesisScoreBreakdown(1.5, 0.0, 0.0, 1, 0, 0, 0.0, 0.1)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new HypothesisScoreBreakdown(0.0, 2.5, 0.0, 0, 2, 0, 0.0, 0.1)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new HypothesisScoreBreakdown(0.0, 0.0, 1.1, 0, 0, 1, 0.0, 0.1)),
+                () -> assertDoesNotThrow(() -> new HypothesisScoreBreakdown(2.0, 0.0, 0.0, 2, 0, 0, 0.0, 0.1)));
+    }
+
+    @Test
     void breakdownRejectsNegativeCounts() {
         assertAll(
                 () -> assertThrows(IllegalArgumentException.class,
@@ -97,6 +126,20 @@ class HypothesisEvaluationContractsTest {
         assertAll(
                 () -> assertThrows(IllegalArgumentException.class, () -> new HypothesisEvaluation(adjacent, 2, 2)),
                 () -> assertThrows(IllegalArgumentException.class, () -> new HypothesisEvaluation(separated, 3, 3)));
+    }
+
+    @Test
+    void evaluationRejectsDuplicatesAboveThePairwiseLimit() {
+        var unique = new ArrayList<EvaluatedHypothesis>();
+        for (var i = 0; i < 19; i++) {
+            unique.add(new EvaluatedHypothesis(i, breakdown(0.9 - 0.01 * i)));
+        }
+        var withDuplicate = new ArrayList<>(unique);
+        withDuplicate.set(18, new EvaluatedHypothesis(3, breakdown(0.5)));
+        assertAll(
+                () -> assertDoesNotThrow(() -> new HypothesisEvaluation(unique, 20, 20)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new HypothesisEvaluation(withDuplicate, 20, 20)));
     }
 
     @Test

@@ -388,8 +388,9 @@ score = (S + R) / (S + R + C + 1)            score in [0, 1)
 ```
 
 Neutral evidence is reported but not scored. Ranking is score descending, then lower
-`Hypothesis.sequence()`. Top-K selection uses a primitive bounded heap (`BoundedHeapSelector`,
-O(N log K)); `FullSortSelector` remains as the oracle. Resonance is an optional, support-only
+`Hypothesis.sequence()`, defined once in `HypothesisRanking` and shared by selection and result
+validation; NaN scores are rejected. Top-K selection uses a primitive bounded heap
+(`BoundedHeapSelector`, O(N log K)); `FullSortSelector` remains as the oracle. Resonance is an optional, support-only
 component supplied by an adapter, and cognitive evaluation of hypotheses is distinct from memory
 retrieval ranking. See ADR 0020.
 

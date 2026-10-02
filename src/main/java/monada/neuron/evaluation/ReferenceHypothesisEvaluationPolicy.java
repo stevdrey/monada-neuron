@@ -3,7 +3,7 @@ package monada.neuron.evaluation;
 import monada.neuron.reasoning.Hypothesis;
 import monada.neuron.reasoning.HypothesisSet;
 
-import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -50,20 +50,25 @@ public final class ReferenceHypothesisEvaluationPolicy implements HypothesisEval
         var count = hypotheses.size();
         var scores = new double[count];
         var resonance = config.usesResonance() ? new double[count] : null;
+        var accumulator = new EvidenceAccumulator();
         for (var i = 0; i < count; i++) {
-            var contribution = resonance == null ? 0.0 : resonanceContribution(hypotheses.get(i));
+            var hypothesis = hypotheses.get(i);
+            var contribution = resonance == null ? 0.0 : resonanceContribution(hypothesis);
             if (resonance != null) {
                 resonance[i] = contribution;
             }
-            scores[i] = score(hypotheses.get(i), contribution);
+            accumulator.accumulate(hypothesis);
+            scores[i] = accumulator.score(contribution);
         }
         var ranked = selector.select(scores, maxSelected);
-        var selected = new ArrayList<EvaluatedHypothesis>(ranked.length);
-        for (var sequence : ranked) {
+        var selected = new EvaluatedHypothesis[ranked.length];
+        for (var rank = 0; rank < ranked.length; rank++) {
+            var sequence = ranked[rank];
             var contribution = resonance == null ? 0.0 : resonance[sequence];
-            selected.add(new EvaluatedHypothesis(sequence, breakdown(hypotheses.get(sequence), contribution)));
+            accumulator.accumulate(hypotheses.get(sequence));
+            selected[rank] = new EvaluatedHypothesis(sequence, accumulator.breakdown(contribution));
         }
-        return new HypothesisEvaluation(selected, count, maxSelected);
+        return new HypothesisEvaluation(List.of(selected), count, maxSelected);
     }
 
     private double resonanceContribution(Hypothesis hypothesis) {
@@ -76,60 +81,64 @@ public final class ReferenceHypothesisEvaluationPolicy implements HypothesisEval
         return config.resonanceWeight() * value;
     }
 
-    /** Allocation-free scoring used for ranking every candidate. */
-    private double score(Hypothesis hypothesis, double resonanceContribution) {
-        var support = 0.0;
-        var contradiction = 0.0;
-        var evidence = hypothesis.evidence();
-        for (var i = 0; i < evidence.size(); i++) {
-            var item = evidence.get(i);
-            switch (item.relation()) {
-                case SUPPORTS -> support += item.weight();
-                case CONTRADICTS -> contradiction += item.weight();
-                case NEUTRAL -> { }
+    /**
+     * Per-call, reusable evidence accumulator: the one place where evidence is summed and the score
+     * formula lives. One instance scores every candidate (no per-candidate allocation) and then
+     * builds the breakdowns of the selected ones, so ranking and explanation cannot diverge.
+     */
+    private static final class EvidenceAccumulator {
+
+        private double support;
+        private double contradiction;
+        private double neutral;
+        private int supportCount;
+        private int contradictionCount;
+        private int neutralCount;
+
+        /** Sums the candidate's evidence in list order, replacing any previous candidate. */
+        void accumulate(Hypothesis hypothesis) {
+            support = 0.0;
+            contradiction = 0.0;
+            neutral = 0.0;
+            supportCount = 0;
+            contradictionCount = 0;
+            neutralCount = 0;
+            var evidence = hypothesis.evidence();
+            for (var i = 0; i < evidence.size(); i++) {
+                var item = evidence.get(i);
+                switch (item.relation()) {
+                    case SUPPORTS -> {
+                        support += item.weight();
+                        supportCount++;
+                    }
+                    case CONTRADICTS -> {
+                        contradiction += item.weight();
+                        contradictionCount++;
+                    }
+                    case NEUTRAL -> {
+                        neutral += item.weight();
+                        neutralCount++;
+                    }
+                }
             }
         }
-        return combine(support + resonanceContribution, contradiction);
-    }
 
-    /** Full breakdown, built only for selected candidates; uses the same formula as {@link #score}. */
-    private HypothesisScoreBreakdown breakdown(Hypothesis hypothesis, double resonanceContribution) {
-        var support = 0.0;
-        var contradiction = 0.0;
-        var neutral = 0.0;
-        var supportCount = 0;
-        var contradictionCount = 0;
-        var neutralCount = 0;
-        var evidence = hypothesis.evidence();
-        for (var i = 0; i < evidence.size(); i++) {
-            var item = evidence.get(i);
-            switch (item.relation()) {
-                case SUPPORTS -> {
-                    support += item.weight();
-                    supportCount++;
-                }
-                case CONTRADICTS -> {
-                    contradiction += item.weight();
-                    contradictionCount++;
-                }
-                case NEUTRAL -> {
-                    neutral += item.weight();
-                    neutralCount++;
-                }
-            }
+        /** Returns {@code (S + R) / (S + R + C + 1)} for the accumulated candidate. */
+        double score(double resonanceContribution) {
+            var supportWithResonance = support + resonanceContribution;
+            return supportWithResonance / (supportWithResonance + contradiction + 1.0);
         }
-        return new HypothesisScoreBreakdown(
-                support,
-                contradiction,
-                neutral,
-                supportCount,
-                contradictionCount,
-                neutralCount,
-                resonanceContribution,
-                combine(support + resonanceContribution, contradiction));
-    }
 
-    private double combine(double supportWithResonance, double contradiction) {
-        return supportWithResonance / (supportWithResonance + contradiction + 1.0);
+        HypothesisScoreBreakdown breakdown(double resonanceContribution) {
+            return new HypothesisScoreBreakdown(
+                    support,
+                    contradiction,
+                    neutral,
+                    supportCount,
+                    contradictionCount,
+                    neutralCount,
+                    resonanceContribution,
+                    score(resonanceContribution));
+        }
     }
 }

@@ -12,6 +12,7 @@ public final class FullSortSelector implements HypothesisSelector {
         if (k < 0) {
             throw new IllegalArgumentException("k must not be negative, got: " + k);
         }
+        HypothesisRanking.requireNoNaN(scores);
         var size = Math.min(k, scores.length);
         if (size == 0) {
             return new int[0];
@@ -20,10 +21,7 @@ public final class FullSortSelector implements HypothesisSelector {
         for (var i = 0; i < order.length; i++) {
             order[i] = i;
         }
-        Arrays.sort(order, (left, right) -> {
-            var byScore = Double.compare(scores[right], scores[left]);
-            return byScore != 0 ? byScore : Integer.compare(left, right);
-        });
+        Arrays.sort(order, (left, right) -> HypothesisRanking.compare(scores[left], left, scores[right], right));
         var result = new int[size];
         for (var i = 0; i < size; i++) {
             result[i] = order[i];

@@ -5,6 +5,8 @@ import monada.neuron.aeon.AeonPurpose;
 import monada.neuron.context.CognitiveBudget;
 import monada.neuron.context.CognitiveContext;
 import monada.neuron.context.CognitiveTraceEvent;
+import monada.neuron.evolution.AdaptationCognitiveStage;
+import monada.neuron.evolution.DeterministicBaselineAdaptationPolicy;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
@@ -27,13 +29,16 @@ import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -66,7 +71,7 @@ class HypothesisEvaluationCognitiveStageTest {
         var evaluation = assertInstanceOf(EvaluationCognitiveStageResult.class, result.stageResults().getLast());
         assertAll(
                 () -> assertEquals(CognitiveCycleTermination.COMPLETED, result.termination()),
-                () -> assertEquals(produced, evaluation.evaluated()),
+                () -> assertSame(produced, evaluation.evaluated()),
                 () -> assertEquals(3, evaluation.evaluation().evaluatedCount()),
                 () -> assertEquals(List.of(1, 0),
                         evaluation.evaluation().selected().stream().map(EvaluatedHypothesis::sequence).toList()));
@@ -106,31 +111,74 @@ class HypothesisEvaluationCognitiveStageTest {
     }
 
     @Test
-    void evaluationDoesNotMutateNodesOrAdaptationState() {
-        var node = new Node.Builder().id(uuid(5)).type(NodeType.PROCESSOR).build();
-        var aeon = new Aeon(uuid(10), AeonPurpose.REASONING);
-        aeon.addMember(node);
-        var monad = new PrimaryMonad(uuid(1));
-        monad.registerAeon(aeon);
-        var state = node.getFrequencyState();
-        var energy = node.getEnergy();
-        var history = List.copyOf(node.getHistory());
-        var topology = node.getTopologyVersion();
-        var produced = hypotheses();
-
-        var result = new DeterministicCognitiveCycle(List.of(
-                reasoningStub(produced, List.of()),
-                new HypothesisEvaluationCognitiveStage(policy, 2)))
-                .execute(monad, List.of(signal(1.0)), new CognitiveBudget(10, 10, 30));
-
+    void evaluationLeavesAdaptationOutcomeIdenticalToACycleWithoutIt() {
+        var without = runWithAdaptation(false);
+        var with = runWithAdaptation(true);
+        var adaptedWith = nodeAdaptedEvents(with.result());
         assertAll(
-                () -> assertEquals(state, node.getFrequencyState()),
-                () -> assertEquals(energy, node.getEnergy()),
-                () -> assertEquals(history, node.getHistory()),
-                () -> assertEquals(topology, node.getTopologyVersion()),
-                () -> assertEquals(hypotheses(), produced),
-                () -> assertTrue(result.snapshot().traceEntries().stream()
-                        .noneMatch(entry -> entry.event() instanceof CognitiveTraceEvent.NodeAdapted)));
+                () -> assertEquals(CognitiveCycleTermination.COMPLETED, with.result().termination()),
+                () -> assertTrue(with.target().getEnergy() > 0.0, "adaptation must actually run"),
+                () -> assertFalse(adaptedWith.isEmpty()),
+                () -> assertEquals(nodeAdaptedEvents(without.result()), adaptedWith),
+                () -> assertEquals(without.target().getFrequencyState(), with.target().getFrequencyState()),
+                () -> assertEquals(without.target().getEnergy(), with.target().getEnergy()),
+                () -> assertEquals(without.target().getHistory(), with.target().getHistory()),
+                () -> assertEquals(without.target().getTopologyVersion(), with.target().getTopologyVersion()),
+                () -> assertEquals(FrequencyState.ZERO, with.bystander().getFrequencyState()),
+                () -> assertEquals(0.0, with.bystander().getEnergy()),
+                () -> assertTrue(with.bystander().getHistory().isEmpty()),
+                () -> assertEquals(0L, with.bystander().getTopologyVersion()));
+    }
+
+    @Test
+    void rejectsAPolicyThatReturnsNull() throws Exception {
+        var stage = new HypothesisEvaluationCognitiveStage((set, maxSelected) -> null, 1);
+        try (var context = new CognitiveContext(new CognitiveBudget(10, 10, 10))) {
+            assertThrows(NullPointerException.class, () -> stage.execute(
+                    new PrimaryMonad(uuid(1)), List.of(signal(1.0)), Optional.empty(), context));
+        }
+    }
+
+    @Test
+    void ignoresPreviousResultsThatAreNotReasoningResults() throws Exception {
+        var stage = new HypothesisEvaluationCognitiveStage(policy, 2);
+        var previous = new StubResult(CognitiveStageKind.MEMORY_RECALL, List.of(signal(1.0)));
+        try (var context = new CognitiveContext(new CognitiveBudget(10, 10, 10))) {
+            var result = (EvaluationCognitiveStageResult) stage.execute(
+                    new PrimaryMonad(uuid(1)), List.of(signal(1.0)), Optional.of(previous), context);
+            assertAll(
+                    () -> assertEquals(0, result.evaluation().evaluatedCount()),
+                    () -> assertTrue(result.evaluation().selected().isEmpty()),
+                    () -> assertEquals(List.of(signal(1.0)), result.outputSignals()));
+        }
+    }
+
+    @Test
+    void laterStagesRunOnThePassedThroughSignals() {
+        var inputs = List.of(signal(1.0), signal(2.0));
+        var seen = new ArrayList<List<Signal>>();
+        var result = new DeterministicCognitiveCycle(List.of(
+                reasoningStub(hypotheses(), inputs),
+                new HypothesisEvaluationCognitiveStage(policy, 2),
+                recordingStage(CognitiveStageKind.ACTION, seen)))
+                .execute(new PrimaryMonad(uuid(1)), List.of(signal(1.0)), new CognitiveBudget(10, 50, 100));
+        assertAll(
+                () -> assertEquals(CognitiveCycleTermination.COMPLETED, result.termination()),
+                () -> assertEquals(List.of(inputs), seen));
+    }
+
+    @Test
+    void hypothesisOnlyHandOffEndsBeforeStagesThatRequireSignals() {
+        var seen = new ArrayList<List<Signal>>();
+        var result = new DeterministicCognitiveCycle(List.of(
+                reasoningStub(hypotheses(), List.of()),
+                new HypothesisEvaluationCognitiveStage(policy, 2),
+                recordingStage(CognitiveStageKind.ACTION, seen)))
+                .execute(new PrimaryMonad(uuid(1)), List.of(signal(1.0)), new CognitiveBudget(10, 10, 30));
+        assertAll(
+                () -> assertEquals(CognitiveCycleTermination.NO_SIGNALS, result.termination()),
+                () -> assertTrue(seen.isEmpty()),
+                () -> assertInstanceOf(EvaluationCognitiveStageResult.class, result.stageResults().getLast()));
     }
 
     // helpers ---------------------------------------------------------------------------------
@@ -165,6 +213,64 @@ class HypothesisEvaluationCognitiveStageTest {
                 return new ReasoningCognitiveStageResult(CognitiveStageStatus.COMPLETED, outputs, hypotheses);
             }
         };
+    }
+
+    private static Run runWithAdaptation(boolean withEvaluation) {
+        var target = new Node.Builder().id(uuid(3)).type(NodeType.PROCESSOR).build();
+        var bystander = new Node.Builder().id(uuid(4)).type(NodeType.PROCESSOR).build();
+        var aeon = new Aeon(uuid(10), AeonPurpose.REASONING);
+        aeon.addMember(bystander);
+        var monad = new PrimaryMonad(uuid(1));
+        monad.registerAeon(aeon);
+        var stages = new ArrayList<CognitiveStage>();
+        stages.add(reasoningStub(hypotheses(), List.of(signal(5.0))));
+        if (withEvaluation) {
+            stages.add(new HypothesisEvaluationCognitiveStage(new ReferenceHypothesisEvaluationPolicy(), 2));
+        }
+        stages.add(new AdaptationCognitiveStage(new DeterministicBaselineAdaptationPolicy(), List.of(target)));
+        var result = new DeterministicCognitiveCycle(stages)
+                .execute(monad, List.of(signal(1.0)), new CognitiveBudget(10, 10, 30));
+        return new Run(result, target, bystander);
+    }
+
+    private static List<CognitiveTraceEvent.NodeAdapted> nodeAdaptedEvents(CognitiveCycleResult result) {
+        return result.snapshot().traceEntries().stream()
+                .map(entry -> entry.event())
+                .filter(CognitiveTraceEvent.NodeAdapted.class::isInstance)
+                .map(CognitiveTraceEvent.NodeAdapted.class::cast)
+                .toList();
+    }
+
+    private static CognitiveStage recordingStage(CognitiveStageKind kind, List<List<Signal>> seen) {
+        return new CognitiveStage() {
+            @Override
+            public CognitiveStageKind kind() {
+                return kind;
+            }
+
+            @Override
+            public CognitiveStageResult execute(
+                    PrimaryMonad monad, List<Signal> inputSignals, CognitiveContext context) {
+                seen.add(inputSignals);
+                return new StubResult(kind, inputSignals);
+            }
+        };
+    }
+
+    private record Run(CognitiveCycleResult result, Node target, Node bystander) {
+    }
+
+    private record StubResult(CognitiveStageKind kind, List<Signal> outputSignals)
+            implements CognitiveStageResult {
+
+        private StubResult {
+            outputSignals = List.copyOf(outputSignals);
+        }
+
+        @Override
+        public CognitiveStageStatus status() {
+            return CognitiveStageStatus.COMPLETED;
+        }
     }
 
     private static Signal signal(double amplitude) {

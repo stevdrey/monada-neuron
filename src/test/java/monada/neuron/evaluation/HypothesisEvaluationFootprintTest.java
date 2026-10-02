@@ -1,5 +1,6 @@
 package monada.neuron.evaluation;
 
+import com.sun.management.ThreadMXBean;
 import monada.neuron.reasoning.EvidenceRelation;
 import monada.neuron.reasoning.HypothesisLimits;
 import monada.neuron.reasoning.HypothesisSet;
@@ -46,9 +47,9 @@ class HypothesisEvaluationFootprintTest {
     @Test
     void transientAllocationScalesWithCandidatesOnlyByTheScoreArray() {
         var bean = ManagementFactory.getThreadMXBean();
-        assumeTrue(bean instanceof com.sun.management.ThreadMXBean,
+        assumeTrue(bean instanceof ThreadMXBean,
                 "com.sun.management.ThreadMXBean is unavailable");
-        var threads = (com.sun.management.ThreadMXBean) bean;
+        var threads = (ThreadMXBean) bean;
         assumeTrue(threads.isThreadAllocatedMemorySupported(),
                 "thread allocated-memory tracking is unsupported");
         if (!threads.isThreadAllocatedMemoryEnabled()) {

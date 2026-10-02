@@ -30,7 +30,11 @@ the input set, or shared state, and identical inputs and configuration give equa
 selected candidates in rank order. Each `EvaluatedHypothesis(sequence, HypothesisScoreBreakdown)`
 references its candidate by the cycle-local `sequence` (no copy). `HypothesisScoreBreakdown` keeps
 `supportMass`, `contradictionMass`, `neutralMass`, the three counts, `resonanceContribution`, and the
-final `score`. Constructors validate finiteness, ranges, the selected-size bound, and rank order.
+final `score`. Constructors validate finiteness, ranges, the selected-size bound, rank order, and
+that each sequence appears at most once. `HypothesisScoreBreakdown` also checks that its evidence
+components agree: each mass is zero exactly when its count is zero and never exceeds its count
+(weights are at most 1). How `score` derives from the components stays policy-defined and is not
+enforced by the record.
 
 **Reference formula.** With `S` the sum of `SUPPORTS` weights, `C` the sum of `CONTRADICTS` weights,
 and `R = resonanceWeight * resonance(h)` (zero by default):
@@ -54,17 +58,24 @@ supporting entry. Component output must be finite and within `[0, 1]`; anything 
 `IllegalArgumentException` instead of being clamped. The core defines no memory or vendor type: deriving the
 value from the Resonance Store belongs behind an adapter, and the evaluator never ranks memory.
 
-**Tie rule and selection.** Candidates rank by score descending under `Double.compare` (so `+0.0`
-ranks before `-0.0`; the policy itself never produces `-0.0`), then by lower
-`Hypothesis.sequence()` (insertion order). A `HypothesisEvaluation` lists each candidate at most once. `HypothesisSelector` ranks a `double[]` of scores indexed
-by sequence. Two implementations exist: `BoundedHeapSelector` (primitive int min-heap, O(N log K),
-K ints of working memory, no boxing) and `FullSortSelector` (full sort, boxed, simple). The reference
-policy uses the bounded heap by default, chosen from the evidence below. `FullSortSelector` stays as
-the semantic oracle and benchmark baseline; tests assert both produce identical output on tie-heavy
-random inputs.
+**Tie rule and selection.** The ranking rule is defined once, in the package-private
+`HypothesisRanking`: score descending under `Double.compare` (so `+0.0` ranks before `-0.0`; the
+policy itself never produces `-0.0`), then lower `Hypothesis.sequence()` (insertion order). Both
+selectors and `HypothesisEvaluation` validation call it, so the heap, the oracle, and the result
+validator cannot drift apart. `HypothesisSelector` ranks a `double[]` of scores indexed by sequence.
+NaN has no rank and is rejected with `IllegalArgumentException`; infinities rank normally. Two
+implementations exist: `BoundedHeapSelector` (primitive int min-heap, O(N log K), K ints of working
+memory, no boxing; NaN sorts above every number under `Double.compare`, so it always reaches the
+insertion path, where it is rejected, without a separate O(N) pass) and `FullSortSelector` (full
+sort, boxed, simple). The reference policy uses the bounded heap by default, chosen from the evidence
+below. `FullSortSelector` stays as the semantic oracle and benchmark baseline; tests assert both
+produce identical output on tie-heavy random inputs that include `-0.0`.
 
-**Allocation shape.** Scoring ranks every candidate without allocating objects (one `double[]`). The
-full `HypothesisScoreBreakdown` is built only for selected candidates.
+**Allocation shape.** Scoring ranks every candidate without allocating objects (one `double[]`). A
+single per-call `EvidenceAccumulator` sums the evidence and holds the score formula; it scores every
+candidate and then builds the `HypothesisScoreBreakdown` of the selected ones only, so ranking and
+explanation cannot diverge. `HypothesisEvaluation` validates uniqueness pairwise for up to 16
+selected candidates (no allocation) and with a bit set above that.
 
 **Stage.** `HypothesisEvaluationCognitiveStage(policy, maxSelected)` occupies `EVALUATION`, reads
 hypotheses with `ReasoningCognitiveStageResult.hypothesesOf(previousResult)`, and opts in through
@@ -104,8 +115,8 @@ bus. A separate typed result avoids all three.
   984 B at K = 10, independent of N. The evaluated `HypothesisSet` is shared by reference. This is
   an estimate (`HypothesisEvaluationFootprintModel`), not a measurement.
 - **Transient allocation (measured with `-prof gc`).** About 8 B per candidate for the score array
-  plus a K-sized result: 80,084 B/op at N = 10,000 and K = 1, and 81,108 B/op at K = 10. The full-sort
-  strategy allocates about 330 KB/op at N = 10,000.
+  plus a K-sized result: 80,243 B/op at N = 10,000 and K = 1, and 81,099 B/op at K = 10. The full-sort
+  strategy allocates about 330 KB/op at N = 10,000 (4.1x more).
 - Equal inputs give equal results, which keeps whole-cycle replay comparable.
 - The formula is a research baseline: it treats evidence as independent additive mass, ignores
   provenance and recency, and is not a calibrated probability.
@@ -118,31 +129,34 @@ candidate (60% supporting, 25% contradicting, 15% neutral, weights on an eighth 
 
 ```bash
 ./gradlew :monada-neuron-evaluation:jmh \
-  -PjmhArgs="-bm avgt -f 1 -wi 2 -i 3 -r 1s -prof gc HypothesisEvaluation"
+  -PjmhArgs="-bm avgt -f 3 -wi 2 -i 3 -r 1s -prof gc HypothesisEvaluation"
 ```
 
 Selection only (µs/op, scores on a coarse grid so ties occur):
 
 | N | K | bounded heap | full sort | speedup |
 | ---: | ---: | ---: | ---: | ---: |
-| 100 | 10 | 0.404 | 4.540 | 11.2x |
-| 1,000 | 10 | 2.329 | 153.5 | 65.9x |
-| 1,000 | 100 | 9.740 | 152.9 | 15.7x |
-| 10,000 | 10 | 18.9 | 1,744 | 92.1x |
-| 10,000 | 100 | 38.4 | 1,743 | 45.4x |
+| 100 | 10 | 0.518 | 4.571 | 8.8x |
+| 1,000 | 10 | 2.552 | 149.5 | 58.6x |
+| 1,000 | 100 | 17.4 | 150.6 | 8.6x |
+| 10,000 | 10 | 20.1 | 1,795 | 89.2x |
+| 10,000 | 100 | 55.8 | 1,678 | 30.1x |
 
-The heap was never slower than the full sort in any of the 12 N x K cells. Where K >= N the two are
-close (for example 2.29 vs 4.61 µs at N = K = 100, and 0.66 vs 0.77 µs end to end at N = 10, K = 10
-with three forks), so no crossover was observed. The full matrix and end-to-end figures are in
-`docs/benchmarks/baseline-methodology.md`. At N = 10,000 the end-to-end cost (about 550 µs) is
-dominated by the scoring pass (about 570 µs, 57 ns per candidate), not by selection, so a further
-specialized layout is not justified by these measurements.
+The heap was never slower than the full sort in any of the 12 N x K cells: selection was 1.6x to 89x
+faster and end-to-end evaluation 1.2x to 5.9x faster. Where K >= N the two are close (for example
+3.00 vs 4.72 µs at N = K = 100, and 0.717 vs 0.827 µs end to end at N = 10, K = 10), so no crossover
+was observed. The full matrix and end-to-end figures are in `docs/benchmarks/baseline-methodology.md`.
+At N = 10,000 the end-to-end cost (about 540 µs) is dominated by the scoring pass (about 506 µs,
+51 ns per candidate), not by selection, so a further specialized layout is not justified by these
+measurements.
 
-These runs are exploratory, not a gate: one fork and three iterations on a laptop CPU, with several
-rows above 15% relative error. Conclusions rely only on differences much larger than the reported
-error. The N = 10 end-to-end rows were repeated with three forks because the first run was unstable. After
-switching the heap to `Double.compare` during review, heap selection was re-measured with three forks
-at K = 10: 2.18 ± 0.15 µs at N = 1,000 and 14.7 ± 0.9 µs at N = 10,000, with no regression.
+These runs are exploratory, not a gate: three forks and three iterations on a laptop CPU. Two of 52
+rows exceed 15% relative error (`selectBoundedHeap` and `evaluateBoundedHeap` at N = 1,000, K = 1);
+conclusions rely only on differences much larger than the reported error. The figures include the
+code merged after review: the single ranking rule, NaN rejection, and the shared evidence
+accumulator. Compared with the heap measured before those changes (about 15 µs at N = 10,000,
+K = 10), heap selection alone is now about 20 µs because the shared comparator adds work per element;
+end-to-end evaluation did not change measurably (537 vs 552 µs), since selection is under 4% of it.
 
 ## Follow-up Work
 

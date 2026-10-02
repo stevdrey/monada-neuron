@@ -188,6 +188,61 @@ class ReferenceHypothesisEvaluationPolicyTest {
     }
 
     @Test
+    void everyBreakdownMatchesAnIndependentRecomputation() {
+        var set = randomSet(11, 120);
+        var configs = List.of(
+                HypothesisScoringConfig.NONE,
+                new HypothesisScoringConfig(hypothesis -> (hypothesis.sequence() % 5) / 4.0, 0.5));
+        for (var config : configs) {
+            var evaluation = new ReferenceHypothesisEvaluationPolicy(config, new BoundedHeapSelector())
+                    .evaluate(set, set.size());
+            assertEquals(set.size(), evaluation.selected().size());
+            for (var evaluated : evaluation.selected()) {
+                var hypothesis = set.get(evaluated.sequence());
+                var support = 0.0;
+                var contradiction = 0.0;
+                var neutral = 0.0;
+                var counts = new int[3];
+                for (var item : hypothesis.evidence()) {
+                    switch (item.relation()) {
+                        case SUPPORTS -> {
+                            support += item.weight();
+                            counts[0]++;
+                        }
+                        case CONTRADICTS -> {
+                            contradiction += item.weight();
+                            counts[1]++;
+                        }
+                        case NEUTRAL -> {
+                            neutral += item.weight();
+                            counts[2]++;
+                        }
+                    }
+                }
+                var resonance = config.usesResonance()
+                        ? config.resonanceWeight() * config.resonance().resonance(hypothesis)
+                        : 0.0;
+                final var expectedSupport = support;
+                final var expectedContradiction = contradiction;
+                final var expectedNeutral = neutral;
+                var supportWithResonance = expectedSupport + resonance;
+                var breakdown = evaluated.breakdown();
+                assertAll(
+                        () -> assertEquals(expectedSupport, breakdown.supportMass()),
+                        () -> assertEquals(expectedContradiction, breakdown.contradictionMass()),
+                        () -> assertEquals(expectedNeutral, breakdown.neutralMass()),
+                        () -> assertEquals(counts[0], breakdown.supportCount()),
+                        () -> assertEquals(counts[1], breakdown.contradictionCount()),
+                        () -> assertEquals(counts[2], breakdown.neutralCount()),
+                        () -> assertEquals(resonance, breakdown.resonanceContribution()),
+                        () -> assertEquals(
+                                supportWithResonance / (supportWithResonance + expectedContradiction + 1.0),
+                                breakdown.score()));
+            }
+        }
+    }
+
+    @Test
     void identicalInputsProduceEqualEvaluations() {
         assertEquals(policy.evaluate(randomSet(42, 100), 10), policy.evaluate(randomSet(42, 100), 10));
     }
