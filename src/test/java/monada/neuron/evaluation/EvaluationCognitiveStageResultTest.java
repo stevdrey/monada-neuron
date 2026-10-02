@@ -86,14 +86,45 @@ class EvaluationCognitiveStageResultTest {
     }
 
     @Test
-    void provenanceValidationIsAcceptedForAnyContext() throws Exception {
+    void provenanceRejectsSignalSequencesTheContextNeverAccepted() {
         try (var context = new CognitiveContext(new CognitiveBudget(10, 10, 10))) {
-            assertDoesNotThrow(() -> result(List.of()).validateProvenance(context));
+            context.tryRecordCognitiveStageInputSignal(CognitiveStageKind.EVALUATION, signal(1.0));
+            assertAll(
+                    () -> resultWithSignalEvidence(0).validateProvenance(context),
+                    () -> assertThrows(IllegalArgumentException.class,
+                            () -> resultWithSignalEvidence(1).validateProvenance(context)),
+                    () -> assertThrows(IllegalArgumentException.class,
+                            () -> resultWithSignalEvidence(Long.MAX_VALUE).validateProvenance(context)));
+        }
+    }
+
+    @Test
+    void provenanceRejectsEvidenceInAnEmptyContext() {
+        try (var context = new CognitiveContext(new CognitiveBudget(10, 10, 10))) {
+            assertAll(
+                    () -> assertThrows(IllegalArgumentException.class, () -> result(List.of()).validateProvenance(context)),
+                    () -> assertThrows(NullPointerException.class, () -> result(List.of()).validateProvenance(null)),
+                    () -> assertDoesNotThrow(() -> new EvaluationCognitiveStageResult(
+                            CognitiveStageStatus.COMPLETED, List.of(), HypothesisSet.EMPTY,
+                            new ReferenceHypothesisEvaluationPolicy().evaluate(HypothesisSet.EMPTY, 1))
+                            .validateProvenance(context)));
         }
     }
 
     private EvaluationCognitiveStageResult result(List<Signal> outputs) {
         return new EvaluationCognitiveStageResult(CognitiveStageStatus.COMPLETED, outputs, set, evaluation);
+    }
+
+    private static EvaluationCognitiveStageResult resultWithSignalEvidence(long sequence) {
+        var builder = new HypothesisSetBuilder(new HypothesisLimits(1, 1));
+        var seq = builder.propose(new Proposition(0, 1)).getAsInt();
+        builder.addEvidence(seq, new SignalEvidence(sequence, EvidenceRelation.SUPPORTS, 0.5));
+        var evidenceSet = builder.build();
+        return new EvaluationCognitiveStageResult(
+                CognitiveStageStatus.COMPLETED,
+                List.of(),
+                evidenceSet,
+                new ReferenceHypothesisEvaluationPolicy().evaluate(evidenceSet, 1));
     }
 
     private static HypothesisSet hypotheses() {

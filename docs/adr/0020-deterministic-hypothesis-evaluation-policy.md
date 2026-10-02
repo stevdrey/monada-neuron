@@ -82,7 +82,10 @@ hypotheses with `ReasoningCognitiveStageResult.hypothesesOf(previousResult)`, an
 `acceptsTypedOnlyHandOff()` so it runs when reasoning produced hypotheses but no output signals. It
 returns `EvaluationCognitiveStageResult(status, outputSignals, evaluated, evaluation)`, a record that
 keeps the typed evaluation (never a map) and passes input signals through so `ADAPTATION` and `ACTION`
-still run. `withAdmittedOutputSignals` trims only the signals. The stage does not touch Nodes or
+still run. `withAdmittedOutputSignals` trims only the signals. The result also validates the
+provenance of signal evidence in the evaluated set after the stage, exactly like the reasoning result
+(one shared `HypothesisSet.validateSignalProvenance`), so a custom `EVALUATION` stage cannot return
+evidence for a signal occurrence the context never accepted (ADR 0019). The stage does not touch Nodes or
 adaptation state; mutation remains the responsibility of adaptation/evolution.
 
 ## Alternatives Considered

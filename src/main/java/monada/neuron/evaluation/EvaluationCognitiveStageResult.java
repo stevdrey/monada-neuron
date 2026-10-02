@@ -1,5 +1,6 @@
 package monada.neuron.evaluation;
 
+import monada.neuron.context.CognitiveContext;
 import monada.neuron.monad.CognitiveStageKind;
 import monada.neuron.monad.CognitiveStageResult;
 import monada.neuron.monad.CognitiveStageStatus;
@@ -55,5 +56,15 @@ public record EvaluationCognitiveStageResult(
                     "admitted output signals must be a prefix of the evaluation outputs");
         }
         return new EvaluationCognitiveStageResult(status, admittedOutputSignals, evaluated, evaluation);
+    }
+
+    /**
+     * Rejects signal evidence in the evaluated set that references an occurrence the context never
+     * accepted, so a custom {@code EVALUATION} stage cannot bypass the provenance rule of ADR 0019.
+     */
+    @Override
+    public void validateProvenance(CognitiveContext context) {
+        Objects.requireNonNull(context, "context must not be null");
+        evaluated.validateSignalProvenance(context.acceptedSignals());
     }
 }

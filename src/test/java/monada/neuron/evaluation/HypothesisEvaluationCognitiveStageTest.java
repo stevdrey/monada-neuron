@@ -10,6 +10,7 @@ import monada.neuron.evolution.DeterministicBaselineAdaptationPolicy;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
+import monada.neuron.monad.CognitiveCycleException;
 import monada.neuron.monad.CognitiveCycleResult;
 import monada.neuron.monad.CognitiveCycleTermination;
 import monada.neuron.monad.CognitiveStage;
@@ -128,6 +129,35 @@ class HypothesisEvaluationCognitiveStageTest {
                 () -> assertEquals(0.0, with.bystander().getEnergy()),
                 () -> assertTrue(with.bystander().getHistory().isEmpty()),
                 () -> assertEquals(0L, with.bystander().getTopologyVersion()));
+    }
+
+    @Test
+    void failsCycleWhenACustomEvaluationStageReturnsUnacceptedSignalEvidence() {
+        var builder = new HypothesisSetBuilder(new HypothesisLimits(1, 1));
+        var seq = builder.propose(new Proposition(0, 1)).getAsInt();
+        builder.addEvidence(seq, new SignalEvidence(999, EvidenceRelation.SUPPORTS, 0.5));
+        var forged = builder.build();
+        CognitiveStage custom = new CognitiveStage() {
+            @Override
+            public CognitiveStageKind kind() {
+                return CognitiveStageKind.EVALUATION;
+            }
+
+            @Override
+            public CognitiveStageResult execute(
+                    PrimaryMonad monad, List<Signal> inputSignals, CognitiveContext context) {
+                return new EvaluationCognitiveStageResult(
+                        CognitiveStageStatus.COMPLETED,
+                        inputSignals,
+                        forged,
+                        policy.evaluate(forged, 1));
+            }
+        };
+        var failure = assertThrows(
+                CognitiveCycleException.class,
+                () -> new DeterministicCognitiveCycle(List.of(reasoningStub(hypotheses(), List.of(signal(1.0))), custom))
+                        .execute(new PrimaryMonad(uuid(1)), List.of(signal(1.0)), new CognitiveBudget(10, 10, 30)));
+        assertInstanceOf(IllegalArgumentException.class, failure.getCause());
     }
 
     @Test

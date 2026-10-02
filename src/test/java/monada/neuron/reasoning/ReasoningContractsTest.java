@@ -88,4 +88,18 @@ class ReasoningContractsTest {
                                 new Hypothesis(1, new Proposition(0, 2), List.of()),
                                 new Hypothesis(2, new Proposition(0, 3), List.of())), limits)));
     }
+
+    @Test
+    void hypothesisSetValidatesSignalProvenanceAgainstAcceptedCount() {
+        var builder = new HypothesisSetBuilder(HypothesisLimits.DEFAULT);
+        var seq = builder.propose(new Proposition(0, 1)).getAsInt();
+        builder.addEvidence(seq, new SignalEvidence(2, EvidenceRelation.SUPPORTS, 0.5));
+        builder.addEvidence(seq, new MemoryReferenceEvidence("mem-1", EvidenceRelation.SUPPORTS, 0.5));
+        var set = builder.build();
+        assertAll(
+                () -> set.validateSignalProvenance(3),
+                () -> assertThrows(IllegalArgumentException.class, () -> set.validateSignalProvenance(2)),
+                () -> assertThrows(IllegalArgumentException.class, () -> set.validateSignalProvenance(0)),
+                () -> HypothesisSet.EMPTY.validateSignalProvenance(0));
+    }
 }
