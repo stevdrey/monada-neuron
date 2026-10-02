@@ -9,7 +9,7 @@ import java.util.Objects;
  * memory-provider objects, or action payloads.
  */
 public sealed interface Evidence
-        permits SignalEvidence, MemoryReferenceEvidence, ActionReferenceEvidence {
+        permits SignalEvidence, MemoryReferenceEvidence {
 
     /** Returns whether this evidence supports, contradicts, or is neutral to the hypothesis. */
     EvidenceRelation relation();
@@ -17,11 +17,8 @@ public sealed interface Evidence
     /** Returns the finite evidence weight in the range {@code (0, 1]}. */
     double weight();
 
-    /** Validates fields shared by all evidence variants. */
-    static void validate(long reference, String name, EvidenceRelation relation, double weight) {
-        if (reference < 0) {
-            throw new IllegalArgumentException(name + " must be non-negative, got: " + reference);
-        }
+    /** Validates the relation and weight shared by all evidence variants. */
+    static void validate(EvidenceRelation relation, double weight) {
         Objects.requireNonNull(relation, "relation must not be null");
         if (!Double.isFinite(weight) || weight <= 0.0 || weight > 1.0) {
             throw new IllegalArgumentException("weight must be finite in (0, 1], got: " + weight);

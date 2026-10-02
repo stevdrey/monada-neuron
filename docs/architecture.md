@@ -350,14 +350,16 @@ or external payloads.
 `REASONING -> Hypothesis/Evidence -> EVALUATION` is typed. A reasoning stage may return a
 `ReasoningCognitiveStageResult` that retains an immutable `HypothesisSet` next to its normal output
 signals. `Hypothesis` records carry a cycle-local `sequence` (no UUID), an opaque `Proposition`,
-and ordered `Evidence`: a sealed hierarchy of signal-occurrence references and opaque memory/action
-references with a `SUPPORTS`/`CONTRADICTS`/`NEUTRAL` relation and a finite weight in `(0, 1]`.
+and ordered `Evidence`: a sealed hierarchy of signal-occurrence references (validated against the
+active context) and bounded opaque memory references with a `SUPPORTS`/`CONTRADICTS`/`NEUTRAL` relation and a finite weight in `(0, 1]`.
 `HypothesisLimits` bounds candidates and evidence per candidate; `HypothesisSetBuilder` reports
 exhaustion without throwing and merges equivalent propositions deterministically.
 
 The cycle passes each stage the cycle-normalized result of the preceding executed stage through a
 `default` `CognitiveStage.execute` overload, so `EVALUATION` reads hypotheses via
-`ReasoningCognitiveStageResult.hypothesesOf(previousResult)`. `Signal` is unchanged.
+`ReasoningCognitiveStageResult.hypothesesOf(previousResult)`. A result that retains hypotheses
+keeps the cycle running for the next non-Aeon stage even with zero output signals. `Signal` is
+unchanged.
 
 Hypotheses are ephemeral cognitive artifacts of one cycle, not long-term memory, and are never
 persisted by Neuron. Evidence holds only compact ids and never retains signals, graphs, or

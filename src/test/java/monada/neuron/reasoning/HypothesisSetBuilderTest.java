@@ -53,8 +53,8 @@ class HypothesisSetBuilderTest {
         var builder = new HypothesisSetBuilder(new HypothesisLimits(1, 3));
         var seq = builder.propose(new Proposition(0, 1)).getAsInt();
         var support = new SignalEvidence(4, EvidenceRelation.SUPPORTS, 0.9);
-        var contradiction = new MemoryReferenceEvidence(2, EvidenceRelation.CONTRADICTS, 0.4);
-        var neutral = new ActionReferenceEvidence(9, EvidenceRelation.NEUTRAL, 0.1);
+        var contradiction = new MemoryReferenceEvidence("mem-2", EvidenceRelation.CONTRADICTS, 0.4);
+        var neutral = new SignalEvidence(9, EvidenceRelation.NEUTRAL, 0.1);
         builder.addEvidence(seq, support);
         builder.addEvidence(seq, contradiction);
         builder.addEvidence(seq, neutral);

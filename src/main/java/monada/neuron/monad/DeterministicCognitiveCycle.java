@@ -74,7 +74,10 @@ public final class DeterministicCognitiveCycle implements CognitiveCycle {
 
             for (var stage : stages) {
                 currentStage = stage;
-                if (currentSignals.isEmpty()) {
+                var typedHandOff = !(stage instanceof AeonCognitiveStage)
+                        && !stageResults.isEmpty()
+                        && stageResults.getLast().retainsTypedHandOff();
+                if (currentSignals.isEmpty() && !typedHandOff) {
                     return complete(
                             monad,
                             CognitiveCycleTermination.NO_SIGNALS,
@@ -86,7 +89,7 @@ public final class DeterministicCognitiveCycle implements CognitiveCycle {
                 var stageInputs = stage instanceof AeonCognitiveStage
                         ? currentSignals
                         : admitStageInputs(stage.kind(), currentSignals, context);
-                if (stageInputs.isEmpty()) {
+                if (stageInputs.isEmpty() && (!currentSignals.isEmpty() || !typedHandOff)) {
                     return complete(
                             monad,
                             CognitiveCycleTermination.CONTEXT_BUDGET_EXHAUSTED,
@@ -106,6 +109,7 @@ public final class DeterministicCognitiveCycle implements CognitiveCycle {
                                 context),
                         "cognitive stage result must not be null");
                 var candidateOutputs = validateStageResult(stage, stageResult);
+                stageResult.validateProvenance(context);
                 if (!context.isActive()) {
                     throw new IllegalStateException("cognitive stages must leave the context active");
                 }

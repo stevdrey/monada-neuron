@@ -25,8 +25,8 @@ The `monada.neuron.reasoning` package defines immutable records and one sealed h
 - `Proposition(domain, code)`: an opaque modality-neutral symbolic statement. Equal propositions are
   equivalent claims, and one set holds at most one hypothesis per proposition.
 - `Evidence` (sealed): `SignalEvidence` references a cycle-local signal occurrence sequence from
-  `CognitiveContext`; `MemoryReferenceEvidence` and `ActionReferenceEvidence` carry opaque `long`
-  references. Each has an `EvidenceRelation` (`SUPPORTS`, `CONTRADICTS`, `NEUTRAL`) and a finite
+  `CognitiveContext`, which the cycle validates against the accepted occurrences; `MemoryReferenceEvidence` carries the opaque, non-blank, length-bounded `String`
+  that `ResonanceMemoryResult.reference()` already defines. Each has an `EvidenceRelation` (`SUPPORTS`, `CONTRADICTS`, `NEUTRAL`) and a finite
   weight in `(0, 1]`. Evidence never retains signals, graphs, or provider objects.
 - `HypothesisLimits(maxCandidates, maxEvidencePerCandidate)`: explicit capacities, separate from
   `CognitiveBudget` so existing budget call sites are unaffected.
@@ -44,6 +44,15 @@ The `monada.neuron.reasoning` package defines immutable records and one sealed h
 existing method, so current stages are unchanged. `DeterministicCognitiveCycle` passes the previous
 stage's normalized result (empty for the first stage). `EVALUATION` reads hypotheses with
 `ReasoningCognitiveStageResult.hypothesesOf(previousResult)`.
+
+An action-outcome evidence variant is deferred: `ActionOutcome` exposes no identifier and `ACTION`
+runs after `REASONING`, so no resolvable same-cycle reference exists. It can be added to the sealed
+hierarchy once an outcome-reference lifecycle is decided.
+
+A result may declare `retainsTypedHandOff()`. When the previous result retains a typed artifact
+(non-empty hypotheses), the cycle runs the next non-Aeon stage even with zero signals instead of
+ending with `NO_SIGNALS`. The cycle also calls `validateProvenance(context)` after each stage so
+signal evidence pointing at an occurrence the context never accepted fails the cycle.
 
 `Signal` is unchanged. A prior/confidence input is intentionally omitted until an evaluation
 consumer defines its semantics. Scoring, top-K selection, and hypothesis generation are follow-ups.

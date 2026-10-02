@@ -1,5 +1,7 @@
 package monada.neuron.reasoning;
 
+import monada.neuron.context.CognitiveBudget;
+import monada.neuron.context.CognitiveContext;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.monad.CognitiveStageKind;
 import monada.neuron.monad.CognitiveStageResultSnapshot;
@@ -13,9 +15,11 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ReasoningCognitiveStageResultTest {
 
@@ -60,6 +64,36 @@ class ReasoningCognitiveStageResultTest {
                 () -> assertSame(hypotheses, ReasoningCognitiveStageResult.hypothesesOf(Optional.of(reasoning))),
                 () -> assertSame(HypothesisSet.EMPTY, ReasoningCognitiveStageResult.hypothesesOf(Optional.of(other))),
                 () -> assertSame(HypothesisSet.EMPTY, ReasoningCognitiveStageResult.hypothesesOf(Optional.empty())));
+    }
+
+    @Test
+    void provenanceRejectsSignalSequencesTheContextNeverAccepted() {
+        try (var context = new CognitiveContext(new CognitiveBudget(10, 10, 10))) {
+            context.tryRecordCognitiveStageInputSignal(CognitiveStageKind.REASONING, first);
+            assertAll(
+                    () -> withSignalEvidence(0).validateProvenance(context),
+                    () -> assertThrows(IllegalArgumentException.class,
+                            () -> withSignalEvidence(1).validateProvenance(context)),
+                    () -> assertThrows(IllegalArgumentException.class,
+                            () -> withSignalEvidence(Long.MAX_VALUE).validateProvenance(context)));
+        }
+    }
+
+    @Test
+    void retainsTypedHandOffOnlyWithHypotheses() {
+        assertAll(
+                () -> assertTrue(new ReasoningCognitiveStageResult(
+                        CognitiveStageStatus.COMPLETED, List.of(), hypotheses).retainsTypedHandOff()),
+                () -> assertFalse(new ReasoningCognitiveStageResult(
+                        CognitiveStageStatus.COMPLETED, List.of(), HypothesisSet.EMPTY).retainsTypedHandOff()));
+    }
+
+    private static ReasoningCognitiveStageResult withSignalEvidence(long sequence) {
+        var builder = new HypothesisSetBuilder(HypothesisLimits.DEFAULT);
+        var seq = builder.propose(new Proposition(0, 1)).getAsInt();
+        builder.addEvidence(seq, new SignalEvidence(sequence, EvidenceRelation.SUPPORTS, 0.5));
+        return new ReasoningCognitiveStageResult(
+                CognitiveStageStatus.COMPLETED, List.of(), builder.build());
     }
 
     private static HypothesisSet hypothesisSet() {

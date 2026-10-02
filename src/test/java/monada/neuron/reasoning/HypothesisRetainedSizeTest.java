@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.lang.management.ManagementFactory;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class HypothesisRetainedSizeTest {
 
@@ -13,13 +14,24 @@ class HypothesisRetainedSizeTest {
 
     @Test
     void allocationPerHypothesisStaysBoundedAtRepresentativeCounts() {
-        var threads = (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
+        var bean = ManagementFactory.getThreadMXBean();
+        assumeTrue(bean instanceof com.sun.management.ThreadMXBean,
+                "com.sun.management.ThreadMXBean is unavailable");
+        var threads = (com.sun.management.ThreadMXBean) bean;
+        assumeTrue(threads.isThreadAllocatedMemorySupported(),
+                "thread allocated-memory tracking is unsupported");
+        if (!threads.isThreadAllocatedMemoryEnabled()) {
+            threads.setThreadAllocatedMemoryEnabled(true);
+        }
+        assumeTrue(threads.getCurrentThreadAllocatedBytes() >= 0,
+                "thread allocated-memory tracking is disabled");
         for (var count : new int[] {10, 100, 1_000}) {
             build(count); // warm-up
             var before = threads.getCurrentThreadAllocatedBytes();
             var set = build(count);
             var perHypothesis = (threads.getCurrentThreadAllocatedBytes() - before) / count;
             System.out.printf("hypotheses=%d allocatedBytesPerHypothesis=%d%n", count, perHypothesis);
+            assertTrue(before >= 0 && perHypothesis > 0, "allocation was not measured");
             assertTrue(set.size() == count);
             assertTrue(perHypothesis <= MAX_BYTES_PER_HYPOTHESIS,
                     "allocation per hypothesis too high at " + count + ": " + perHypothesis);

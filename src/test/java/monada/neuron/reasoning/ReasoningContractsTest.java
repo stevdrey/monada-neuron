@@ -35,9 +35,7 @@ class ReasoningContractsTest {
                 () -> assertThrows(IllegalArgumentException.class,
                         () -> new SignalEvidence(0, EvidenceRelation.SUPPORTS, weight)),
                 () -> assertThrows(IllegalArgumentException.class,
-                        () -> new MemoryReferenceEvidence(0, EvidenceRelation.CONTRADICTS, weight)),
-                () -> assertThrows(IllegalArgumentException.class,
-                        () -> new ActionReferenceEvidence(0, EvidenceRelation.NEUTRAL, weight)));
+                        () -> new MemoryReferenceEvidence("m", EvidenceRelation.CONTRADICTS, weight)));
     }
 
     @Test
@@ -45,10 +43,23 @@ class ReasoningContractsTest {
         assertAll(
                 () -> assertThrows(IllegalArgumentException.class,
                         () -> new SignalEvidence(-1, EvidenceRelation.SUPPORTS, 0.5)),
-                () -> assertThrows(IllegalArgumentException.class,
-                        () -> new MemoryReferenceEvidence(-1, EvidenceRelation.SUPPORTS, 0.5)),
                 () -> assertThrows(NullPointerException.class,
-                        () -> new ActionReferenceEvidence(1, null, 0.5)));
+                        () -> new SignalEvidence(1, null, 0.5)));
+    }
+
+    @Test
+    void memoryReferenceIsBoundedNonBlankAndStructurallyEqual() {
+        var longest = "x".repeat(MemoryReferenceEvidence.MAX_REFERENCE_LENGTH);
+        assertAll(
+                () -> assertThrows(NullPointerException.class,
+                        () -> new MemoryReferenceEvidence(null, EvidenceRelation.SUPPORTS, 0.5)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new MemoryReferenceEvidence(" ", EvidenceRelation.SUPPORTS, 0.5)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new MemoryReferenceEvidence(longest + "x", EvidenceRelation.SUPPORTS, 0.5)),
+                () -> assertEquals(
+                        new MemoryReferenceEvidence(longest, EvidenceRelation.SUPPORTS, 0.5),
+                        new MemoryReferenceEvidence(longest, EvidenceRelation.SUPPORTS, 0.5)));
     }
 
     @Test

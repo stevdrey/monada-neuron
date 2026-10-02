@@ -1,5 +1,6 @@
 package monada.neuron.reasoning;
 
+import monada.neuron.context.CognitiveContext;
 import monada.neuron.monad.CognitiveStageKind;
 import monada.neuron.monad.CognitiveStageResult;
 import monada.neuron.monad.CognitiveStageStatus;
@@ -47,6 +48,28 @@ public record ReasoningCognitiveStageResult(
                     "admitted output signals must be a prefix of the reasoning outputs");
         }
         return new ReasoningCognitiveStageResult(status, admittedOutputSignals, hypotheses);
+    }
+
+    @Override
+    public boolean retainsTypedHandOff() {
+        return !hypotheses.isEmpty();
+    }
+
+    /** Rejects signal evidence that references an occurrence the context never accepted. */
+    @Override
+    public void validateProvenance(CognitiveContext context) {
+        Objects.requireNonNull(context, "context must not be null");
+        var accepted = context.acceptedSignals();
+        for (var hypothesis : hypotheses.hypotheses()) {
+            for (var item : hypothesis.evidence()) {
+                if (item instanceof SignalEvidence signal && signal.signalSequence() >= accepted) {
+                    throw new IllegalArgumentException(
+                            "signal evidence references unknown occurrence "
+                                    + signal.signalSequence() + " for hypothesis "
+                                    + hypothesis.sequence());
+                }
+            }
+        }
     }
 
     /** Extracts hypotheses from the previous stage result, or an empty set when it has none. */
