@@ -48,15 +48,13 @@ class ReasoningContractsTest {
     }
 
     @Test
-    void memoryReferenceIsBoundedNonBlankAndStructurallyEqual() {
-        var longest = "x".repeat(MemoryReferenceEvidence.MAX_REFERENCE_LENGTH);
+    void memoryReferenceAcceptsAnyNonBlankReferenceAndIsStructurallyEqual() {
+        var longest = "x".repeat(10_000);
         assertAll(
                 () -> assertThrows(NullPointerException.class,
                         () -> new MemoryReferenceEvidence(null, EvidenceRelation.SUPPORTS, 0.5)),
                 () -> assertThrows(IllegalArgumentException.class,
                         () -> new MemoryReferenceEvidence(" ", EvidenceRelation.SUPPORTS, 0.5)),
-                () -> assertThrows(IllegalArgumentException.class,
-                        () -> new MemoryReferenceEvidence(longest + "x", EvidenceRelation.SUPPORTS, 0.5)),
                 () -> assertEquals(
                         new MemoryReferenceEvidence(longest, EvidenceRelation.SUPPORTS, 0.5),
                         new MemoryReferenceEvidence(longest, EvidenceRelation.SUPPORTS, 0.5)));

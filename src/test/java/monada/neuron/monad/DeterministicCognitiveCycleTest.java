@@ -682,6 +682,11 @@ class DeterministicCognitiveCycleTest {
         var evaluationInputs = new ArrayList<Integer>();
         CognitiveStage evaluation = new CognitiveStage() {
             @Override
+            public boolean acceptsTypedOnlyHandOff() {
+                return true;
+            }
+
+            @Override
             public CognitiveStageKind kind() {
                 return CognitiveStageKind.EVALUATION;
             }
@@ -730,6 +735,33 @@ class DeterministicCognitiveCycleTest {
                         List.of(signal(1.0)),
                         new CognitiveBudget(10, 10, 30)));
         assertInstanceOf(IllegalArgumentException.class, failure.getCause());
+    }
+
+    @Test
+    void doesNotRunStageWithoutTypedHandOffOptInWhenOnlyHypothesesRemain() {
+        var builder = new HypothesisSetBuilder(HypothesisLimits.DEFAULT);
+        builder.propose(new Proposition(0, 1));
+        var executed = new AtomicBoolean();
+        CognitiveStage action = new CognitiveStage() {
+            @Override
+            public CognitiveStageKind kind() {
+                return CognitiveStageKind.ACTION;
+            }
+
+            @Override
+            public CognitiveStageResult execute(
+                    PrimaryMonad monad, List<Signal> inputSignals, CognitiveContext context) {
+                executed.set(true);
+                throw new AssertionError("stage requires signals and must not run");
+            }
+        };
+
+        var result = new DeterministicCognitiveCycle(List.of(reasoningStub(builder.build()), action))
+                .execute(new PrimaryMonad(uuid(1)), List.of(signal(1.0)), new CognitiveBudget(10, 10, 30));
+
+        assertAll(
+                () -> assertEquals(CognitiveCycleTermination.NO_SIGNALS, result.termination()),
+                () -> assertFalse(executed.get()));
     }
 
     private CognitiveStage reasoningStub(HypothesisSet hypotheses) {

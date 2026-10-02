@@ -42,4 +42,14 @@ public interface CognitiveStage {
             CognitiveContext context) {
         return execute(monad, inputSignals, context);
     }
+
+    /**
+     * Returns whether this stage can execute with zero input signals when the previous result
+     * retains a typed artifact (see {@link CognitiveStageResult#retainsTypedHandOff()}).
+     *
+     * <p>Stages that require signals keep the default and the cycle ends with {@code NO_SIGNALS}.
+     */
+    default boolean acceptsTypedOnlyHandOff() {
+        return false;
+    }
 }

@@ -75,6 +75,7 @@ public final class DeterministicCognitiveCycle implements CognitiveCycle {
             for (var stage : stages) {
                 currentStage = stage;
                 var typedHandOff = !(stage instanceof AeonCognitiveStage)
+                        && stage.acceptsTypedOnlyHandOff()
                         && !stageResults.isEmpty()
                         && stageResults.getLast().retainsTypedHandOff();
                 if (currentSignals.isEmpty() && !typedHandOff) {
