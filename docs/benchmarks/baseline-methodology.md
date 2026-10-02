@@ -364,7 +364,7 @@ Selection only (µs/op):
 | 10,000 | 10 | 20.1 | 1,795 | 89.2x |
 | 10,000 | 100 | 55.8 | 1,678 | 30.1x |
 
-End-to-end `evaluate` (µs/op and steady-state allocation):
+End-to-end `evaluate` with evidence-only scoring (µs/op and steady-state allocation):
 
 | N | K | Heap (µs) | Heap alloc (B/op) | Full sort (µs) | Full sort alloc (B/op) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -381,7 +381,7 @@ End-to-end `evaluate` (µs/op and steady-state allocation):
 | 10,000 | 10 | 536.6 | 81,099 | 2,604 | 331,209 |
 | 10,000 | 100 | 575.3 | 90,628 | 2,558 | 340,760 |
 
-Scoring pass only (`K = 0`):
+Scoring pass only (`K = 0`, evidence-only scoring):
 
 | N | Scoring (µs) | Per candidate (ns) | Alloc (B/op) |
 | ---: | ---: | ---: | ---: |
@@ -393,7 +393,11 @@ Scoring pass only (`K = 0`):
 Retained size is modeled separately by `HypothesisEvaluationFootprintTest`: 24 B plus a list plus
 88 B per selected candidate (136 B at K = 1, 984 B at K = 10), independent of N; the evaluated set is
 shared by reference. Transient allocation is about 8 B per candidate (the score array) plus the
-K-sized result, which is why the scoring pass allocates no objects per candidate.
+K-sized result, which is why the scoring pass allocates no objects per candidate. All figures in this
+section use evidence-only scoring (`HypothesisScoringConfig.NONE`). With a resonance component the
+policy also keeps an N-sized `double[]` of resonance contributions, roughly doubling the numeric
+storage to about 16 B per candidate (161,112 B at N = 10,000, K = 10, measured by
+`HypothesisEvaluationFootprintTest`; the JMH benchmark does not cover that configuration).
 
 **Decision.** Ship `BoundedHeapSelector` as the default and keep `FullSortSelector` as the semantic
 oracle and benchmark baseline. The heap was never slower in any measured cell: selection was 1.6x to

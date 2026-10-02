@@ -30,8 +30,9 @@ import java.util.concurrent.TimeUnit;
  * only on {@code N} ({@link ScoringState}). The {@code select*} benchmarks run the selectors over a
  * pre-generated score array and the {@code evaluate*} benchmarks measure the complete reference
  * policy with each selector; both depend on {@code N} and {@code K} ({@link SelectionState}). When
- * {@code K >= N} both selectors rank every candidate. Run with {@code -prof gc} for allocation per
- * operation.
+ * {@code K >= N} both selectors rank every candidate. All policies use evidence-only scoring
+ * ({@code HypothesisScoringConfig.NONE}); a resonance component adds a second N-sized array. Run with
+ * {@code -prof gc} for allocation per operation.
  */
 @BenchmarkMode({Mode.Throughput, Mode.AverageTime})
 @OutputTimeUnit(TimeUnit.MICROSECONDS)

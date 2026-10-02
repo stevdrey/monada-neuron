@@ -71,7 +71,9 @@ sort, boxed, simple). The reference policy uses the bounded heap by default, cho
 below. `FullSortSelector` stays as the semantic oracle and benchmark baseline; tests assert both
 produce identical output on tie-heavy random inputs that include `-0.0`.
 
-**Allocation shape.** Scoring ranks every candidate without allocating objects (one `double[]`). A
+**Allocation shape.** Scoring ranks every candidate without allocating per-candidate objects. It
+needs one `double[]` of scores (8 B per candidate) and, only when a resonance component is configured,
+a second `double[]` of resonance contributions (16 B per candidate in total). A
 single per-call `EvidenceAccumulator` sums the evidence and holds the score formula; it scores every
 candidate and then builds the `HypothesisScoreBreakdown` of the selected ones only, so ranking and
 explanation cannot diverge. `HypothesisEvaluation` validates uniqueness pairwise for up to 16
@@ -117,9 +119,11 @@ bus. A separate typed result avoids all three.
   list plus 88 B per selected candidate (24 B reference record, 64 B breakdown): 136 B at K = 1 and
   984 B at K = 10, independent of N. The evaluated `HypothesisSet` is shared by reference. This is
   an estimate (`HypothesisEvaluationFootprintModel`), not a measurement.
-- **Transient allocation (measured with `-prof gc`).** About 8 B per candidate for the score array
-  plus a K-sized result: 80,243 B/op at N = 10,000 and K = 1, and 81,099 B/op at K = 10. The full-sort
-  strategy allocates about 330 KB/op at N = 10,000 (4.1x more).
+- **Transient allocation (measured with `-prof gc`, evidence-only scoring).** About 8 B per candidate
+  for the score array plus a K-sized result: 80,243 B/op at N = 10,000 and K = 1, and 81,099 B/op at
+  K = 10. The full-sort strategy allocates about 330 KB/op at N = 10,000 (4.1x more). With a resonance
+  component the policy keeps a second N-sized `double[]`, so it costs about 16 B per candidate
+  (161,112 B at N = 10,000, K = 10, measured by `HypothesisEvaluationFootprintTest`, not by JMH).
 - Equal inputs give equal results, which keeps whole-cycle replay comparable.
 - The formula is a research baseline: it treats evidence as independent additive mass, ignores
   provenance and recency, and is not a calibrated probability.

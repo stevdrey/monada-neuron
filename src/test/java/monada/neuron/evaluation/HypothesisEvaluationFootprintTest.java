@@ -46,6 +46,19 @@ class HypothesisEvaluationFootprintTest {
 
     @Test
     void transientAllocationScalesWithCandidatesOnlyByTheScoreArray() {
+        assertBoundedAllocation(policy, 8, "evidence-only");
+    }
+
+    @Test
+    void transientAllocationWithResonanceAddsOneMoreNumericArray() {
+        var withResonance = new ReferenceHypothesisEvaluationPolicy(
+                new HypothesisScoringConfig(hypothesis -> 0.5, 0.5), new BoundedHeapSelector());
+        // scores[] and resonance[]: 16 B per candidate instead of 8 B.
+        assertBoundedAllocation(withResonance, 16, "resonance-enabled");
+    }
+
+    private static void assertBoundedAllocation(
+            ReferenceHypothesisEvaluationPolicy subject, long bytesPerCandidate, String label) {
         var bean = ManagementFactory.getThreadMXBean();
         assumeTrue(bean instanceof ThreadMXBean,
                 "com.sun.management.ThreadMXBean is unavailable");
@@ -61,18 +74,18 @@ class HypothesisEvaluationFootprintTest {
         for (var count : new int[] {100, 1_000, 10_000}) {
             var set = set(count);
             for (var warm = 0; warm < 3; warm++) {
-                policy.evaluate(set, k);
+                subject.evaluate(set, k);
             }
             var before = threads.getCurrentThreadAllocatedBytes();
-            var evaluation = policy.evaluate(set, k);
+            var evaluation = subject.evaluate(set, k);
             var allocated = threads.getCurrentThreadAllocatedBytes() - before;
-            System.out.printf("candidates=%d K=%d allocatedBytes=%d perCandidate=%.1f%n",
-                    count, k, allocated, (double) allocated / count);
+            System.out.printf("%s candidates=%d K=%d allocatedBytes=%d perCandidate=%.1f%n",
+                    label, count, k, allocated, (double) allocated / count);
             assertEquals(k, evaluation.selected().size());
-            // double[] scores (8 B per candidate) plus a bounded, K-sized result; slack for tooling.
-            var bound = 8L * count + 256L * k + 1_024;
+            // Numeric arrays (bytesPerCandidate per candidate) plus a bounded, K-sized result; slack for tooling.
+            var bound = bytesPerCandidate * count + 256L * k + 1_024;
             assertTrue(allocated > 0 && allocated <= bound,
-                    "allocation not bounded at N=" + count + ": " + allocated + " > " + bound);
+                    label + " allocation not bounded at N=" + count + ": " + allocated + " > " + bound);
         }
     }
 
