@@ -1,5 +1,6 @@
 package monada.neuron.monad;
 
+import monada.neuron.context.CognitiveContext;
 import monada.neuron.signal.Signal;
 
 import java.util.List;
@@ -25,5 +26,21 @@ public interface CognitiveStageResult {
      */
     default CognitiveStageResult withAdmittedOutputSignals(List<Signal> admittedOutputSignals) {
         return new CognitiveStageResultSnapshot(kind(), status(), admittedOutputSignals);
+    }
+
+    /**
+     * Returns whether this result retains a typed artifact for the next stage even when it offers
+     * no output signals, so the cycle must not end for lack of signals.
+     */
+    default boolean retainsTypedHandOff() {
+        return false;
+    }
+
+    /**
+     * Validates provenance carried by this result against the active cycle context.
+     *
+     * @throws IllegalArgumentException when the result references data the context never accepted
+     */
+    default void validateProvenance(CognitiveContext context) {
     }
 }

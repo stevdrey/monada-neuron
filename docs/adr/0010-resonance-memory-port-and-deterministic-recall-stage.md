@@ -63,4 +63,6 @@ Implement a production adapter only after selecting its concrete transport and p
 compatibility metadata it requires. Keep any blocking or virtual-thread policy in that adapter rather
 than in this core contract.
 
-The embedded production adapter is recorded in ADR 0018.
+The embedded production adapter is recorded in ADR 0018. Result references are capped at
+`ResonanceMemoryResult.MAX_REFERENCE_LENGTH` (128) so that provenance, such as hypothesis evidence
+(ADR 0019), can cite them without retaining large payloads.

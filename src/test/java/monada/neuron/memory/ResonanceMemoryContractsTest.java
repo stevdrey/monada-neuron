@@ -100,6 +100,17 @@ class ResonanceMemoryContractsTest {
                 () -> assertEquals(List.of(fixtureRequest, defaultRequest), adapter.receivedRequests()));
     }
 
+    @Test
+    void boundsOpaqueReferenceLength() {
+        var maximum = "x".repeat(ResonanceMemoryResult.MAX_REFERENCE_LENGTH);
+        var adapterReference = "rs-" + "0123456789abcdef".repeat(2);
+        assertAll(
+                () -> assertEquals(adapterReference, result(adapterReference, 1.0, 0.0).reference()),
+                () -> assertEquals(maximum, result(maximum, 1.0, 0.0).reference()),
+                () -> assertThrows(IllegalArgumentException.class, () -> result(" ", 1.0, 0.0)),
+                () -> assertThrows(IllegalArgumentException.class, () -> result(maximum + "x", 1.0, 0.0)));
+    }
+
     private ResonanceMemoryResult result(String reference, double amplitude, double score) {
         return new ResonanceMemoryResult(reference, signal(amplitude), score);
     }
