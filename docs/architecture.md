@@ -303,6 +303,14 @@ matches, `UNAVAILABLE`, `TIMED_OUT`, and expected `FAILED` responses all preserv
 `ResonanceMemoryStageResult`, while unexpected adapter failures follow normal cycle-failure
 semantics.
 
+`EVALUATION` can use `HypothesisEvaluationCognitiveStage`, backed by a Neuron-owned
+`HypothesisEvaluationPolicy`. It scores the hypotheses of the preceding `REASONING` result and
+selects a bounded, ranked subset; the reference policy is deterministic, side-effect free, and
+documented in ADR 0020. The typed `EvaluationCognitiveStageResult` keeps the evaluated set and the
+ranked `HypothesisEvaluation` with per-candidate score breakdowns, and passes input signals through
+so later stages still run. Evaluation observes hypotheses only; Node mutation remains the
+responsibility of `ADAPTATION`, and memory ranking remains with the Resonance Store.
+
 `ADAPTATION` can use `AdaptationCognitiveStage`, backed by an `AdaptationPolicy`. It evaluates
 incoming feedback against eligible target Nodes and applies bounded in-place state and energy
 transitions. `NoOpAdaptationPolicy` provides an immutable reference baseline where `adapted = false`,
@@ -365,8 +373,25 @@ unchanged.
 
 Hypotheses are ephemeral cognitive artifacts of one cycle, not long-term memory, and are never
 persisted by Neuron. Evidence holds only compact ids and never retains signals, graphs, or
-Resonance Store/provider objects. Scoring and selection are not part of this boundary. See
-ADR 0019.
+Resonance Store/provider objects. Scoring and selection are not part of this boundary; they live
+in the evaluation policy below. See ADR 0019.
+
+### Hypothesis Evaluation Policy
+
+`HypothesisEvaluationPolicy` is the Neuron-owned contract that turns a `HypothesisSet` into a
+ranked, bounded `HypothesisEvaluation`. `ReferenceHypothesisEvaluationPolicy` is the semantic oracle
+for future learned or model-backed evaluators. With `S` and `C` the summed weights of supporting
+and contradicting evidence and `R` an optional resonance contribution:
+
+```text
+score = (S + R) / (S + R + C + 1)            score in [0, 1)
+```
+
+Neutral evidence is reported but not scored. Ranking is score descending, then lower
+`Hypothesis.sequence()`. Top-K selection uses a primitive bounded heap (`BoundedHeapSelector`,
+O(N log K)); `FullSortSelector` remains as the oracle. Resonance is an optional, support-only
+component supplied by an adapter, and cognitive evaluation of hypotheses is distinct from memory
+retrieval ranking. See ADR 0020.
 
 ## Target Module Boundaries
 

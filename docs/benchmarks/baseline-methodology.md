@@ -104,6 +104,10 @@ All synthetic workloads are generated deterministically from configurable seeds 
    - Covers construction/population, sequential reads, random reads against a precomputed schedule, and bounded updates. The baseline additionally measures CSR plus state snapshot compilation as an integration cost only.
    - Propagation stays on the existing reference or explicit CSR paths; no benchmark routes signals through FFM state.
 
+7. **Hypothesis Evaluation (Issue #33)**:
+   - Scores deterministic hypothesis sets (4 evidence entries per candidate) and compares bounded-heap against full-sort top-K selection at 10, 100, 1,000, and 10,000 candidates with K = 1, 10, 100.
+   - Separates the scoring pass (`scoreOnly`), selection over a pre-generated score array, and the end-to-end reference policy.
+
 ## Verification & Benchmark Commands
 
 ### Run Full Baseline Suite
@@ -121,7 +125,7 @@ Options:
 
 ### Run JMH Microbenchmarks
 
-Runs JMH microbenchmarks for hot primitives (`ScalarResonanceBenchmark`, `SignalPropagationBenchmark`, `AeonCoordinationBenchmark`, `CognitiveCycleBenchmark`, `AdaptationPolicyBenchmark`):
+Runs JMH microbenchmarks for hot primitives (`ScalarResonanceBenchmark`, `SignalPropagationBenchmark`, `AeonCoordinationBenchmark`, `CognitiveCycleBenchmark`, `AdaptationPolicyBenchmark`, `HypothesisEvaluationBenchmark`):
 
 ```bash
 ./gradlew :monada-neuron-evaluation:jmh
@@ -322,6 +326,85 @@ The review-before-merge study was executed on Linux x86_64 with Java 26 (Temurin
 | `benchmarkSelectingVectorBatch` | 1,000 pairs | 12,211.5 ns | 0.086 B/op | Selecting SIMD adapter (6.5x faster than scalar) |
 
 Comparing direct and selecting variants demonstrates that adapter dispatch overhead is negligible (~2.6 ns at 4 pairs, undetectable at scale) and introduces zero application-level heap allocation in the steady-state evaluation hot path. The 0.001–0.005 B/op telemetry at small scales and 0.086 B/op at 1,000 pairs reflect amortized JVM and JMH harness background profiling noise across measurement intervals rather than application object allocations, accompanied by zero GC pauses (`gc.count ≈ 0`). In the control plane, pre-allocated metadata and immutable copy optimizations bound decision latency to 12–77 ns across all components.
+
+### Issue #33 Hypothesis Evaluation: Scoring and Top-K Selection
+
+`HypothesisEvaluationBenchmark` answers one question: at what candidate count `N` and selection bound
+`K` does a bounded heap beat a full sort, and what does scoring cost? The reference policy and
+formula are defined in ADR 0020. `scoreOnly` evaluates with `K = 0`, `select*` runs the selectors over
+a pre-generated score array, and `evaluate*` runs the complete reference policy with each selector.
+
+```bash
+./gradlew :monada-neuron-evaluation:jmh \
+  -PjmhArgs="-bm avgt -f 1 -wi 2 -i 3 -r 1s -prof gc -rf json -rff /tmp/hyp-eval.json HypothesisEvaluation"
+```
+
+Environment: Linux x86_64, Intel Core i7-6500U (4 CPUs), Zulu 27+35, G1. Workload: seed 42, four
+evidence entries per candidate (60% supporting, 25% contradicting, 15% neutral, weights on an eighth
+grid). Correctness check: `HypothesisSelectorTest` asserts identical output from both selectors on
+tie-heavy random inputs, and `ReferenceHypothesisEvaluationPolicyTest` asserts equal evaluations
+for both strategies.
+
+Selection only (µs/op):
+
+| N | K | Bounded heap | Full sort | Speedup |
+| ---: | ---: | ---: | ---: | ---: |
+| 10 | 1 | 0.021 | 0.194 | 9.2x |
+| 10 | 10 | 0.098 | 0.199 | 2.0x |
+| 10 | 100 | 0.093 | 0.251 | 2.7x |
+| 100 | 1 | 0.141 | 4.536 | 32.3x |
+| 100 | 10 | 0.404 | 4.540 | 11.2x |
+| 100 | 100 | 2.289 | 4.613 | 2.0x |
+| 1,000 | 1 | 1.165 | 153.7 | 131.9x |
+| 1,000 | 10 | 2.329 | 153.5 | 65.9x |
+| 1,000 | 100 | 9.740 | 152.9 | 15.7x |
+| 10,000 | 1 | 13.1 | 1,735 | 132.6x |
+| 10,000 | 10 | 18.9 | 1,744 | 92.1x |
+| 10,000 | 100 | 38.4 | 1,743 | 45.4x |
+
+End-to-end `evaluate` (µs/op and steady-state allocation):
+
+| N | K | Heap (µs) | Heap alloc (B/op) | Full sort (µs) | Full sort alloc (B/op) |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 10 | 1 | 0.225 | 288 | 0.383 | 344 |
+| 10 | 10 | 0.658 | 1,184 | 0.766 | 1,240 |
+| 10 | 100 | 0.687 | 1,184 | 0.754 | 1,240 |
+| 100 | 1 | 1.523 | 1,008 | 6.739 | 1,768 |
+| 100 | 10 | 2.117 | 1,904 | 7.003 | 2,664 |
+| 100 | 100 | 10.3 | 10,544 | 11.6 | 11,304 |
+| 1,000 | 1 | 36.1 | 8,208 | 220.6 | 29,433 |
+| 1,000 | 10 | 41.5 | 9,080 | 224.5 | 30,281 |
+| 1,000 | 100 | 58.8 | 17,720 | 224.1 | 38,945 |
+| 10,000 | 1 | 559.3 | 80,212 | 2,601 | 330,321 |
+| 10,000 | 10 | 552.0 | 81,108 | 2,613 | 331,217 |
+| 10,000 | 100 | 637.6 | 89,724 | 2,651 | 339,857 |
+
+Scoring pass only (`K = 0`):
+
+| N | Scoring (µs) | Per candidate (ns) | Alloc (B/op) |
+| ---: | ---: | ---: | ---: |
+| 10 | 0.142 | 14 | 120 |
+| 100 | 1.378 | 14 | 840 |
+| 1,000 | 24.0 | 24 | 8,080 |
+| 10,000 | 570.4 | 57 | 80,084 |
+
+Retained size is modeled separately by `HypothesisEvaluationFootprintTest`: 24 B plus a list plus
+88 B per selected candidate (136 B at K = 1, 984 B at K = 10), independent of N; the evaluated set is
+shared by reference. Transient allocation is about 8 B per candidate (the score array) plus the
+K-sized result, which is why the scoring pass allocates no objects per candidate.
+
+**Decision.** Ship `BoundedHeapSelector` as the default and keep `FullSortSelector` as the semantic
+oracle and benchmark baseline. The heap was never slower in any measured cell, with 2x to 133x lower
+selection latency and about 4x lower allocation at N = 10,000. No crossover was observed, so no
+small-N fallback to sorting is introduced. At N = 10,000 the scoring pass dominates end-to-end cost;
+the rise from 14 to 57 ns per candidate is consistent with the object graph outgrowing cache but was
+not profiled, so no specialized layout is proposed.
+
+**Validity.** This is an exploratory run, not a gate: one fork and three iterations on a laptop CPU,
+and several rows (for example N = 100 end-to-end and N = 10,000 scoring) carry more than 15% relative
+error. The N = 10 end-to-end rows were rerun with `-f 3 -wi 3 -i 5` because the first run was unstable
+(errors above the score). Conclusions rely only on differences much larger than the reported error;
+near-equal cells (K >= N) are not claimed as heap wins.
 
 ### Run Unit and Harness Tests
 
