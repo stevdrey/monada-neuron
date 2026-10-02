@@ -404,7 +404,9 @@ not profiled, so no specialized layout is proposed.
 and several rows (for example N = 100 end-to-end and N = 10,000 scoring) carry more than 15% relative
 error. The N = 10 end-to-end rows were rerun with `-f 3 -wi 3 -i 5` because the first run was unstable
 (errors above the score). Conclusions rely only on differences much larger than the reported error;
-near-equal cells (K >= N) are not claimed as heap wins.
+near-equal cells (K >= N) are not claimed as heap wins. After review, the heap comparison was changed
+to `Double.compare` (to match the full-sort oracle on signed zeros) and re-measured with `-f 3 -wi 3 -i 5`
+at K = 10: 2.18 ± 0.15 µs (N = 1,000) and 14.7 ± 0.9 µs (N = 10,000), with no regression.
 
 ### Run Unit and Harness Tests
 

@@ -86,6 +86,33 @@ class HypothesisEvaluationContractsTest {
     }
 
     @Test
+    void evaluationRejectsDuplicateSequencesEvenWhenNotAdjacent() {
+        var adjacent = List.of(
+                new EvaluatedHypothesis(1, breakdown(0.5)),
+                new EvaluatedHypothesis(1, breakdown(0.5)));
+        var separated = List.of(
+                new EvaluatedHypothesis(0, breakdown(0.9)),
+                new EvaluatedHypothesis(1, breakdown(0.5)),
+                new EvaluatedHypothesis(0, breakdown(0.1)));
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class, () -> new HypothesisEvaluation(adjacent, 2, 2)),
+                () -> assertThrows(IllegalArgumentException.class, () -> new HypothesisEvaluation(separated, 3, 3)));
+    }
+
+    @Test
+    void evaluationRankValidationOrdersPositiveZeroBeforeNegativeZero() {
+        var positiveFirst = List.of(
+                new EvaluatedHypothesis(1, breakdown(0.0)),
+                new EvaluatedHypothesis(0, breakdown(-0.0)));
+        var negativeFirst = List.of(
+                new EvaluatedHypothesis(0, breakdown(-0.0)),
+                new EvaluatedHypothesis(1, breakdown(0.0)));
+        assertAll(
+                () -> assertDoesNotThrow(() -> new HypothesisEvaluation(positiveFirst, 2, 2)),
+                () -> assertThrows(IllegalArgumentException.class, () -> new HypothesisEvaluation(negativeFirst, 2, 2)));
+    }
+
+    @Test
     void evaluationRejectsInconsistentCounts() {
         var one = List.of(new EvaluatedHypothesis(0, breakdown(0.5)));
         var outOfRange = List.of(new EvaluatedHypothesis(5, breakdown(0.5)));

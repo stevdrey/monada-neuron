@@ -16,9 +16,9 @@ import java.util.Objects;
  * score = (S + R) / (S + R + C + 1)          score in [0, 1)
  * }</pre>
  *
- * <p>The constant 1 acts as one unit of ignorance: a candidate with no evidence scores 0, thin
- * evidence scores low, and contradiction always lowers the score. Neutral evidence is counted and
- * reported but does not change the score. Weights are summed in evidence-list order, so results are
+ * <p>The constant 1 acts as one unit of ignorance: a candidate with no evidence and no resonance
+ * contribution scores 0, thin evidence scores low, and contradiction always lowers the score.
+ * Neutral evidence is counted and reported but does not change the score. Weights are summed in evidence-list order, so results are
  * bit-identical for identical inputs. Ties rank the lower {@code Hypothesis.sequence()} first.
  *
  * <p>Limitations: evidence is treated as independent, additive mass; the formula is a research

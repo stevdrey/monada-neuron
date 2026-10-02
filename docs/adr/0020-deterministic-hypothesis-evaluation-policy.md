@@ -39,9 +39,9 @@ and `R = resonanceWeight * resonance(h)` (zero by default):
 score = (S + R) / (S + R + C + 1)            score in [0, 1)
 ```
 
-The constant 1 is one unit of ignorance. A candidate with no evidence scores 0, thin evidence scores
-low (one supporting entry of weight 1 gives 0.5), and contradiction always lowers the score.
-`NEUTRAL` evidence is counted and reported but does not change the score. Weights are summed in
+The constant 1 is one unit of ignorance. A candidate with no evidence and no resonance contribution
+scores 0, thin evidence scores low (one supporting entry of weight 1 gives 0.5), and contradiction
+always lowers the score. `NEUTRAL` evidence is counted and reported but does not change the score. Weights are summed in
 evidence-list order with primitive `double` accumulation, so results are bit-identical on replay.
 Supporting and contradicting evidence stay separate in the breakdown rather than collapsing into one
 opaque confidence value.
@@ -54,8 +54,9 @@ supporting entry. Component output must be finite and within `[0, 1]`; anything 
 `IllegalArgumentException` instead of being clamped. The core defines no memory or vendor type: deriving the
 value from the Resonance Store belongs behind an adapter, and the evaluator never ranks memory.
 
-**Tie rule and selection.** Candidates rank by score descending, then by lower
-`Hypothesis.sequence()` (insertion order). `HypothesisSelector` ranks a `double[]` of scores indexed
+**Tie rule and selection.** Candidates rank by score descending under `Double.compare` (so `+0.0`
+ranks before `-0.0`; the policy itself never produces `-0.0`), then by lower
+`Hypothesis.sequence()` (insertion order). A `HypothesisEvaluation` lists each candidate at most once. `HypothesisSelector` ranks a `double[]` of scores indexed
 by sequence. Two implementations exist: `BoundedHeapSelector` (primitive int min-heap, O(N log K),
 K ints of working memory, no boxing) and `FullSortSelector` (full sort, boxed, simple). The reference
 policy uses the bounded heap by default, chosen from the evidence below. `FullSortSelector` stays as
@@ -139,7 +140,9 @@ specialized layout is not justified by these measurements.
 
 These runs are exploratory, not a gate: one fork and three iterations on a laptop CPU, with several
 rows above 15% relative error. Conclusions rely only on differences much larger than the reported
-error. The N = 10 end-to-end rows were repeated with three forks because the first run was unstable.
+error. The N = 10 end-to-end rows were repeated with three forks because the first run was unstable. After
+switching the heap to `Double.compare` during review, heap selection was re-measured with three forks
+at K = 10: 2.18 ± 0.15 µs at N = 1,000 and 14.7 ± 0.9 µs at N = 10,000, with no regression.
 
 ## Follow-up Work
 

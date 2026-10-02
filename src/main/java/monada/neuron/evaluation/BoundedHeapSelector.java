@@ -4,7 +4,9 @@ import java.util.Objects;
 
 /**
  * Selector that keeps the best K candidates in a primitive min-heap: O(N log K), K ints of
- * working memory, no boxing. The heap root is always the worst retained candidate.
+ * working memory, no boxing. The heap root is always the worst retained candidate. Scores are
+ * ordered with {@link Double#compare}, exactly like {@link FullSortSelector}, so {@code +0.0}
+ * ranks before {@code -0.0}.
  */
 public final class BoundedHeapSelector implements HypothesisSelector {
 
@@ -25,7 +27,7 @@ public final class BoundedHeapSelector implements HypothesisSelector {
                 heap[count] = i;
                 siftUp(heap, scores, count);
                 count++;
-            } else if (scores[i] > scores[heap[0]]) {
+            } else if (Double.compare(scores[i], scores[heap[0]]) > 0) {
                 // Indices ascend, so an equal score is always worse than the root: strict > suffices.
                 heap[0] = i;
                 siftDown(heap, scores, 0, size);
@@ -73,9 +75,8 @@ public final class BoundedHeapSelector implements HypothesisSelector {
 
     /** Returns whether candidate {@code a} ranks after {@code b}. */
     private boolean worse(double[] scores, int a, int b) {
-        var scoreA = scores[a];
-        var scoreB = scores[b];
-        return scoreA < scoreB || (scoreA == scoreB && a > b);
+        var byScore = Double.compare(scores[a], scores[b]);
+        return byScore < 0 || (byScore == 0 && a > b);
     }
 
     private void swap(int[] heap, int first, int second) {

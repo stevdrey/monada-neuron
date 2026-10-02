@@ -64,6 +64,15 @@ class HypothesisSelectorTest {
         assertArrayEquals(copy, scores);
     }
 
+    @ParameterizedTest
+    @MethodSource("selectors")
+    void ranksPositiveZeroBeforeNegativeZeroLikeDoubleCompare(HypothesisSelector selector) {
+        assertArrayEquals(new int[] {1, 0}, selector.select(new double[] {-0.0, 0.0}, 2));
+        assertArrayEquals(new int[] {0, 1}, selector.select(new double[] {0.0, -0.0}, 2));
+        assertArrayEquals(new int[] {1}, selector.select(new double[] {-0.0, 0.0}, 1));
+        assertArrayEquals(new int[] {0, 2, 1}, selector.select(new double[] {0.0, -0.0, 0.0}, 3));
+    }
+
     @Test
     void boundedHeapEqualsFullSortOnTieHeavyRandomInputs() {
         var heap = new BoundedHeapSelector();
@@ -74,7 +83,8 @@ class HypothesisSelectorTest {
             var scores = new double[n];
             for (var i = 0; i < n; i++) {
                 // Few distinct values force many exact ties.
-                scores[i] = random.nextInt(6) / 8.0;
+                var bucket = random.nextInt(7);
+                scores[i] = bucket == 6 ? -0.0 : bucket / 8.0;
             }
             for (var k : new int[] {0, 1, 2, 5, n / 2, Math.max(0, n - 1), n, n + 3}) {
                 assertArrayEquals(sort.select(scores, k), heap.select(scores, k),
