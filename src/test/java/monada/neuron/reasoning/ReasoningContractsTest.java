@@ -1,5 +1,6 @@
 package monada.neuron.reasoning;
 
+import monada.neuron.memory.ResonanceMemoryResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -48,13 +49,18 @@ class ReasoningContractsTest {
     }
 
     @Test
-    void memoryReferenceAcceptsAnyNonBlankReferenceAndIsStructurallyEqual() {
-        var longest = "x".repeat(10_000);
+    void memoryReferenceUsesTheSharedBoundedContract() {
+        var adapterReference = "rs-" + "0123456789abcdef".repeat(2);
+        var longest = "x".repeat(ResonanceMemoryResult.MAX_REFERENCE_LENGTH);
         assertAll(
                 () -> assertThrows(NullPointerException.class,
                         () -> new MemoryReferenceEvidence(null, EvidenceRelation.SUPPORTS, 0.5)),
                 () -> assertThrows(IllegalArgumentException.class,
                         () -> new MemoryReferenceEvidence(" ", EvidenceRelation.SUPPORTS, 0.5)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new MemoryReferenceEvidence(longest + "x", EvidenceRelation.SUPPORTS, 0.5)),
+                () -> assertEquals(adapterReference,
+                        new MemoryReferenceEvidence(adapterReference, EvidenceRelation.SUPPORTS, 0.5).reference()),
                 () -> assertEquals(
                         new MemoryReferenceEvidence(longest, EvidenceRelation.SUPPORTS, 0.5),
                         new MemoryReferenceEvidence(longest, EvidenceRelation.SUPPORTS, 0.5)));

@@ -7,13 +7,17 @@ import java.lang.management.ManagementFactory;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-class HypothesisRetainedSizeTest {
+/**
+ * Measures transient allocation (builder growth plus final snapshot). This is not retained size;
+ * see {@link HypothesisFootprintModelTest} for the retained-footprint model.
+ */
+class HypothesisAllocationTest {
 
     private static final int EVIDENCE_PER_HYPOTHESIS = 4;
     private static final long MAX_BYTES_PER_HYPOTHESIS = 1_024;
 
     @Test
-    void allocationPerHypothesisStaysBoundedAtRepresentativeCounts() {
+    void transientAllocationPerHypothesisStaysBoundedAtRepresentativeCounts() {
         var bean = ManagementFactory.getThreadMXBean();
         assumeTrue(bean instanceof com.sun.management.ThreadMXBean,
                 "com.sun.management.ThreadMXBean is unavailable");
@@ -34,7 +38,7 @@ class HypothesisRetainedSizeTest {
             assertTrue(before >= 0 && perHypothesis > 0, "allocation was not measured");
             assertTrue(set.size() == count);
             assertTrue(perHypothesis <= MAX_BYTES_PER_HYPOTHESIS,
-                    "allocation per hypothesis too high at " + count + ": " + perHypothesis);
+                    "transient allocation per hypothesis too high at " + count + ": " + perHypothesis);
         }
     }
 

@@ -351,7 +351,7 @@ or external payloads.
 `ReasoningCognitiveStageResult` that retains an immutable `HypothesisSet` next to its normal output
 signals. `Hypothesis` records carry a cycle-local `sequence` (no UUID), an opaque `Proposition`,
 and ordered `Evidence`: a sealed hierarchy of signal-occurrence references (validated against the
-active context) and opaque memory references with a `SUPPORTS`/`CONTRADICTS`/`NEUTRAL` relation and a finite weight in `(0, 1]`.
+active context) and opaque memory references (bounded by the port's shared `MAX_REFERENCE_LENGTH`) with a `SUPPORTS`/`CONTRADICTS`/`NEUTRAL` relation and a finite weight in `(0, 1]`.
 `HypothesisLimits` bounds candidates and evidence per candidate; `HypothesisSetBuilder` reports
 exhaustion without throwing and merges equivalent propositions deterministically.
 

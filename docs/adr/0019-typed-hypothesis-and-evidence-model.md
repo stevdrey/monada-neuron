@@ -25,9 +25,10 @@ The `monada.neuron.reasoning` package defines immutable records and one sealed h
 - `Proposition(domain, code)`: an opaque modality-neutral symbolic statement. Equal propositions are
   equivalent claims, and one set holds at most one hypothesis per proposition.
 - `Evidence` (sealed): `SignalEvidence` references a cycle-local signal occurrence sequence from
-  `CognitiveContext`, which the cycle validates against the accepted occurrences; `MemoryReferenceEvidence` carries the opaque non-blank `String` that
-  `ResonanceMemoryResult.reference()` already defines, with the same accepted domain; bounding
-  reference size is the memory adapter's responsibility. Each has an `EvidenceRelation` (`SUPPORTS`, `CONTRADICTS`, `NEUTRAL`) and a finite
+  `CognitiveContext`, which the cycle validates against the accepted occurrences; `MemoryReferenceEvidence` carries the opaque `String` that
+  `ResonanceMemoryResult.reference()` defines. Both contracts share one deliberate bound,
+  `ResonanceMemoryResult.MAX_REFERENCE_LENGTH` (128, versus 35 characters for current `rs-`
+  adapter references), so evidence never retains large external payloads. Each has an `EvidenceRelation` (`SUPPORTS`, `CONTRADICTS`, `NEUTRAL`) and a finite
   weight in `(0, 1]`. Evidence never retains signals, graphs, or provider objects.
 - `HypothesisLimits(maxCandidates, maxEvidencePerCandidate)`: explicit capacities, separate from
   `CognitiveBudget` so existing budget call sites are unaffected.
@@ -77,11 +78,17 @@ Rejected by ADR 0005 and the issue: `Signal` stays a compact transport primitive
 
 ## Consequences
 
-- Retained size is bounded by `maxCandidates * maxEvidencePerCandidate` evidence records.
-  `HypothesisRetainedSizeTest` measured about 500 bytes allocated per hypothesis with four
-  evidence entries (builder plus snapshot) at 10, 100, and 1,000 hypotheses on Java 27, so
-  retained size grows linearly without object explosion. A primitive/contiguous layout is deferred
-  until a benchmark justifies it.
+- Size is bounded by `maxCandidates * maxEvidencePerCandidate` evidence records. Two different
+  quantities are reported separately (Java 27, four evidence entries per hypothesis):
+  - **Transient allocation**: `HypothesisAllocationTest` measures thread-allocated bytes while
+    building (builder growth plus the final snapshot), about 500 B per hypothesis at 10, 100, and
+    1,000 hypotheses. This is not retained size.
+  - **Retained footprint (modeled)**: `HypothesisFootprintModel` estimates only the final
+    immutable graph on a 64-bit HotSpot JVM with compressed references (12 B header, 4 B
+    references, 8 B alignment): about 242, 237, and 236 B per hypothesis at 10, 100, and 1,000
+    hypotheses (2,424; 23,664; 236,064 B in total). It is an estimate, not a measurement.
+  Both grow linearly without object explosion. A primitive/contiguous layout is deferred until a
+  benchmark justifies it.
 - Evidence sequences are only meaningful within their cycle; snapshots must not outlive it.
 - Any future stage can consume typed upstream results without changing `Signal` or the context.
 - Follow-ups: evaluation scoring/top-K, optional hypothesis trace events, and a compact layout if
