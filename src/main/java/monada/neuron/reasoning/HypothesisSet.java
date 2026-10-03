@@ -45,6 +45,26 @@ public record HypothesisSet(List<Hypothesis> hypotheses, HypothesisLimits limits
         }
     }
 
+    /**
+     * Rejects signal evidence that references an occurrence the cycle never accepted. Results that
+     * carry a set (reasoning, evaluation) share this check so the provenance rule has one definition.
+     *
+     * @param acceptedSignals number of signal occurrences the active context has accepted
+     * @throws IllegalArgumentException if any signal evidence sequence is not below that number
+     */
+    public void validateSignalProvenance(long acceptedSignals) {
+        for (var hypothesis : hypotheses) {
+            for (var item : hypothesis.evidence()) {
+                if (item instanceof SignalEvidence signal && signal.signalSequence() >= acceptedSignals) {
+                    throw new IllegalArgumentException(
+                            "signal evidence references unknown occurrence "
+                                    + signal.signalSequence() + " for hypothesis "
+                                    + hypothesis.sequence());
+                }
+            }
+        }
+    }
+
     /** Returns the hypothesis with the given cycle-local sequence. */
     public Hypothesis get(int sequence) {
         return hypotheses.get(sequence);

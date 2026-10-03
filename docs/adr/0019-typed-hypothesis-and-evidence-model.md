@@ -59,7 +59,8 @@ the default and the cycle still ends with `NO_SIGNALS`. The cycle also calls `va
 signal evidence pointing at an occurrence the context never accepted fails the cycle.
 
 `Signal` is unchanged. A prior/confidence input is intentionally omitted until an evaluation
-consumer defines its semantics. Scoring, top-K selection, and hypothesis generation are follow-ups.
+consumer defines its semantics. Scoring and top-K selection are defined in ADR 0020; hypothesis
+generation remains a follow-up.
 
 ## Alternatives Considered
 
@@ -91,5 +92,5 @@ Rejected by ADR 0005 and the issue: `Signal` stays a compact transport primitive
   benchmark justifies it.
 - Evidence sequences are only meaningful within their cycle; snapshots must not outlive it.
 - Any future stage can consume typed upstream results without changing `Signal` or the context.
-- Follow-ups: evaluation scoring/top-K, optional hypothesis trace events, and a compact layout if
+- Follow-ups: optional hypothesis trace events and a compact layout if
   measurements demand it.

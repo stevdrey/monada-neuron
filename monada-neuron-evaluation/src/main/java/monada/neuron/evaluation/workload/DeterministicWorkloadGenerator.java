@@ -11,6 +11,12 @@ import monada.neuron.evolution.AdaptationPolicy;
 import monada.neuron.memory.ResonanceMemoryCognitiveStage;
 import monada.neuron.memory.ResonanceMemoryPort;
 import monada.neuron.model.FrequencyState;
+import monada.neuron.reasoning.EvidenceRelation;
+import monada.neuron.reasoning.HypothesisLimits;
+import monada.neuron.reasoning.HypothesisSet;
+import monada.neuron.reasoning.HypothesisSetBuilder;
+import monada.neuron.reasoning.Proposition;
+import monada.neuron.reasoning.SignalEvidence;
 import monada.neuron.resonance.FrequencyStateBatch;
 import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
@@ -66,6 +72,56 @@ public final class DeterministicWorkloadGenerator {
     /** Returns the seed used by this generator. */
     public long seed() {
         return seed;
+    }
+
+    /**
+     * Generates a deterministic hypothesis set with a mixed supporting, contradicting, and neutral
+     * evidence profile. Weights come from a coarse grid so equal scores occur realistically.
+     *
+     * @param candidateCount number of candidate hypotheses
+     * @param evidencePerCandidate evidence entries attached to each candidate
+     * @return an immutable hypothesis set sized exactly to the request
+     */
+    public HypothesisSet generateHypothesisSet(int candidateCount, int evidencePerCandidate) {
+        if (candidateCount <= 0) {
+            throw new IllegalArgumentException("candidateCount must be positive, got: " + candidateCount);
+        }
+        if (evidencePerCandidate <= 0) {
+            throw new IllegalArgumentException(
+                    "evidencePerCandidate must be positive, got: " + evidencePerCandidate);
+        }
+        var random = new Random(seed ^ 0x48595054L);
+        var builder = new HypothesisSetBuilder(new HypothesisLimits(candidateCount, evidencePerCandidate));
+        for (var i = 0; i < candidateCount; i++) {
+            var sequence = builder.propose(new Proposition(0, i)).getAsInt();
+            for (var e = 0; e < evidencePerCandidate; e++) {
+                var roll = random.nextInt(100);
+                var relation = roll < 60
+                        ? EvidenceRelation.SUPPORTS
+                        : roll < 85 ? EvidenceRelation.CONTRADICTS : EvidenceRelation.NEUTRAL;
+                builder.addEvidence(sequence, new SignalEvidence(e, relation, (1 + random.nextInt(8)) / 8.0));
+            }
+        }
+        return builder.build();
+    }
+
+    /**
+     * Generates deterministic candidate scores in {@code [0, 0.9)} on a coarse grid, for isolating
+     * top-K selection cost from scoring cost.
+     *
+     * @param candidateCount number of scores
+     * @return a new score array
+     */
+    public double[] generateHypothesisScores(int candidateCount) {
+        if (candidateCount <= 0) {
+            throw new IllegalArgumentException("candidateCount must be positive, got: " + candidateCount);
+        }
+        var random = new Random(seed ^ 0x53434f52L);
+        var scores = new double[candidateCount];
+        for (var i = 0; i < candidateCount; i++) {
+            scores[i] = random.nextInt(64) / 64.0 * 0.9;
+        }
+        return scores;
     }
 
     /**

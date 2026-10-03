@@ -5,9 +5,11 @@ import monada.neuron.evolution.NoOpAdaptationPolicy;
 import monada.neuron.model.Node;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -98,6 +100,25 @@ class DeterministicWorkloadGeneratorTest {
         assertThrows(IllegalArgumentException.class, () -> generator.generateSignals(-1));
         assertThrows(IllegalArgumentException.class, () -> generator.generateGraph(0, 0));
         assertThrows(IllegalArgumentException.class, () -> generator.generateGraph(10, 10));
+    }
+
+    @Test
+    void generatesDeterministicHypothesisSetsAndScores() {
+        var gen1 = new DeterministicWorkloadGenerator(7L);
+        var gen2 = new DeterministicWorkloadGenerator(7L);
+
+        var set = gen1.generateHypothesisSet(50, 4);
+        var scores = gen1.generateHypothesisScores(50);
+
+        assertAll(
+                () -> assertEquals(50, set.size()),
+                () -> assertTrue(set.hypotheses().stream().allMatch(h -> h.evidence().size() == 4)),
+                () -> assertEquals(set, gen2.generateHypothesisSet(50, 4)),
+                () -> assertArrayEquals(scores, gen2.generateHypothesisScores(50)),
+                () -> assertTrue(Arrays.stream(scores).allMatch(score -> score >= 0.0 && score < 0.9)),
+                () -> assertThrows(IllegalArgumentException.class, () -> gen1.generateHypothesisSet(0, 4)),
+                () -> assertThrows(IllegalArgumentException.class, () -> gen1.generateHypothesisSet(4, 0)),
+                () -> assertThrows(IllegalArgumentException.class, () -> gen1.generateHypothesisScores(0)));
     }
 
     @Test

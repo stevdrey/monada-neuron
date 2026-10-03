@@ -104,6 +104,10 @@ All synthetic workloads are generated deterministically from configurable seeds 
    - Covers construction/population, sequential reads, random reads against a precomputed schedule, and bounded updates. The baseline additionally measures CSR plus state snapshot compilation as an integration cost only.
    - Propagation stays on the existing reference or explicit CSR paths; no benchmark routes signals through FFM state.
 
+7. **Hypothesis Evaluation (Issue #33)**:
+   - Scores deterministic hypothesis sets (4 evidence entries per candidate) and compares bounded-heap against full-sort top-K selection at 10, 100, 1,000, and 10,000 candidates with K = 1, 10, 100.
+   - Separates the scoring pass (`scoreOnly`), selection over a pre-generated score array, and the end-to-end reference policy.
+
 ## Verification & Benchmark Commands
 
 ### Run Full Baseline Suite
@@ -121,7 +125,7 @@ Options:
 
 ### Run JMH Microbenchmarks
 
-Runs JMH microbenchmarks for hot primitives (`ScalarResonanceBenchmark`, `SignalPropagationBenchmark`, `AeonCoordinationBenchmark`, `CognitiveCycleBenchmark`, `AdaptationPolicyBenchmark`):
+Runs JMH microbenchmarks for hot primitives (`ScalarResonanceBenchmark`, `SignalPropagationBenchmark`, `AeonCoordinationBenchmark`, `CognitiveCycleBenchmark`, `AdaptationPolicyBenchmark`, `HypothesisEvaluationBenchmark`):
 
 ```bash
 ./gradlew :monada-neuron-evaluation:jmh
@@ -322,6 +326,98 @@ The review-before-merge study was executed on Linux x86_64 with Java 26 (Temurin
 | `benchmarkSelectingVectorBatch` | 1,000 pairs | 12,211.5 ns | 0.086 B/op | Selecting SIMD adapter (6.5x faster than scalar) |
 
 Comparing direct and selecting variants demonstrates that adapter dispatch overhead is negligible (~2.6 ns at 4 pairs, undetectable at scale) and introduces zero application-level heap allocation in the steady-state evaluation hot path. The 0.001–0.005 B/op telemetry at small scales and 0.086 B/op at 1,000 pairs reflect amortized JVM and JMH harness background profiling noise across measurement intervals rather than application object allocations, accompanied by zero GC pauses (`gc.count ≈ 0`). In the control plane, pre-allocated metadata and immutable copy optimizations bound decision latency to 12–77 ns across all components.
+
+### Issue #33 Hypothesis Evaluation: Scoring and Top-K Selection
+
+`HypothesisEvaluationBenchmark` answers one question: at what candidate count `N` and selection bound
+`K` does a bounded heap beat a full sort, and what does scoring cost? The reference policy and
+formula are defined in ADR 0020. `scoreOnly` runs the policy with a no-op selector (so the selector's
+NaN scan is excluded) and depends only on `N`,
+`select*` runs the selectors over a pre-generated score array, and `evaluate*` runs the complete
+reference policy with each selector (both depend on `N` and `K`).
+
+```bash
+./gradlew :monada-neuron-evaluation:jmh \
+  -PjmhArgs="-bm avgt -f 3 -wi 2 -i 3 -r 1s -prof gc -rf json -rff /tmp/hyp-eval.json HypothesisEvaluation"
+```
+
+Environment: Linux x86_64, Intel Core i7-6500U (4 CPUs), Zulu 27+35, G1. Workload: seed 42, four
+evidence entries per candidate (60% supporting, 25% contradicting, 15% neutral, weights on an eighth
+grid). Correctness check: `HypothesisSelectorTest` asserts identical output from both selectors on
+tie-heavy random inputs (including `-0.0`), and `ReferenceHypothesisEvaluationPolicyTest` asserts
+equal evaluations for both strategies and recomputes every breakdown independently. Rows with
+`K >= N` rank every candidate, so for `N = 10` the `K = 10` and `K = 100` rows are the same workload.
+
+Selection only (µs/op):
+
+| N | K | Bounded heap | Full sort | Speedup |
+| ---: | ---: | ---: | ---: | ---: |
+| 10 | 1 | 0.030 | 0.172 | 5.6x |
+| 10 | 10 | 0.088 | 0.194 | 2.2x |
+| 10 | 100 | 0.087 | 0.193 | 2.2x |
+| 100 | 1 | 0.320 | 4.569 | 14.3x |
+| 100 | 10 | 0.532 | 4.659 | 8.8x |
+| 100 | 100 | 2.983 | 4.754 | 1.6x |
+| 1,000 | 1 | 2.779 | 153.2 | 55.1x |
+| 1,000 | 10 | 2.613 | 152.3 | 58.3x |
+| 1,000 | 100 | 19.4 | 153.1 | 7.9x |
+| 10,000 | 1 | 24.8 | 1,774 | 71.6x |
+| 10,000 | 10 | 20.9 | 1,781 | 85.1x |
+| 10,000 | 100 | 56.1 | 1,801 | 32.1x |
+
+End-to-end `evaluate` with evidence-only scoring (µs/op and steady-state allocation):
+
+| N | K | Heap (µs) | Heap alloc (B/op) | Full sort (µs) | Full sort alloc (B/op) |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 10 | 1 | 0.232 | 248 | 0.395 | 304 |
+| 10 | 10 | 0.760 | 1,104 | 0.852 | 1,160 |
+| 10 | 100 | 0.784 | 1,104 | 0.865 | 1,160 |
+| 100 | 1 | 1.782 | 968 | 6.000 | 1,728 |
+| 100 | 10 | 2.691 | 1,824 | 6.972 | 2,584 |
+| 100 | 100 | 9.363 | 10,568 | 12.1 | 11,328 |
+| 1,000 | 1 | 37.7 | 8,168 | 214.6 | 29,441 |
+| 1,000 | 10 | 37.5 | 9,024 | 214.6 | 30,225 |
+| 1,000 | 100 | 72.9 | 17,744 | 223.6 | 38,945 |
+| 10,000 | 1 | 573.5 | 80,244 | 2,602 | 330,353 |
+| 10,000 | 10 | 554.9 | 81,052 | 2,579 | 331,208 |
+| 10,000 | 100 | 611.8 | 89,772 | 2,658 | 339,905 |
+
+Scoring pass only (no-op selector, evidence-only scoring):
+
+| N | Scoring (µs) | Per candidate (ns) | Alloc (B/op) |
+| ---: | ---: | ---: | ---: |
+| 10 | 0.151 | 15 | 120 |
+| 100 | 1.350 | 13 | 840 |
+| 1,000 | 36.1 | 36 | 8,064 |
+| 10,000 | 528.4 | 53 | 80,067 |
+
+Retained size is modeled separately by `HypothesisEvaluationFootprintTest`: 24 B plus a list plus
+88 B per selected candidate (136 B at K = 1, 984 B at K = 10), independent of N; the evaluated set is
+shared by reference. Transient allocation is about 8 B per candidate (the score array) plus the
+K-sized result, which is why the scoring pass allocates no objects per candidate. All figures in this
+section use evidence-only scoring (`HypothesisScoringConfig.NONE`). With a resonance component the
+policy also keeps an N-sized `double[]` of resonance contributions, roughly doubling the numeric
+storage to about 16 B per candidate (161,112 B at N = 10,000, K = 10, measured by
+`HypothesisEvaluationFootprintTest`; the JMH benchmark does not cover that configuration).
+
+**Decision.** Ship `BoundedHeapSelector` as the default and keep `FullSortSelector` as the semantic
+oracle and benchmark baseline. The heap was never slower in any measured cell: selection was 1.6x to
+85x faster, end-to-end evaluation 1.1x to 5.7x faster, and allocation about 4x lower at N = 10,000. No
+crossover was observed, so no small-N fallback to sorting is introduced. At N = 10,000 the scoring
+pass dominates end-to-end cost; the rise from about 13 to 53 ns per candidate is consistent with the
+object graph outgrowing cache but was not profiled, so no specialized layout is proposed.
+
+**Validity.** This is an exploratory run, not a gate: three forks and three iterations on a laptop
+CPU. Four of 52 rows exceed 15% relative error, the worst at 23% (`selectBoundedHeap` at N = 1,000 and
+10,000 with K = 1, `evaluateBoundedHeap` at N = 1,000 and K = 10, `evaluateFullSort` at N = 100 and
+K = 100). The previous full run predates the latest review changes, and one rerun was discarded because the
+desktop was under load (23 of 52 rows above 15% error and scoring about 70% slower). The
+figures include the code merged after review (single ranking rule in `HypothesisRanking`, NaN
+rejection, shared evidence accumulator, O(K) uniqueness check). Against the heap measured before the
+shared ranking rule (about 15 µs at N = 10,000, K = 10), heap selection alone is now about 21 µs
+because the shared comparator adds work per element, while end-to-end evaluation is unchanged within
+noise (555 vs 552 µs), since selection is under 4% of it. Near-equal cells (K >= N) are not claimed as
+heap wins.
 
 ### Run Unit and Harness Tests
 
