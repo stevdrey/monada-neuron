@@ -26,10 +26,11 @@ import java.util.concurrent.TimeUnit;
  * JMH microbenchmarks answering: at what candidate count {@code N} and selection bound {@code K}
  * does a bounded heap beat a full sort, and what do scoring and end-to-end evaluation cost?
  *
- * <p>{@code scoreOnly} evaluates with {@code K = 0} so it isolates the scoring pass and depends
- * only on {@code N} ({@link ScoringState}). The {@code select*} benchmarks run the selectors over a
- * pre-generated score array and the {@code evaluate*} benchmarks measure the complete reference
- * policy with each selector; both depend on {@code N} and {@code K} ({@link SelectionState}). When
+ * <p>{@code scoreOnly} runs the reference policy with a no-op selector, so it isolates the scoring
+ * pass (plus a constant, empty result) and depends only on {@code N} ({@link ScoringState}). The
+ * {@code select*} benchmarks run the selectors over a pre-generated score array and the
+ * {@code evaluate*} benchmarks measure the complete reference policy with each selector; both
+ * depend on {@code N} and {@code K} ({@link SelectionState}). When
  * {@code K >= N} both selectors rank every candidate. All policies use evidence-only scoring
  * ({@code HypothesisScoringConfig.NONE}); a resonance component adds a second N-sized array. Run with
  * {@code -prof gc} for allocation per operation.
@@ -43,6 +44,7 @@ import java.util.concurrent.TimeUnit;
 public class HypothesisEvaluationBenchmark {
 
     private static final int EVIDENCE_PER_CANDIDATE = 4;
+    private static final int[] NO_SELECTION = new int[0];
 
     /** Workload for the scoring pass: parameterized by candidate count only. */
     @State(Scope.Benchmark)
@@ -58,7 +60,9 @@ public class HypothesisEvaluationBenchmark {
         public void setup() {
             hypotheses = new DeterministicWorkloadGenerator()
                     .generateHypothesisSet(candidates, EVIDENCE_PER_CANDIDATE);
-            policy = new ReferenceHypothesisEvaluationPolicy();
+            // A no-op selector keeps the selector (including its NaN scan) out of the scoring measurement.
+            policy = new ReferenceHypothesisEvaluationPolicy(
+                    HypothesisScoringConfig.NONE, (scores, k) -> NO_SELECTION);
         }
     }
 

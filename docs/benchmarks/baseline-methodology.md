@@ -331,7 +331,8 @@ Comparing direct and selecting variants demonstrates that adapter dispatch overh
 
 `HypothesisEvaluationBenchmark` answers one question: at what candidate count `N` and selection bound
 `K` does a bounded heap beat a full sort, and what does scoring cost? The reference policy and
-formula are defined in ADR 0020. `scoreOnly` evaluates with `K = 0` and depends only on `N`,
+formula are defined in ADR 0020. `scoreOnly` runs the policy with a no-op selector (so the selector's
+NaN scan is excluded) and depends only on `N`,
 `select*` runs the selectors over a pre-generated score array, and `evaluate*` runs the complete
 reference policy with each selector (both depend on `N` and `K`).
 
@@ -351,44 +352,44 @@ Selection only (µs/op):
 
 | N | K | Bounded heap | Full sort | Speedup |
 | ---: | ---: | ---: | ---: | ---: |
-| 10 | 1 | 0.030 | 0.170 | 5.7x |
-| 10 | 10 | 0.085 | 0.194 | 2.3x |
-| 10 | 100 | 0.086 | 0.194 | 2.3x |
-| 100 | 1 | 0.315 | 4.626 | 14.7x |
-| 100 | 10 | 0.518 | 4.571 | 8.8x |
-| 100 | 100 | 3.000 | 4.722 | 1.6x |
-| 1,000 | 1 | 2.918 | 150.4 | 51.5x |
-| 1,000 | 10 | 2.552 | 149.5 | 58.6x |
-| 1,000 | 100 | 17.4 | 150.6 | 8.6x |
-| 10,000 | 1 | 23.7 | 1,742 | 73.4x |
-| 10,000 | 10 | 20.1 | 1,795 | 89.2x |
-| 10,000 | 100 | 55.8 | 1,678 | 30.1x |
+| 10 | 1 | 0.030 | 0.172 | 5.6x |
+| 10 | 10 | 0.088 | 0.194 | 2.2x |
+| 10 | 100 | 0.087 | 0.193 | 2.2x |
+| 100 | 1 | 0.320 | 4.569 | 14.3x |
+| 100 | 10 | 0.532 | 4.659 | 8.8x |
+| 100 | 100 | 2.983 | 4.754 | 1.6x |
+| 1,000 | 1 | 2.779 | 153.2 | 55.1x |
+| 1,000 | 10 | 2.613 | 152.3 | 58.3x |
+| 1,000 | 100 | 19.4 | 153.1 | 7.9x |
+| 10,000 | 1 | 24.8 | 1,774 | 71.6x |
+| 10,000 | 10 | 20.9 | 1,781 | 85.1x |
+| 10,000 | 100 | 56.1 | 1,801 | 32.1x |
 
 End-to-end `evaluate` with evidence-only scoring (µs/op and steady-state allocation):
 
 | N | K | Heap (µs) | Heap alloc (B/op) | Full sort (µs) | Full sort alloc (B/op) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 10 | 1 | 0.240 | 248 | 0.409 | 304 |
-| 10 | 10 | 0.717 | 1,104 | 0.827 | 1,160 |
-| 10 | 100 | 0.711 | 1,104 | 0.831 | 1,160 |
-| 100 | 1 | 1.767 | 968 | 6.131 | 1,728 |
-| 100 | 10 | 2.563 | 1,824 | 6.611 | 2,584 |
-| 100 | 100 | 8.990 | 10,160 | 11.3 | 10,920 |
-| 1,000 | 1 | 36.0 | 8,240 | 211.3 | 29,441 |
-| 1,000 | 10 | 40.6 | 9,024 | 210.5 | 30,225 |
-| 1,000 | 100 | 72.3 | 17,472 | 217.2 | 38,673 |
-| 10,000 | 1 | 543.2 | 80,243 | 2,596 | 330,353 |
-| 10,000 | 10 | 536.6 | 81,099 | 2,604 | 331,209 |
-| 10,000 | 100 | 575.3 | 90,628 | 2,558 | 340,760 |
+| 10 | 1 | 0.232 | 248 | 0.395 | 304 |
+| 10 | 10 | 0.760 | 1,104 | 0.852 | 1,160 |
+| 10 | 100 | 0.784 | 1,104 | 0.865 | 1,160 |
+| 100 | 1 | 1.782 | 968 | 6.000 | 1,728 |
+| 100 | 10 | 2.691 | 1,824 | 6.972 | 2,584 |
+| 100 | 100 | 9.363 | 10,568 | 12.1 | 11,328 |
+| 1,000 | 1 | 37.7 | 8,168 | 214.6 | 29,441 |
+| 1,000 | 10 | 37.5 | 9,024 | 214.6 | 30,225 |
+| 1,000 | 100 | 72.9 | 17,744 | 223.6 | 38,945 |
+| 10,000 | 1 | 573.5 | 80,244 | 2,602 | 330,353 |
+| 10,000 | 10 | 554.9 | 81,052 | 2,579 | 331,208 |
+| 10,000 | 100 | 611.8 | 89,772 | 2,658 | 339,905 |
 
-Scoring pass only (`K = 0`, evidence-only scoring):
+Scoring pass only (no-op selector, evidence-only scoring):
 
 | N | Scoring (µs) | Per candidate (ns) | Alloc (B/op) |
 | ---: | ---: | ---: | ---: |
-| 10 | 0.157 | 16 | 120 |
-| 100 | 1.476 | 15 | 840 |
-| 1,000 | 37.1 | 37 | 8,096 |
-| 10,000 | 505.8 | 51 | 80,099 |
+| 10 | 0.151 | 15 | 120 |
+| 100 | 1.350 | 13 | 840 |
+| 1,000 | 36.1 | 36 | 8,064 |
+| 10,000 | 528.4 | 53 | 80,067 |
 
 Retained size is modeled separately by `HypothesisEvaluationFootprintTest`: 24 B plus a list plus
 88 B per selected candidate (136 B at K = 1, 984 B at K = 10), independent of N; the evaluated set is
@@ -401,19 +402,22 @@ storage to about 16 B per candidate (161,112 B at N = 10,000, K = 10, measured b
 
 **Decision.** Ship `BoundedHeapSelector` as the default and keep `FullSortSelector` as the semantic
 oracle and benchmark baseline. The heap was never slower in any measured cell: selection was 1.6x to
-89x faster, end-to-end evaluation 1.2x to 5.9x faster, and allocation about 4x lower at N = 10,000. No
+85x faster, end-to-end evaluation 1.1x to 5.7x faster, and allocation about 4x lower at N = 10,000. No
 crossover was observed, so no small-N fallback to sorting is introduced. At N = 10,000 the scoring
-pass dominates end-to-end cost; the rise from about 15 to 51 ns per candidate is consistent with the
+pass dominates end-to-end cost; the rise from about 13 to 53 ns per candidate is consistent with the
 object graph outgrowing cache but was not profiled, so no specialized layout is proposed.
 
 **Validity.** This is an exploratory run, not a gate: three forks and three iterations on a laptop
-CPU. Two of 52 rows exceed 15% relative error (`selectBoundedHeap` and `evaluateBoundedHeap` at
-N = 1,000, K = 1). The figures include the code merged after review (single ranking rule in
-`HypothesisRanking`, NaN rejection, shared evidence accumulator). Against the heap measured before
-those changes (about 15 µs at N = 10,000, K = 10), heap selection alone is now about 20 µs because
-the shared comparator adds work per element, while end-to-end evaluation is unchanged within noise
-(537 vs 552 µs), since selection is under 4% of it. Near-equal cells (K >= N) are not claimed as heap
-wins.
+CPU. Four of 52 rows exceed 15% relative error, the worst at 23% (`selectBoundedHeap` at N = 1,000 and
+10,000 with K = 1, `evaluateBoundedHeap` at N = 1,000 and K = 10, `evaluateFullSort` at N = 100 and
+K = 100). The previous full run predates the latest review changes, and one rerun was discarded because the
+desktop was under load (23 of 52 rows above 15% error and scoring about 70% slower). The
+figures include the code merged after review (single ranking rule in `HypothesisRanking`, NaN
+rejection, shared evidence accumulator, O(K) uniqueness check). Against the heap measured before the
+shared ranking rule (about 15 µs at N = 10,000, K = 10), heap selection alone is now about 21 µs
+because the shared comparator adds work per element, while end-to-end evaluation is unchanged within
+noise (555 vs 552 µs), since selection is under 4% of it. Near-equal cells (K >= N) are not claimed as
+heap wins.
 
 ### Run Unit and Harness Tests
 

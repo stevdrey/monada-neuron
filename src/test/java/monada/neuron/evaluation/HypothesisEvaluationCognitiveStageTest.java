@@ -60,9 +60,18 @@ class HypothesisEvaluationCognitiveStageTest {
         assertAll(
                 () -> assertThrows(NullPointerException.class, () -> new HypothesisEvaluationCognitiveStage(null, 1)),
                 () -> assertThrows(IllegalArgumentException.class,
-                        () -> new HypothesisEvaluationCognitiveStage(policy, 0)),
-                () -> assertThrows(IllegalArgumentException.class,
                         () -> new HypothesisEvaluationCognitiveStage(policy, -1)));
+    }
+
+    @Test
+    void acceptsZeroAsAnEvaluateWithoutSelectionPass() {
+        var result = run(reasoningStub(hypotheses(), List.of()), new HypothesisEvaluationCognitiveStage(policy, 0));
+        var evaluation = assertInstanceOf(EvaluationCognitiveStageResult.class, result.stageResults().getLast());
+        assertAll(
+                () -> assertEquals(CognitiveCycleTermination.COMPLETED, result.termination()),
+                () -> assertTrue(evaluation.evaluation().selected().isEmpty()),
+                () -> assertEquals(3, evaluation.evaluation().evaluatedCount()),
+                () -> assertEquals(0, evaluation.evaluation().requestedMaxSelected()));
     }
 
     @Test
@@ -149,7 +158,6 @@ class HypothesisEvaluationCognitiveStageTest {
                 return new EvaluationCognitiveStageResult(
                         CognitiveStageStatus.COMPLETED,
                         inputSignals,
-                        forged,
                         policy.evaluate(forged, 1));
             }
         };

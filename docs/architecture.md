@@ -306,8 +306,8 @@ semantics.
 `EVALUATION` can use `HypothesisEvaluationCognitiveStage`, backed by a Neuron-owned
 `HypothesisEvaluationPolicy`. It scores the hypotheses of the preceding `REASONING` result and
 selects a bounded, ranked subset; the reference policy is deterministic, side-effect free, and
-documented in ADR 0020. The typed `EvaluationCognitiveStageResult` keeps the evaluated set and the
-ranked `HypothesisEvaluation` with per-candidate score breakdowns, and passes input signals through
+documented in ADR 0020. The typed `EvaluationCognitiveStageResult` keeps the ranked `HypothesisEvaluation`,
+which carries the set it scored, with per-candidate score breakdowns, and passes input signals through
 so later stages still run. Evaluation observes hypotheses only; Node mutation remains the
 responsibility of `ADAPTATION`, and memory ranking remains with the Resonance Store.
 

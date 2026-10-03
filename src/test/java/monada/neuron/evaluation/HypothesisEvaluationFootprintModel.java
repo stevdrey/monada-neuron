@@ -16,7 +16,7 @@ final class HypothesisEvaluationFootprintModel {
     /** Returns the modeled retained bytes of the evaluation and its selected candidates. */
     long retainedBytes(HypothesisEvaluation evaluation) {
         var selected = evaluation.selected().size();
-        return align(HEADER + REF + 4 + 4)                        // HypothesisEvaluation record
+        return align(HEADER + 2 * REF + 4)                        // HypothesisEvaluation record (set ref, list ref, int)
                 + listBytes(selected)
                 + selected * (evaluatedBytes() + breakdownBytes());
     }

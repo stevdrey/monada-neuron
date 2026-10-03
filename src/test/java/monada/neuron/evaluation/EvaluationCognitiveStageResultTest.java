@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class EvaluationCognitiveStageResultTest {
@@ -63,18 +64,22 @@ class EvaluationCognitiveStageResultTest {
     }
 
     @Test
-    void rejectsEvaluationInconsistentWithEvaluatedSet() {
+    void rejectsNullComponents() {
         assertAll(
-                () -> assertThrows(IllegalArgumentException.class, () -> new EvaluationCognitiveStageResult(
-                        CognitiveStageStatus.COMPLETED, List.of(), HypothesisSet.EMPTY, evaluation)),
                 () -> assertThrows(NullPointerException.class, () -> new EvaluationCognitiveStageResult(
-                        null, List.of(), set, evaluation)),
+                        null, List.of(), evaluation)),
                 () -> assertThrows(NullPointerException.class, () -> new EvaluationCognitiveStageResult(
-                        CognitiveStageStatus.COMPLETED, null, set, evaluation)),
+                        CognitiveStageStatus.COMPLETED, null, evaluation)),
                 () -> assertThrows(NullPointerException.class, () -> new EvaluationCognitiveStageResult(
-                        CognitiveStageStatus.COMPLETED, List.of(), null, evaluation)),
-                () -> assertThrows(NullPointerException.class, () -> new EvaluationCognitiveStageResult(
-                        CognitiveStageStatus.COMPLETED, List.of(), set, null)));
+                        CognitiveStageStatus.COMPLETED, List.of(), null)));
+    }
+
+    @Test
+    void evaluatedSetIsTheOneTheEvaluationScored() {
+        var result = result(List.of());
+        assertAll(
+                () -> assertSame(evaluation.evaluated(), result.evaluated()),
+                () -> assertSame(set, result.evaluated()));
     }
 
     @Test
@@ -105,14 +110,14 @@ class EvaluationCognitiveStageResultTest {
                     () -> assertThrows(IllegalArgumentException.class, () -> result(List.of()).validateProvenance(context)),
                     () -> assertThrows(NullPointerException.class, () -> result(List.of()).validateProvenance(null)),
                     () -> assertDoesNotThrow(() -> new EvaluationCognitiveStageResult(
-                            CognitiveStageStatus.COMPLETED, List.of(), HypothesisSet.EMPTY,
+                            CognitiveStageStatus.COMPLETED, List.of(),
                             new ReferenceHypothesisEvaluationPolicy().evaluate(HypothesisSet.EMPTY, 1))
                             .validateProvenance(context)));
         }
     }
 
     private EvaluationCognitiveStageResult result(List<Signal> outputs) {
-        return new EvaluationCognitiveStageResult(CognitiveStageStatus.COMPLETED, outputs, set, evaluation);
+        return new EvaluationCognitiveStageResult(CognitiveStageStatus.COMPLETED, outputs, evaluation);
     }
 
     private static EvaluationCognitiveStageResult resultWithSignalEvidence(long sequence) {
@@ -123,7 +128,6 @@ class EvaluationCognitiveStageResultTest {
         return new EvaluationCognitiveStageResult(
                 CognitiveStageStatus.COMPLETED,
                 List.of(),
-                evidenceSet,
                 new ReferenceHypothesisEvaluationPolicy().evaluate(evidenceSet, 1));
     }
 

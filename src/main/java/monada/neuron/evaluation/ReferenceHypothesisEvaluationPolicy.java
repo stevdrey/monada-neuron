@@ -68,7 +68,7 @@ public final class ReferenceHypothesisEvaluationPolicy implements HypothesisEval
             accumulator.accumulate(hypotheses.get(sequence));
             selected[rank] = new EvaluatedHypothesis(sequence, accumulator.breakdown(contribution));
         }
-        return new HypothesisEvaluation(List.of(selected), count, maxSelected);
+        return new HypothesisEvaluation(hypotheses, List.of(selected), maxSelected);
     }
 
     private double resonanceContribution(Hypothesis hypothesis) {

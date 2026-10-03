@@ -26,12 +26,15 @@ immutable `HypothesisEvaluation`. Implementations are pure: no mutation of Nodes
 the input set, or shared state, and identical inputs and configuration give equal results.
 `maxSelected >= 0`; zero selects nothing and a bound above the candidate count selects all.
 
-**Results.** `HypothesisEvaluation(selected, evaluatedCount, requestedMaxSelected)` holds the
-selected candidates in rank order. Each `EvaluatedHypothesis(sequence, HypothesisScoreBreakdown)`
+**Results.** `HypothesisEvaluation(evaluated, selected, requestedMaxSelected)` holds the scored
+`HypothesisSet` and the selected candidates in rank order; `evaluatedCount()` is derived from the set.
+Carrying the set (a shared reference, not a copy) means the selected sequences always resolve against
+the set they were computed from, so a mismatched evaluation/set pairing cannot be constructed. Each `EvaluatedHypothesis(sequence, HypothesisScoreBreakdown)`
 references its candidate by the cycle-local `sequence` (no copy). `HypothesisScoreBreakdown` keeps
 `supportMass`, `contradictionMass`, `neutralMass`, the three counts, `resonanceContribution`, and the
-final `score`. Constructors validate finiteness, ranges, the selected-size bound, rank order, and
-that each sequence appears at most once. `HypothesisScoreBreakdown` also checks that its evidence
+final `score`. Constructors validate finiteness, ranges (including `resonanceContribution <= 1`, since
+both the weight and the resonance are in `[0, 1]`), the selected-size bound, rank order, and that each
+sequence appears at most once. `HypothesisScoreBreakdown` also checks that its evidence
 components agree: each mass is zero exactly when its count is zero and never exceeds its count
 (weights are at most 1). How `score` derives from the components stays policy-defined and is not
 enforced by the record.
@@ -77,13 +80,15 @@ a second `double[]` of resonance contributions (16 B per candidate in total). A
 single per-call `EvidenceAccumulator` sums the evidence and holds the score formula; it scores every
 candidate and then builds the `HypothesisScoreBreakdown` of the selected ones only, so ranking and
 explanation cannot diverge. `HypothesisEvaluation` validates uniqueness pairwise for up to 16
-selected candidates (no allocation) and with a bit set above that.
+selected candidates (no allocation) and on a sorted copy of the selected sequences above that, so its
+working state is bounded by the selection size and never by the candidate count.
 
-**Stage.** `HypothesisEvaluationCognitiveStage(policy, maxSelected)` occupies `EVALUATION`, reads
+**Stage.** `HypothesisEvaluationCognitiveStage(policy, maxSelected)` occupies `EVALUATION` and accepts
+any `maxSelected >= 0`, like the policy (zero is an evaluate-without-selection pass). It reads
 hypotheses with `ReasoningCognitiveStageResult.hypothesesOf(previousResult)`, and opts in through
 `acceptsTypedOnlyHandOff()` so it runs when reasoning produced hypotheses but no output signals. It
-returns `EvaluationCognitiveStageResult(status, outputSignals, evaluated, evaluation)`, a record that
-keeps the typed evaluation (never a map) and passes input signals through so `ADAPTATION` and `ACTION`
+returns `EvaluationCognitiveStageResult(status, outputSignals, evaluation)`, a record that keeps the
+typed evaluation (never a map; `evaluated()` returns the set the evaluation scored) and passes input signals through so `ADAPTATION` and `ACTION`
 still run. `withAdmittedOutputSignals` trims only the signals. The result also validates the
 provenance of signal evidence in the evaluated set after the stage, exactly like the reasoning result
 (one shared `HypothesisSet.validateSignalProvenance`), so a custom `EVALUATION` stage cannot return
@@ -120,7 +125,7 @@ bus. A separate typed result avoids all three.
   984 B at K = 10, independent of N. The evaluated `HypothesisSet` is shared by reference. This is
   an estimate (`HypothesisEvaluationFootprintModel`), not a measurement.
 - **Transient allocation (measured with `-prof gc`, evidence-only scoring).** About 8 B per candidate
-  for the score array plus a K-sized result: 80,243 B/op at N = 10,000 and K = 1, and 81,099 B/op at
+  for the score array plus a K-sized result: 80,244 B/op at N = 10,000 and K = 1, and 81,052 B/op at
   K = 10. The full-sort strategy allocates about 330 KB/op at N = 10,000 (4.1x more). With a resonance
   component the policy keeps a second N-sized `double[]`, so it costs about 16 B per candidate
   (161,112 B at N = 10,000, K = 10, measured by `HypothesisEvaluationFootprintTest`, not by JMH).
@@ -143,27 +148,30 @@ Selection only (µs/op, scores on a coarse grid so ties occur):
 
 | N | K | bounded heap | full sort | speedup |
 | ---: | ---: | ---: | ---: | ---: |
-| 100 | 10 | 0.518 | 4.571 | 8.8x |
-| 1,000 | 10 | 2.552 | 149.5 | 58.6x |
-| 1,000 | 100 | 17.4 | 150.6 | 8.6x |
-| 10,000 | 10 | 20.1 | 1,795 | 89.2x |
-| 10,000 | 100 | 55.8 | 1,678 | 30.1x |
+| 100 | 10 | 0.532 | 4.659 | 8.8x |
+| 1,000 | 10 | 2.613 | 152.3 | 58.3x |
+| 1,000 | 100 | 19.4 | 153.1 | 7.9x |
+| 10,000 | 10 | 20.9 | 1,781 | 85.1x |
+| 10,000 | 100 | 56.1 | 1,801 | 32.1x |
 
-The heap was never slower than the full sort in any of the 12 N x K cells: selection was 1.6x to 89x
-faster and end-to-end evaluation 1.2x to 5.9x faster. Where K >= N the two are close (for example
-3.00 vs 4.72 µs at N = K = 100, and 0.717 vs 0.827 µs end to end at N = 10, K = 10), so no crossover
+The heap was never slower than the full sort in any of the 12 N x K cells: selection was 1.6x to 85x
+faster and end-to-end evaluation 1.1x to 5.7x faster. Where K >= N the two are close (for example
+2.98 vs 4.75 µs at N = K = 100, and 0.760 vs 0.852 µs end to end at N = 10, K = 10), so no crossover
 was observed. The full matrix and end-to-end figures are in `docs/benchmarks/baseline-methodology.md`.
-At N = 10,000 the end-to-end cost (about 540 µs) is dominated by the scoring pass (about 506 µs,
-51 ns per candidate), not by selection, so a further specialized layout is not justified by these
+At N = 10,000 the end-to-end cost (about 555 µs) is dominated by the scoring pass (about 528 µs,
+53 ns per candidate), not by selection, so a further specialized layout is not justified by these
 measurements.
 
-These runs are exploratory, not a gate: three forks and three iterations on a laptop CPU. Two of 52
-rows exceed 15% relative error (`selectBoundedHeap` and `evaluateBoundedHeap` at N = 1,000, K = 1);
-conclusions rely only on differences much larger than the reported error. The figures include the
-code merged after review: the single ranking rule, NaN rejection, and the shared evidence
-accumulator. Compared with the heap measured before those changes (about 15 µs at N = 10,000,
-K = 10), heap selection alone is now about 20 µs because the shared comparator adds work per element;
-end-to-end evaluation did not change measurably (537 vs 552 µs), since selection is under 4% of it.
+These runs are exploratory, not a gate: three forks and three iterations on a laptop CPU. Four of 52
+rows exceed 15% relative error, the worst at 23% (`selectBoundedHeap` at N = 1,000 and 10,000 with
+K = 1, `evaluateBoundedHeap` at N = 1,000 and K = 10, `evaluateFullSort` at N = 100 and K = 100);
+conclusions rely only on differences much larger than the reported error. `scoreOnly` runs the policy
+with a no-op selector so it excludes the selector's NaN scan. The figures include the code merged after
+review: the single ranking rule, NaN rejection, the shared evidence accumulator, and the O(K)
+uniqueness check. Compared with the heap measured before the shared ranking rule (about 15 µs at
+N = 10,000, K = 10), heap selection alone is now about 21 µs because the shared comparator adds work
+per element; end-to-end evaluation did not change measurably (555 vs 552 µs), since selection is under
+4% of it.
 
 ## Follow-up Work
 

@@ -27,11 +27,14 @@ public final class HypothesisEvaluationCognitiveStage implements CognitiveStage 
     private final HypothesisEvaluationPolicy policy;
     private final int maxSelected;
 
-    /** Creates an evaluation stage with an explicit policy and positive selection bound. */
+    /**
+     * Creates an evaluation stage with an explicit policy and non-negative selection bound. Zero is
+     * valid and runs an evaluate-without-selection pass, matching the policy contract.
+     */
     public HypothesisEvaluationCognitiveStage(HypothesisEvaluationPolicy policy, int maxSelected) {
         this.policy = Objects.requireNonNull(policy, "policy must not be null");
-        if (maxSelected <= 0) {
-            throw new IllegalArgumentException("maxSelected must be positive, got: " + maxSelected);
+        if (maxSelected < 0) {
+            throw new IllegalArgumentException("maxSelected must not be negative, got: " + maxSelected);
         }
         this.maxSelected = maxSelected;
     }
@@ -76,7 +79,6 @@ public final class HypothesisEvaluationCognitiveStage implements CognitiveStage 
         return new EvaluationCognitiveStageResult(
                 CognitiveStageStatus.COMPLETED,
                 stableInputs,
-                hypotheses,
                 evaluation);
     }
 }

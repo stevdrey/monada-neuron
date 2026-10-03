@@ -11,33 +11,30 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Typed {@code EVALUATION} result: the evaluated candidate set and its ranked evaluation, next to
- * the normal signal hand-off. Hypotheses are never converted into maps or signals.
+ * Typed {@code EVALUATION} result: the ranked evaluation, which carries the candidate set it scored,
+ * next to the normal signal hand-off. Hypotheses are never converted into maps or signals.
  *
  * @param status completion status of the stage
  * @param outputSignals ordered signals offered to the next stage
- * @param evaluated immutable candidate set that was scored; selected sequences resolve in it
- * @param evaluation ranked selection with per-candidate score breakdowns
+ * @param evaluation ranked selection with per-candidate score breakdowns and the scored set
  */
 public record EvaluationCognitiveStageResult(
         CognitiveStageStatus status,
         List<Signal> outputSignals,
-        HypothesisSet evaluated,
         HypothesisEvaluation evaluation) implements CognitiveStageResult {
 
-    /** Validates components and that the evaluation describes the evaluated set. */
+    /** Validates and snapshots components. */
     public EvaluationCognitiveStageResult {
         Objects.requireNonNull(status, "status must not be null");
         outputSignals = List.copyOf(Objects.requireNonNull(
                 outputSignals,
                 "outputSignals must not be null"));
-        Objects.requireNonNull(evaluated, "evaluated must not be null");
         Objects.requireNonNull(evaluation, "evaluation must not be null");
-        if (evaluation.evaluatedCount() != evaluated.size()) {
-            throw new IllegalArgumentException(
-                    "evaluation covers " + evaluation.evaluatedCount()
-                            + " candidates but the evaluated set has " + evaluated.size());
-        }
+    }
+
+    /** Returns the candidate set the evaluation scored; selected sequences resolve in it. */
+    public HypothesisSet evaluated() {
+        return evaluation.evaluated();
     }
 
     @Override
@@ -55,7 +52,7 @@ public record EvaluationCognitiveStageResult(
             throw new IllegalArgumentException(
                     "admitted output signals must be a prefix of the evaluation outputs");
         }
-        return new EvaluationCognitiveStageResult(status, admittedOutputSignals, evaluated, evaluation);
+        return new EvaluationCognitiveStageResult(status, admittedOutputSignals, evaluation);
     }
 
     /**
@@ -65,6 +62,6 @@ public record EvaluationCognitiveStageResult(
     @Override
     public void validateProvenance(CognitiveContext context) {
         Objects.requireNonNull(context, "context must not be null");
-        evaluated.validateSignalProvenance(context.acceptedSignals());
+        evaluated().validateSignalProvenance(context.acceptedSignals());
     }
 }

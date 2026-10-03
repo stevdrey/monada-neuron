@@ -14,7 +14,8 @@ package monada.neuron.evaluation;
  * @param supportCount number of supporting evidence entries
  * @param contradictionCount number of contradicting evidence entries
  * @param neutralCount number of neutral evidence entries
- * @param resonanceContribution optional resonance support added to the support side; zero when absent
+ * @param resonanceContribution optional resonance support added to the support side, in {@code [0, 1]}
+ *     (resonance weight times resonance, both in {@code [0, 1]}); zero when absent
  * @param score final finite score in {@code [0, 1)}
  */
 public record HypothesisScoreBreakdown(
@@ -33,6 +34,11 @@ public record HypothesisScoreBreakdown(
         requireMass(contradictionMass, "contradictionMass");
         requireMass(neutralMass, "neutralMass");
         requireMass(resonanceContribution, "resonanceContribution");
+        if (resonanceContribution > 1.0) {
+            throw new IllegalArgumentException(
+                    "resonanceContribution must not exceed 1 (weight and resonance are both in [0, 1]), got: "
+                            + resonanceContribution);
+        }
         requireCount(supportCount, "supportCount");
         requireCount(contradictionCount, "contradictionCount");
         requireCount(neutralCount, "neutralCount");
