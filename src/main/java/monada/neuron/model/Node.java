@@ -1,7 +1,8 @@
 package monada.neuron.model;
 
-import java.util.ArrayList;
+import java.util.AbstractList;
 import java.util.Collections;
+import java.util.RandomAccess;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -36,6 +37,16 @@ import java.util.UUID;
  */
 public final class Node implements NodeView {
 
+    /**
+     * Default maximum number of past {@link FrequencyState} values retained per node.
+     *
+     * <p>Repeated adaptation across cognitive cycles appends one state per transition, so retention
+     * is bounded by default; the oldest state is overwritten once the limit is reached.
+     */
+    public static final int DEFAULT_HISTORY_LIMIT = 256;
+
+    private static final int INITIAL_HISTORY_CAPACITY = 4;
+
     /** Immutable unique identifier for this node. */
     private final UUID id;
 
@@ -46,11 +57,21 @@ public final class Node implements NodeView {
     private FrequencyState frequencyState;
 
     /**
-     * Ordered record of past {@link FrequencyState} values.
-     * Lazily initialised: {@code null} until the first state transition is recorded.
-     * This avoids allocating a list for every node when history is not needed.
+     * Ring buffer of past {@link FrequencyState} values, oldest at {@link #historyHead}.
+     * Lazily initialised: {@code null} until the first state transition is recorded, and grown by
+     * doubling up to {@link #historyLimit}. This avoids allocating storage for every node when
+     * history is not needed and keeps memory bounded when it is.
      */
-    private List<FrequencyState> history;
+    private FrequencyState[] history;
+
+    /** Index of the oldest retained state inside {@link #history}. */
+    private int historyHead;
+
+    /** Number of retained states in {@link #history}. */
+    private int historySize;
+
+    /** Maximum number of retained states; zero disables history. */
+    private final int historyLimit;
 
     /**
      * Scalar activation/intensity level.
@@ -92,6 +113,7 @@ public final class Node implements NodeView {
         this.connections = new HashSet<>(builder.connections);
         this.connectionsView = Collections.unmodifiableSet(this.connections);
         this.topologyVersion = 0L;
+        this.historyLimit = builder.historyLimit;
         // History is not pre-populated; only future transitions are recorded.
         this.history = null;
     }
@@ -112,10 +134,17 @@ public final class Node implements NodeView {
 
     /**
      * Returns an unmodifiable ordered list of historical {@link FrequencyState} values,
-     * from oldest to most recent. Returns an empty list if history has never been recorded.
+     * from oldest to most recent, limited to the most recent {@link #getHistoryLimit()} states.
+     * Returns an empty list if history has never been recorded. The returned list is a snapshot of
+     * the buffer at call time and is not affected by later transitions.
      */
     public List<FrequencyState> getHistory() {
-        return history == null ? List.of() : Collections.unmodifiableList(history);
+        return historySize == 0 ? List.of() : new HistoryView(history, historyHead, historySize);
+    }
+
+    /** Returns the maximum number of past states this node retains; zero means history is disabled. */
+    public int getHistoryLimit() {
+        return historyLimit;
     }
 
     /** Returns the current energy/activation level. */
@@ -232,12 +261,61 @@ public final class Node implements NodeView {
     // History
     // -------------------------------------------------------------------------
 
-    /** Lazily initialises {@link #history} and appends {@code state}. */
+    /**
+     * Appends {@code state}, overwriting the oldest retained state once {@link #historyLimit} is
+     * reached. Append is O(1) amortised and never shifts elements.
+     */
     private void recordHistory(FrequencyState state) {
-        if (history == null) {
-            history = new ArrayList<>();
+        if (historyLimit == 0) {
+            return;
         }
-        history.add(state);
+        if (history == null) {
+            history = new FrequencyState[Math.min(INITIAL_HISTORY_CAPACITY, historyLimit)];
+        }
+        if (historySize == history.length && history.length < historyLimit) {
+            growHistory();
+        }
+        if (historySize < history.length) {
+            history[(historyHead + historySize) % history.length] = state;
+            historySize++;
+        } else {
+            history[historyHead] = state;
+            historyHead = (historyHead + 1) % history.length;
+        }
+    }
+
+    /** Doubles the ring capacity (bounded by the limit), re-linearising so the oldest is at 0. */
+    private void growHistory() {
+        int newCapacity = (int) Math.min((long) history.length * 2, historyLimit);
+        var grown = new FrequencyState[newCapacity];
+        for (int i = 0; i < historySize; i++) {
+            grown[i] = history[(historyHead + i) % history.length];
+        }
+        history = grown;
+        historyHead = 0;
+    }
+
+    /** Immutable ordered view over a copy of the ring contents, oldest first. */
+    private static final class HistoryView extends AbstractList<FrequencyState> implements RandomAccess {
+
+        private final FrequencyState[] ordered;
+
+        HistoryView(FrequencyState[] ring, int head, int size) {
+            this.ordered = new FrequencyState[size];
+            for (int i = 0; i < size; i++) {
+                this.ordered[i] = ring[(head + i) % ring.length];
+            }
+        }
+
+        @Override
+        public FrequencyState get(int index) {
+            return ordered[Objects.checkIndex(index, ordered.length)];
+        }
+
+        @Override
+        public int size() {
+            return ordered.length;
+        }
     }
 
     private void requireTopologyVersionCapacity() {
@@ -289,6 +367,7 @@ public final class Node implements NodeView {
      *   <li>{@code frequencyState} — {@link FrequencyState#ZERO}</li>
      *   <li>{@code energy} — {@code 0.0}</li>
      *   <li>{@code connections} — empty set</li>
+     *   <li>{@code historyLimit} — {@link Node#DEFAULT_HISTORY_LIMIT}</li>
      * </ul>
      */
     public static final class Builder {
@@ -297,6 +376,7 @@ public final class Node implements NodeView {
         private FrequencyState frequencyState = FrequencyState.ZERO;
         private double energy = 0.0;
         private NodeType type;
+        private int historyLimit = DEFAULT_HISTORY_LIMIT;
         private final Set<Node> connections = new HashSet<>();
 
         /** Sets a specific UUID (useful for deserialization or deterministic testing). */
@@ -325,6 +405,20 @@ public final class Node implements NodeView {
                 throw new IllegalArgumentException("energy must be non-negative, got: " + energy);
             }
             this.energy = energy;
+            return this;
+        }
+
+        /**
+         * Sets the maximum number of past frequency states retained by the node.
+         *
+         * @param historyLimit retained states; zero disables history
+         * @throws IllegalArgumentException if {@code historyLimit} is negative
+         */
+        public Builder historyLimit(int historyLimit) {
+            if (historyLimit < 0) {
+                throw new IllegalArgumentException("historyLimit must be non-negative, got: " + historyLimit);
+            }
+            this.historyLimit = historyLimit;
             return this;
         }
 

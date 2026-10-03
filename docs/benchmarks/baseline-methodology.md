@@ -108,6 +108,10 @@ All synthetic workloads are generated deterministically from configurable seeds 
    - Scores deterministic hypothesis sets (4 evidence entries per candidate) and compares bounded-heap against full-sort top-K selection at 10, 100, 1,000, and 10,000 candidates with K = 1, 10, 100.
    - Separates the scoring pass (`scoreOnly`), selection over a pre-generated score array, and the end-to-end reference policy.
 
+8. **Cross-Cycle Feedback Loop (Issue #34)**:
+   - Runs a bounded cycle sequence from identical initial state in three arms: no feedback (control), feedback derived but not consumed, and feedback consumed by baseline adaptation.
+   - Verifies semantics outside the timed window (A/B divergence only on consumption, bit-identical replay, bounded artifacts and Node history); latency and allocation are exploratory diagnostics.
+
 ## Verification & Benchmark Commands
 
 ### Run Full Baseline Suite
@@ -424,6 +428,17 @@ heap wins.
 ```bash
 ./gradlew test
 ```
+
+### Run the Cross-Cycle Feedback Loop Evaluation (Issue #34)
+
+```bash
+./gradlew :monada-neuron-evaluation:runFeedbackLoop
+./gradlew :monada-neuron-evaluation:runFeedbackLoop -PbenchmarkArgs="--quick --output-dir /tmp/feedback-loop"
+```
+
+The runner writes `feedback-loop.json` and `feedback-loop.md` (default `build/reports/benchmarks`) and exits non-zero only when a semantic check fails; timings never decide the verdict. The workload uses threshold routing for the perception Aeon because route-all propagation never quiesces on a cyclic graph and would end the cycle at `STAGE_LIMIT_REACHED` before `ADAPTATION`. Actions alternate `SUCCEEDED` and `FAILED` by cycle: a constant reward saturates the amplitude bound after a few dozen cycles, after which the baseline policy stops transitioning and Node history stops growing, which would hide the history bound.
+
+Results and the interpretation limits are recorded in ADR 0021.
 
 ## Baseline Results (Java 26 Reference)
 

@@ -1,6 +1,8 @@
 package monada.neuron.context;
 
+import monada.neuron.action.ActionStatus;
 import monada.neuron.aeon.AeonInputResult;
+import monada.neuron.evolution.FeedbackDisposition;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.monad.CognitiveStageKind;
 import monada.neuron.monad.CognitiveStageStatus;
@@ -371,6 +373,23 @@ public final class CognitiveContext implements AutoCloseable {
                             newState,
                             previousEnergy,
                             newEnergy)));
+        }
+    }
+
+    /** Records that a prior cycle's feedback artifact was consumed by this cycle's adaptation stage. */
+    public void recordFeedbackConsumed(
+            long originCycleOrdinal,
+            ActionStatus sourceStatus,
+            FeedbackDisposition disposition,
+            int entryCount,
+            int appliedCount,
+            int ineligibleCount) {
+        requireActive();
+        var event = new CognitiveTraceEvent.FeedbackConsumed(
+                originCycleOrdinal, sourceStatus, disposition, entryCount, appliedCount, ineligibleCount);
+        long traceSequence = reserveTraceSequence();
+        if (traceSequence != TRACE_ENTRY_OMITTED) {
+            traceEntries.add(new CognitiveTraceEntry(traceSequence, event));
         }
     }
 
