@@ -6,7 +6,6 @@ import monada.neuron.evaluation.EvaluationCognitiveStageResult;
 import monada.neuron.monad.CognitiveCycleResult;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -55,12 +54,8 @@ public final class DeterministicOutcomeFeedbackPolicy implements OutcomeFeedback
             List<UUID> targetNodeIds,
             long originCycleOrdinal) {
         Objects.requireNonNull(cycle, "cycle must not be null");
-        Objects.requireNonNull(targetNodeIds, "targetNodeIds must not be null");
-        if (originCycleOrdinal < 0) {
-            throw new IllegalArgumentException(
-                    "originCycleOrdinal must be non-negative, got: " + originCycleOrdinal);
-        }
-        var targets = considerTargets(targetNodeIds);
+        FeedbackArguments.requireOrdinal(originCycleOrdinal);
+        var targets = FeedbackArguments.considerTargets(targetNodeIds, config.maxEntries());
 
         ActionCognitiveStageResult action = null;
         EvaluationCognitiveStageResult evaluation = null;
@@ -102,21 +97,6 @@ public final class DeterministicOutcomeFeedbackPolicy implements OutcomeFeedback
                 disposition,
                 entries,
                 attributions));
-    }
-
-    /** Validates and returns the bounded, unique prefix of targets that may receive credit. */
-    private List<UUID> considerTargets(List<UUID> targetNodeIds) {
-        var limit = Math.min(targetNodeIds.size(), config.maxEntries());
-        var considered = new ArrayList<UUID>(limit);
-        var seen = new HashSet<UUID>(limit * 2);
-        for (var index = 0; index < limit; index++) {
-            var target = Objects.requireNonNull(targetNodeIds.get(index), "targetNodeIds must not contain null");
-            if (!seen.add(target)) {
-                throw new IllegalArgumentException("duplicate feedback target: " + target);
-            }
-            considered.add(target);
-        }
-        return considered;
     }
 
     private List<HypothesisAttribution> attributions(EvaluationCognitiveStageResult evaluation) {

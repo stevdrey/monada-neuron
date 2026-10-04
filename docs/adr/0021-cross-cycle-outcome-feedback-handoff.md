@@ -48,7 +48,9 @@ entries, attributions)` is an immutable record. `entries` is an ordered list of
 attributions, unique targets, and that the sign of every score matches the explicit
 `FeedbackDisposition` (`REINFORCE` positive, `PENALIZE` negative, `NEUTRAL` with no entries and nothing
 else). It holds typed enums, counters, and stable identifiers only: no provider payload, exception,
-Signal of the originating cycle, or `HypothesisSet`. `originCycleOrdinal` is assigned by the caller,
+Signal of the originating cycle, or `HypothesisSet`. The only Signal an artifact can carry is an optional
+`FeedbackEntry.targetSignal`, the expected Signal an adaptation rule may need; the reference policy leaves it
+unset. `originCycleOrdinal` is assigned by the caller,
 because the cycle has no identity (ADR 0009) and Neuron must not invent a global counter.
 
 **Attribution.** Targets are Node UUIDs supplied by the caller in the order that should receive credit.
@@ -59,7 +61,9 @@ status and observation count instead of referencing the outcome object.
 
 **Derivation policy.** `OutcomeFeedbackPolicy.derive(CognitiveCycleResult, List<UUID>, long)` is pure and
 deterministic and returns empty when the cycle produced no action result.
-`NoOpOutcomeFeedbackPolicy` always returns empty and is the control path.
+`NoOpOutcomeFeedbackPolicy` always returns empty and is the control path; it still validates the ordinal and
+the leading targets (at most `OutcomeFeedback.MAX_ENTRIES`) exactly like the reference policy, so switching
+policies never hides malformed provenance or target data.
 `DeterministicOutcomeFeedbackPolicy` (configured by `OutcomeFeedbackConfig`) uses these semantics:
 
 | `ActionStatus` | Disposition | Score per entry (default) | Rationale |
@@ -84,7 +88,9 @@ artifact's entry order, never the map's), applies the configured `AdaptationPoli
 target it knows, records the usual `NodeAdapted` event for each, and passes the cycle's Signals through so
 `ACTION` still runs. An entry whose target is unknown to the stage is ineligible: it is counted and
 skipped, not an error, because a later cycle may legitimately be configured with different targets.
-Neutral feedback applies nothing. `AdaptationCognitiveStage` is untouched, so a cycle without feedback
+Neutral feedback applies nothing. `validate(monad)` rejects feedback whose `monadId` differs from the
+executing Monad with an `IllegalArgumentException`; the cycle calls it before creating its context, so an
+artifact from Monad A can never adapt Nodes through a cycle of Monad B and nothing is mutated. `AdaptationCognitiveStage` is untouched, so a cycle without feedback
 behaves exactly as before. Reusing one stage instance for several cycles reapplies the same artifact; that
 is the caller's explicit choice.
 

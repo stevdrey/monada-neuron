@@ -420,9 +420,11 @@ Cycle N+1
 
 `OutcomeFeedback` is an immutable, bounded record (at most 64 entries and 16 attributions) that holds
 only the source `ActionStatus`, counters, stable Node identifiers, finite scores, and the
-`Proposition` plus score of hypotheses the evaluation selected. It retains no Signals, provider payloads,
-exceptions, or reasoning object graphs, and it is referenced by stable identifiers rather than by
-cycle-local sequences. Neuron keeps no queue, session, or history of feedback: dropping the artifact
+`Proposition` plus score of hypotheses the evaluation selected. An entry may also carry one optional target
+Signal for adaptation rules that need it; the artifact retains no Signals of the cycle that produced it, no
+provider payloads, exceptions, or reasoning object graphs, and it refers to Nodes and hypotheses by stable
+identifiers rather than by cycle-local sequences. `FeedbackAdaptationCognitiveStage` only accepts feedback
+produced by the Monad that executes the cycle. Neuron keeps no queue, session, or history of feedback: dropping the artifact
 discards it, and persisting reusable experience belongs to Monada Resonance Store behind an explicit adapter.
 
 `DeterministicOutcomeFeedbackPolicy` maps each status without fabricating reward: `SUCCEEDED` and

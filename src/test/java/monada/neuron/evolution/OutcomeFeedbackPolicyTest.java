@@ -212,6 +212,34 @@ class OutcomeFeedbackPolicyTest {
     }
 
     @Test
+    void noOpPolicyRejectsTheSameMalformedInputsAsTheReferencePolicy() {
+        var cycle = runAction(ActionStatus.SUCCEEDED, 1);
+        var noOp = NoOpOutcomeFeedbackPolicy.INSTANCE;
+
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class, () -> noOp.derive(cycle, TARGETS, -1L)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> noOp.derive(cycle, List.of(uuid(1), uuid(1)), 0L)),
+                () -> assertThrows(NullPointerException.class,
+                        () -> noOp.derive(cycle, java.util.Arrays.asList(uuid(1), null), 0L)),
+                () -> assertThrows(NullPointerException.class, () -> noOp.derive(null, TARGETS, 0L)),
+                () -> assertThrows(NullPointerException.class, () -> noOp.derive(cycle, null, 0L)),
+                () -> assertTrue(noOp.derive(cycle, List.of(), 0L).isEmpty()));
+    }
+
+    @Test
+    void noOpPolicyOnlyConsidersTheHardCapOfTargets() {
+        var cycle = runAction(ActionStatus.SUCCEEDED, 1);
+        var targets = new java.util.ArrayList<UUID>();
+        for (var i = 0; i < OutcomeFeedback.MAX_ENTRIES; i++) {
+            targets.add(uuid(1000 + i));
+        }
+        targets.add(uuid(1000)); // repeated, but beyond every policy's considered prefix
+
+        assertTrue(NoOpOutcomeFeedbackPolicy.INSTANCE.derive(cycle, targets, 0L).isEmpty());
+    }
+
+    @Test
     void noOpPolicyIsTheControlPathAndDerivesNothing() {
         var cycle = runAction(ActionStatus.SUCCEEDED, 1);
 

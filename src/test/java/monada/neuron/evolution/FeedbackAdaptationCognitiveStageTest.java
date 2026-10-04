@@ -193,6 +193,34 @@ class FeedbackAdaptationCognitiveStageTest {
     }
 
     @Test
+    void rejectsFeedbackProducedByADifferentMonadBeforeAnyNodeChanges() {
+        var a = node(1, 2.0, 5.0);
+        var foreign = new OutcomeFeedback(
+                uuid(999), 0L, ActionStatus.SUCCEEDED, 0, FeedbackDisposition.REINFORCE,
+                List.of(FeedbackEntry.of(uuid(1), 1.0)), List.of());
+        var stage = new FeedbackAdaptationCognitiveStage(baseline, List.of(a), foreign);
+        var cycle = new DeterministicCognitiveCycle(List.of(stage));
+
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class, () -> stage.validate(MONAD)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> cycle.execute(MONAD, List.of(signal(1.0)), new CognitiveBudget(10, 10, 20))),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> execute(stage, List.of(signal(1.0)))),
+                () -> assertEquals(new FrequencyState(2.0, 10.0, 0.0), a.getFrequencyState()),
+                () -> assertEquals(5.0, a.getEnergy()),
+                () -> assertTrue(a.getHistory().isEmpty()));
+    }
+
+    @Test
+    void acceptsFeedbackProducedByTheExecutingMonad() {
+        var stage = new FeedbackAdaptationCognitiveStage(baseline, List.of(), neutral());
+
+        stage.validate(MONAD);
+        stage.validate(new PrimaryMonad(uuid(100)));
+    }
+
+    @Test
     void rejectsInvalidConstruction() {
         var node = node(1, 1.0, 1.0);
         var nodes = new ArrayList<Node>();

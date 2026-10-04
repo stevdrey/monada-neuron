@@ -24,7 +24,9 @@ public interface OutcomeFeedbackPolicy {
      * @param targetNodeIds ordered Node identifiers eligible to receive credit; order defines entry order
      * @param originCycleOrdinal non-negative caller-assigned ordinal that identifies the producing cycle
      * @return the derived feedback, or empty when the cycle produced no action outcome
-     * @throws IllegalArgumentException if the ordinal is negative or considered targets repeat
+     * @throws NullPointerException if an argument or a considered target is null
+     * @throws IllegalArgumentException if the ordinal is negative or considered targets repeat; a policy
+     *     considers at most {@link OutcomeFeedback#MAX_ENTRIES} leading targets, fewer if configured lower
      */
     Optional<OutcomeFeedback> derive(CognitiveCycleResult cycle, List<UUID> targetNodeIds, long originCycleOrdinal);
 }

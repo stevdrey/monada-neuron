@@ -17,7 +17,8 @@ import java.util.UUID;
 /**
  * {@code ADAPTATION} stage that consumes a prior cycle's {@link OutcomeFeedback}.
  *
- * <p>The feedback is supplied by the caller when the stage is created for this cycle, so the
+ * <p>The feedback must have been produced by the Monad that executes the cycle; {@link #validate} rejects
+ * any other. The feedback is supplied by the caller when the stage is created for this cycle, so the
  * canonical order {@code ... -> ADAPTATION -> ACTION} is untouched and no state survives the stage:
  * the artifact came from an earlier cycle that has already ended. Reusing one stage instance for
  * several cycles reapplies the same feedback; carrying feedback forward is always the caller's
@@ -71,9 +72,23 @@ public final class FeedbackAdaptationCognitiveStage implements CognitiveStage {
         return CognitiveStageKind.ADAPTATION;
     }
 
+    /**
+     * Rejects feedback that a different Monad produced.
+     *
+     * <p>{@link OutcomeFeedback#monadId()} names the producing Monad, so an artifact from Monad A cannot
+     * adapt Nodes through a cycle that Monad B executes. The cycle calls this before creating its context,
+     * so a mismatch fails before any Node changes.
+     *
+     * @throws IllegalArgumentException if the feedback was produced by another Monad
+     */
     @Override
     public void validate(PrimaryMonad monad) {
         Objects.requireNonNull(monad, "monad must not be null");
+        if (!feedback.monadId().equals(monad.getId())) {
+            throw new IllegalArgumentException(
+                    "feedback was produced by Monad " + feedback.monadId()
+                            + " and cannot be consumed by Monad " + monad.getId());
+        }
     }
 
     @Override
