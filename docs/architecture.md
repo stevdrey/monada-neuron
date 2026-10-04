@@ -346,8 +346,9 @@ cycle ends with `NO_SIGNALS`; completing all configured stages ends with `COMPLE
 
 A context step/signal budget exhaustion ends the cycle with `CONTEXT_BUDGET_EXHAUSTED`. Non-Aeon
 stage results are normalized to their admitted output prefix; a memory result whose complete recall
-is cut by that prefix becomes `PARTIAL`, while a successful action result becomes
-`PARTIALLY_COMPLETED`; neither retains a rejected Signal. Aeon result accounting is unchanged,
+is cut by that prefix becomes `PARTIAL`, while an action result keeps the status the capability reported and
+`ActionCognitiveStageResult` records the produced observation count and a `TRUNCATED` admission; neither
+retains a rejected Signal. Aeon result accounting is unchanged,
 avoiding double-counting. A local
 propagation step/hop limit ends it with `STAGE_LIMIT_REACHED`; when both are observed, context-budget
 exhaustion wins and the snapshot retains both underlying indicators. Successful results retain the

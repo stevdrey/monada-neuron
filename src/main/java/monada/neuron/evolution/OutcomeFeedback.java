@@ -24,8 +24,10 @@ import java.util.UUID;
  * @param originCycleOrdinal non-negative caller-assigned ordinal of the producing cycle, used to
  *     correlate derivation with consumption in a later cycle trace
  * @param sourceStatus status of the action outcome the feedback was derived from
- * @param observationCount number of observations the outcome retained after cycle admission; zero for
- *     {@code REJECTED}, {@code UNAVAILABLE}, {@code TIMED_OUT}, and {@code FAILED}, which retain none
+ * @param producedObservationCount observations the capability produced before cycle admission; zero for
+ *     {@code REJECTED}, {@code UNAVAILABLE}, {@code TIMED_OUT}, and {@code FAILED}, which produce none
+ * @param admittedObservationCount observations the cycle admitted, at most the produced count; the
+ *     difference is provenance about the cycle budget and never changes the status or the reward
  * @param disposition explicit direction of the feedback
  * @param entries ordered feedback per target Node; empty exactly when the disposition is {@link FeedbackDisposition#NEUTRAL}
  * @param attributions evaluation-selected hypotheses in rank order, at most {@link #MAX_ATTRIBUTIONS}:
@@ -35,7 +37,8 @@ public record OutcomeFeedback(
         UUID monadId,
         long originCycleOrdinal,
         ActionStatus sourceStatus,
-        int observationCount,
+        int producedObservationCount,
+        int admittedObservationCount,
         FeedbackDisposition disposition,
         List<FeedbackEntry> entries,
         List<HypothesisAttribution> attributions) {
@@ -48,7 +51,7 @@ public record OutcomeFeedback(
 
     /**
      * Validates counters, bounds, target uniqueness, attribution uniqueness and rank order, that the
-     * status can have retained the observation count, and agreement between disposition and scores.
+     * status can have produced the observation counts, and agreement between disposition and scores.
      */
     public OutcomeFeedback {
         Objects.requireNonNull(monadId, "monadId must not be null");
@@ -58,18 +61,25 @@ public record OutcomeFeedback(
             throw new IllegalArgumentException(
                     "originCycleOrdinal must be non-negative, got: " + originCycleOrdinal);
         }
-        if (observationCount < 0) {
+        if (producedObservationCount < 0 || admittedObservationCount < 0) {
             throw new IllegalArgumentException(
-                    "observationCount must be non-negative, got: " + observationCount);
+                    "observation counts must be non-negative, got: " + producedObservationCount
+                            + "/" + admittedObservationCount);
+        }
+        if (admittedObservationCount > producedObservationCount) {
+            throw new IllegalArgumentException(
+                    "admittedObservationCount must not exceed producedObservationCount: "
+                            + admittedObservationCount + " > " + producedObservationCount);
         }
         // ActionResult forbids observations for these statuses, so no valid outcome could report any.
         var observationsPossible = switch (sourceStatus) {
             case SUCCEEDED, PARTIALLY_COMPLETED -> true;
             case REJECTED, UNAVAILABLE, TIMED_OUT, FAILED -> false;
         };
-        if (!observationsPossible && observationCount != 0) {
+        if (!observationsPossible && producedObservationCount != 0) {
             throw new IllegalArgumentException(
-                    sourceStatus + " outcomes retain no observations, got observationCount: " + observationCount);
+                    sourceStatus + " outcomes produce no observations, got producedObservationCount: "
+                            + producedObservationCount);
         }
         entries = List.copyOf(Objects.requireNonNull(entries, "entries must not be null"));
         attributions = List.copyOf(Objects.requireNonNull(attributions, "attributions must not be null"));
@@ -114,6 +124,22 @@ public record OutcomeFeedback(
         }
     }
 
+    /**
+     * Creates an artifact whose observations were all admitted: produced and admitted counts are
+     * {@code observationCount}.
+     */
+    public OutcomeFeedback(
+            UUID monadId,
+            long originCycleOrdinal,
+            ActionStatus sourceStatus,
+            int observationCount,
+            FeedbackDisposition disposition,
+            List<FeedbackEntry> entries,
+            List<HypothesisAttribution> attributions) {
+        this(monadId, originCycleOrdinal, sourceStatus, observationCount, observationCount,
+                disposition, entries, attributions);
+    }
+
     /** Creates explicit neutral feedback: the outcome is recorded but no reward or penalty is implied. */
     public static OutcomeFeedback neutral(
             UUID monadId,
@@ -121,6 +147,6 @@ public record OutcomeFeedback(
             ActionStatus sourceStatus,
             List<HypothesisAttribution> attributions) {
         return new OutcomeFeedback(
-                monadId, originCycleOrdinal, sourceStatus, 0, FeedbackDisposition.NEUTRAL, List.of(), attributions);
+                monadId, originCycleOrdinal, sourceStatus, 0, 0, FeedbackDisposition.NEUTRAL, List.of(), attributions);
     }
 }

@@ -28,6 +28,7 @@ import monada.neuron.signal.SignalKind;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
@@ -55,7 +56,7 @@ class OutcomeFeedbackPolicyTest {
                 () -> assertEquals(MONAD_ID, feedback.monadId()),
                 () -> assertEquals(7L, feedback.originCycleOrdinal()),
                 () -> assertEquals(ActionStatus.SUCCEEDED, feedback.sourceStatus()),
-                () -> assertEquals(2, feedback.observationCount()),
+                () -> assertEquals(2, feedback.admittedObservationCount()),
                 () -> assertEquals(FeedbackDisposition.REINFORCE, feedback.disposition()),
                 () -> assertEquals(
                         List.of(FeedbackEntry.of(uuid(1), 1.0), FeedbackEntry.of(uuid(2), 1.0),
@@ -70,8 +71,31 @@ class OutcomeFeedbackPolicyTest {
 
         assertAll(
                 () -> assertEquals(FeedbackDisposition.REINFORCE, feedback.disposition()),
-                () -> assertEquals(1, feedback.observationCount()),
+                () -> assertEquals(1, feedback.admittedObservationCount()),
                 () -> assertTrue(feedback.entries().stream().allMatch(entry -> entry.score() == 0.5)));
+    }
+
+    @Test
+    void theCycleBudgetNeverChangesTheFeedbackDerivedFromTheReportedStatus() {
+        // capability produced 3 observations; maxSignals 4 admits the input and all 3, 2 admits input and 1
+        var expected = Map.of(ActionStatus.SUCCEEDED, 1.0, ActionStatus.PARTIALLY_COMPLETED, 0.5);
+        for (var reported : expected.keySet()) {
+            var complete = policy.derive(runBudgetedAction(reported, 3, 4), TARGETS, 0L).orElseThrow();
+            var truncated = policy.derive(runBudgetedAction(reported, 3, 2), TARGETS, 0L).orElseThrow();
+
+            assertAll(
+                    reported.name(),
+                    () -> assertEquals(reported, complete.sourceStatus()),
+                    () -> assertEquals(3, complete.producedObservationCount()),
+                    () -> assertEquals(3, complete.admittedObservationCount()),
+                    () -> assertTrue(complete.entries().stream().allMatch(entry -> entry.score() == expected.get(reported))),
+                    // a budget-truncated outcome keeps the status and the reward; only provenance records the loss
+                    () -> assertEquals(reported, truncated.sourceStatus()),
+                    () -> assertEquals(3, truncated.producedObservationCount()),
+                    () -> assertEquals(1, truncated.admittedObservationCount()),
+                    () -> assertEquals(FeedbackDisposition.REINFORCE, truncated.disposition()),
+                    () -> assertTrue(truncated.entries().stream().allMatch(entry -> entry.score() == expected.get(reported))));
+        }
     }
 
     @Test
@@ -297,6 +321,11 @@ class OutcomeFeedbackPolicyTest {
                 status,
                 request.maxObservations(),
                 java.util.stream.IntStream.range(0, observations).mapToObj(i -> signal(i + 1.0)).toList());
+    }
+
+    private static CognitiveCycleResult runBudgetedAction(ActionStatus status, int observations, int maxSignals) {
+        return new DeterministicCognitiveCycle(List.of(new ActionCognitiveStage(capability(status, observations), 4)))
+                .execute(new PrimaryMonad(MONAD_ID), List.of(signal(1.0)), new CognitiveBudget(10, maxSignals, 30));
     }
 
     private static CognitiveCycleResult runAction(ActionStatus status, int observations) {

@@ -85,7 +85,7 @@ class OutcomeFeedbackContractsTest {
                 () -> assertEquals(MONAD, feedback.monadId()),
                 () -> assertEquals(3L, feedback.originCycleOrdinal()),
                 () -> assertEquals(ActionStatus.SUCCEEDED, feedback.sourceStatus()),
-                () -> assertEquals(2, feedback.observationCount()));
+                () -> assertEquals(2, feedback.admittedObservationCount()));
     }
 
     @Test
@@ -187,25 +187,52 @@ class OutcomeFeedbackContractsTest {
                             MONAD, 0L, status, 1, FeedbackDisposition.PENALIZE, List.of(entry(1, -0.5)), List.of())),
                     () -> assertEquals(0, new OutcomeFeedback(
                             MONAD, 0L, status, 0, FeedbackDisposition.PENALIZE, List.of(entry(1, -0.5)), List.of())
-                            .observationCount()));
+                            .admittedObservationCount()));
         }
         for (var status : List.of(ActionStatus.UNAVAILABLE, ActionStatus.TIMED_OUT)) {
             assertAll(
                     status.name(),
                     () -> assertThrows(IllegalArgumentException.class, () -> new OutcomeFeedback(
                             MONAD, 0L, status, 2, FeedbackDisposition.NEUTRAL, List.of(), List.of())),
-                    () -> assertEquals(0, OutcomeFeedback.neutral(MONAD, 0L, status, List.of()).observationCount()));
+                    () -> assertEquals(0, OutcomeFeedback.neutral(MONAD, 0L, status, List.of()).admittedObservationCount()));
         }
         for (var status : List.of(ActionStatus.SUCCEEDED, ActionStatus.PARTIALLY_COMPLETED)) {
             assertAll(
                     status.name(),
                     () -> assertEquals(3, new OutcomeFeedback(
                             MONAD, 0L, status, 3, FeedbackDisposition.REINFORCE, List.of(entry(1, 0.5)), List.of())
-                            .observationCount()),
+                            .admittedObservationCount()),
                     () -> assertEquals(0, new OutcomeFeedback(
                             MONAD, 0L, status, 0, FeedbackDisposition.REINFORCE, List.of(entry(1, 0.5)), List.of())
-                            .observationCount()));
+                            .admittedObservationCount()));
         }
+    }
+
+    @Test
+    void outcomeFeedbackKeepsProducedAndAdmittedObservationCountsApart() {
+        var truncated = new OutcomeFeedback(
+                MONAD, 0L, ActionStatus.SUCCEEDED, 5, 3, FeedbackDisposition.REINFORCE,
+                List.of(entry(1, 1.0)), List.of());
+        var convenience = new OutcomeFeedback(
+                MONAD, 0L, ActionStatus.SUCCEEDED, 4, FeedbackDisposition.REINFORCE,
+                List.of(entry(1, 1.0)), List.of());
+
+        assertAll(
+                () -> assertEquals(5, truncated.producedObservationCount()),
+                () -> assertEquals(3, truncated.admittedObservationCount()),
+                // the single-count constructor describes a complete admission
+                () -> assertEquals(4, convenience.producedObservationCount()),
+                () -> assertEquals(4, convenience.admittedObservationCount()),
+                () -> assertThrows(IllegalArgumentException.class, () -> new OutcomeFeedback(
+                        MONAD, 0L, ActionStatus.SUCCEEDED, 2, 3, FeedbackDisposition.REINFORCE,
+                        List.of(entry(1, 1.0)), List.of())),
+                () -> assertThrows(IllegalArgumentException.class, () -> new OutcomeFeedback(
+                        MONAD, 0L, ActionStatus.SUCCEEDED, -1, -1, FeedbackDisposition.REINFORCE,
+                        List.of(entry(1, 1.0)), List.of())),
+                // a failed outcome produced nothing, so nothing could have been truncated
+                () -> assertThrows(IllegalArgumentException.class, () -> new OutcomeFeedback(
+                        MONAD, 0L, ActionStatus.FAILED, 2, 0, FeedbackDisposition.PENALIZE,
+                        List.of(entry(1, -1.0)), List.of())));
     }
 
     @Test
@@ -226,7 +253,7 @@ class OutcomeFeedbackContractsTest {
         assertAll(
                 () -> assertEquals(FeedbackDisposition.NEUTRAL, neutral.disposition()),
                 () -> assertTrue(neutral.entries().isEmpty()),
-                () -> assertEquals(0, neutral.observationCount()),
+                () -> assertEquals(0, neutral.admittedObservationCount()),
                 () -> assertEquals(ActionStatus.UNAVAILABLE, neutral.sourceStatus()));
     }
 

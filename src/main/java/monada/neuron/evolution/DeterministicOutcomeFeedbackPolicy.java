@@ -70,7 +70,11 @@ public final class DeterministicOutcomeFeedbackPolicy implements OutcomeFeedback
             return Optional.empty();
         }
 
+        // The status is the capability's report: the cycle budget never redefines it, so a truncated success
+        // is still a success. Truncation is provenance (produced vs admitted), not part of the reward.
         var result = action.outcome().result();
+        var produced = action.producedObservationCount();
+        var admitted = action.admittedObservationCount();
         var attributions = attributions(evaluation);
         var disposition = disposition(result.status());
         if (disposition == FeedbackDisposition.NEUTRAL || targets.isEmpty()) {
@@ -78,7 +82,8 @@ public final class DeterministicOutcomeFeedbackPolicy implements OutcomeFeedback
                     cycle.monadId(),
                     originCycleOrdinal,
                     result.status(),
-                    result.observations().size(),
+                    produced,
+                    admitted,
                     FeedbackDisposition.NEUTRAL,
                     List.of(),
                     attributions));
@@ -93,7 +98,8 @@ public final class DeterministicOutcomeFeedbackPolicy implements OutcomeFeedback
                 cycle.monadId(),
                 originCycleOrdinal,
                 result.status(),
-                result.observations().size(),
+                produced,
+                admitted,
                 disposition,
                 entries,
                 attributions));

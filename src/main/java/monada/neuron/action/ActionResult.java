@@ -31,7 +31,13 @@ public record ActionResult(
         }
     }
 
-    /** Returns this result with only the cycle-admitted ordered observation prefix retained. */
+    /**
+     * Returns this result with only the cycle-admitted ordered observation prefix retained.
+     *
+     * <p>The status is the capability's report and is never changed by admission: a cycle budget limits
+     * what the cycle keeps, not what the action achieved. {@link ActionCognitiveStageResult} records the
+     * truncation separately.
+     */
     public ActionResult withAdmittedObservationPrefix(List<Signal> admittedObservations) {
         var stableObservations = List.copyOf(Objects.requireNonNull(
                 admittedObservations,
@@ -48,9 +54,6 @@ public record ActionResult(
         if (stableObservations.size() == observations.size()) {
             return this;
         }
-        var admittedStatus = status == ActionStatus.SUCCEEDED
-                ? ActionStatus.PARTIALLY_COMPLETED
-                : status;
-        return new ActionResult(admittedStatus, observationLimit, stableObservations);
+        return new ActionResult(status, observationLimit, stableObservations);
     }
 }

@@ -113,7 +113,7 @@ class ActionCognitiveStageTest {
     }
 
     @Test
-    void cycleBudgetAdmitsOnlyTheActionObservationPrefixAndNormalizesSuccessToPartial() {
+    void cycleBudgetAdmitsOnlyTheActionObservationPrefixAndKeepsTheReportedSuccess() {
         var input = signal(1.0);
         var firstObservation = signal(2.0);
         var secondObservation = signal(3.0);
@@ -134,13 +134,44 @@ class ActionCognitiveStageTest {
         assertAll(
                 () -> assertEquals(CognitiveCycleTermination.CONTEXT_BUDGET_EXHAUSTED, result.termination()),
                 () -> assertEquals(List.of(firstObservation, secondObservation), result.outputSignals()),
-                () -> assertEquals(ActionStatus.PARTIALLY_COMPLETED, stageResult.outcome().result().status()),
+                // the budget limits what the cycle keeps; it does not turn a success into a partial one
+                () -> assertEquals(ActionStatus.SUCCEEDED, stageResult.outcome().result().status()),
+                () -> assertEquals(3, stageResult.producedObservationCount()),
+                () -> assertEquals(2, stageResult.admittedObservationCount()),
+                () -> assertEquals(ObservationAdmission.TRUNCATED, stageResult.observationAdmission()),
                 () -> assertEquals(List.of(firstObservation, secondObservation),
                         stageResult.outcome().result().observations()),
                 () -> assertEquals(3, result.snapshot().acceptedSignals()),
                 () -> assertFalse(result.snapshot().signalOccurrences().stream()
                         .map(CognitiveSignalOccurrence::signal)
                         .anyMatch(rejectedObservation::equals)));
+    }
+
+    @Test
+    void cycleBudgetNeverRedefinesTheStatusOfEitherReportedCompletion() {
+        var observations = List.of(signal(2.0), signal(3.0), signal(4.0));
+        for (var reported : List.of(ActionStatus.SUCCEEDED, ActionStatus.PARTIALLY_COMPLETED)) {
+            ActionCapability capability = request -> new ActionResult(reported, request.maxObservations(), observations);
+
+            // maxSignals 3 admits the input and two of the three observations; 4 admits all of them
+            var truncated = new DeterministicCognitiveCycle(List.of(new ActionCognitiveStage(capability, 3)))
+                    .execute(monad(), List.of(signal(1.0)), new CognitiveBudget(10, 3, 20));
+            var complete = new DeterministicCognitiveCycle(List.of(new ActionCognitiveStage(capability, 3)))
+                    .execute(monad(), List.of(signal(1.0)), new CognitiveBudget(10, 4, 20));
+            var truncatedStage = assertInstanceOf(ActionCognitiveStageResult.class, truncated.stageResults().getFirst());
+            var completeStage = assertInstanceOf(ActionCognitiveStageResult.class, complete.stageResults().getFirst());
+
+            assertAll(
+                    reported.name(),
+                    () -> assertEquals(reported, truncatedStage.outcome().result().status()),
+                    () -> assertEquals(ObservationAdmission.TRUNCATED, truncatedStage.observationAdmission()),
+                    () -> assertEquals(3, truncatedStage.producedObservationCount()),
+                    () -> assertEquals(2, truncatedStage.admittedObservationCount()),
+                    () -> assertEquals(CognitiveCycleTermination.CONTEXT_BUDGET_EXHAUSTED, truncated.termination()),
+                    () -> assertEquals(reported, completeStage.outcome().result().status()),
+                    () -> assertEquals(ObservationAdmission.COMPLETE, completeStage.observationAdmission()),
+                    () -> assertEquals(3, completeStage.admittedObservationCount()));
+        }
     }
 
     @Test

@@ -40,15 +40,16 @@ the caller builds the cycle for N+1 with the stage that already holds the prior 
 queue, session store, singleton, background service, or self-starting loop; nothing in Neuron executes
 another cycle.
 
-**Artifact.** `OutcomeFeedback(monadId, originCycleOrdinal, sourceStatus, observationCount, disposition,
-entries, attributions)` is an immutable record. `entries` is an ordered list of
+**Artifact.** `OutcomeFeedback(monadId, originCycleOrdinal, sourceStatus, producedObservationCount,
+admittedObservationCount, disposition, entries, attributions)` is an immutable record. `entries` is an ordered list of
 `FeedbackEntry(targetNodeId, targetSignal, score)`; `attributions` is an ordered list of
 `HypothesisAttribution(proposition, evaluationScore)`. The record validates finite values, scores in
 `[-1, 1]` that are never zero, at most `MAX_ENTRIES = 64` entries and `MAX_ATTRIBUTIONS = 16`
 attributions, unique targets, and that the sign of every score matches the explicit
 `FeedbackDisposition` (`REINFORCE` positive, `PENALIZE` negative, `NEUTRAL` with no entries and nothing
-else). `observationCount` must be zero for `REJECTED`, `UNAVAILABLE`, `TIMED_OUT`, and `FAILED`, as
-`ActionResult` retains no observations for them, and `attributions` must name each `Proposition` once with
+else). `producedObservationCount` must be zero for `REJECTED`, `UNAVAILABLE`, `TIMED_OUT`, and `FAILED`, as
+`ActionResult` carries no observations for them, `admittedObservationCount` cannot exceed it (the difference
+is provenance about the cycle budget, never reward), and `attributions` must name each `Proposition` once with
 evaluation scores that never increase along the list, the order `EVALUATION` selects in, so a hand-built or
 deserialized artifact cannot claim provenance or a rank no valid cycle could have produced. It holds typed
 enums, counters, and stable identifiers only: no provider payload, exception,
@@ -81,6 +82,24 @@ and matches the reference policy only in that case.
 | `UNAVAILABLE` | `NEUTRAL` | none | Environmental; says nothing about the targets. |
 | `TIMED_OUT` | `NEUTRAL` | none | Environmental; says nothing about the targets. |
 | no action result | no artifact | none | The cycle ended before `ACTION`. |
+
+**The cycle budget never redefines the action's status.** The status is what the capability reported.
+`ActionResult.withAdmittedObservationPrefix` used to downgrade a `SUCCEEDED` result to `PARTIALLY_COMPLETED`
+when the cycle's global signal budget admitted only a prefix of its observations, which made a budget limit
+indistinguishable from a partial success and halved the reward of a fully successful action. It now keeps the
+status, and `ActionCognitiveStageResult(outcome, producedObservationCount, observationAdmission)` records what
+the cycle did with the output (`ObservationAdmission.COMPLETE` or `TRUNCATED`). Feedback is derived from the
+reported status; the produced and admitted counts travel in the artifact for audit only:
+
+| Capability reported | Cycle budget | Status kept | Admission | Feedback |
+| --- | --- | --- | --- | ---: |
+| `SUCCEEDED` | admits all | `SUCCEEDED` | `COMPLETE` | +1.0 |
+| `SUCCEEDED` | truncates | `SUCCEEDED` | `TRUNCATED` | +1.0 |
+| `PARTIALLY_COMPLETED` | admits all | `PARTIALLY_COMPLETED` | `COMPLETE` | +0.5 |
+| `PARTIALLY_COMPLETED` | truncates | `PARTIALLY_COMPLETED` | `TRUNCATED` | +0.5 |
+
+Truncation still ends the cycle with `CONTEXT_BUDGET_EXHAUSTED`; the action's outcome and the cycle's termination
+describe different things. This amends ADR 0011, which described the downgrade.
 
 Neutral outcomes produce an explicit `NEUTRAL` artifact with no entries instead of a fabricated reward
 or penalty. Only the first `maxEntries` supplied targets are considered, in the supplied order, and a
@@ -226,3 +245,5 @@ and are not interpretable per arm.
 - An action-outcome evidence variant for hypotheses, now that an outcome reference lifecycle exists
   through the caller-owned artifact (ADR 0019 deferred it).
 - Target-Signal feedback entries once a rule needs them; the record already carries the field.
+- `ResonanceMemoryCognitiveStage` still turns a `COMPLETE` recall into `PARTIAL` when the cycle budget truncates
+  it, the same conflation fixed here for actions; it is out of scope for this change.
