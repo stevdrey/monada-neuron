@@ -27,9 +27,12 @@ import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -232,7 +235,7 @@ class OutcomeFeedbackPolicyTest {
                 () -> assertThrows(NullPointerException.class, () -> policy.derive(null, TARGETS, 0L)),
                 () -> assertThrows(NullPointerException.class, () -> policy.derive(cycle, null, 0L)),
                 () -> assertThrows(NullPointerException.class,
-                        () -> policy.derive(cycle, java.util.Arrays.asList(uuid(1), null), 0L)),
+                        () -> policy.derive(cycle, Arrays.asList(uuid(1), null), 0L)),
                 () -> assertThrows(NullPointerException.class, () -> new DeterministicOutcomeFeedbackPolicy(null)));
     }
 
@@ -246,7 +249,7 @@ class OutcomeFeedbackPolicyTest {
                 () -> assertThrows(IllegalArgumentException.class,
                         () -> noOp.derive(cycle, List.of(uuid(1), uuid(1)), 0L)),
                 () -> assertThrows(NullPointerException.class,
-                        () -> noOp.derive(cycle, java.util.Arrays.asList(uuid(1), null), 0L)),
+                        () -> noOp.derive(cycle, Arrays.asList(uuid(1), null), 0L)),
                 () -> assertThrows(NullPointerException.class, () -> noOp.derive(null, TARGETS, 0L)),
                 () -> assertThrows(NullPointerException.class, () -> noOp.derive(cycle, null, 0L)),
                 () -> assertTrue(noOp.derive(cycle, List.of(), 0L).isEmpty()));
@@ -255,7 +258,7 @@ class OutcomeFeedbackPolicyTest {
     @Test
     void noOpPolicyOnlyConsidersTheHardCapOfTargets() {
         var cycle = runAction(ActionStatus.SUCCEEDED, 1);
-        var targets = new java.util.ArrayList<UUID>();
+        var targets = new ArrayList<UUID>();
         for (var i = 0; i < OutcomeFeedback.MAX_ENTRIES; i++) {
             targets.add(uuid(1000 + i));
         }
@@ -272,8 +275,8 @@ class OutcomeFeedbackPolicyTest {
         var cycle = runAction(ActionStatus.SUCCEEDED, 1);
         var duplicateInside = List.of(uuid(1), uuid(1), uuid(3));
         var duplicateBeyond = List.of(uuid(1), uuid(2), uuid(3), uuid(1));
-        var nullInside = java.util.Arrays.asList(uuid(1), null, uuid(3));
-        var nullBeyond = java.util.Arrays.asList(uuid(1), uuid(2), null);
+        var nullInside = Arrays.asList(uuid(1), null, uuid(3));
+        var nullBeyond = Arrays.asList(uuid(1), uuid(2), null);
 
         // Swapping the control for the reference policy must not change whether the workload runs.
         assertAll(
@@ -320,7 +323,7 @@ class OutcomeFeedbackPolicyTest {
         return request -> new ActionResult(
                 status,
                 request.maxObservations(),
-                java.util.stream.IntStream.range(0, observations).mapToObj(i -> signal(i + 1.0)).toList());
+                IntStream.range(0, observations).mapToObj(i -> signal(i + 1.0)).toList());
     }
 
     private static CognitiveCycleResult runBudgetedAction(ActionStatus status, int observations, int maxSignals) {

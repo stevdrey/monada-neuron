@@ -165,18 +165,21 @@ public sealed interface CognitiveTraceEvent permits CognitiveTraceEvent.AeonInpu
      * A prior cycle's feedback artifact was consumed by this cycle's adaptation stage.
      *
      * <p>The origin ordinal is the caller-assigned ordinal carried by the artifact and correlates this
-     * consumption with the cycle that derived it. The event keeps only counters and enums, never the
-     * feedback entries themselves.
+     * consumption with the cycle that derived it. Every entry is exactly one of: adapted (the policy changed
+     * a Node), unchanged (an eligible target the policy left as it was, such as under a no-op policy or at a
+     * configured bound), or ineligible (its target is not among the stage's targets). The event keeps only
+     * counters and enums, never the feedback entries themselves.
      */
     record FeedbackConsumed(
             long originCycleOrdinal,
             ActionStatus sourceStatus,
             FeedbackDisposition disposition,
             int entryCount,
-            int appliedCount,
+            int adaptedCount,
+            int unchangedCount,
             int ineligibleCount) implements CognitiveTraceEvent {
 
-        /** Validates the consumption counters: every entry is either applied or ineligible. */
+        /** Validates the consumption counters: every entry is adapted, unchanged, or ineligible. */
         public FeedbackConsumed {
             Objects.requireNonNull(sourceStatus, "sourceStatus must not be null");
             Objects.requireNonNull(disposition, "disposition must not be null");
@@ -184,15 +187,16 @@ public sealed interface CognitiveTraceEvent permits CognitiveTraceEvent.AeonInpu
                 throw new IllegalArgumentException(
                         "originCycleOrdinal must be non-negative, got: " + originCycleOrdinal);
             }
-            if (entryCount < 0 || appliedCount < 0 || ineligibleCount < 0) {
+            if (entryCount < 0 || adaptedCount < 0 || unchangedCount < 0 || ineligibleCount < 0) {
                 throw new IllegalArgumentException(
-                        "feedback counters must be non-negative, got: " + entryCount + "/"
-                                + appliedCount + "/" + ineligibleCount);
+                        "feedback counters must be non-negative, got: " + entryCount + "/" + adaptedCount
+                                + "/" + unchangedCount + "/" + ineligibleCount);
             }
-            if (appliedCount + ineligibleCount != entryCount) {
+            if ((long) adaptedCount + unchangedCount + ineligibleCount != entryCount) {
                 throw new IllegalArgumentException(
-                        "appliedCount + ineligibleCount must equal entryCount, got: "
-                                + appliedCount + " + " + ineligibleCount + " != " + entryCount);
+                        "adaptedCount + unchangedCount + ineligibleCount must equal entryCount, got: "
+                                + adaptedCount + " + " + unchangedCount + " + " + ineligibleCount
+                                + " != " + entryCount);
             }
         }
     }

@@ -7,8 +7,8 @@ package monada.neuron.evolution;
  * {@code UNAVAILABLE} and {@code TIMED_OUT}, are environmental and always derive neutral feedback.
  *
  * @param successScore score for {@code SUCCEEDED}, in {@code (0.0, 1.0]}
- * @param partialScore score for {@code PARTIALLY_COMPLETED}, in {@code (0.0, 1.0]}
- * @param rejectedScore score for {@code REJECTED}, in {@code [-1.0, 0.0)}
+ * @param partialScore score for {@code PARTIALLY_COMPLETED}, in {@code (0.0, successScore]}
+ * @param rejectedScore score for {@code REJECTED}, in {@code [failedScore, 0.0)}
  * @param failedScore score for {@code FAILED}, in {@code [-1.0, 0.0)}
  * @param maxEntries maximum entries per artifact, in {@code [1, OutcomeFeedback.MAX_ENTRIES]}
  * @param maxAttributions maximum attributions per artifact, in {@code [0, OutcomeFeedback.MAX_ATTRIBUTIONS]}
@@ -31,6 +31,16 @@ public record OutcomeFeedbackConfig(
         requirePositive("partialScore", partialScore);
         requireNegative("rejectedScore", rejectedScore);
         requireNegative("failedScore", failedScore);
+        // The documented semantics are ordered: a partial completion is never rewarded more than a full
+        // success, and a refused request is never penalized harder than an execution failure.
+        if (partialScore > successScore) {
+            throw new IllegalArgumentException(
+                    "partialScore must not exceed successScore, got: " + partialScore + " > " + successScore);
+        }
+        if (rejectedScore < failedScore) {
+            throw new IllegalArgumentException(
+                    "rejectedScore must not be harsher than failedScore, got: " + rejectedScore + " < " + failedScore);
+        }
         if (maxEntries < 1 || maxEntries > OutcomeFeedback.MAX_ENTRIES) {
             throw new IllegalArgumentException(
                     "maxEntries must be within [1, " + OutcomeFeedback.MAX_ENTRIES + "], got: " + maxEntries);

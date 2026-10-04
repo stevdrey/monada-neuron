@@ -8,6 +8,7 @@ import monada.neuron.signal.SignalKind;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -241,7 +242,7 @@ class OutcomeFeedbackContractsTest {
                 () -> assertThrows(IllegalArgumentException.class,
                         () -> reinforce(List.of(entry(1, 0.5), entry(1, 1.0)), List.of())),
                 () -> assertThrows(NullPointerException.class,
-                        () -> reinforce(java.util.Arrays.asList(entry(1, 0.5), null), List.of())),
+                        () -> reinforce(Arrays.asList(entry(1, 0.5), null), List.of())),
                 () -> assertThrows(NullPointerException.class, () -> reinforce(null, List.of())),
                 () -> assertThrows(NullPointerException.class, () -> reinforce(List.of(entry(1, 0.5)), null)));
     }
@@ -298,5 +299,19 @@ class OutcomeFeedbackContractsTest {
                         () -> new OutcomeFeedbackConfig(
                                 1.0, 0.5, -0.25, -1.0, 8, OutcomeFeedback.MAX_ATTRIBUTIONS + 1)),
                 () -> assertEquals(0, new OutcomeFeedbackConfig(1.0, 0.5, -0.25, -1.0, 8, 0).maxAttributions()));
+    }
+
+    @Test
+    void configRejectsScoresThatInvertTheDocumentedOrdering() {
+        assertAll(
+                // a partial completion must not be rewarded more than a full success
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new OutcomeFeedbackConfig(0.1, 1.0, -0.25, -1.0, 8, 4)),
+                // a refused request must not be penalized harder than an execution failure
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new OutcomeFeedbackConfig(1.0, 0.5, -1.0, -0.25, 8, 4)),
+                // equal scores are allowed
+                () -> assertEquals(0.5, new OutcomeFeedbackConfig(0.5, 0.5, -0.5, -0.5, 8, 4).partialScore()),
+                () -> assertEquals(1.0, new OutcomeFeedbackConfig(1.0, 1.0, -1.0, -1.0, 8, 4).partialScore()));
     }
 }

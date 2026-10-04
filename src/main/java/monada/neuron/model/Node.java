@@ -2,10 +2,10 @@ package monada.neuron.model;
 
 import java.util.AbstractList;
 import java.util.Collections;
-import java.util.RandomAccess;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.RandomAccess;
 import java.util.Set;
 import java.util.UUID;
 
@@ -21,8 +21,10 @@ import java.util.UUID;
  *   <li>Identity is solely determined by {@link #id}; two nodes with the same UUID are the same
  *       node regardless of any mutable state.</li>
  *   <li>{@link #frequencyState} and {@link #energy} are mutable to support in-place learning
- *       updates, but mutations are intentionally coarse-grained (full-state replacement) to
- *       keep the history accurate and auditable.</li>
+ *       updates, but mutations are intentionally coarse-grained (full-state replacement) so
+ *       each transition records exactly one previous state. The history keeps only the most recent
+ *       {@link #getHistoryLimit()} states ({@link #DEFAULT_HISTORY_LIMIT} by default); it is a bounded
+ *       diagnostic window, not a complete audit trail.</li>
  *   <li>{@link #connections} is exposed as an unmodifiable view; structural changes must go
  *       through {@link #connect(Node)} / {@link #disconnect(Node)} to maintain invariants.</li>
  *   <li>{@link #history} is lazily initialised to minimise heap pressure when running millions
@@ -45,8 +47,6 @@ public final class Node implements NodeView {
      */
     public static final int DEFAULT_HISTORY_LIMIT = 256;
 
-    private static final int INITIAL_HISTORY_CAPACITY = 4;
-
     /** Immutable unique identifier for this node. */
     private final UUID id;
 
@@ -57,21 +57,14 @@ public final class Node implements NodeView {
     private FrequencyState frequencyState;
 
     /**
-     * Ring buffer of past {@link FrequencyState} values, oldest at {@link #historyHead}.
-     * Lazily initialised: {@code null} until the first state transition is recorded, and grown by
-     * doubling up to {@link #historyLimit}. This avoids allocating storage for every node when
-     * history is not needed and keeps memory bounded when it is.
+     * Bounded history of past {@link FrequencyState} values, or {@code null} when nothing was recorded and
+     * the limit is {@link #DEFAULT_HISTORY_LIMIT}.
+     *
+     * <p>The ring's indices and limit live in this lazily allocated holder, not in the Node, so a Node that
+     * never adapts pays for exactly one reference, as before history was bounded. A Node built with a
+     * different limit gets its (still empty) holder at construction because the limit must be remembered.
      */
-    private FrequencyState[] history;
-
-    /** Index of the oldest retained state inside {@link #history}. */
-    private int historyHead;
-
-    /** Number of retained states in {@link #history}. */
-    private int historySize;
-
-    /** Maximum number of retained states; zero disables history. */
-    private final int historyLimit;
+    private HistoryRing history;
 
     /**
      * Scalar activation/intensity level.
@@ -113,9 +106,8 @@ public final class Node implements NodeView {
         this.connections = new HashSet<>(builder.connections);
         this.connectionsView = Collections.unmodifiableSet(this.connections);
         this.topologyVersion = 0L;
-        this.historyLimit = builder.historyLimit;
         // History is not pre-populated; only future transitions are recorded.
-        this.history = null;
+        this.history = builder.historyLimit == DEFAULT_HISTORY_LIMIT ? null : new HistoryRing(builder.historyLimit);
     }
 
     // -------------------------------------------------------------------------
@@ -140,7 +132,7 @@ public final class Node implements NodeView {
      * {@link #getHistorySize()} when only the count is needed.
      */
     public List<FrequencyState> getHistory() {
-        return historySize == 0 ? List.of() : new HistoryView(history, historyHead, historySize);
+        return history == null ? List.of() : history.snapshot();
     }
 
     /**
@@ -148,12 +140,12 @@ public final class Node implements NodeView {
      * Prefer this over {@code getHistory().size()}, which copies every retained state.
      */
     public int getHistorySize() {
-        return historySize;
+        return history == null ? 0 : history.size();
     }
 
     /** Returns the maximum number of past states this node retains; zero means history is disabled. */
     public int getHistoryLimit() {
-        return historyLimit;
+        return history == null ? DEFAULT_HISTORY_LIMIT : history.limit();
     }
 
     /** Returns the current energy/activation level. */
@@ -270,50 +262,90 @@ public final class Node implements NodeView {
     // History
     // -------------------------------------------------------------------------
 
-    /**
-     * Appends {@code state}, overwriting the oldest retained state once {@link #historyLimit} is
-     * reached. Append is O(1) amortised and never shifts elements.
-     */
+    /** Appends {@code state} to the bounded history, allocating the default-limit holder on first use. */
     private void recordHistory(FrequencyState state) {
-        if (historyLimit == 0) {
-            return;
-        }
         if (history == null) {
-            history = new FrequencyState[Math.min(INITIAL_HISTORY_CAPACITY, historyLimit)];
+            history = new HistoryRing(DEFAULT_HISTORY_LIMIT);
         }
-        if (historySize == history.length && history.length < historyLimit) {
-            growHistory();
+        history.add(state);
+    }
+
+    /**
+     * Ring buffer of the most recent states. Append is O(1) amortised and never shifts elements; the array
+     * is allocated on the first append and grown by doubling up to the limit, after which the oldest state
+     * is overwritten.
+     */
+    private static final class HistoryRing {
+
+        private static final int INITIAL_CAPACITY = 4;
+
+        private final int limit;
+        private FrequencyState[] states;
+        private int head;
+        private int size;
+
+        HistoryRing(int limit) {
+            this.limit = limit;
         }
-        if (historySize < history.length) {
-            history[(historyHead + historySize) % history.length] = state;
-            historySize++;
-        } else {
-            history[historyHead] = state;
-            historyHead = (historyHead + 1) % history.length;
+
+        int limit() {
+            return limit;
+        }
+
+        int size() {
+            return size;
+        }
+
+        void add(FrequencyState state) {
+            if (limit == 0) {
+                return;
+            }
+            if (states == null) {
+                states = new FrequencyState[Math.min(INITIAL_CAPACITY, limit)];
+            }
+            if (size == states.length && states.length < limit) {
+                grow();
+            }
+            if (size < states.length) {
+                states[(head + size) % states.length] = state;
+                size++;
+            } else {
+                states[head] = state;
+                head = (head + 1) % states.length;
+            }
+        }
+
+        /** Doubles the capacity (bounded by the limit), re-linearising so the oldest state is at index 0. */
+        private void grow() {
+            int newCapacity = (int) Math.min((long) states.length * 2, limit);
+            var grown = new FrequencyState[newCapacity];
+            for (int i = 0; i < size; i++) {
+                grown[i] = states[(head + i) % states.length];
+            }
+            states = grown;
+            head = 0;
+        }
+
+        /** Returns an immutable ordered copy of the retained states, oldest first, or an empty list. */
+        List<FrequencyState> snapshot() {
+            if (size == 0) {
+                return List.of();
+            }
+            var ordered = new FrequencyState[size];
+            for (int i = 0; i < size; i++) {
+                ordered[i] = states[(head + i) % states.length];
+            }
+            return new HistoryView(ordered);
         }
     }
 
-    /** Doubles the ring capacity (bounded by the limit), re-linearising so the oldest is at 0. */
-    private void growHistory() {
-        int newCapacity = (int) Math.min((long) history.length * 2, historyLimit);
-        var grown = new FrequencyState[newCapacity];
-        for (int i = 0; i < historySize; i++) {
-            grown[i] = history[(historyHead + i) % history.length];
-        }
-        history = grown;
-        historyHead = 0;
-    }
-
-    /** Immutable ordered view over a copy of the ring contents, oldest first. */
+    /** Immutable ordered list over a private copy of the ring contents, oldest first. */
     private static final class HistoryView extends AbstractList<FrequencyState> implements RandomAccess {
 
         private final FrequencyState[] ordered;
 
-        HistoryView(FrequencyState[] ring, int head, int size) {
-            this.ordered = new FrequencyState[size];
-            for (int i = 0; i < size; i++) {
-                this.ordered[i] = ring[(head + i) % ring.length];
-            }
+        HistoryView(FrequencyState[] ordered) {
+            this.ordered = ordered;
         }
 
         @Override

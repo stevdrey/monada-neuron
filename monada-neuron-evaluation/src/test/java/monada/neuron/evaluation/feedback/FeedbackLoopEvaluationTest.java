@@ -11,7 +11,9 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -59,6 +61,22 @@ class FeedbackLoopEvaluationTest {
     }
 
     @Test
+    void theControlArmModelsNoRetainedFeedbackBecauseItDerivesNone() {
+        var outcome = new FeedbackLoopEvaluation(SEED, true).run();
+
+        var rows = outcome.results().stream()
+                .collect(Collectors.toMap(row -> row.benchmarkName(), row -> row.diagnostics()));
+        var control = rows.get("FeedbackLoop.control");
+        assertAll(
+                () -> assertEquals("0", control.get("derivedFeedbackArtifacts")),
+                () -> assertEquals("0", control.get("modeledFeedbackBytesPerCycle")),
+                () -> assertTrue(Long.parseLong(
+                        rows.get("FeedbackLoop.derived-not-consumed").get("modeledFeedbackBytesPerCycle")) > 0L),
+                () -> assertTrue(Long.parseLong(
+                        rows.get("FeedbackLoop.consumed").get("modeledFeedbackBytesPerCycle")) > 0L));
+    }
+
+    @Test
     void stateDigestsAreStableAcrossRunsAndSeparateConsumedFromUnconsumedArms() {
         Map<String, String> first = digests(new FeedbackLoopEvaluation(SEED, true).run());
         Map<String, String> second = digests(new FeedbackLoopEvaluation(SEED, true).run());
@@ -67,6 +85,24 @@ class FeedbackLoopEvaluationTest {
                 () -> assertEquals(first, second),
                 () -> assertEquals(first.get("FeedbackLoop.control"), first.get("FeedbackLoop.derived-not-consumed")),
                 () -> assertTrue(!first.get("FeedbackLoop.control").equals(first.get("FeedbackLoop.consumed"))));
+    }
+
+    @Test
+    void theReportedRunConfigurationIsTheOneTheEvaluationActuallyUses() {
+        var quick = new FeedbackLoopEvaluation(SEED, true).runConfiguration();
+        var full = new FeedbackLoopEvaluation(SEED, false).runConfiguration();
+        var reported = FeedbackLoopRunner.run(SEED, true).evaluation().runConfiguration();
+
+        assertAll(
+                () -> assertEquals(quick, reported),
+                () -> assertEquals(SEED, quick.seed()),
+                () -> assertTrue(quick.quickMode()),
+                () -> assertFalse(full.quickMode()),
+                // the iteration counts come from the evaluation, so the report cannot drift from the run
+                () -> assertEquals(1, quick.defaultWarmupIterations()),
+                () -> assertEquals(3, quick.defaultMeasurementIterations()),
+                () -> assertEquals(3, full.defaultWarmupIterations()),
+                () -> assertEquals(10, full.defaultMeasurementIterations()));
     }
 
     @Test
@@ -197,7 +233,7 @@ class FeedbackLoopEvaluationTest {
     }
 
     private static Map<String, String> digests(FeedbackLoopEvaluation.Outcome outcome) {
-        var digests = new java.util.TreeMap<String, String>();
+        var digests = new TreeMap<String, String>();
         outcome.results().forEach(result ->
                 digests.put(result.benchmarkName(), result.diagnostics().get("stateDigest")));
         return digests;

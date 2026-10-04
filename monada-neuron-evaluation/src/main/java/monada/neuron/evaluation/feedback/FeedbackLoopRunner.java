@@ -2,7 +2,6 @@ package monada.neuron.evaluation.feedback;
 
 import monada.neuron.evaluation.metrics.EnvironmentMetadata;
 import monada.neuron.evaluation.metrics.EvaluationReport;
-import monada.neuron.evaluation.metrics.EvaluationReport.RunConfiguration;
 import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator;
 
 import java.io.IOException;
@@ -70,17 +69,12 @@ public final class FeedbackLoopRunner {
 
     /** Runs the evaluation and assembles the report. */
     public static FeedbackLoopReport run(long seed, boolean quick) {
-        var outcome = new FeedbackLoopEvaluation(seed, quick).run();
+        var feedbackLoop = new FeedbackLoopEvaluation(seed, quick);
+        var outcome = feedbackLoop.run();
         var evaluation = new EvaluationReport(
                 Instant.now(),
                 EnvironmentMetadata.current(),
-                new RunConfiguration(
-                        seed,
-                        quick,
-                        quick ? 1 : 3,
-                        quick ? 3 : 10,
-                        "One op is one cognitive cycle; an iteration runs the whole bounded cycle sequence"
-                                + " over a freshly generated topology (setup excluded from timing)"),
+                feedbackLoop.runConfiguration(),
                 outcome.results(),
                 FeedbackLoopReport.TITLE);
         return new FeedbackLoopReport(evaluation, outcome.checks(), outcome.metadata());

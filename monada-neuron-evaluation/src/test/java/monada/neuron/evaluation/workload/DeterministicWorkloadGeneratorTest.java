@@ -122,13 +122,14 @@ class DeterministicWorkloadGeneratorTest {
     }
 
     @Test
-    void modelsTheNodeObjectGraphWithTheRingBufferHistoryFields() {
-        // 232 B per node: a 64 B Node (the ring-buffer index and limit ints included), UUID, FrequencyState,
-        // the unmodifiable-set wrapper, and the empty adjacency set; plus 32 B per directed edge.
+    void keepsTheNodeObjectGraphModelUnchangedByTheBoundedHistory() {
+        // 224 B per node: a 56 B Node, UUID, FrequencyState, the unmodifiable-set wrapper, and the empty
+        // adjacency set; plus 32 B per directed edge. The lazily allocated history holder adds nothing to
+        // the base, which a direct measurement of retained heap per node confirmed.
         assertAll(
                 () -> assertEquals(0L, DeterministicWorkloadGenerator.estimateRetainedHeapBytes(0, 5)),
-                () -> assertEquals(232L, DeterministicWorkloadGenerator.estimateRetainedHeapBytes(1, 0)),
-                () -> assertEquals(10L * 232L + 3L * 32L, DeterministicWorkloadGenerator.estimateRetainedHeapBytes(10, 3)));
+                () -> assertEquals(224L, DeterministicWorkloadGenerator.estimateRetainedHeapBytes(1, 0)),
+                () -> assertEquals(10L * 224L + 3L * 32L, DeterministicWorkloadGenerator.estimateRetainedHeapBytes(10, 3)));
     }
 
     @Test

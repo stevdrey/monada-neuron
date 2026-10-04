@@ -184,9 +184,9 @@ class CognitiveContextTest {
     void recordsFeedbackConsumedEventsWithinTheTraceBudget() {
         var context = new CognitiveContext(new CognitiveBudget(1, 1, 1));
         context.recordFeedbackConsumed(
-                4L, ActionStatus.PARTIALLY_COMPLETED, FeedbackDisposition.REINFORCE, 3, 2, 1);
+                4L, ActionStatus.PARTIALLY_COMPLETED, FeedbackDisposition.REINFORCE, 4, 2, 1, 1);
         context.recordFeedbackConsumed(
-                5L, ActionStatus.FAILED, FeedbackDisposition.PENALIZE, 1, 1, 0);
+                5L, ActionStatus.FAILED, FeedbackDisposition.PENALIZE, 1, 1, 0, 0);
         var snapshot = context.complete(CognitiveCycleOutcome.SUCCESS);
 
         assertAll(
@@ -194,7 +194,7 @@ class CognitiveContextTest {
                 () -> assertEquals(1L, snapshot.omittedTraceEntries()),
                 () -> assertEquals(
                         new CognitiveTraceEvent.FeedbackConsumed(
-                                4L, ActionStatus.PARTIALLY_COMPLETED, FeedbackDisposition.REINFORCE, 3, 2, 1),
+                                4L, ActionStatus.PARTIALLY_COMPLETED, FeedbackDisposition.REINFORCE, 4, 2, 1, 1),
                         snapshot.traceEntries().getFirst().event()));
     }
 
@@ -204,17 +204,20 @@ class CognitiveContextTest {
 
         assertAll(
                 () -> assertThrows(IllegalArgumentException.class, () -> context.recordFeedbackConsumed(
-                        -1L, ActionStatus.FAILED, FeedbackDisposition.PENALIZE, 1, 1, 0)),
+                        -1L, ActionStatus.FAILED, FeedbackDisposition.PENALIZE, 1, 1, 0, 0)),
                 () -> assertThrows(IllegalArgumentException.class, () -> context.recordFeedbackConsumed(
-                        0L, ActionStatus.FAILED, FeedbackDisposition.PENALIZE, -1, 0, 0)),
+                        0L, ActionStatus.FAILED, FeedbackDisposition.PENALIZE, -1, 0, 0, 0)),
+                // adapted + unchanged + ineligible must account for every entry
                 () -> assertThrows(IllegalArgumentException.class, () -> context.recordFeedbackConsumed(
-                        0L, ActionStatus.FAILED, FeedbackDisposition.PENALIZE, 2, 2, 1)),
+                        0L, ActionStatus.FAILED, FeedbackDisposition.PENALIZE, 2, 2, 0, 1)),
                 () -> assertThrows(IllegalArgumentException.class, () -> context.recordFeedbackConsumed(
-                        0L, ActionStatus.FAILED, FeedbackDisposition.PENALIZE, 2, -1, 3)),
+                        0L, ActionStatus.FAILED, FeedbackDisposition.PENALIZE, 2, 1, 0, 0)),
+                () -> assertThrows(IllegalArgumentException.class, () -> context.recordFeedbackConsumed(
+                        0L, ActionStatus.FAILED, FeedbackDisposition.PENALIZE, 2, -1, 2, 1)),
                 () -> assertThrows(NullPointerException.class, () -> context.recordFeedbackConsumed(
-                        0L, null, FeedbackDisposition.PENALIZE, 1, 1, 0)),
+                        0L, null, FeedbackDisposition.PENALIZE, 1, 1, 0, 0)),
                 () -> assertThrows(NullPointerException.class, () -> context.recordFeedbackConsumed(
-                        0L, ActionStatus.FAILED, null, 1, 1, 0)));
+                        0L, ActionStatus.FAILED, null, 1, 1, 0, 0)));
     }
 
     @Test

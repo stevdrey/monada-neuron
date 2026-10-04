@@ -4,6 +4,7 @@ import monada.neuron.context.CognitiveBudget;
 import monada.neuron.context.CognitiveContext;
 import monada.neuron.evaluation.integration.ResonanceStoreFixtureCorpus.Query;
 import monada.neuron.evaluation.metrics.BenchmarkRunResult;
+import monada.neuron.evaluation.metrics.EvaluationCheck;
 import monada.neuron.evaluation.metrics.EvaluationMetricsCollector;
 import monada.neuron.evaluation.workload.DeterministicActionFixture;
 import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator;
@@ -51,7 +52,7 @@ import java.util.function.Supplier;
 public final class ResonanceStoreIntegrationEvaluation {
 
     /** One named semantic verdict. */
-    public record Check(String name, boolean passed, String detail) {
+    public record Check(String name, boolean passed, String detail) implements EvaluationCheck {
     }
 
     /** Complete evaluation output. */

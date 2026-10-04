@@ -433,8 +433,11 @@ discards it, and persisting reusable experience belongs to Monada Resonance Stor
 `TIMED_OUT` derive explicit `NEUTRAL` feedback with no entries. `NoOpOutcomeFeedbackPolicy` is the control
 path, and the existing `AdaptationCognitiveStage` is unchanged, so a cycle without feedback behaves exactly as before.
 The consuming stage skips targets it was not configured with, applies entries in artifact order, and records one
-`FeedbackConsumed` trace event after its `NodeAdapted` events, carrying the origin cycle ordinal, which correlates consumption with derivation
-without making the trace a store. Repeated adaptation grows a Node's history by one state per transition,
+`FeedbackConsumed` trace event after its `NodeAdapted` events, carrying the origin cycle ordinal, which correlates
+consumption with derivation without making the trace a store, and the number of entries adapted, left unchanged
+(for example by the no-op policy), and ineligible. The stage runs only if the cycle reaches `ADAPTATION`; when it
+ends earlier (for example with `NO_SIGNALS`) the artifact was not consumed and stays with the caller, visible as
+the absence of an `AdaptationCognitiveStageResult` in the cycle result. Repeated adaptation grows a Node's history by one state per transition,
 so history is bounded (see Current Phase-1 Model). See ADR 0021.
 
 ## Target Module Boundaries

@@ -101,16 +101,23 @@ reported status; the produced and admitted counts travel in the artifact for aud
 Truncation still ends the cycle with `CONTEXT_BUDGET_EXHAUSTED`; the action's outcome and the cycle's termination
 describe different things. This amends ADR 0011, which described the downgrade.
 
+`OutcomeFeedbackConfig` also checks the ordering these semantics imply: `partialScore <= successScore` and
+`rejectedScore >= failedScore` (a partial completion is never rewarded more than a full success, and a refused
+request is never penalized harder than an execution failure), so a configuration cannot invert the learning signal.
+
 Neutral outcomes produce an explicit `NEUTRAL` artifact with no entries instead of a fabricated reward
 or penalty. Only the first `maxEntries` supplied targets are considered, in the supplied order, and a
 repeated target among them is an `IllegalArgumentException`. With no considered target the artifact is
 also neutral. Scalar scores carry no target Signal, so the baseline adaptation policy scales amplitude and
 energy (ADR 0012); `FeedbackEntry` can carry a `targetSignal` for other policies.
 
-**Consumption.** `FeedbackAdaptationCognitiveStage` occupies `ADAPTATION`. It indexes its target Nodes by
-UUID once (two target Nodes with the same UUID are ambiguous and rejected at construction, not silently
-ignored) (a `HashMap`, O(1) per entry; entry count is bounded by 64, and processing order is the
-artifact's entry order, never the map's), applies the configured `AdaptationPolicy` to every entry whose
+**Consumption.** `FeedbackAdaptationCognitiveStage` occupies `ADAPTATION`. It resolves only the (at most 64)
+Nodes the feedback refers to, so its cost follows the feedback and not the number of candidate targets: the
+`Aeon` constructor looks members up with `Aeon.findMember` when the stage executes (O(1), no copy of the
+membership; Aeon membership must not change while a cycle executes), and the `List<Node>` constructor makes one
+pass that keeps just the referenced Nodes. Two target Nodes with the same UUID that the feedback refers to are
+ambiguous and rejected at construction, not silently ignored; duplicates it never refers to are inert. It
+processes entries in the artifact's order, never in the order of any index, and applies the configured `AdaptationPolicy` to every entry whose
 target it knows, records the usual `NodeAdapted` event for each, and passes the cycle's Signals through so
 `ACTION` still runs. An entry whose target is unknown to the stage is ineligible: it is counted and
 skipped, not an error, because a later cycle may legitimately be configured with different targets.
@@ -120,10 +127,21 @@ artifact from Monad A can never adapt Nodes through a cycle of Monad B and nothi
 behaves exactly as before. Reusing one stage instance for several cycles reapplies the same artifact; that
 is the caller's explicit choice.
 
+**Observable consumption.** The stage runs only if the cycle reaches `ADAPTATION`. It needs no input Signals, so
+it opts in to `acceptsTypedOnlyHandOff()` and also runs when the preceding result retains hypotheses and emits
+none. When no Signal reaches it and no typed artifact keeps the cycle alive, the cycle ends with `NO_SIGNALS`
+before the stage: nothing was consumed, no `FeedbackConsumed` event is recorded, and the caller still owns the
+artifact. Consumption is therefore visible without relying on the trace, whose entries can be omitted by its
+budget: the stage ran if and only if `CognitiveCycleResult.stageResults()` contains an
+`AdaptationCognitiveStageResult`.
+
 **Trace.** `CognitiveTraceEvent.FeedbackConsumed(originCycleOrdinal, sourceStatus, disposition,
-entryCount, appliedCount, ineligibleCount)` is recorded once per consuming stage, within the existing trace
-budget, after the stage's `NodeAdapted` events (which keep the artifact's entry order): the counters are only
-known once every entry was visited. Derivation happens after the producing cycle has completed, when its `CognitiveContext` can no
+entryCount, adaptedCount, unchangedCount, ineligibleCount)` is recorded once per consuming stage, within the
+existing trace budget, after the stage's `NodeAdapted` events (which keep the artifact's entry order): the
+counters are only known once every entry was visited. Every entry is exactly one of adapted (the policy changed
+a Node), unchanged (an eligible target the policy left alone, as `NoOpAdaptationPolicy` always does, or a Node
+already at a configured bound), or ineligible, so the event never reports a no-op control as having applied
+feedback. Derivation happens after the producing cycle has completed, when its `CognitiveContext` can no
 longer record events, so there is no derivation event; the artifact itself is the record of derivation and
 carries the ordinal that ties the later `FeedbackConsumed` event to its origin. The event holds counters
 and enums, not entries, so the trace does not become persistence.
@@ -195,11 +213,14 @@ cycles. The ring buffer bounds it at the cost of dropping the oldest states.
 - Cost is small relative to propagation. Modeled retained size of an artifact is about 64 B plus 36 B per
   entry (1,216 B for 32 entries; a model of a 64-bit HotSpot with compressed references, not a measurement).
   With 32 targets, history is at most `256 * 32 * 44 B`, about 352 KB in the model.
-- The ring buffer adds three `int` fields to every `Node`, even one that never adapts, because the history array
-  stays unallocated until the first transition. Measured retained heap per node (no edges, 400,000 nodes) grew
-  by 8.1 B under classic 12-byte object headers (218.8 to 226.9 B) and by 16.5 B under JDK 27's default compact
-  headers (186.8 to 203.3 B). `DeterministicWorkloadGenerator.estimateRetainedHeapBytes` now models 232 B per node
-  (classic headers), up from 224 B.
+- Bounding history adds no per-Node memory. The ring's head, size, and limit live in a lazily allocated
+  `HistoryRing` that the Node reaches through the single `history` reference it already had; a Node with the default
+  limit that never adapts allocates nothing, and one built with another limit gets its still empty holder at
+  construction. A first implementation kept the three indices as `int` fields on every `Node`, which a direct
+  measurement showed growing retained heap per node (no edges, 400,000 nodes) by 8.1 B under classic 12-byte
+  headers and 16.5 B under JDK 27's default compact headers, for a feature most Nodes never use. The final layout
+  measures 218.8 B (classic) and 187.1 B (compact), equal to the previous 218.8 B and 186.8 B, so
+  `DeterministicWorkloadGenerator.estimateRetainedHeapBytes` stays at 224 B per node.
 - `Node.getHistory()` is a snapshot, and callers that held the live view no longer observe later
   transitions through it.
 - `CognitiveTraceEvent` gains a permitted variant; exhaustive `switch` statements over it need a case.

@@ -102,7 +102,7 @@ class FeedbackLoopCycleTest {
                 () -> assertTrue(consumptions.get(0).isEmpty()),
                 () -> assertEquals(
                         List.of(new CognitiveTraceEvent.FeedbackConsumed(
-                                0L, ActionStatus.SUCCEEDED, FeedbackDisposition.REINFORCE, 1, 1, 0)),
+                                0L, ActionStatus.SUCCEEDED, FeedbackDisposition.REINFORCE, 1, 1, 0, 0)),
                         consumptions.get(1)),
                 () -> assertEquals(1L, consumptions.get(2).getFirst().originCycleOrdinal()),
                 () -> assertEquals(2L, consumptions.get(3).getFirst().originCycleOrdinal()));

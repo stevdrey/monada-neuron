@@ -26,9 +26,10 @@ import java.util.concurrent.TimeUnit;
 /**
  * JMH comparison for construction and steady-state access to selected large-node state layouts.
  *
- * <p>Each iteration starts from fresh Nodes and copied layouts. This prevents the object baseline's
- * intentional history from accumulating across a long update measurement while keeping setup out
- * of the timed benchmark operation.
+ * <p>Each iteration starts from fresh Nodes and copied layouts. This keeps the object baseline's
+ * intentional (bounded) history from filling up across a long update measurement, which would make
+ * later updates overwrite old states instead of appending, while keeping setup out of the timed
+ * benchmark operation.
  */
 @BenchmarkMode({Mode.AverageTime, Mode.Throughput})
 @OutputTimeUnit(TimeUnit.MICROSECONDS)

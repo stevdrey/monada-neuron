@@ -382,11 +382,13 @@ public final class CognitiveContext implements AutoCloseable {
             ActionStatus sourceStatus,
             FeedbackDisposition disposition,
             int entryCount,
-            int appliedCount,
+            int adaptedCount,
+            int unchangedCount,
             int ineligibleCount) {
         requireActive();
         var event = new CognitiveTraceEvent.FeedbackConsumed(
-                originCycleOrdinal, sourceStatus, disposition, entryCount, appliedCount, ineligibleCount);
+                originCycleOrdinal, sourceStatus, disposition, entryCount, adaptedCount, unchangedCount,
+                ineligibleCount);
         long traceSequence = reserveTraceSequence();
         if (traceSequence != TRACE_ENTRY_OMITTED) {
             traceEntries.add(new CognitiveTraceEntry(traceSequence, event));

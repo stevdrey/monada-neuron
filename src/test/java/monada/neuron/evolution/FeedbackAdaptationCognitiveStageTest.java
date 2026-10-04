@@ -12,9 +12,20 @@ import monada.neuron.context.CognitiveTraceEvent;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
+import monada.neuron.monad.CognitiveCycleTermination;
+import monada.neuron.monad.CognitiveStage;
 import monada.neuron.monad.CognitiveStageKind;
+import monada.neuron.monad.CognitiveStageResult;
+import monada.neuron.monad.CognitiveStageStatus;
 import monada.neuron.monad.DeterministicCognitiveCycle;
 import monada.neuron.monad.PrimaryMonad;
+import monada.neuron.reasoning.EvidenceRelation;
+import monada.neuron.reasoning.HypothesisLimits;
+import monada.neuron.reasoning.HypothesisSet;
+import monada.neuron.reasoning.HypothesisSetBuilder;
+import monada.neuron.reasoning.Proposition;
+import monada.neuron.reasoning.ReasoningCognitiveStageResult;
+import monada.neuron.reasoning.SignalEvidence;
 import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
 import org.junit.jupiter.api.Test;
@@ -67,7 +78,7 @@ class FeedbackAdaptationCognitiveStageTest {
                         run.adapted().stream().map(CognitiveTraceEvent.NodeAdapted::nodeId).toList()),
                 () -> assertEquals(
                         List.of(new CognitiveTraceEvent.FeedbackConsumed(
-                                9L, ActionStatus.SUCCEEDED, FeedbackDisposition.REINFORCE, 2, 2, 0)),
+                                9L, ActionStatus.SUCCEEDED, FeedbackDisposition.REINFORCE, 2, 2, 0, 0)),
                         run.consumed()));
     }
 
@@ -93,7 +104,7 @@ class FeedbackAdaptationCognitiveStageTest {
                 () -> assertEquals(uuid(1), assertInstanceOf(CognitiveTraceEvent.NodeAdapted.class, events.get(1)).nodeId()),
                 () -> assertEquals(
                         new CognitiveTraceEvent.FeedbackConsumed(
-                                5L, ActionStatus.SUCCEEDED, FeedbackDisposition.REINFORCE, 3, 2, 1),
+                                5L, ActionStatus.SUCCEEDED, FeedbackDisposition.REINFORCE, 3, 2, 0, 1),
                         events.get(2)));
     }
 
@@ -111,7 +122,7 @@ class FeedbackAdaptationCognitiveStageTest {
                 () -> assertEquals(2.0 * 0.9, a.getFrequencyState().amplitude(), 1e-12),
                 () -> assertEquals(
                         List.of(new CognitiveTraceEvent.FeedbackConsumed(
-                                1L, ActionStatus.FAILED, FeedbackDisposition.PENALIZE, 2, 1, 1)),
+                                1L, ActionStatus.FAILED, FeedbackDisposition.PENALIZE, 2, 1, 0, 1)),
                         run.consumed()));
     }
 
@@ -130,7 +141,7 @@ class FeedbackAdaptationCognitiveStageTest {
                 () -> assertTrue(a.getHistory().isEmpty()),
                 () -> assertEquals(
                         List.of(new CognitiveTraceEvent.FeedbackConsumed(
-                                3L, ActionStatus.TIMED_OUT, FeedbackDisposition.NEUTRAL, 0, 0, 0)),
+                                3L, ActionStatus.TIMED_OUT, FeedbackDisposition.NEUTRAL, 0, 0, 0, 0)),
                         run.consumed()));
     }
 
@@ -149,6 +160,33 @@ class FeedbackAdaptationCognitiveStageTest {
                 () -> assertEquals(new FrequencyState(2.0, 10.0, 0.0), a.getFrequencyState()),
                 () -> assertEquals(5.0, a.getEnergy()),
                 () -> assertTrue(a.getHistory().isEmpty()));
+    }
+
+    @Test
+    void countsEntriesTheAdaptationPolicyLeftUnchangedSeparatelyFromAdaptedOnes() {
+        var a = node(1, 2.0, 5.0);
+        var b = node(2, 2.0, 5.0);
+        var feedback = feedback(FeedbackDisposition.REINFORCE, ActionStatus.SUCCEEDED, 2L,
+                FeedbackEntry.of(uuid(1), 1.0), FeedbackEntry.of(uuid(2), 1.0), FeedbackEntry.of(uuid(99), 1.0));
+        // adapts node 1 only: the policy reports adapted = false for every other node
+        AdaptationPolicy onlyFirst = (node, input) -> node.getId().equals(uuid(1))
+                ? baseline.adapt(node, input)
+                : NoOpAdaptationPolicy.INSTANCE.adapt(node, input);
+
+        var run = execute(new FeedbackAdaptationCognitiveStage(onlyFirst, List.of(a, b), feedback), List.of(signal(1.0)));
+        var control = execute(new FeedbackAdaptationCognitiveStage(
+                NoOpAdaptationPolicy.INSTANCE, List.of(node(1, 2.0, 5.0)), feedback), List.of(signal(1.0)));
+
+        assertAll(
+                () -> assertEquals(
+                        List.of(new CognitiveTraceEvent.FeedbackConsumed(
+                                2L, ActionStatus.SUCCEEDED, FeedbackDisposition.REINFORCE, 3, 1, 1, 1)),
+                        run.consumed()),
+                // the documented control path consumes the feedback without changing any Node
+                () -> assertEquals(
+                        List.of(new CognitiveTraceEvent.FeedbackConsumed(
+                                2L, ActionStatus.SUCCEEDED, FeedbackDisposition.REINFORCE, 3, 0, 1, 2)),
+                        control.consumed()));
     }
 
     @Test
@@ -179,6 +217,87 @@ class FeedbackAdaptationCognitiveStageTest {
         var run = execute(new FeedbackAdaptationCognitiveStage(baseline, aeon, feedback), List.of(signal(1.0)));
 
         assertEquals(1, run.result().decisions().size());
+    }
+
+    @Test
+    void resolvesAeonMembersWhenTheStageRunsWithoutCopyingTheMembership() {
+        var a = node(1, 2.0, 5.0);
+        var late = node(2, 2.0, 5.0);
+        var aeon = new Aeon(uuid(10), AeonPurpose.EVOLUTION);
+        aeon.addMember(a);
+        var feedback = feedback(FeedbackDisposition.REINFORCE, ActionStatus.SUCCEEDED, 0L,
+                FeedbackEntry.of(uuid(1), 1.0), FeedbackEntry.of(uuid(2), 1.0), FeedbackEntry.of(uuid(3), 1.0));
+        var stage = new FeedbackAdaptationCognitiveStage(baseline, aeon, feedback);
+
+        aeon.addMember(late); // membership is read when the stage executes, as for any cycle-time lookup
+        var run = execute(stage, List.of(signal(1.0)));
+
+        assertAll(
+                () -> assertEquals(List.of(uuid(1), uuid(2)),
+                        run.result().decisions().stream().map(AdaptationDecision::nodeId).toList()),
+                () -> assertEquals(
+                        List.of(new CognitiveTraceEvent.FeedbackConsumed(
+                                0L, ActionStatus.SUCCEEDED, FeedbackDisposition.REINFORCE, 3, 2, 0, 1)),
+                        run.consumed()));
+    }
+
+    @Test
+    void duplicateTargetNodesTheFeedbackDoesNotReferenceAreInert() {
+        var referenced = node(1, 2.0, 5.0);
+        var unreferenced = node(2, 2.0, 5.0);
+        var unreferencedAgain = node(2, 3.0, 7.0);
+        var feedback = feedback(FeedbackDisposition.REINFORCE, ActionStatus.SUCCEEDED, 0L,
+                FeedbackEntry.of(uuid(1), 1.0));
+
+        var run = execute(new FeedbackAdaptationCognitiveStage(
+                baseline, List.of(referenced, unreferenced, unreferencedAgain), feedback), List.of(signal(1.0)));
+
+        assertAll(
+                () -> assertEquals(1, run.result().decisions().size()),
+                () -> assertEquals(new FrequencyState(2.0, 10.0, 0.0), unreferenced.getFrequencyState()),
+                () -> assertEquals(new FrequencyState(3.0, 10.0, 0.0), unreferencedAgain.getFrequencyState()));
+    }
+
+    @Test
+    void runsWithoutInputSignalsWhenTheUpstreamResultRetainsHypotheses() {
+        var a = node(1, 2.0, 5.0);
+        var feedback = feedback(FeedbackDisposition.REINFORCE, ActionStatus.SUCCEEDED, 0L,
+                FeedbackEntry.of(uuid(1), 1.0));
+        var stage = new FeedbackAdaptationCognitiveStage(baseline, List.of(a), feedback);
+
+        var result = new DeterministicCognitiveCycle(List.of(reasoningWithHypothesesOnly(), stage))
+                .execute(MONAD, List.of(signal(1.0)), new CognitiveBudget(10, 10, 20));
+
+        assertAll(
+                () -> assertTrue(stage.acceptsTypedOnlyHandOff()),
+                () -> assertEquals(CognitiveCycleTermination.COMPLETED, result.termination()),
+                () -> assertInstanceOf(AdaptationCognitiveStageResult.class, result.stageResults().getLast()),
+                () -> assertEquals(2.0 * 1.1, a.getFrequencyState().amplitude(), 1e-12));
+    }
+
+    @Test
+    void aCycleThatEndsBeforeAdaptationLeavesTheArtifactUnconsumedForTheCaller() {
+        var a = node(1, 2.0, 5.0);
+        var feedback = feedback(FeedbackDisposition.REINFORCE, ActionStatus.SUCCEEDED, 0L,
+                FeedbackEntry.of(uuid(1), 1.0));
+        var stage = new FeedbackAdaptationCognitiveStage(baseline, List.of(a), feedback);
+
+        // No signal reaches ADAPTATION: the cycle ends first, which is visible as the absence of the stage result.
+        var skipped = new DeterministicCognitiveCycle(List.of(stage))
+                .execute(MONAD, List.of(), new CognitiveBudget(10, 10, 20));
+        var untouched = a.getFrequencyState();
+        // The caller still owns the artifact and can hand the same one to the next cycle.
+        var consumed = new DeterministicCognitiveCycle(List.of(stage))
+                .execute(MONAD, List.of(signal(1.0)), new CognitiveBudget(10, 10, 20));
+
+        assertAll(
+                () -> assertEquals(CognitiveCycleTermination.NO_SIGNALS, skipped.termination()),
+                () -> assertTrue(skipped.stageResults().stream()
+                        .noneMatch(AdaptationCognitiveStageResult.class::isInstance)),
+                () -> assertEquals(new FrequencyState(2.0, 10.0, 0.0), untouched),
+                () -> assertTrue(consumed.stageResults().stream()
+                        .anyMatch(AdaptationCognitiveStageResult.class::isInstance)),
+                () -> assertEquals(2.0 * 1.1, a.getFrequencyState().amplitude(), 1e-12));
     }
 
     @Test
@@ -317,6 +436,26 @@ class FeedbackAdaptationCognitiveStageTest {
             }
         }
         return new Run(result, adapted, consumed);
+    }
+
+    /** A REASONING stage that retains hypotheses but emits no signals, so only a typed artifact flows on. */
+    private static CognitiveStage reasoningWithHypothesesOnly() {
+        var builder = new HypothesisSetBuilder(new HypothesisLimits(1, 1));
+        var sequence = builder.propose(new Proposition(0, 1)).getAsInt();
+        builder.addEvidence(sequence, new SignalEvidence(0, EvidenceRelation.SUPPORTS, 0.5));
+        HypothesisSet hypotheses = builder.build();
+        return new CognitiveStage() {
+            @Override
+            public CognitiveStageKind kind() {
+                return CognitiveStageKind.REASONING;
+            }
+
+            @Override
+            public CognitiveStageResult execute(
+                    PrimaryMonad monad, List<Signal> inputSignals, CognitiveContext context) {
+                return new ReasoningCognitiveStageResult(CognitiveStageStatus.COMPLETED, List.of(), hypotheses);
+            }
+        };
     }
 
     private static OutcomeFeedback neutral() {

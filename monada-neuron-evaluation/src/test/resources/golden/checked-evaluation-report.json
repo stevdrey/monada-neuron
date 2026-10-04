@@ -1,0 +1,36 @@
+{
+  "title": "Monada Neuron Cross-Cycle Feedback Loop Report",
+  "allChecksPassed": false,
+  "checks": [
+    { "name": "c.one", "passed": true, "detail": "detail | pipe" },
+    { "name": "c.two", "passed": false, "detail": "line1\nline2 \"q\"" }
+  ],
+  "metadata": {
+    "a.key": "quote \" and \\ backslash\ttab",
+    "b.key": "value | with pipe\nand newline"
+  },
+  "evaluation": {
+  "timestamp": "2026-01-01T00:00:00Z",
+  "runConfiguration": {
+    "seed": 42,
+    "quickMode": true,
+    "defaultWarmupIterations": 1,
+    "defaultMeasurementIterations": 3,
+    "operationsPerIterationPolicy": "ops | per \"iteration\""
+  },
+  "environment": {
+    "javaVersion": "27",
+    "javaVendor": "Vendor \"Q\"",
+    "jvmName": "VM",
+    "osName": "Linux",
+    "osArch": "amd64",
+    "availableProcessors": 4,
+    "maxMemoryBytes": 1073741824,
+    "totalMemoryBytes": 536870912,
+    "garbageCollectors": ["G1 Young", "G1 Old"],
+    "jvmArguments": ["-Xmx1g", "--add-modules=x"]
+  },
+  "results": [
+  ]
+}
+}

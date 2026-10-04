@@ -7,7 +7,9 @@ import monada.neuron.aeon.AeonPurpose;
 import monada.neuron.aeon.DeterministicAeonCoordinator;
 import monada.neuron.context.CognitiveBudget;
 import monada.neuron.evaluation.metrics.BenchmarkRunResult;
+import monada.neuron.evaluation.metrics.EvaluationCheck;
 import monada.neuron.evaluation.metrics.EvaluationMetricsCollector;
+import monada.neuron.evaluation.metrics.EvaluationReport.RunConfiguration;
 import monada.neuron.evaluation.workload.DeterministicActionFixture;
 import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator;
 import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator.GraphTopology;
@@ -63,7 +65,7 @@ import java.util.UUID;
 public final class FeedbackLoopEvaluation {
 
     /** One named semantic verdict. */
-    public record Check(String name, boolean passed, String detail) {
+    public record Check(String name, boolean passed, String detail) implements EvaluationCheck {
     }
 
     /** Complete evaluation output. */
@@ -132,6 +134,20 @@ public final class FeedbackLoopEvaluation {
         this.cycles = quick ? 40 : Node.DEFAULT_HISTORY_LIMIT + 44;
         this.warmupIterations = quick ? 1 : 3;
         this.measurementIterations = quick ? 3 : 10;
+    }
+
+    /**
+     * Returns the run configuration this evaluation actually uses, so a report cannot state different
+     * iteration counts than the ones that were measured.
+     */
+    public RunConfiguration runConfiguration() {
+        return new RunConfiguration(
+                seed,
+                quick,
+                warmupIterations,
+                measurementIterations,
+                "One op is one cognitive cycle; an iteration runs the whole bounded cycle sequence over a"
+                        + " freshly generated topology (setup excluded from timing)");
     }
 
     /** Runs verification and measurement. */
@@ -274,8 +290,10 @@ public final class FeedbackLoopEvaluation {
         diagnostics.put("stateDigest", digest(reference.last()));
         diagnostics.put("maxNodeHistorySize", Integer.toString(reference.maxNodeHistorySize()));
         diagnostics.put("derivedFeedbackArtifacts", Integer.toString(reference.derived().size()));
-        diagnostics.put("modeledFeedbackBytesPerCycle", Long.toString(modeledFeedbackBytes(
-                reference.derived().isEmpty() ? 0 : reference.derived().getLast().entries().size())));
+        // An arm that derives no artifact retains no feedback: report 0, not the size of an empty artifact.
+        diagnostics.put("modeledFeedbackBytesPerCycle", Long.toString(reference.derived().isEmpty()
+                ? 0L
+                : modeledFeedbackBytes(reference.derived().getLast().entries().size())));
         diagnostics.put("modeledNodeHistoryBytes", Long.toString(
                 (long) reference.maxNodeHistorySize() * targetCount * 44L));
         diagnostics.put("cyclesPerIteration", Integer.toString(cycles));

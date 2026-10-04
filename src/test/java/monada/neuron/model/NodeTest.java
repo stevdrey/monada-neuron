@@ -4,6 +4,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -405,8 +407,8 @@ class NodeTest {
                     () -> assertEquals(state(6), node.getHistory().get(1)),
                     () -> assertEquals(state(7), node.getHistory().get(2)),
                     () -> assertEquals(state(8), node.getFrequencyState()),
-                    () -> assertEquals(java.util.List.of(state(5), state(6), state(7)),
-                            java.util.List.copyOf(node.getHistory())));
+                    () -> assertEquals(List.of(state(5), state(6), state(7)),
+                            List.copyOf(node.getHistory())));
         }
 
         @Test
@@ -415,8 +417,8 @@ class NodeTest {
             var node = new Node.Builder().type(NodeType.PROCESSOR).historyLimit(5).build();
             node.transition(state(1));
             node.transition(state(2));
-            assertEquals(java.util.List.of(FrequencyState.ZERO, state(1)),
-                    java.util.List.copyOf(node.getHistory()));
+            assertEquals(List.of(FrequencyState.ZERO, state(1)),
+                    List.copyOf(node.getHistory()));
         }
 
         @Test
@@ -455,7 +457,7 @@ class NodeTest {
             var node = new Node.Builder().type(NodeType.PROCESSOR).historyLimit(2).build();
             node.transition(state(1));
             var held = node.getHistory();
-            var heldCopy = java.util.List.copyOf(held);
+            var heldCopy = List.copyOf(held);
 
             node.transition(state(2));
             node.transition(state(3)); // wraps: the oldest retained state is overwritten
@@ -464,15 +466,15 @@ class NodeTest {
                     () -> assertEquals(heldCopy, held),
                     () -> assertEquals(1, held.size()),
                     () -> assertEquals(FrequencyState.ZERO, held.getFirst()),
-                    () -> assertEquals(java.util.List.of(state(1), state(2)),
-                            java.util.List.copyOf(node.getHistory())));
+                    () -> assertEquals(List.of(state(1), state(2)),
+                            List.copyOf(node.getHistory())));
         }
 
         @Test
         @DisplayName("history size is available without materializing the history")
         void historySizeTracksRetainedStates() {
             var node = new Node.Builder().type(NodeType.PROCESSOR).historyLimit(3).build();
-            var sizes = new java.util.ArrayList<Integer>();
+            var sizes = new ArrayList<Integer>();
             sizes.add(node.getHistorySize());
             for (int i = 1; i <= 5; i++) {
                 node.transition(state(i));
@@ -483,8 +485,42 @@ class NodeTest {
             disabled.transition(state(1));
 
             assertAll(
-                    () -> assertEquals(java.util.List.of(0, 1, 2, 3, 3, 3), sizes),
+                    () -> assertEquals(List.of(0, 1, 2, 3, 3, 3), sizes),
                     () -> assertEquals(0, disabled.getHistorySize()));
+        }
+
+        @Test
+        @DisplayName("an explicit limit equal to the default behaves exactly like the default")
+        void explicitDefaultLimitMatchesTheDefault() {
+            var implicit = new Node.Builder().type(NodeType.PROCESSOR).build();
+            var explicit = new Node.Builder().type(NodeType.PROCESSOR)
+                    .historyLimit(Node.DEFAULT_HISTORY_LIMIT).build();
+            for (int i = 0; i < Node.DEFAULT_HISTORY_LIMIT + 5; i++) {
+                implicit.transition(state(i));
+                explicit.transition(state(i));
+            }
+
+            assertAll(
+                    () -> assertEquals(Node.DEFAULT_HISTORY_LIMIT, implicit.getHistoryLimit()),
+                    () -> assertEquals(Node.DEFAULT_HISTORY_LIMIT, explicit.getHistoryLimit()),
+                    () -> assertEquals(Node.DEFAULT_HISTORY_LIMIT, implicit.getHistorySize()),
+                    () -> assertEquals(List.copyOf(implicit.getHistory()),
+                            List.copyOf(explicit.getHistory())));
+        }
+
+        @Test
+        @DisplayName("limits are reported before any state was recorded")
+        void limitsAreReportedBeforeAnyTransition() {
+            var defaulted = new Node.Builder().type(NodeType.PROCESSOR).build();
+            var custom = new Node.Builder().type(NodeType.PROCESSOR).historyLimit(3).build();
+            var disabled = new Node.Builder().type(NodeType.PROCESSOR).historyLimit(0).build();
+
+            assertAll(
+                    () -> assertEquals(Node.DEFAULT_HISTORY_LIMIT, defaulted.getHistoryLimit()),
+                    () -> assertEquals(3, custom.getHistoryLimit()),
+                    () -> assertEquals(0, disabled.getHistoryLimit()),
+                    () -> assertEquals(0, defaulted.getHistorySize() + custom.getHistorySize() + disabled.getHistorySize()),
+                    () -> assertTrue(defaulted.getHistory().isEmpty()));
         }
 
         @Test

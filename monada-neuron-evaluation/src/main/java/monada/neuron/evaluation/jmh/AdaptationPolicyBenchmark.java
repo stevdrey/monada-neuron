@@ -30,7 +30,8 @@ import java.util.concurrent.TimeUnit;
  * JMH microbenchmark comparing {@link NoOpAdaptationPolicy} vs {@link DeterministicBaselineAdaptationPolicy}.
  *
  * <p>Separates pure policy decision arithmetic from state-mutating transition benchmarks to guarantee
- * equivalent, controlled state per invocation without unbounded history list accumulation:
+ * equivalent, controlled state per invocation, so adapted state and the bounded node history
+ * ({@link Node#DEFAULT_HISTORY_LIMIT} states) do not accumulate across invocations:
  * <ul>
  *   <li>{@link #benchmarkNoOpPolicy}: Non-mutating no-op policy baseline.</li>
  *   <li>{@link #benchmarkBaselinePolicyDecisionArithmetic}: Pure mathematical candidate-state derivation without {@link Node} mutation.</li>
