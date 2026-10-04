@@ -153,6 +153,61 @@ class OutcomeFeedbackContractsTest {
                         MONAD, 0L, ActionStatus.FAILED, 0, FeedbackDisposition.PENALIZE, List.of(), List.of())));
     }
 
+    private static HypothesisAttribution attribution(long code, double score) {
+        return new HypothesisAttribution(new Proposition(0, code), score);
+    }
+
+    @Test
+    void outcomeFeedbackRequiresAttributionsToBeUniqueAndInRankOrder() {
+        var entries = List.of(entry(1, 0.5));
+
+        assertAll(
+                () -> assertEquals(0, reinforce(entries, List.of()).attributions().size()),
+                () -> assertEquals(1, reinforce(entries, List.of(attribution(1, 0.4))).attributions().size()),
+                () -> assertEquals(3, reinforce(entries,
+                        List.of(attribution(1, 0.8), attribution(2, 0.5), attribution(3, 0.5))).attributions().size()),
+                // a repeated proposition would double-credit one hypothesis
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> reinforce(entries, List.of(attribution(1, 0.8), attribution(1, 0.5)))),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> reinforce(entries, List.of(attribution(1, 0.9), attribution(2, 0.8), attribution(1, 0.1)))),
+                // a later attribution must not outrank an earlier one
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> reinforce(entries, List.of(attribution(1, 0.5), attribution(2, 0.6)))),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> reinforce(entries, List.of(attribution(1, 0.9), attribution(2, 0.5), attribution(3, 0.7)))));
+    }
+
+    @Test
+    void outcomeFeedbackRejectsObservationCountsNoValidActionOutcomeCouldProduce() {
+        for (var status : List.of(ActionStatus.REJECTED, ActionStatus.FAILED)) {
+            assertAll(
+                    status.name(),
+                    () -> assertThrows(IllegalArgumentException.class, () -> new OutcomeFeedback(
+                            MONAD, 0L, status, 1, FeedbackDisposition.PENALIZE, List.of(entry(1, -0.5)), List.of())),
+                    () -> assertEquals(0, new OutcomeFeedback(
+                            MONAD, 0L, status, 0, FeedbackDisposition.PENALIZE, List.of(entry(1, -0.5)), List.of())
+                            .observationCount()));
+        }
+        for (var status : List.of(ActionStatus.UNAVAILABLE, ActionStatus.TIMED_OUT)) {
+            assertAll(
+                    status.name(),
+                    () -> assertThrows(IllegalArgumentException.class, () -> new OutcomeFeedback(
+                            MONAD, 0L, status, 2, FeedbackDisposition.NEUTRAL, List.of(), List.of())),
+                    () -> assertEquals(0, OutcomeFeedback.neutral(MONAD, 0L, status, List.of()).observationCount()));
+        }
+        for (var status : List.of(ActionStatus.SUCCEEDED, ActionStatus.PARTIALLY_COMPLETED)) {
+            assertAll(
+                    status.name(),
+                    () -> assertEquals(3, new OutcomeFeedback(
+                            MONAD, 0L, status, 3, FeedbackDisposition.REINFORCE, List.of(entry(1, 0.5)), List.of())
+                            .observationCount()),
+                    () -> assertEquals(0, new OutcomeFeedback(
+                            MONAD, 0L, status, 0, FeedbackDisposition.REINFORCE, List.of(entry(1, 0.5)), List.of())
+                            .observationCount()));
+        }
+    }
+
     @Test
     void outcomeFeedbackRejectsDuplicateTargetsAndNullElements() {
         assertAll(

@@ -34,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -237,6 +238,39 @@ class OutcomeFeedbackPolicyTest {
         targets.add(uuid(1000)); // repeated, but beyond every policy's considered prefix
 
         assertTrue(NoOpOutcomeFeedbackPolicy.INSTANCE.derive(cycle, targets, 0L).isEmpty());
+    }
+
+    @Test
+    void noOpPolicyValidatesTheSameConfiguredPrefixAsTheReferencePolicy() {
+        var config = new OutcomeFeedbackConfig(1.0, 0.5, -0.25, -1.0, 2, 4);
+        var reference = new DeterministicOutcomeFeedbackPolicy(config);
+        var control = new NoOpOutcomeFeedbackPolicy(config);
+        var cycle = runAction(ActionStatus.SUCCEEDED, 1);
+        var duplicateInside = List.of(uuid(1), uuid(1), uuid(3));
+        var duplicateBeyond = List.of(uuid(1), uuid(2), uuid(3), uuid(1));
+        var nullInside = java.util.Arrays.asList(uuid(1), null, uuid(3));
+        var nullBeyond = java.util.Arrays.asList(uuid(1), uuid(2), null);
+
+        // Swapping the control for the reference policy must not change whether the workload runs.
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class, () -> reference.derive(cycle, duplicateInside, 0L)),
+                () -> assertThrows(IllegalArgumentException.class, () -> control.derive(cycle, duplicateInside, 0L)),
+                () -> assertThrows(NullPointerException.class, () -> reference.derive(cycle, nullInside, 0L)),
+                () -> assertThrows(NullPointerException.class, () -> control.derive(cycle, nullInside, 0L)),
+                () -> assertTrue(reference.derive(cycle, duplicateBeyond, 0L).isPresent()),
+                () -> assertTrue(control.derive(cycle, duplicateBeyond, 0L).isEmpty()),
+                () -> assertTrue(reference.derive(cycle, nullBeyond, 0L).isPresent()),
+                () -> assertTrue(control.derive(cycle, nullBeyond, 0L).isEmpty()));
+    }
+
+    @Test
+    void noOpPolicyExposesItsConfigurationAndDefaultsToTheReferenceDefault() {
+        var custom = new OutcomeFeedbackConfig(1.0, 0.5, -0.25, -1.0, 8, 0);
+
+        assertAll(
+                () -> assertSame(OutcomeFeedbackConfig.DEFAULT, NoOpOutcomeFeedbackPolicy.INSTANCE.config()),
+                () -> assertSame(custom, new NoOpOutcomeFeedbackPolicy(custom).config()),
+                () -> assertThrows(NullPointerException.class, () -> new NoOpOutcomeFeedbackPolicy(null)));
     }
 
     @Test

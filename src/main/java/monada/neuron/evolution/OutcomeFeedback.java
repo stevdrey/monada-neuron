@@ -1,6 +1,7 @@
 package monada.neuron.evolution;
 
 import monada.neuron.action.ActionStatus;
+import monada.neuron.reasoning.Proposition;
 
 import java.util.HashSet;
 import java.util.List;
@@ -23,10 +24,12 @@ import java.util.UUID;
  * @param originCycleOrdinal non-negative caller-assigned ordinal of the producing cycle, used to
  *     correlate derivation with consumption in a later cycle trace
  * @param sourceStatus status of the action outcome the feedback was derived from
- * @param observationCount number of observations the outcome retained after cycle admission
+ * @param observationCount number of observations the outcome retained after cycle admission; zero for
+ *     {@code REJECTED}, {@code UNAVAILABLE}, {@code TIMED_OUT}, and {@code FAILED}, which retain none
  * @param disposition explicit direction of the feedback
  * @param entries ordered feedback per target Node; empty exactly when the disposition is {@link FeedbackDisposition#NEUTRAL}
- * @param attributions evaluation-selected hypotheses in rank order, at most {@link #MAX_ATTRIBUTIONS}
+ * @param attributions evaluation-selected hypotheses in rank order, at most {@link #MAX_ATTRIBUTIONS}:
+ *     each proposition appears once and the evaluation scores never increase along the list
  */
 public record OutcomeFeedback(
         UUID monadId,
@@ -43,7 +46,10 @@ public record OutcomeFeedback(
     /** Maximum number of hypothesis attributions one artifact may carry. */
     public static final int MAX_ATTRIBUTIONS = 16;
 
-    /** Validates counters, bounds, target uniqueness, and agreement between disposition and scores. */
+    /**
+     * Validates counters, bounds, target uniqueness, attribution uniqueness and rank order, that the
+     * status can have retained the observation count, and agreement between disposition and scores.
+     */
     public OutcomeFeedback {
         Objects.requireNonNull(monadId, "monadId must not be null");
         Objects.requireNonNull(sourceStatus, "sourceStatus must not be null");
@@ -56,6 +62,15 @@ public record OutcomeFeedback(
             throw new IllegalArgumentException(
                     "observationCount must be non-negative, got: " + observationCount);
         }
+        // ActionResult forbids observations for these statuses, so no valid outcome could report any.
+        var observationsPossible = switch (sourceStatus) {
+            case SUCCEEDED, PARTIALLY_COMPLETED -> true;
+            case REJECTED, UNAVAILABLE, TIMED_OUT, FAILED -> false;
+        };
+        if (!observationsPossible && observationCount != 0) {
+            throw new IllegalArgumentException(
+                    sourceStatus + " outcomes retain no observations, got observationCount: " + observationCount);
+        }
         entries = List.copyOf(Objects.requireNonNull(entries, "entries must not be null"));
         attributions = List.copyOf(Objects.requireNonNull(attributions, "attributions must not be null"));
         if (entries.size() > MAX_ENTRIES) {
@@ -65,6 +80,19 @@ public record OutcomeFeedback(
         if (attributions.size() > MAX_ATTRIBUTIONS) {
             throw new IllegalArgumentException(
                     "attributions must not exceed " + MAX_ATTRIBUTIONS + ", got: " + attributions.size());
+        }
+        var propositions = new HashSet<Proposition>(attributions.size() * 2);
+        for (var index = 0; index < attributions.size(); index++) {
+            var attribution = attributions.get(index);
+            if (!propositions.add(attribution.proposition())) {
+                throw new IllegalArgumentException("duplicate attributed proposition: " + attribution.proposition());
+            }
+            if (index > 0 && attribution.evaluationScore() > attributions.get(index - 1).evaluationScore()) {
+                throw new IllegalArgumentException(
+                        "attributions must be in rank order (non-increasing evaluationScore), but "
+                                + attribution.evaluationScore() + " follows "
+                                + attributions.get(index - 1).evaluationScore());
+            }
         }
         if (disposition != FeedbackDisposition.NEUTRAL && entries.isEmpty()) {
             throw new IllegalArgumentException(disposition + " feedback requires at least one entry");

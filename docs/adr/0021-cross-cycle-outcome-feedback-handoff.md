@@ -47,7 +47,11 @@ entries, attributions)` is an immutable record. `entries` is an ordered list of
 `[-1, 1]` that are never zero, at most `MAX_ENTRIES = 64` entries and `MAX_ATTRIBUTIONS = 16`
 attributions, unique targets, and that the sign of every score matches the explicit
 `FeedbackDisposition` (`REINFORCE` positive, `PENALIZE` negative, `NEUTRAL` with no entries and nothing
-else). It holds typed enums, counters, and stable identifiers only: no provider payload, exception,
+else). `observationCount` must be zero for `REJECTED`, `UNAVAILABLE`, `TIMED_OUT`, and `FAILED`, as
+`ActionResult` retains no observations for them, and `attributions` must name each `Proposition` once with
+evaluation scores that never increase along the list, the order `EVALUATION` selects in, so a hand-built or
+deserialized artifact cannot claim provenance or a rank no valid cycle could have produced. It holds typed
+enums, counters, and stable identifiers only: no provider payload, exception,
 Signal of the originating cycle, or `HypothesisSet`. The only Signal an artifact can carry is an optional
 `FeedbackEntry.targetSignal`, the expected Signal an adaptation rule may need; the reference policy leaves it
 unset. `originCycleOrdinal` is assigned by the caller,
@@ -61,9 +65,11 @@ status and observation count instead of referencing the outcome object.
 
 **Derivation policy.** `OutcomeFeedbackPolicy.derive(CognitiveCycleResult, List<UUID>, long)` is pure and
 deterministic and returns empty when the cycle produced no action result.
-`NoOpOutcomeFeedbackPolicy` always returns empty and is the control path; it still validates the ordinal and
-the leading targets (at most `OutcomeFeedback.MAX_ENTRIES`) exactly like the reference policy, so switching
-policies never hides malformed provenance or target data.
+`NoOpOutcomeFeedbackPolicy` always returns empty and is the control path; it takes the same
+`OutcomeFeedbackConfig` as the reference policy and validates the ordinal and the same leading targets (up to
+`maxEntries`) exactly like it, so swapping the control for the reference policy changes only whether feedback
+is derived, never whether a workload runs. `NoOpOutcomeFeedbackPolicy.INSTANCE` uses the default configuration
+and matches the reference policy only in that case.
 `DeterministicOutcomeFeedbackPolicy` (configured by `OutcomeFeedbackConfig`) uses these semantics:
 
 | `ActionStatus` | Disposition | Score per entry (default) | Rationale |
@@ -170,6 +176,11 @@ cycles. The ring buffer bounds it at the cost of dropping the oldest states.
 - Cost is small relative to propagation. Modeled retained size of an artifact is about 64 B plus 36 B per
   entry (1,216 B for 32 entries; a model of a 64-bit HotSpot with compressed references, not a measurement).
   With 32 targets, history is at most `256 * 32 * 44 B`, about 352 KB in the model.
+- The ring buffer adds three `int` fields to every `Node`, even one that never adapts, because the history array
+  stays unallocated until the first transition. Measured retained heap per node (no edges, 400,000 nodes) grew
+  by 8.1 B under classic 12-byte object headers (218.8 to 226.9 B) and by 16.5 B under JDK 27's default compact
+  headers (186.8 to 203.3 B). `DeterministicWorkloadGenerator.estimateRetainedHeapBytes` now models 232 B per node
+  (classic headers), up from 224 B.
 - `Node.getHistory()` is a snapshot, and callers that held the live view no longer observe later
   transitions through it.
 - `CognitiveTraceEvent` gains a permitted variant; exhaustive `switch` statements over it need a case.

@@ -49,7 +49,7 @@ To guarantee reliable and reproducible baselines, the harness enforces five key 
    - `CognitiveCycleBenchmark` provides a non-mutating 5-stage full cycle baseline (`benchmarkCognitiveCycleNoOp`, ~74.4 µs/op) and an isolated baseline cycle with fresh setup per invocation (`benchmarkCognitiveCycleBaseline`, ~65.4 µs/op).
 
 4. **Retained Graph Footprint Modeling**:
-   - Represents the 64-bit HotSpot JVM heap layout for the current `Node` object graph (~224 bytes/node base + ~32 bytes/directed edge, including the topology-version counter).
+   - Represents the 64-bit HotSpot JVM heap layout for the current `Node` object graph (~232 bytes/node base + ~32 bytes/directed edge, including the topology-version counter and, since Issue #34, the three `int` fields of the bounded history ring buffer, which raise the `Node` instance from 56 to 64 bytes; the history array itself is allocated lazily and is not part of the base). The estimate assumes classic 12-byte object headers; JDK 27 enables compact 8-byte headers by default, where a direct measurement of retained heap per node without edges (400,000 nodes, serial GC) went from 186.8 B to 203.3 B (+16.5 B), against 218.8 B to 226.9 B (+8.1 B) under classic headers.
    - The CSR experiment separately estimates the incremental snapshot arrays (`Node[]`, topology-version `long[]`, CSR offsets and targets) and the combined structural footprint while both representations coexist.
    - This prevents a snapshot-only number from being presented as a reduction in total live heap; temporary traversal queues and emitted results remain allocation metrics, not retained-topology metrics.
 

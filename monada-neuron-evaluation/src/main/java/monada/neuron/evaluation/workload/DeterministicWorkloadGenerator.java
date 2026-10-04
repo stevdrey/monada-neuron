@@ -258,15 +258,25 @@ public final class DeterministicWorkloadGenerator {
      *
      * <p>Footprint model on 64-bit HotSpot JVM with Compressed OOPs (-XX:+UseCompressedOops):
      * <ul>
-     *   <li>{@link Node} instance: 56 bytes (header + references + primitive fields, including
-     *       the topology-version counter).</li>
+     *   <li>{@link Node} instance: 64 bytes (header + six references + primitive fields, including
+     *       the topology-version counter and the three {@code int} fields of the bounded history ring
+     *       buffer: head, size, and limit). The history array itself is allocated lazily and is not
+     *       part of this base; once materialized it adds at most {@code 16 + 4 * limit} bytes plus the
+     *       retained {@link FrequencyState} values.</li>
      *   <li>{@link UUID}: 32 bytes (header + two 64-bit longs).</li>
      *   <li>{@link FrequencyState}: 32 bytes (header + three 64-bit doubles).</li>
      *   <li>{@link java.util.Collections#unmodifiableSet}: 24 bytes wrapper.</li>
      *   <li>{@link java.util.HashSet} and backing {@link java.util.HashMap}: ~80 bytes base + table array (~4 bytes/entry).</li>
      *   <li>Adjacency entries: 32 bytes per {@code HashMap$Node} edge entry.</li>
      * </ul>
-     * Total per node base: ~224 bytes. Total per directed edge: ~32 bytes.
+     * Total per node base: ~232 bytes. Total per directed edge: ~32 bytes.
+     *
+     * <p>The model assumes classic 12-byte object headers ({@code -XX:-UseCompactObjectHeaders}). JDK 27
+     * enables compact 8-byte headers by default, where real nodes are smaller. A direct measurement of
+     * retained heap per node without edges (400,000 nodes, serial GC) gave 218.8 B on the previous layout
+     * and 226.9 B with the ring-buffer fields (+8.1 B) under classic headers, and 186.8 B and 203.3 B
+     * (+16.5 B) under JDK 27's default compact headers. The per-component sizes above are an approximation
+     * and were not each re-measured; the sum is the figure that tracks the measurement.
      *
      * @param nodeCount number of nodes in the graph
      * @param totalEdges total directed edges across all nodes
@@ -276,7 +286,7 @@ public final class DeterministicWorkloadGenerator {
         if (nodeCount <= 0) {
             return 0L;
         }
-        return ((long) nodeCount * 224L) + ((long) totalEdges * 32L);
+        return ((long) nodeCount * 232L) + ((long) totalEdges * 32L);
     }
 
     /**

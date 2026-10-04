@@ -122,6 +122,16 @@ class DeterministicWorkloadGeneratorTest {
     }
 
     @Test
+    void modelsTheNodeObjectGraphWithTheRingBufferHistoryFields() {
+        // 232 B per node: a 64 B Node (the ring-buffer index and limit ints included), UUID, FrequencyState,
+        // the unmodifiable-set wrapper, and the empty adjacency set; plus 32 B per directed edge.
+        assertAll(
+                () -> assertEquals(0L, DeterministicWorkloadGenerator.estimateRetainedHeapBytes(0, 5)),
+                () -> assertEquals(232L, DeterministicWorkloadGenerator.estimateRetainedHeapBytes(1, 0)),
+                () -> assertEquals(10L * 232L + 3L * 32L, DeterministicWorkloadGenerator.estimateRetainedHeapBytes(10, 3)));
+    }
+
+    @Test
     void estimatesCompactSnapshotStorageSeparatelyFromTheSharedObjectGraph() {
         long empty = DeterministicWorkloadGenerator.estimateCompactSnapshotHeapBytes(0, 0);
         long small = DeterministicWorkloadGenerator.estimateCompactSnapshotHeapBytes(50, 143);

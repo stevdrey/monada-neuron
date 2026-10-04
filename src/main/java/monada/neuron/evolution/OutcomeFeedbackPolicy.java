@@ -26,7 +26,9 @@ public interface OutcomeFeedbackPolicy {
      * @return the derived feedback, or empty when the cycle produced no action outcome
      * @throws NullPointerException if an argument or a considered target is null
      * @throws IllegalArgumentException if the ordinal is negative or considered targets repeat; a policy
-     *     considers at most {@link OutcomeFeedback#MAX_ENTRIES} leading targets, fewer if configured lower
+     *     considers only the leading targets up to its configured bound
+     *     ({@link OutcomeFeedbackConfig#maxEntries()}), and every implementation of a given configuration
+     *     must validate the same prefix so that swapping policies never changes which inputs are accepted
      */
     Optional<OutcomeFeedback> derive(CognitiveCycleResult cycle, List<UUID> targetNodeIds, long originCycleOrdinal);
 }
