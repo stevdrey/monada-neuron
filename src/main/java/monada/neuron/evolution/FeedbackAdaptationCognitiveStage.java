@@ -27,9 +27,10 @@ import java.util.UUID;
  * <p>Entries are applied in {@link OutcomeFeedback#entries()} order. An entry whose target is not
  * among this stage's target Nodes is ineligible: it is counted and skipped, never an error, because a
  * later cycle may legitimately be configured with different targets. Neutral feedback applies
- * nothing. Either way one {@link monada.neuron.context.CognitiveTraceEvent.FeedbackConsumed} event is
- * recorded, followed by the usual {@code NodeAdapted} events as they happen. The cycle's signals pass
- * through unchanged so later stages still run.
+ * nothing. A {@code NodeAdapted} event is recorded for each applied entry as it happens, in entry
+ * order. Either way exactly one {@link monada.neuron.context.CognitiveTraceEvent.FeedbackConsumed} event
+ * is recorded last, after every entry was visited, because it carries the applied and ineligible counts.
+ * The cycle's signals pass through unchanged so later stages still run.
  */
 public final class FeedbackAdaptationCognitiveStage implements CognitiveStage {
 

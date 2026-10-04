@@ -72,6 +72,32 @@ class FeedbackAdaptationCognitiveStageTest {
     }
 
     @Test
+    void recordsFeedbackConsumedAfterTheNodeAdaptedEventsItCounts() {
+        var a = node(1, 2.0, 5.0);
+        var b = node(2, 2.0, 5.0);
+        var feedback = feedback(FeedbackDisposition.REINFORCE, ActionStatus.SUCCEEDED, 5L,
+                FeedbackEntry.of(uuid(2), 1.0), FeedbackEntry.of(uuid(99), 1.0), FeedbackEntry.of(uuid(1), 1.0));
+        var stage = new FeedbackAdaptationCognitiveStage(baseline, List.of(a, b), feedback);
+        var context = new CognitiveContext(new CognitiveBudget(10, 10, 20));
+
+        stage.execute(MONAD, List.of(signal(1.0)), context);
+        var events = context.complete(CognitiveCycleOutcome.SUCCESS).traceEntries().stream()
+                .map(entry -> entry.event())
+                .toList();
+
+        // The consumption counters are only known once every entry was visited, so the summary event is
+        // last, and the NodeAdapted events keep the artifact's entry order.
+        assertAll(
+                () -> assertEquals(3, events.size()),
+                () -> assertEquals(uuid(2), assertInstanceOf(CognitiveTraceEvent.NodeAdapted.class, events.get(0)).nodeId()),
+                () -> assertEquals(uuid(1), assertInstanceOf(CognitiveTraceEvent.NodeAdapted.class, events.get(1)).nodeId()),
+                () -> assertEquals(
+                        new CognitiveTraceEvent.FeedbackConsumed(
+                                5L, ActionStatus.SUCCEEDED, FeedbackDisposition.REINFORCE, 3, 2, 1),
+                        events.get(2)));
+    }
+
+    @Test
     void skipsIneligibleTargetsWithoutFailingAndCountsThem() {
         var a = node(1, 2.0, 5.0);
         var feedback = feedback(FeedbackDisposition.PENALIZE, ActionStatus.FAILED, 1L,

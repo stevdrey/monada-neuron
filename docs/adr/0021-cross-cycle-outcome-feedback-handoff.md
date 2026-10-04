@@ -96,7 +96,8 @@ is the caller's explicit choice.
 
 **Trace.** `CognitiveTraceEvent.FeedbackConsumed(originCycleOrdinal, sourceStatus, disposition,
 entryCount, appliedCount, ineligibleCount)` is recorded once per consuming stage, within the existing trace
-budget. Derivation happens after the producing cycle has completed, when its `CognitiveContext` can no
+budget, after the stage's `NodeAdapted` events (which keep the artifact's entry order): the counters are only
+known once every entry was visited. Derivation happens after the producing cycle has completed, when its `CognitiveContext` can no
 longer record events, so there is no derivation event; the artifact itself is the record of derivation and
 carries the ordinal that ties the later `FeedbackConsumed` event to its origin. The event holds counters
 and enums, not entries, so the trace does not become persistence.

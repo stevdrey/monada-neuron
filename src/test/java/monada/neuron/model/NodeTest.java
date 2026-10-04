@@ -450,6 +450,25 @@ class NodeTest {
         }
 
         @Test
+        @DisplayName("a returned history is a snapshot that later transitions do not change")
+        void returnedHistoryIsASnapshot() {
+            var node = new Node.Builder().type(NodeType.PROCESSOR).historyLimit(2).build();
+            node.transition(state(1));
+            var held = node.getHistory();
+            var heldCopy = java.util.List.copyOf(held);
+
+            node.transition(state(2));
+            node.transition(state(3)); // wraps: the oldest retained state is overwritten
+
+            assertAll(
+                    () -> assertEquals(heldCopy, held),
+                    () -> assertEquals(1, held.size()),
+                    () -> assertEquals(FrequencyState.ZERO, held.getFirst()),
+                    () -> assertEquals(java.util.List.of(state(1), state(2)),
+                            java.util.List.copyOf(node.getHistory())));
+        }
+
+        @Test
         @DisplayName("negative limit throws")
         void negativeLimitThrows() {
             assertThrows(IllegalArgumentException.class,
