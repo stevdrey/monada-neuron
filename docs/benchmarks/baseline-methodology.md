@@ -49,7 +49,7 @@ To guarantee reliable and reproducible baselines, the harness enforces five key 
    - `CognitiveCycleBenchmark` provides a non-mutating 5-stage full cycle baseline (`benchmarkCognitiveCycleNoOp`, ~74.4 µs/op) and an isolated baseline cycle with fresh setup per invocation (`benchmarkCognitiveCycleBaseline`, ~65.4 µs/op).
 
 4. **Retained Graph Footprint Modeling**:
-   - Represents the 64-bit HotSpot JVM heap layout for the current `Node` object graph (~224 bytes/node base + ~32 bytes/directed edge, including the topology-version counter).
+   - Represents the 64-bit HotSpot JVM heap layout for the current `Node` object graph (~232 bytes/node base + ~32 bytes/directed edge, including the topology-version counter and, since Issue #34, the three `int` fields of the bounded history ring buffer, which raise the `Node` instance from 56 to 64 bytes; the history array itself is allocated lazily and is not part of the base). The estimate assumes classic 12-byte object headers; JDK 27 enables compact 8-byte headers by default, where a direct measurement of retained heap per node without edges (400,000 nodes, serial GC) went from 186.8 B to 203.3 B (+16.5 B), against 218.8 B to 226.9 B (+8.1 B) under classic headers.
    - The CSR experiment separately estimates the incremental snapshot arrays (`Node[]`, topology-version `long[]`, CSR offsets and targets) and the combined structural footprint while both representations coexist.
    - This prevents a snapshot-only number from being presented as a reduction in total live heap; temporary traversal queues and emitted results remain allocation metrics, not retained-topology metrics.
 
@@ -107,6 +107,10 @@ All synthetic workloads are generated deterministically from configurable seeds 
 7. **Hypothesis Evaluation (Issue #33)**:
    - Scores deterministic hypothesis sets (4 evidence entries per candidate) and compares bounded-heap against full-sort top-K selection at 10, 100, 1,000, and 10,000 candidates with K = 1, 10, 100.
    - Separates the scoring pass (`scoreOnly`), selection over a pre-generated score array, and the end-to-end reference policy.
+
+8. **Cross-Cycle Feedback Loop (Issue #34)**:
+   - Runs a bounded cycle sequence from identical initial state in three arms: no feedback (control), feedback derived but not consumed, and feedback consumed by baseline adaptation.
+   - Verifies semantics outside the timed window (A/B divergence only on consumption, bit-identical replay, bounded artifacts and Node history); latency and allocation are exploratory diagnostics.
 
 ## Verification & Benchmark Commands
 
@@ -424,6 +428,17 @@ heap wins.
 ```bash
 ./gradlew test
 ```
+
+### Run the Cross-Cycle Feedback Loop Evaluation (Issue #34)
+
+```bash
+./gradlew :monada-neuron-evaluation:runFeedbackLoop
+./gradlew :monada-neuron-evaluation:runFeedbackLoop -PbenchmarkArgs="--quick --output-dir /tmp/feedback-loop"
+```
+
+The runner writes `feedback-loop.json` and `feedback-loop.md` (default `build/reports/benchmarks`) and exits non-zero only when a semantic check fails; timings never decide the verdict. The workload uses threshold routing for the perception Aeon because route-all propagation never quiesces on a cyclic graph and would end the cycle at `STAGE_LIMIT_REACHED` before `ADAPTATION`. Actions alternate `SUCCEEDED` and `FAILED` by cycle: a constant reward saturates the amplitude bound after a few dozen cycles, after which the baseline policy stops transitioning and Node history stops growing, which would hide the history bound.
+
+Results and the interpretation limits are recorded in ADR 0021.
 
 ## Baseline Results (Java 26 Reference)
 

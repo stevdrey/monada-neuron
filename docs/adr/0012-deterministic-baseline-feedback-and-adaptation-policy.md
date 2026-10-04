@@ -48,3 +48,4 @@ Rejected because topology mutation introduces non-deterministic structural diver
 - A/B evaluation can compare cognitive cycles with `NoOpAdaptationPolicy` versus `DeterministicBaselineAdaptationPolicy`.
 - Update rules are strictly bounded, preventing numerical instability or overflow.
 - No third-party frameworks or external services are required.
+- Amended by ADR 0021: a Node's state history is now a bounded ring buffer (default 256 states), and the cross-cycle handoff that carries action outcomes into a later cycle's adaptation is defined there.

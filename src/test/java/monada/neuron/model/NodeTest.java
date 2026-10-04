@@ -372,6 +372,130 @@ class NodeTest {
     }
 
     // =========================================================================
+    // Bounded history tests
+    // =========================================================================
+
+    @Nested
+    @DisplayName("Bounded history")
+    class HistoryLimitTests {
+
+        private FrequencyState state(int index) {
+            return new FrequencyState(index, 10.0, 0.0);
+        }
+
+        @Test
+        @DisplayName("default limit is the documented constant")
+        void defaultLimit() {
+            var node = new Node.Builder().type(NodeType.PROCESSOR).build();
+            assertEquals(256, Node.DEFAULT_HISTORY_LIMIT);
+            assertEquals(Node.DEFAULT_HISTORY_LIMIT, node.getHistoryLimit());
+        }
+
+        @Test
+        @DisplayName("history keeps only the most recent states, oldest first, after wrapping")
+        void retainsMostRecentStatesInOrder() {
+            var node = new Node.Builder().type(NodeType.PROCESSOR).historyLimit(3).build();
+            for (int i = 1; i <= 8; i++) {
+                node.transition(state(i));
+            }
+            // previous states recorded: ZERO, s1, ..., s7 -> last three are s5, s6, s7
+            assertAll(
+                    () -> assertEquals(3, node.getHistory().size()),
+                    () -> assertEquals(state(5), node.getHistory().get(0)),
+                    () -> assertEquals(state(6), node.getHistory().get(1)),
+                    () -> assertEquals(state(7), node.getHistory().get(2)),
+                    () -> assertEquals(state(8), node.getFrequencyState()),
+                    () -> assertEquals(java.util.List.of(state(5), state(6), state(7)),
+                            java.util.List.copyOf(node.getHistory())));
+        }
+
+        @Test
+        @DisplayName("history below the limit is unchanged and ordered")
+        void belowLimitKeepsEverything() {
+            var node = new Node.Builder().type(NodeType.PROCESSOR).historyLimit(5).build();
+            node.transition(state(1));
+            node.transition(state(2));
+            assertEquals(java.util.List.of(FrequencyState.ZERO, state(1)),
+                    java.util.List.copyOf(node.getHistory()));
+        }
+
+        @Test
+        @DisplayName("limit zero disables history without disabling transitions")
+        void zeroLimitDisablesHistory() {
+            var node = new Node.Builder().type(NodeType.PROCESSOR).historyLimit(0).build();
+            node.transition(state(1));
+            assertAll(
+                    () -> assertTrue(node.getHistory().isEmpty()),
+                    () -> assertEquals(state(1), node.getFrequencyState()));
+        }
+
+        @Test
+        @DisplayName("history size never exceeds the limit over many transitions")
+        void sizeStaysBounded() {
+            var node = new Node.Builder().type(NodeType.PROCESSOR).build();
+            for (int i = 0; i < Node.DEFAULT_HISTORY_LIMIT * 4; i++) {
+                node.transition(state(i));
+            }
+            assertEquals(Node.DEFAULT_HISTORY_LIMIT, node.getHistory().size());
+        }
+
+        @Test
+        @DisplayName("history view is read-only")
+        void historyIsReadOnly() {
+            var node = new Node.Builder().type(NodeType.PROCESSOR).historyLimit(2).build();
+            node.transition(state(1));
+            assertThrows(UnsupportedOperationException.class,
+                    () -> node.getHistory().add(FrequencyState.ZERO));
+            assertThrows(IndexOutOfBoundsException.class, () -> node.getHistory().get(1));
+        }
+
+        @Test
+        @DisplayName("a returned history is a snapshot that later transitions do not change")
+        void returnedHistoryIsASnapshot() {
+            var node = new Node.Builder().type(NodeType.PROCESSOR).historyLimit(2).build();
+            node.transition(state(1));
+            var held = node.getHistory();
+            var heldCopy = java.util.List.copyOf(held);
+
+            node.transition(state(2));
+            node.transition(state(3)); // wraps: the oldest retained state is overwritten
+
+            assertAll(
+                    () -> assertEquals(heldCopy, held),
+                    () -> assertEquals(1, held.size()),
+                    () -> assertEquals(FrequencyState.ZERO, held.getFirst()),
+                    () -> assertEquals(java.util.List.of(state(1), state(2)),
+                            java.util.List.copyOf(node.getHistory())));
+        }
+
+        @Test
+        @DisplayName("history size is available without materializing the history")
+        void historySizeTracksRetainedStates() {
+            var node = new Node.Builder().type(NodeType.PROCESSOR).historyLimit(3).build();
+            var sizes = new java.util.ArrayList<Integer>();
+            sizes.add(node.getHistorySize());
+            for (int i = 1; i <= 5; i++) {
+                node.transition(state(i));
+                sizes.add(node.getHistorySize());
+                assertEquals(node.getHistory().size(), node.getHistorySize());
+            }
+            var disabled = new Node.Builder().type(NodeType.PROCESSOR).historyLimit(0).build();
+            disabled.transition(state(1));
+
+            assertAll(
+                    () -> assertEquals(java.util.List.of(0, 1, 2, 3, 3, 3), sizes),
+                    () -> assertEquals(0, disabled.getHistorySize()));
+        }
+
+        @Test
+        @DisplayName("negative limit throws")
+        void negativeLimitThrows() {
+            assertThrows(IllegalArgumentException.class,
+                    () -> new Node.Builder().historyLimit(-1));
+        }
+    }
+
+    // =========================================================================
     // Node identity tests
     // =========================================================================
 
