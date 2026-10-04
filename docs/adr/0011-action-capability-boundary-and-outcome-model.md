@@ -37,9 +37,11 @@ outcome that later evaluation or evolution code may inspect. A thrown exception,
 inconsistent limit, or invalid contract remains an operational stage failure.
 
 The cycle owns admission of action observations. If its global signal budget accepts only a proper
-prefix of a successful result, the retained result becomes `PARTIALLY_COMPLETED`; no rejected
-observation is stored in the result or context. This expresses a partial observable outcome, not a
-claim about an external side effect beyond what the capability reported.
+prefix of a result's observations, no rejected observation is stored in the result or context. The status is
+always the one the capability reported; the truncation is recorded in `ActionCognitiveStageResult`, which keeps
+the produced observation count and an `ObservationAdmission` of `COMPLETE` or `TRUNCATED`. (Amended by ADR
+0021: this decision originally turned a truncated `SUCCEEDED` result into `PARTIALLY_COMPLETED`, which made a
+cycle-budget limit indistinguishable from a partial success.)
 
 `ActionCognitiveStage` and `AeonCognitiveStage` are alternative implementations of the one
 `ACTION` slot. The existing unique-stage validation rejects a plan containing both; no additional

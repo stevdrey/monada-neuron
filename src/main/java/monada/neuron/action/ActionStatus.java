@@ -5,7 +5,10 @@ public enum ActionStatus {
     /** The capability completed the requested action. */
     SUCCEEDED,
 
-    /** The capability or cycle retained only a deterministic observable prefix. */
+    /**
+     * The capability reported that it completed only part of the requested action. A cycle budget that
+     * truncates observations never produces this status; see {@link ObservationAdmission}.
+     */
     PARTIALLY_COMPLETED,
 
     /** The capability declined the requested action without executing it. */

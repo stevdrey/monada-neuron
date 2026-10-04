@@ -1,6 +1,6 @@
-package monada.neuron.evaluation.integration;
+package monada.neuron.evaluation.feedback;
 
-import monada.neuron.evaluation.integration.ResonanceStoreIntegrationEvaluation.Check;
+import monada.neuron.evaluation.feedback.FeedbackLoopEvaluation.Check;
 import monada.neuron.evaluation.metrics.CheckedEvaluationReport;
 import monada.neuron.evaluation.metrics.EvaluationReport;
 
@@ -8,23 +8,20 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Diff-friendly JSON and Markdown rendering of the integration evaluation.
- *
- * <p>Semantic verdicts and metadata are stable across runs; only the embedded {@link EvaluationReport}
- * measurements and timestamp vary by machine. Rendering is shared with the other checked evaluations
- * through {@link CheckedEvaluationReport}.
+ * Report of the feedback-loop evaluation: semantic verdicts and metadata followed by the measurements.
+ * Rendering is shared with the other checked evaluations through {@link CheckedEvaluationReport}.
  */
-public record ResonanceStoreIntegrationReport(
+public record FeedbackLoopReport(
         EvaluationReport evaluation,
         List<Check> checks,
         Map<String, String> metadata) {
 
-    public static final String TITLE = "Monada Neuron + Resonance Store Integration Report";
+    public static final String TITLE = "Monada Neuron Cross-Cycle Feedback Loop Report";
 
-    private static final String METADATA_HEADING = "Integration Metadata";
+    private static final String METADATA_HEADING = "Feedback Loop Metadata";
 
     /** Snapshots checks and metadata (metadata sorted by key). */
-    public ResonanceStoreIntegrationReport {
+    public FeedbackLoopReport {
         var shared = new CheckedEvaluationReport(TITLE, METADATA_HEADING, evaluation, checks, metadata);
         checks = List.copyOf(checks);
         metadata = shared.metadata();

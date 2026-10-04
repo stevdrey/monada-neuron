@@ -34,7 +34,8 @@ import java.util.concurrent.TimeUnit;
  *   <li>{@link #benchmarkCognitiveCycleNoOp}: Stable full-cycle execution with {@link NoOpAdaptationPolicy}
  *       which performs zero node mutations, ensuring pristine cognitive state across all invocations.</li>
  *   <li>{@link #benchmarkCognitiveCycleBaseline}: Full-cycle execution with {@link DeterministicBaselineAdaptationPolicy}
- *       operating on a fresh cognitive setup per invocation to eliminate mutation history accumulation.</li>
+ *       operating on a fresh cognitive setup per invocation so adapted state and node history do not
+ *       accumulate and make successive invocations non-comparable.</li>
  * </ul>
  */
 @BenchmarkMode({Mode.Throughput, Mode.AverageTime})
@@ -106,7 +107,8 @@ public class CognitiveCycleBenchmark {
 
     /**
      * Benchmarks full 5-stage cognitive cycle with {@link DeterministicBaselineAdaptationPolicy}
-     * with fresh setup per invocation to avoid history accumulation across successive cycles.
+     * with fresh setup per invocation so adapted state and node history do not accumulate across
+     * successive cycles.
      */
     @Benchmark
     public void benchmarkCognitiveCycleBaseline(

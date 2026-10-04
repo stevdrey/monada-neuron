@@ -45,6 +45,20 @@ tasks.register<JavaExec>("runCognitiveBaseline") {
     }
 }
 
+tasks.register<JavaExec>("runFeedbackLoop") {
+    group = "benchmark"
+    description = "Runs the repeated-cycle cross-cycle outcome-to-feedback evaluation (Issue #34)"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("monada.neuron.evaluation.feedback.FeedbackLoopRunner")
+    jvmArgs("--add-modules", "jdk.incubator.vector")
+    if (project.hasProperty("benchmarkArgs")) {
+        // Quote-aware so `--output-dir "/tmp/benchmark reports"` stays one argument.
+        args(Regex("\"([^\"]*)\"|(\\S+)").findAll(project.property("benchmarkArgs").toString())
+            .map { it.groups[1]?.value ?: it.groups[2]!!.value }
+            .toList())
+    }
+}
+
 tasks.register<JavaExec>("jmh") {
     group = "benchmark"
     description = "Runs JMH microbenchmarks"

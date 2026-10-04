@@ -23,7 +23,11 @@ Input / Observation
   -> Adaptation / Evolution
   -> Action
   -> Outcome / Feedback
+  -> (caller-carried) Adaptation of a later cycle
 ```
+
+The final arrow is the explicit cross-cycle feedback handoff described below: an outcome never flows
+backward into the cycle that produced it.
 
 The flow is intentionally native to Monada Neuron. External LLMs or agent frameworks may participate through adapters, but they do not define this lifecycle.
 
@@ -57,7 +61,7 @@ The current domain baseline is under `src/main/java/monada/neuron/model`.
 - scalar energy;
 - `NodeType` classification;
 - directed node connections;
-- lazily allocated state history.
+- lazily allocated, bounded state history (a ring buffer of the most recent states, default limit 256).
 
 This representation prioritizes correctness and inspectability. It should remain the reference behavior until scale measurements justify a different internal representation.
 
@@ -342,8 +346,9 @@ cycle ends with `NO_SIGNALS`; completing all configured stages ends with `COMPLE
 
 A context step/signal budget exhaustion ends the cycle with `CONTEXT_BUDGET_EXHAUSTED`. Non-Aeon
 stage results are normalized to their admitted output prefix; a memory result whose complete recall
-is cut by that prefix becomes `PARTIAL`, while a successful action result becomes
-`PARTIALLY_COMPLETED`; neither retains a rejected Signal. Aeon result accounting is unchanged,
+is cut by that prefix becomes `PARTIAL`, while an action result keeps the status the capability reported and
+`ActionCognitiveStageResult` records the produced observation count and a `TRUNCATED` admission; neither
+retains a rejected Signal. Aeon result accounting is unchanged,
 avoiding double-counting. A local
 propagation step/hop limit ends it with `STAGE_LIMIT_REACHED`; when both are observed, context-budget
 exhaustion wins and the snapshot retains both underlying indicators. Successful results retain the
@@ -393,6 +398,47 @@ validation; NaN scores are rejected. Top-K selection uses a primitive bounded he
 (`BoundedHeapSelector`, O(N log K)); `FullSortSelector` remains as the oracle. Resonance is an optional, support-only
 component supplied by an adapter, and cognitive evaluation of hypotheses is distinct from memory
 retrieval ranking. See ADR 0020.
+
+### Cross-Cycle Feedback Handoff
+
+`ACTION` runs after `ADAPTATION`, so an action's outcome cannot adapt the cycle that produced it
+without a backward edge that would break the canonical order. Closing the learning loop is therefore
+an explicit hand-over between two cycles that the *caller* owns (ADR 0021):
+
+```text
+Cycle N
+  -> ... EVALUATION -> ADAPTATION (consumes feedback given to cycle N, if any) -> ACTION
+  -> CognitiveCycleResult (ActionOutcome inside)
+
+Caller / explicit orchestrator
+  -> OutcomeFeedbackPolicy.derive(result, targetNodeIds, ordinal)  -> Optional<OutcomeFeedback>
+  -> chooses whether to carry the artifact forward, or drops it
+
+Cycle N+1
+  -> FeedbackAdaptationCognitiveStage(policy, targets, priorFeedback) occupies ADAPTATION
+  -> ... -> ACTION -> next artifact
+```
+
+`OutcomeFeedback` is an immutable, bounded record (at most 64 entries and 16 attributions) that holds
+only the source `ActionStatus`, counters, stable Node identifiers, finite scores, and the
+`Proposition` plus score of hypotheses the evaluation selected. An entry may also carry one optional target
+Signal for adaptation rules that need it; the artifact retains no Signals of the cycle that produced it, no
+provider payloads, exceptions, or reasoning object graphs, and it refers to Nodes and hypotheses by stable
+identifiers rather than by cycle-local sequences. `FeedbackAdaptationCognitiveStage` only accepts feedback
+produced by the Monad that executes the cycle. Neuron keeps no queue, session, or history of feedback: dropping the artifact
+discards it, and persisting reusable experience belongs to Monada Resonance Store behind an explicit adapter.
+
+`DeterministicOutcomeFeedbackPolicy` maps each status without fabricating reward: `SUCCEEDED` and
+`PARTIALLY_COMPLETED` reinforce, `FAILED` and `REJECTED` penalize, and the environmental `UNAVAILABLE` and
+`TIMED_OUT` derive explicit `NEUTRAL` feedback with no entries. `NoOpOutcomeFeedbackPolicy` is the control
+path, and the existing `AdaptationCognitiveStage` is unchanged, so a cycle without feedback behaves exactly as before.
+The consuming stage skips targets it was not configured with, applies entries in artifact order, and records one
+`FeedbackConsumed` trace event after its `NodeAdapted` events, carrying the origin cycle ordinal, which correlates
+consumption with derivation without making the trace a store, and the number of entries adapted, left unchanged
+(for example by the no-op policy), and ineligible. The stage runs only if the cycle reaches `ADAPTATION`; when it
+ends earlier (for example with `NO_SIGNALS`) the artifact was not consumed and stays with the caller, visible as
+the absence of an `AdaptationCognitiveStageResult` in the cycle result. Repeated adaptation grows a Node's history by one state per transition,
+so history is bounded (see Current Phase-1 Model). See ADR 0021.
 
 ## Target Module Boundaries
 

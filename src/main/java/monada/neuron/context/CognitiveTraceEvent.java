@@ -1,5 +1,7 @@
 package monada.neuron.context;
 
+import monada.neuron.action.ActionStatus;
+import monada.neuron.evolution.FeedbackDisposition;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.monad.CognitiveStageKind;
 import monada.neuron.monad.CognitiveStageStatus;
@@ -12,7 +14,7 @@ public sealed interface CognitiveTraceEvent permits CognitiveTraceEvent.AeonInpu
         CognitiveTraceEvent.NodeProcessed, CognitiveTraceEvent.SignalRouted,
         CognitiveTraceEvent.AeonInputCompleted, CognitiveTraceEvent.CognitiveStageStarted,
         CognitiveTraceEvent.CognitiveStageCompleted, CognitiveTraceEvent.CognitiveStageFailed,
-        CognitiveTraceEvent.NodeAdapted {
+        CognitiveTraceEvent.NodeAdapted, CognitiveTraceEvent.FeedbackConsumed {
 
     /** One configured Monad stage started with its inherited ordered input signals. */
     record CognitiveStageStarted(CognitiveStageKind stage) implements CognitiveTraceEvent {
@@ -155,6 +157,46 @@ public sealed interface CognitiveTraceEvent permits CognitiveTraceEvent.AeonInpu
             if (!Double.isFinite(newEnergy) || newEnergy < 0) {
                 throw new IllegalArgumentException(
                         "newEnergy must be non-negative and finite, got: " + newEnergy);
+            }
+        }
+    }
+
+    /**
+     * A prior cycle's feedback artifact was consumed by this cycle's adaptation stage.
+     *
+     * <p>The origin ordinal is the caller-assigned ordinal carried by the artifact and correlates this
+     * consumption with the cycle that derived it. Every entry is exactly one of: adapted (the policy changed
+     * a Node), unchanged (an eligible target the policy left as it was, such as under a no-op policy or at a
+     * configured bound), or ineligible (its target is not among the stage's targets). The event keeps only
+     * counters and enums, never the feedback entries themselves.
+     */
+    record FeedbackConsumed(
+            long originCycleOrdinal,
+            ActionStatus sourceStatus,
+            FeedbackDisposition disposition,
+            int entryCount,
+            int adaptedCount,
+            int unchangedCount,
+            int ineligibleCount) implements CognitiveTraceEvent {
+
+        /** Validates the consumption counters: every entry is adapted, unchanged, or ineligible. */
+        public FeedbackConsumed {
+            Objects.requireNonNull(sourceStatus, "sourceStatus must not be null");
+            Objects.requireNonNull(disposition, "disposition must not be null");
+            if (originCycleOrdinal < 0) {
+                throw new IllegalArgumentException(
+                        "originCycleOrdinal must be non-negative, got: " + originCycleOrdinal);
+            }
+            if (entryCount < 0 || adaptedCount < 0 || unchangedCount < 0 || ineligibleCount < 0) {
+                throw new IllegalArgumentException(
+                        "feedback counters must be non-negative, got: " + entryCount + "/" + adaptedCount
+                                + "/" + unchangedCount + "/" + ineligibleCount);
+            }
+            if ((long) adaptedCount + unchangedCount + ineligibleCount != entryCount) {
+                throw new IllegalArgumentException(
+                        "adaptedCount + unchangedCount + ineligibleCount must equal entryCount, got: "
+                                + adaptedCount + " + " + unchangedCount + " + " + ineligibleCount
+                                + " != " + entryCount);
             }
         }
     }
