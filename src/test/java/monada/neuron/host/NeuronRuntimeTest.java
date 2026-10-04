@@ -11,6 +11,11 @@ import monada.neuron.aeon.DeterministicAeonCoordinator;
 import monada.neuron.context.CognitiveBudget;
 import monada.neuron.context.CognitiveContext;
 import monada.neuron.context.CognitiveCycleOutcome;
+import monada.neuron.evolution.AdaptationCognitiveStage;
+import monada.neuron.evolution.DeterministicBaselineAdaptationPolicy;
+import monada.neuron.evolution.DeterministicOutcomeFeedbackPolicy;
+import monada.neuron.evolution.FeedbackAdaptationCognitiveStage;
+import monada.neuron.evolution.NoOpAdaptationPolicy;
 import monada.neuron.memory.ResonanceMemoryCognitiveStage;
 import monada.neuron.memory.ResonanceMemoryPort;
 import monada.neuron.memory.ResonanceMemoryResponse;
@@ -284,6 +289,43 @@ class NeuronRuntimeTest {
         assertEquals(
                 new DeterministicCognitiveCycle(List.of(stage)).execute(monad, List.of(first), BUDGET),
                 one);
+    }
+
+    @Test
+    void feedbackStageConsumesItsCapturedFeedbackOnEveryExecutionOfOneRuntime() {
+        var target = new Node.Builder()
+                .id(uuid(30))
+                .type(NodeType.PROCESSOR)
+                .frequencyState(new FrequencyState(2.0, 10.0, 0.0))
+                .energy(1.0)
+                .build();
+        ActionCapability capability = request -> new ActionResult(
+                ActionStatus.SUCCEEDED, request.maxObservations(), List.of());
+        var origin = NeuronRuntime.builder()
+                .monad(monad)
+                .stage(new AdaptationCognitiveStage(NoOpAdaptationPolicy.INSTANCE, List.of(target)))
+                .actionCapability(capability, 1)
+                .build()
+                .execute(List.of(signal(1.0)), BUDGET);
+        var feedback = new DeterministicOutcomeFeedbackPolicy()
+                .derive(origin, List.of(target.getId()), 0)
+                .orElseThrow();
+        assertEquals(0, target.getHistorySize());
+
+        // ADR 0021: the caller builds the runtime for cycle N+1 with the feedback derived from cycle N.
+        var next = NeuronRuntime.builder()
+                .monad(monad)
+                .stage(new FeedbackAdaptationCognitiveStage(
+                        new DeterministicBaselineAdaptationPolicy(), List.of(target), feedback))
+                .actionCapability(capability, 1)
+                .build();
+
+        next.execute(List.of(signal(1.0)), BUDGET);
+        assertEquals(1, target.getHistorySize());
+
+        // A reused runtime keeps its captured artifact, so the same feedback adapts the Node again.
+        next.execute(List.of(signal(1.0)), BUDGET);
+        assertEquals(2, target.getHistorySize());
     }
 
     private CognitiveStage recording(CognitiveStageKind kind, List<CognitiveStageKind> order) {

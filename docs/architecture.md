@@ -466,7 +466,10 @@ A `NeuronRuntime` is configured once with a `PrimaryMonad`, its stages, and an o
 `CognitiveBudget` (overridable per call). Its composition is immutable and reusable across executions,
 and the budget, termination status, and failures stay visible because the runtime returns the cycle's
 own `CognitiveCycleResult` and propagates its `CognitiveCycleException`. The runtime is sequential and
-not thread-safe, like the Monad and context it wraps. The low-level cycle, stage, memory, and action APIs
+not thread-safe, like the Monad and context it wraps. Its stage instances are shared by every
+execution, so a stage that captures one cycle's input, such as `FeedbackAdaptationCognitiveStage`,
+reapplies it each time; the cross-cycle feedback handoff (ADR 0021) therefore builds a runtime per cycle
+with the feedback derived from the previous one. The low-level cycle, stage, memory, and action APIs
 remain public for experiments and focused tests, and no preview, incubator, or native type is part of the
 host-facing contract.
 

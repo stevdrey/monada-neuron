@@ -33,6 +33,13 @@ import java.util.UUID;
  *
  * <p>Like {@link PrimaryMonad} and the cycle context, a runtime is not thread-safe: executions must
  * be sequential, and the Monad's Aeon registrations must not change while a cycle is running.
+ *
+ * <p>The composition is reused as-is by every execution, so a stage that captures per-cycle input
+ * when it is created keeps and reapplies it each time. {@code FeedbackAdaptationCognitiveStage} is
+ * the main case: it holds one prior-cycle {@code OutcomeFeedback}, and ADR 0021 makes carrying
+ * feedback forward the caller's explicit choice. A feedback loop therefore builds a new runtime for
+ * each cycle with the feedback derived from the previous one; construction is a single cycle and one
+ * list copy, not a rebuild of Neuron.
  */
 public final class NeuronRuntime {
 
@@ -91,7 +98,12 @@ public final class NeuronRuntime {
             return this;
         }
 
-        /** Adds any cognitive stage; its canonical position is its own {@code kind()}. */
+        /**
+         * Adds any cognitive stage; its canonical position is its own {@code kind()}.
+         *
+         * <p>The stage instance is shared by every execution of the built runtime, so it must not
+         * hold input that is only valid for one cycle (see {@link NeuronRuntime}).
+         */
         public Builder stage(CognitiveStage stage) {
             stages.add(Objects.requireNonNull(stage, "stage must not be null"));
             return this;

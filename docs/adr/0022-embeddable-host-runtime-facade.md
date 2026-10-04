@@ -40,6 +40,12 @@ Add `monada.neuron.host.NeuronRuntime` to the core module, with no new module an
   Executing without any budget throws `IllegalStateException` rather than inventing one.
 - **Not thread-safe.** The runtime shares the sequential contract of `PrimaryMonad` and
   `CognitiveContext`: executions are sequential and Aeon registrations must not change during a cycle.
+- **Reusable composition, one-cycle stages.** The built runtime shares its stage instances across every
+  execution. A stage that captures per-cycle input when it is created, notably
+  `FeedbackAdaptationCognitiveStage`, therefore reapplies that input on each execution. ADR 0021 keeps
+  feedback handoff the caller's explicit choice, so a feedback loop builds a new runtime per cycle with
+  the feedback derived from the previous cycle. The facade neither rejects such stages nor adds a
+  per-execution stage mechanism.
 - **Contract surface.** Only `NeuronRuntime`, its `Builder`, and the existing public types it accepts or
   returns are part of the embedding contract. No preview, incubator, native, Vector API, Forge, or provider
   type appears in it, and `--enable-preview` is not required.
@@ -64,6 +70,12 @@ Rejected as the only form: it is allowed through the override, but hosts that ru
 policy would repeat the budget in each call. The budget is still never hidden: it is part of the result
 snapshot.
 
+### Reject feedback stages, or add per-execution stages
+
+Rejected: refusing `FeedbackAdaptationCognitiveStage` would couple the facade to one stage and block the
+valid runtime-per-cycle use, and a per-call stage mechanism would widen the public API and reintroduce
+per-execution composition, which the issue asks to avoid.
+
 ### Wrapper result or sealed host outcome
 
 Rejected: `CognitiveCycleResult` already carries termination, stage results, outputs, and snapshot, and a
@@ -81,6 +93,9 @@ reflection and per-cycle discovery cost.
 - Per-cycle overhead is one delegate call and one `Optional` read; setup is control-plane work done once.
 - The facade is a compatibility promise on a small surface. Changing the builder methods or the
   result/failure types later needs a new decision.
+- Closing the feedback loop through the facade costs one `NeuronRuntime.builder()...build()` per cycle,
+  which allocates a cycle and a stage list and runs each stage's `validate`; no state is kept between
+  runtimes, in line with ADR 0021.
 - Because hosts hold the same `PrimaryMonad` reference they passed in, they remain responsible for not
   mutating its registrations during a cycle.
 
