@@ -136,10 +136,19 @@ public final class Node implements NodeView {
      * Returns an unmodifiable ordered list of historical {@link FrequencyState} values,
      * from oldest to most recent, limited to the most recent {@link #getHistoryLimit()} states.
      * Returns an empty list if history has never been recorded. The returned list is a snapshot of
-     * the buffer at call time and is not affected by later transitions.
+     * the buffer at call time and is not affected by later transitions. Taking it costs O(size); use
+     * {@link #getHistorySize()} when only the count is needed.
      */
     public List<FrequencyState> getHistory() {
         return historySize == 0 ? List.of() : new HistoryView(history, historyHead, historySize);
+    }
+
+    /**
+     * Returns how many past states are currently retained, in O(1) and without materializing them.
+     * Prefer this over {@code getHistory().size()}, which copies every retained state.
+     */
+    public int getHistorySize() {
+        return historySize;
     }
 
     /** Returns the maximum number of past states this node retains; zero means history is disabled. */

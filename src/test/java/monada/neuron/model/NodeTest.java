@@ -469,6 +469,25 @@ class NodeTest {
         }
 
         @Test
+        @DisplayName("history size is available without materializing the history")
+        void historySizeTracksRetainedStates() {
+            var node = new Node.Builder().type(NodeType.PROCESSOR).historyLimit(3).build();
+            var sizes = new java.util.ArrayList<Integer>();
+            sizes.add(node.getHistorySize());
+            for (int i = 1; i <= 5; i++) {
+                node.transition(state(i));
+                sizes.add(node.getHistorySize());
+                assertEquals(node.getHistory().size(), node.getHistorySize());
+            }
+            var disabled = new Node.Builder().type(NodeType.PROCESSOR).historyLimit(0).build();
+            disabled.transition(state(1));
+
+            assertAll(
+                    () -> assertEquals(java.util.List.of(0, 1, 2, 3, 3, 3), sizes),
+                    () -> assertEquals(0, disabled.getHistorySize()));
+        }
+
+        @Test
         @DisplayName("negative limit throws")
         void negativeLimitThrows() {
             assertThrows(IllegalArgumentException.class,

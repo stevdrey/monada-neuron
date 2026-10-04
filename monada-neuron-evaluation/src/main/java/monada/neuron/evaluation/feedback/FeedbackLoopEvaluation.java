@@ -15,6 +15,7 @@ import monada.neuron.evolution.AdaptationCognitiveStage;
 import monada.neuron.evolution.DeterministicBaselineAdaptationPolicy;
 import monada.neuron.evolution.DeterministicOutcomeFeedbackPolicy;
 import monada.neuron.evolution.FeedbackAdaptationCognitiveStage;
+import monada.neuron.evolution.FeedbackDisposition;
 import monada.neuron.evolution.NoOpAdaptationPolicy;
 import monada.neuron.evolution.NoOpOutcomeFeedbackPolicy;
 import monada.neuron.evolution.OutcomeFeedback;
@@ -92,7 +93,7 @@ public final class FeedbackLoopEvaluation {
     }
 
     /** Everything one arm run produces; the measured windows discard it. */
-    private record Run(
+    record Run(
             List<double[]> fingerprints,
             List<OutcomeFeedback> derived,
             int maxNodeHistorySize,
@@ -159,11 +160,8 @@ public final class FeedbackLoopEvaluation {
         var initialAmplitude = meanTargetAmplitude(newTopology().nodes().subList(0, targetCount));
 
         var checks = new ArrayList<Check>();
-        var allReached = control.allCyclesReachedAction() && derivedOnly.allCyclesReachedAction()
-                && consumed.allCyclesReachedAction() && reward.allCyclesReachedAction()
-                && penalty.allCyclesReachedAction();
-        checks.add(new Check("cycles.complete-through-action", allReached,
-                "every cycle of every arm terminated COMPLETED and produced an ACTION outcome"));
+        checks.add(completionCheck(List.of(
+                control, derivedOnly, consumed, replay, neutralControl, neutralConsumed, reward, penalty)));
 
         checks.add(new Check("ab.derived-not-consumed-matches-control",
                 sameSequence(control, derivedOnly) && derivedOnly.derived().size() == cycles,
@@ -177,14 +175,9 @@ public final class FeedbackLoopEvaluation {
         checks.add(new Check("ab.consumed-diverges-after-first-consumption", divergesAfterFirstConsumption,
                 "cycle 1 has no prior feedback and matches the control; cycle 2 onward diverges"));
 
-        checks.add(new Check("replay.consumed-is-deterministic",
-                sameSequence(consumed, replay) && consumed.derived().equals(replay.derived()),
-                "two independent runs from the same initial state yield bit-identical state sequences"
-                        + " and equal feedback artifacts"));
+        checks.add(replayCheck(consumed, replay, cycles));
 
-        checks.add(new Check("neutral.environmental-outcome-matches-control",
-                sameSequence(neutralControl, neutralConsumed),
-                "TIMED_OUT outcomes derive neutral feedback; consuming it never moves a Node"));
+        checks.add(neutralCheck(neutralControl, neutralConsumed, ActionStatus.TIMED_OUT, cycles));
 
         var rewarded = reward.meanTargetAmplitude() > initialAmplitude;
         var penalized = penalty.meanTargetAmplitude() < initialAmplitude;
@@ -192,11 +185,7 @@ public final class FeedbackLoopEvaluation {
                 "mean target amplitude: initial " + initialAmplitude + ", SUCCEEDED " + reward.meanTargetAmplitude()
                         + ", FAILED " + penalty.meanTargetAmplitude()));
 
-        var maxEntries = consumed.derived().stream().mapToInt(feedback -> feedback.entries().size()).max().orElse(0);
-        var feedbackBounded = maxEntries <= targetCount && maxEntries <= OutcomeFeedback.MAX_ENTRIES;
-        checks.add(new Check("feedback.bounded", feedbackBounded,
-                "largest artifact had " + maxEntries + " entries (targets " + targetCount + ", hard cap "
-                        + OutcomeFeedback.MAX_ENTRIES + ")"));
+        checks.add(feedbackBoundedCheck(consumed, targetCount, cycles));
 
         var expectedHistory = Math.min(cycles - 1, Node.DEFAULT_HISTORY_LIMIT);
         var historyBounded = consumed.maxNodeHistorySize() == expectedHistory
@@ -206,6 +195,60 @@ public final class FeedbackLoopEvaluation {
                 "max Node history " + consumed.maxNodeHistorySize() + " after " + (cycles - 1)
                         + " consumed cycles (limit " + Node.DEFAULT_HISTORY_LIMIT + "); unconsumed arms retain 0"));
         return checks;
+    }
+
+    /**
+     * Every run must terminate {@code COMPLETED} with an {@code ACTION} outcome in every cycle. A check
+     * that compares states is meaningless if a run stopped early, so this covers all runs, neutral ones
+     * included.
+     */
+    static Check completionCheck(List<Run> runs) {
+        var passed = !runs.isEmpty() && runs.stream().allMatch(Run::allCyclesReachedAction);
+        return new Check("cycles.complete-through-action", passed,
+                "every cycle of all " + runs.size() + " runs terminated COMPLETED and produced an ACTION outcome");
+    }
+
+    /** Replay must be bit-identical and non-vacuous: feedback was actually derived for every cycle. */
+    static Check replayCheck(Run first, Run second, int cycles) {
+        var derivedEveryCycle = first.derived().size() == cycles && second.derived().size() == cycles;
+        var passed = derivedEveryCycle
+                && first.allCyclesReachedAction() && second.allCyclesReachedAction()
+                && sameSequence(first, second)
+                && first.derived().equals(second.derived());
+        return new Check("replay.consumed-is-deterministic", passed,
+                "two independent runs from the same initial state yield bit-identical state sequences and equal"
+                        + " feedback artifacts (" + first.derived().size() + " and " + second.derived().size()
+                        + " derived over " + cycles + " cycles)");
+    }
+
+    /**
+     * An environmental outcome must derive explicit neutral feedback in every cycle, hand it to the next
+     * cycle, and still leave every state identical to the control. Identical states alone are vacuous:
+     * they also hold when nothing was derived or a run stopped before {@code ACTION}.
+     */
+    static Check neutralCheck(Run control, Run consumed, ActionStatus status, int cycles) {
+        var reached = control.allCyclesReachedAction() && consumed.allCyclesReachedAction();
+        var neutralEveryCycle = consumed.derived().size() == cycles
+                && consumed.derived().stream().allMatch(feedback ->
+                        feedback.disposition() == FeedbackDisposition.NEUTRAL
+                                && feedback.sourceStatus() == status
+                                && feedback.entries().isEmpty());
+        var passed = reached && neutralEveryCycle && sameSequence(control, consumed);
+        return new Check("neutral.environmental-outcome-matches-control", passed,
+                status + " outcomes derived " + consumed.derived().size() + " entry-free NEUTRAL artifacts over "
+                        + cycles + " cycles; consuming them never moves a Node");
+    }
+
+    /** Artifacts must exist for every cycle and stay within the target count and the hard cap. */
+    static Check feedbackBoundedCheck(Run consumed, int targetCount, int cycles) {
+        var maxEntries = consumed.derived().stream().mapToInt(feedback -> feedback.entries().size()).max().orElse(0);
+        var passed = consumed.derived().size() == cycles
+                && maxEntries > 0
+                && maxEntries <= targetCount
+                && maxEntries <= OutcomeFeedback.MAX_ENTRIES;
+        return new Check("feedback.bounded", passed,
+                "largest of " + consumed.derived().size() + " artifacts had " + maxEntries + " entries (targets "
+                        + targetCount + ", hard cap " + OutcomeFeedback.MAX_ENTRIES + ")");
     }
 
     private static boolean sameSequence(Run a, Run b) {
@@ -332,7 +375,7 @@ public final class FeedbackLoopEvaluation {
                 fingerprints.add(fingerprint(targets));
             }
         }
-        var maxHistory = targets.stream().mapToInt(node -> node.getHistory().size()).max().orElse(0);
+        var maxHistory = targets.stream().mapToInt(node -> node.getHistorySize()).max().orElse(0);
         return new Run(fingerprints, derived, maxHistory, reachedAction, meanTargetAmplitude(targets), fingerprint(targets));
     }
 
@@ -350,7 +393,7 @@ public final class FeedbackLoopEvaluation {
             values[index++] = state.frequency();
             values[index++] = state.phase();
             values[index++] = node.getEnergy();
-            values[index++] = node.getHistory().size();
+            values[index++] = node.getHistorySize();
         }
         return values;
     }

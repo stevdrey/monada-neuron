@@ -83,7 +83,8 @@ also neutral. Scalar scores carry no target Signal, so the baseline adaptation p
 energy (ADR 0012); `FeedbackEntry` can carry a `targetSignal` for other policies.
 
 **Consumption.** `FeedbackAdaptationCognitiveStage` occupies `ADAPTATION`. It indexes its target Nodes by
-UUID once (a `HashMap`, O(1) per entry; entry count is bounded by 64, and processing order is the
+UUID once (two target Nodes with the same UUID are ambiguous and rejected at construction, not silently
+ignored) (a `HashMap`, O(1) per entry; entry count is bounded by 64, and processing order is the
 artifact's entry order, never the map's), applies the configured `AdaptationPolicy` to every entry whose
 target it knows, records the usual `NodeAdapted` event for each, and passes the cycle's Signals through so
 `ACTION` still runs. An entry whose target is unknown to the stage is ineligible: it is counted and
@@ -107,7 +108,8 @@ and enums, not entries, so the trace does not become persistence.
 disables history). Append is O(1) amortised, never shifts elements, grows by doubling up to the limit, and
 overwrites the oldest state afterwards, so retained memory per Node is at most `limit` references plus
 the states. `getHistory()` still returns a read-only list ordered oldest to newest, but it is now a
-snapshot taken at call time (O(size)) instead of a live view. This amends the unbounded-history behavior
+snapshot taken at call time (O(size)) instead of a live view; `getHistorySize()` returns the retained count in
+O(1) for callers that only need the size. This amends the unbounded-history behavior
 of ADR 0012 and keeps adaptation across many cycles bounded.
 
 ## Alternatives Considered
@@ -197,12 +199,13 @@ outcomes never move a Node, reward raises and penalty lowers mean amplitude, art
 bounds, and Node history reaches exactly its limit (256 after 299 consumed cycles) while unconsumed arms
 retain none.
 
-This is an exploratory single run on a laptop CPU, not a gate. A second run of the same command measured
-the consumed arm at 14.1 ms and 19.0 KB per cycle, so the 1.1x to 1.7x latency difference against the
-control is within run-to-run noise and is not claimed. The allocation differences were consistent across the
-runs: deriving feedback cost about 2.2 to 3.1 KB per cycle over the control, and deriving plus consuming
-about 4.4 to 4.5 KB. Resident-set deltas in the report are
-dominated by topology regeneration and are not interpretable per arm.
+The table is one exploratory run on a laptop CPU, not a gate. Four runs of the same command are not
+consistent on latency: the consumed arm measured between 8.8 and 21.9 ms and the control between 12.8 and
+19.4 ms, and in the last run the consumed arm was faster than the control. No latency difference between
+arms is claimed. Allocation was steadier, but the size of the difference varied: deriving feedback cost
+about 1.1 to 3.1 KB per cycle over the control, and deriving plus consuming about 3.2 to 4.5 KB, with the
+consumed arm always the largest. Resident-set deltas in the report are dominated by topology regeneration
+and are not interpretable per arm.
 
 ## Follow-up Work
 

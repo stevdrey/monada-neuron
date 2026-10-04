@@ -41,7 +41,9 @@ public final class FeedbackAdaptationCognitiveStage implements CognitiveStage {
     /**
      * Creates the stage with an explicit policy, target Nodes, and the prior-cycle feedback.
      *
-     * <p>Targets are indexed by identifier once. Lookup cost is O(1) per entry and, because entries are
+     * <p>Node identity is its UUID, so two targets with the same identifier are ambiguous and rejected
+     * with an {@link IllegalArgumentException} instead of silently ignoring one. Targets are indexed by
+     * identifier once. Lookup cost is O(1) per entry and, because entries are
      * bounded by {@link OutcomeFeedback#MAX_ENTRIES}, iteration never depends on the index's order.
      */
     public FeedbackAdaptationCognitiveStage(
@@ -53,7 +55,9 @@ public final class FeedbackAdaptationCognitiveStage implements CognitiveStage {
         this.targetsById = new HashMap<>(Math.max(16, targets.size() * 2));
         for (var node : targets) {
             Objects.requireNonNull(node, "targetNodes must not contain null elements");
-            targetsById.putIfAbsent(node.getId(), node);
+            if (targetsById.putIfAbsent(node.getId(), node) != null) {
+                throw new IllegalArgumentException("duplicate target node: " + node.getId());
+            }
         }
         this.feedback = Objects.requireNonNull(feedback, "feedback must not be null");
     }

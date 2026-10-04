@@ -247,6 +247,25 @@ class FeedbackAdaptationCognitiveStageTest {
     }
 
     @Test
+    void rejectsTargetNodesThatShareAnIdentifierInsteadOfIgnoringOne() {
+        var first = node(1, 2.0, 5.0);
+        var sameInstanceAgain = first;
+        var differentInstanceSameId = node(1, 3.0, 7.0);
+        var feedback = feedback(FeedbackDisposition.REINFORCE, ActionStatus.SUCCEEDED, 0L,
+                FeedbackEntry.of(uuid(1), 1.0));
+
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new FeedbackAdaptationCognitiveStage(baseline, List.of(first, sameInstanceAgain), feedback)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new FeedbackAdaptationCognitiveStage(
+                                baseline, List.of(first, differentInstanceSameId), feedback)),
+                () -> assertEquals(1, execute(new FeedbackAdaptationCognitiveStage(
+                        baseline, List.of(first, node(2, 1.0, 1.0)), feedback), List.of(signal(1.0)))
+                        .result().decisions().size()));
+    }
+
+    @Test
     void rejectsInvalidConstruction() {
         var node = node(1, 1.0, 1.0);
         var nodes = new ArrayList<Node>();

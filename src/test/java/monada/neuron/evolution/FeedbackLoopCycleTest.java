@@ -143,7 +143,7 @@ class FeedbackLoopCycleTest {
             pending = derivation.derive(result, List.of(target.getId()), ordinal);
         }
 
-        assertEquals(3, target.getHistory().size());
+        assertEquals(3, target.getHistorySize());
     }
 
     // helpers ---------------------------------------------------------------------------------
@@ -166,7 +166,7 @@ class FeedbackLoopCycleTest {
             pending = arm == Arm.CONSUMED ? next : Optional.empty();
             states.add(target.getFrequencyState());
             energies.add(target.getEnergy());
-            histories.add(target.getHistory().size());
+            histories.add(target.getHistorySize());
         }
         return new Outcome(states, energies, histories, derived, cycles);
     }
