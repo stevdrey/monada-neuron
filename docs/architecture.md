@@ -440,6 +440,36 @@ ends earlier (for example with `NO_SIGNALS`) the artifact was not consumed and s
 the absence of an `AdaptationCognitiveStageResult` in the cycle result. Repeated adaptation grows a Node's history by one state per transition,
 so history is bounded (see Current Phase-1 Model). See ADR 0021.
 
+## Host Runtime Boundary
+
+External Java hosts, such as Monada Forge, embed Neuron through `monada.neuron.host.NeuronRuntime`
+(ADR 0022) instead of wiring `DeterministicCognitiveCycle` and its stages themselves:
+
+```text
+Host application
+  -> prepares Signals from its own domain input        (host-owned)
+  -> NeuronRuntime.execute(signals[, budget])
+       -> DeterministicCognitiveCycle (built once)     (Neuron-owned semantics)
+            -> stages in canonical order
+            -> optional ResonanceMemoryPort / ActionCapability
+  <- CognitiveCycleResult or CognitiveCycleException
+  -> interprets outputs and action observations        (host-owned)
+```
+
+The ownership split is deliberate. Neuron owns cognitive execution semantics: stage order, termination,
+budget handling, and failure behavior all remain those of the cycle, which the runtime only delegates to.
+The host owns domain-specific input preparation and output interpretation, so no issue, task, tracker,
+provider, or UI concept enters Neuron. Memory stays behind `ResonanceMemoryPort` and external actions stay
+behind `ActionCapability`; neither is mandatory, and neither a Resonance Store nor an LLM is required.
+
+A `NeuronRuntime` is configured once with a `PrimaryMonad`, its stages, and an optional default
+`CognitiveBudget` (overridable per call). Its composition is immutable and reusable across executions,
+and the budget, termination status, and failures stay visible because the runtime returns the cycle's
+own `CognitiveCycleResult` and propagates its `CognitiveCycleException`. The runtime is sequential and
+not thread-safe, like the Monad and context it wraps. The low-level cycle, stage, memory, and action APIs
+remain public for experiments and focused tests, and no preview, incubator, or native type is part of the
+host-facing contract.
+
 ## Target Module Boundaries
 
 As the repository grows, prefer boundaries similar to:

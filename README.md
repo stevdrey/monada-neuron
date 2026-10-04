@@ -185,6 +185,30 @@ monada-neuron-langchain-adapter
 
 The exact module structure may change as the project matures, but the architectural boundaries should remain clear.
 
+## Embedding Neuron in a Host Application
+
+A Java host configures a `NeuronRuntime` once and executes bounded cognitive cycles with it, without
+wiring the cycle's stages itself. Memory and action capabilities are optional and stay behind
+`ResonanceMemoryPort` and `ActionCapability`.
+
+```java
+var runtime = NeuronRuntime.builder()
+        .monad(primaryMonad)                          // your PrimaryMonad with its registered Aeons
+        .stage(reasoningStage)                        // any CognitiveStage, in any order
+        .memoryPort(memoryPort, 8)                    // optional: recall up to 8 results
+        .actionCapability(actionCapability, 4)        // optional: up to 4 observations
+        .defaultBudget(new CognitiveBudget(1_000, 4_000, 256))
+        .build();
+
+CognitiveCycleResult result = runtime.execute(inputSignals);            // default budget
+CognitiveCycleResult bounded = runtime.execute(inputSignals, budget);   // per-call budget
+```
+
+The result is the cycle's own `CognitiveCycleResult` (termination, stage results, output signals,
+snapshot) and failures propagate as `CognitiveCycleException`. The host prepares input Signals and
+interprets the outputs; a runtime is sequential and not thread-safe. See
+[ADR 0022](docs/adr/0022-embeddable-host-runtime-facade.md).
+
 ## Design Principles
 
 ### 1. Do not build an LLM wrapper
