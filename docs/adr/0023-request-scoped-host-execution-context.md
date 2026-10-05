@@ -22,7 +22,7 @@ Add a small immutable correlation view that travels explicitly through existing 
 CycleInput.hostContext
   -> NeuronRuntime.execute
   -> DeterministicCognitiveCycle.execute(monad, signals, budget, hostContext)
-  -> CognitiveContext.hostContext()          (lifetime: exactly one cycle)
+  -> CognitiveContext.hostContext()          (held by Neuron for one cycle)
   -> ActionCognitiveStage                    (reads it from the context it is given)
   -> ActionRequest.hostContext
   -> ActionCapability adapter                (resolves it on the host side)

@@ -478,12 +478,13 @@ A host that must correlate Neuron actions with its own work item supplies a `Hos
 (an opaque, bounded execution reference plus an optional host-owned lookup token) in
 `CycleInput.hostContext` (ADR 0023). It travels explicitly: `NeuronRuntime` -> `DeterministicCognitiveCycle`
 -> `CognitiveContext.hostContext()` -> `ActionCognitiveStage` -> `ActionRequest.hostContext`, where the
-`ActionCapability` adapter resolves it on the host side. Its lifetime is exactly one cycle; the runtime and
-its shared stages retain nothing, `Signal` stays identity-free (ADR 0005), and the context is not sent to
+`ActionCapability` adapter resolves it on the host side. Neuron holds it for exactly one cycle: the runtime and
+its shared stages retain nothing. The `ActionRequest` is kept by `ActionOutcome` in the returned
+`CognitiveCycleResult`, so a host that retains that result retains the references too (ADR 0023). `Signal` stays identity-free (ADR 0005), and the context is not sent to
 `ResonanceMemoryPort`, the trace, or the snapshot. A missing context is simply empty, an invalid reference
 is rejected on construction, and an expired or unknown reference is resolved (and refused with an expected
-`ActionStatus`) by the host adapter, not by Neuron. Heavy domain context stays with the host. The low-level cycle, stage, memory, and action APIs
-remain public for experiments and focused tests, and no preview, incubator, or native type is part of the
+`ActionStatus`) by the host adapter, not by Neuron. Heavy domain context stays with the host. The low-level
+cycle, stage, memory, and action APIs remain public for experiments and focused tests, and no preview, incubator, or native type is part of the
 host-facing contract.
 
 ## Target Module Boundaries
