@@ -32,7 +32,6 @@ import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -160,7 +159,7 @@ class HostContextRuntimeTest {
     }
 
     @Test
-    void hostContextCombinesWithPriorFeedbackAndStaysOutOfTheSnapshot() {
+    void hostContextCombinesWithPriorFeedback() {
         var target = new Node.Builder()
                 .id(new UUID(0L, 30L))
                 .type(NodeType.PROCESSOR)
@@ -181,13 +180,25 @@ class HostContextRuntimeTest {
         capability.seen.clear();
         var context = host("with-feedback");
 
-        var result = runtime.execute(
+        runtime.execute(
                 CycleInput.of(List.of(signal(1.0))).withPriorFeedback(feedback).withHostContext(context));
 
         assertAll(
                 () -> assertEquals(List.of(Optional.of(context)), List.copyOf(capability.seen)),
-                () -> assertEquals(1, target.getHistorySize()),
-                () -> assertFalse(result.snapshot().toString().contains("with-feedback")));
+                () -> assertEquals(1, target.getHistorySize()));
+    }
+
+    @Test
+    void hostContextDoesNotChangeTheCycleSnapshotOrOutputs() {
+        var withContext = runtime(new UUID(0L, 1L), new RecordingCapability())
+                .execute(CycleInput.of(List.of(signal(1.0))).withHostContext(host("snapshot")));
+        var without = runtime(new UUID(0L, 1L), new RecordingCapability())
+                .execute(CycleInput.of(List.of(signal(1.0))));
+
+        assertAll(
+                () -> assertEquals(without.snapshot(), withContext.snapshot()),
+                () -> assertEquals(without.outputSignals(), withContext.outputSignals()),
+                () -> assertEquals(without.termination(), withContext.termination()));
     }
 
     @Test
