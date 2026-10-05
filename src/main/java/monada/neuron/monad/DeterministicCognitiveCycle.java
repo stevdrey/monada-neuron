@@ -4,6 +4,7 @@ import monada.neuron.context.CognitiveBudget;
 import monada.neuron.context.CognitiveContext;
 import monada.neuron.context.CognitiveCycleOutcome;
 import monada.neuron.context.CognitiveCycleSnapshot;
+import monada.neuron.context.HostExecutionContext;
 import monada.neuron.signal.Signal;
 
 import java.util.ArrayList;
@@ -51,6 +52,20 @@ public final class DeterministicCognitiveCycle implements CognitiveCycle {
             PrimaryMonad monad,
             List<Signal> inputSignals,
             CognitiveBudget budget) {
+        return execute(monad, inputSignals, budget, Optional.empty());
+    }
+
+    /**
+     * Executes all configured stages over one fresh bounded context bound to a host execution.
+     *
+     * <p>The host context is held only by that context, so it lives for this call and is visible only
+     * to stages that read it explicitly; stage ordering and results are unaffected by it.
+     */
+    public CognitiveCycleResult execute(
+            PrimaryMonad monad,
+            List<Signal> inputSignals,
+            CognitiveBudget budget,
+            Optional<HostExecutionContext> hostContext) {
         Objects.requireNonNull(monad, "monad must not be null");
         var stableInputs = List.copyOf(Objects.requireNonNull(
                 inputSignals,
@@ -58,7 +73,7 @@ public final class DeterministicCognitiveCycle implements CognitiveCycle {
         Objects.requireNonNull(budget, "budget must not be null");
         validateBindings(monad);
 
-        var context = new CognitiveContext(budget);
+        var context = new CognitiveContext(budget, hostContext);
         var stageResults = new ArrayList<CognitiveStageResult>(stages.size());
         var currentSignals = stableInputs;
         CognitiveStage currentStage = null;

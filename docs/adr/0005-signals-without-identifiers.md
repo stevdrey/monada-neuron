@@ -43,3 +43,5 @@ Rejected because ordering belongs to `NodeProcessingResult` and a future propaga
 ## Follow-Up
 
 If a future runtime needs correlation or tracing, define a separate cycle-context or envelope contract with explicit lifetime and ordering semantics. Do not restore signal identity without an implemented consumer and a measured justification for its cost.
+
+Implemented for host integrations by ADR 0023, which adds a request-scoped `HostExecutionContext` carried outside `Signal`.

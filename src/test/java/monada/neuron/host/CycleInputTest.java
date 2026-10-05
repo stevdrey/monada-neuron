@@ -2,6 +2,8 @@ package monada.neuron.host;
 
 import monada.neuron.action.ActionStatus;
 import monada.neuron.context.CognitiveBudget;
+import monada.neuron.context.HostExecutionContext;
+import monada.neuron.context.HostReference;
 import monada.neuron.evolution.OutcomeFeedback;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.signal.Signal;
@@ -28,7 +30,21 @@ class CycleInputTest {
         assertAll(
                 () -> assertEquals(List.of(SIGNAL), input.signals()),
                 () -> assertEquals(Optional.empty(), input.budget()),
-                () -> assertEquals(Optional.empty(), input.priorFeedback()));
+                () -> assertEquals(Optional.empty(), input.priorFeedback()),
+                () -> assertEquals(Optional.empty(), input.hostContext()));
+    }
+
+    @Test
+    void withHostContextKeepsTheOtherValues() {
+        var budget = new CognitiveBudget(1, 2, 3);
+        var host = HostExecutionContext.of(new HostReference("run-1"));
+
+        var input = CycleInput.of(List.of(SIGNAL)).withHostContext(host).withBudget(budget);
+
+        assertAll(
+                () -> assertEquals(Optional.of(host), input.hostContext()),
+                () -> assertEquals(Optional.of(budget), input.budget()),
+                () -> assertEquals(List.of(SIGNAL), input.signals()));
     }
 
     @Test
@@ -57,8 +73,12 @@ class CycleInputTest {
                 () -> assertThrows(NullPointerException.class, () -> CycleInput.of(List.of(SIGNAL)).withBudget(null)),
                 () -> assertThrows(NullPointerException.class, () -> CycleInput.of(List.of(SIGNAL)).withPriorFeedback(null)),
                 () -> assertThrows(NullPointerException.class,
-                        () -> new CycleInput(List.of(SIGNAL), null, Optional.empty())),
+                        () -> new CycleInput(List.of(SIGNAL), null, Optional.empty(), Optional.empty())),
                 () -> assertThrows(NullPointerException.class,
-                        () -> new CycleInput(List.of(SIGNAL), Optional.empty(), null)));
+                        () -> new CycleInput(List.of(SIGNAL), Optional.empty(), null, Optional.empty())),
+                () -> assertThrows(NullPointerException.class,
+                        () -> new CycleInput(List.of(SIGNAL), Optional.empty(), Optional.empty(), null)),
+                () -> assertThrows(NullPointerException.class,
+                        () -> CycleInput.of(List.of(SIGNAL)).withHostContext(null)));
     }
 }
