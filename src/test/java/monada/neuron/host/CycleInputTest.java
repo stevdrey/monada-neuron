@@ -35,6 +35,13 @@ class CycleInputTest {
     }
 
     @Test
+    void threeArgumentConstructorDefaultsToNoHostContext() {
+        var input = new CycleInput(List.of(SIGNAL), Optional.empty(), Optional.empty());
+
+        assertEquals(Optional.empty(), input.hostContext());
+    }
+
+    @Test
     void withHostContextKeepsTheOtherValues() {
         var budget = new CognitiveBudget(1, 2, 3);
         var host = HostExecutionContext.of(new HostReference("run-1"));

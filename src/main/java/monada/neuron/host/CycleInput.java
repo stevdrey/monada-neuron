@@ -38,6 +38,14 @@ public record CycleInput(
         Objects.requireNonNull(hostContext, "hostContext must not be null");
     }
 
+    /** Creates an input without host context, preserving the ADR 0022 three-argument form. */
+    public CycleInput(
+            List<Signal> signals,
+            Optional<CognitiveBudget> budget,
+            Optional<OutcomeFeedback> priorFeedback) {
+        this(signals, budget, priorFeedback, Optional.empty());
+    }
+
     /** Creates an input with only signals: default budget and no prior feedback. */
     public static CycleInput of(List<Signal> signals) {
         return new CycleInput(signals, Optional.empty(), Optional.empty(), Optional.empty());
