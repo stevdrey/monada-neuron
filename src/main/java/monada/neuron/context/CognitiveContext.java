@@ -50,7 +50,9 @@ public final class CognitiveContext implements AutoCloseable {
      * Creates an active context that also carries the host execution it belongs to.
      *
      * <p>The host context has exactly this cycle's lifetime and is exposed only to stages that call
-     * external capabilities; it is never recorded in the trace, snapshot, or result.
+     * external capabilities; it is never recorded in the trace or
+     * snapshot. An {@code ActionRequest} copies it for the capability and is retained by its
+     * {@code ActionOutcome} in the returned cycle result (ADR 0023).
      */
     public CognitiveContext(CognitiveBudget budget, Optional<HostExecutionContext> hostContext) {
         this.budget = Objects.requireNonNull(budget, "budget must not be null");

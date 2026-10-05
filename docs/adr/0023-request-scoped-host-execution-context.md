@@ -82,7 +82,8 @@ stage and `ActionRequest` is already the capability's request value, so neither 
 ## Consequences
 
 - Per cycle the cost is one `Optional` reference copy; the context is control-plane data.
-- `ActionRequest` and `CycleInput` gain a component; the previous two- and three-argument constructors are kept, so existing source and binary callers keep working.
+- `ActionRequest` and `CycleInput` gain a component; the previous two- and three-argument constructors are kept, so callers that construct them keep working at source and binary level.
+- Adding a record component changes the record's shape: code that deconstructs `CycleInput` or `ActionRequest` with a record pattern must add the new component and be recompiled. This is a deliberate, accepted source-breaking change while the host API is experimental (ADR 0022 is one release old); the shape was kept explicit rather than hiding the context in a side channel.
 - Memory and persistence ports receive no host context. A future need for it requires a new decision.
 - A host that retains a `CognitiveCycleResult` retains the references in its action outcome; that is a
   host choice.
