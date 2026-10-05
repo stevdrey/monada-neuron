@@ -124,9 +124,10 @@ reflection and per-cycle discovery cost.
 - A feedback loop uses one `NeuronRuntime`; per execution the cost is one `ScopedValue` binding and one
   short-lived `FeedbackAdaptationCognitiveStage` that holds the artifact, with no state kept between
   executions.
-- The prior-feedback channel is implicit between the runtime and the scoped stage. It is thread-confined
-  to the calling thread, so the stage is meant for the sequential deterministic cycle, whose stages run on
-  that thread.
+- The prior-feedback channel is implicit between the runtime and the scoped stage. The current
+  deterministic cycle consumes the binding on the calling thread, where it executes its stages
+  sequentially. Structured-concurrency child tasks may inherit scoped bindings under the `ScopedValue`
+  contract, but plain threads and executors do not, so the stage is meant for that sequential cycle.
 - Because hosts hold the same `PrimaryMonad` reference they passed in, they remain responsible for not
   mutating its registrations during a cycle.
 

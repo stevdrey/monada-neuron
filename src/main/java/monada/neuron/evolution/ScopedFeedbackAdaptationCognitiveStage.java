@@ -24,9 +24,12 @@ import java.util.function.Supplier;
  * those of that stage, and the artifact is never retained after the scope ends.
  *
  * <p>When no feedback is bound the stage consumes nothing: it passes its input signals through with no
- * decisions and records no trace event, so the caller still owns any feedback it did not bind. The
- * binding is visible only to the calling thread, which is the thread a deterministic cycle runs its
- * stages on; the stage is not for cycles whose stages run on other threads.
+ * decisions and records no trace event, so the caller still owns any feedback it did not bind.
+ *
+ * <p>The current deterministic cycle executes its stages sequentially on the calling thread, which
+ * is where this stage consumes the binding. Child tasks of structured concurrency may inherit scoped
+ * bindings under the {@link ScopedValue} contract, but plain threads and executors do not, so the stage
+ * is not meant for cycles whose stages run on such threads.
  */
 public final class ScopedFeedbackAdaptationCognitiveStage implements CognitiveStage {
 
