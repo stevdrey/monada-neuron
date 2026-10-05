@@ -40,12 +40,24 @@ Add `monada.neuron.host.NeuronRuntime` to the core module, with no new module an
   Executing without any budget throws `IllegalStateException` rather than inventing one.
 - **Not thread-safe.** The runtime shares the sequential contract of `PrimaryMonad` and
   `CognitiveContext`: executions are sequential and Aeon registrations must not change during a cycle.
-- **Reusable composition, one-cycle stages.** The built runtime shares its stage instances across every
-  execution. A stage that captures per-cycle input when it is created, notably
-  `FeedbackAdaptationCognitiveStage`, therefore reapplies that input on each execution. ADR 0021 keeps
-  feedback handoff the caller's explicit choice, so a feedback loop builds a new runtime per cycle with
-  the feedback derived from the previous cycle. The facade neither rejects such stages nor adds a
-  per-execution stage mechanism.
+- **Static composition, cycle-local input.** The built runtime shares its stage instances across every
+  execution, so cycle-local data does not belong in them. It travels in an immutable
+  `CycleInput(signals, budget, priorFeedback)`; `execute(signals)` and `execute(signals, budget)` are
+  conveniences over it. This keeps ADR 0021's caller-owned feedback handoff while letting one runtime
+  serve a whole feedback loop.
+- **Prior feedback through a scoped stage.** `feedbackAdaptation(policy, targets|aeon)` adds
+  `ScopedFeedbackAdaptationCognitiveStage`, configured only with its policy and targets. `execute` binds
+  `CycleInput.priorFeedback()` with a `ScopedValue` (a final API since Java 25, so no preview flag) around
+  `cycle.execute`; each execution the stage delegates to a `FeedbackAdaptationCognitiveStage` created for
+  that feedback, so consumption, trace events, and results are those of the existing stage and nothing is
+  duplicated. Without bound feedback the stage passes its signals through, records no event, and leaves
+  the artifact with the caller. The cycle, `CognitiveContext`, `PrimaryMonad`, and
+  `FeedbackAdaptationCognitiveStage` are unchanged.
+- **No silent loss.** Supplying prior feedback to a runtime with no feedback adaptation stage fails with
+  `IllegalStateException`, and feedback from another Monad fails in the stage's `validate` before any Node
+  changes. Adding a capturing `FeedbackAdaptationCognitiveStage` through `stage(...)` remains possible for
+  one-cycle runtimes and still reapplies its captured artifact on each execution; this is documented rather
+  than rejected.
 - **Contract surface.** Only `NeuronRuntime`, its `Builder`, and the existing public types it accepts or
   returns are part of the embedding contract. No preview, incubator, native, Vector API, Forge, or provider
   type appears in it, and `--enable-preview` is not required.
@@ -70,11 +82,27 @@ Rejected as the only form: it is allowed through the override, but hosts that ru
 policy would repeat the budget in each call. The budget is still never hidden: it is part of the result
 snapshot.
 
-### Reject feedback stages, or add per-execution stages
+### Build a new runtime for every cycle of a feedback loop
 
-Rejected: refusing `FeedbackAdaptationCognitiveStage` would couple the facade to one stage and block the
-valid runtime-per-cycle use, and a per-call stage mechanism would widen the public API and reintroduce
-per-execution composition, which the issue asks to avoid.
+Rejected after review: it avoids stale feedback but moves the lifecycle problem to the host, which would
+have to know to rebuild the runtime whenever feedback changes, against the purpose of a configure-once
+boundary. It remains valid for a runtime that deliberately captures one artifact.
+
+### Reject `FeedbackAdaptationCognitiveStage`, or accept an arbitrary per-call stage list
+
+Rejected: refusing the stage couples the facade to one class, and a per-call stage list or stage factory
+widens the public API into a plugin mechanism. Feedback is the one concrete cycle-local input, so a typed
+`CycleInput` is enough.
+
+### Assemble a cycle per execution when feedback is present
+
+Rejected: it needs no scoped value, but rebuilds the cycle composition on every feedback execution, which
+the issue asks to avoid.
+
+### Carry the input through `DeterministicCognitiveCycle` and `CognitiveContext`
+
+Rejected for now: it is the most explicit data flow, but it changes core types that ADR 0021 left untouched
+and would make `context` depend on `evolution`. Revisit if more cycle-local inputs appear.
 
 ### Wrapper result or sealed host outcome
 
@@ -93,9 +121,12 @@ reflection and per-cycle discovery cost.
 - Per-cycle overhead is one delegate call and one `Optional` read; setup is control-plane work done once.
 - The facade is a compatibility promise on a small surface. Changing the builder methods or the
   result/failure types later needs a new decision.
-- Closing the feedback loop through the facade costs one `NeuronRuntime.builder()...build()` per cycle,
-  which allocates a cycle and a stage list and runs each stage's `validate`; no state is kept between
-  runtimes, in line with ADR 0021.
+- A feedback loop uses one `NeuronRuntime`; per execution the cost is one `ScopedValue` binding and one
+  short-lived `FeedbackAdaptationCognitiveStage` that holds the artifact, with no state kept between
+  executions.
+- The prior-feedback channel is implicit between the runtime and the scoped stage. It is thread-confined
+  to the calling thread, so the stage is meant for the sequential deterministic cycle, whose stages run on
+  that thread.
 - Because hosts hold the same `PrimaryMonad` reference they passed in, they remain responsible for not
   mutating its registrations during a cycle.
 

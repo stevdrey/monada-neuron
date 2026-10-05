@@ -11,6 +11,11 @@ import monada.neuron.aeon.DeterministicAeonCoordinator;
 import monada.neuron.context.CognitiveBudget;
 import monada.neuron.context.CognitiveContext;
 import monada.neuron.context.CognitiveCycleOutcome;
+import monada.neuron.context.CognitiveTraceEvent;
+import monada.neuron.evolution.FeedbackDisposition;
+import monada.neuron.evolution.FeedbackEntry;
+import monada.neuron.evolution.OutcomeFeedback;
+import monada.neuron.evolution.ScopedFeedbackAdaptationCognitiveStage;
 import monada.neuron.evolution.AdaptationCognitiveStage;
 import monada.neuron.evolution.DeterministicBaselineAdaptationPolicy;
 import monada.neuron.evolution.DeterministicOutcomeFeedbackPolicy;
@@ -45,6 +50,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -292,40 +298,201 @@ class NeuronRuntimeTest {
     }
 
     @Test
-    void feedbackStageConsumesItsCapturedFeedbackOnEveryExecutionOfOneRuntime() {
-        var target = new Node.Builder()
+    void configuredOnceConsumesFreshPriorFeedbackOnEachExecution() {
+        var scopedTarget = feedbackTarget();
+        var capturingTarget = feedbackTarget();
+        var policy = new DeterministicOutcomeFeedbackPolicy();
+        var runtime = NeuronRuntime.builder()
+                .monad(monad)
+                .feedbackAdaptation(new DeterministicBaselineAdaptationPolicy(), List.of(scopedTarget))
+                .actionCapability(succeeding(), 1)
+                .defaultBudget(BUDGET)
+                .build();
+
+        var first = runtime.execute(CycleInput.of(List.of(signal(1.0))));
+        var firstFeedback = policy.derive(first, List.of(scopedTarget.getId()), 0).orElseThrow();
+        var second = runtime.execute(CycleInput.of(List.of(signal(1.0))).withPriorFeedback(firstFeedback));
+        var secondFeedback = policy.derive(second, List.of(scopedTarget.getId()), 1).orElseThrow();
+        var third = runtime.execute(CycleInput.of(List.of(signal(1.0))).withPriorFeedback(secondFeedback));
+        var fourth = runtime.execute(CycleInput.of(List.of(signal(1.0))));
+
+        // The per-cycle capturing approach of ADR 0021 is the reference for the same sequence.
+        var reference = new ArrayList<CognitiveCycleResult>();
+        reference.add(directCycle(capturingTarget, Optional.empty()).execute(monad, List.of(signal(1.0)), BUDGET));
+        var carried = policy.derive(reference.getLast(), List.of(capturingTarget.getId()), 0);
+        reference.add(directCycle(capturingTarget, carried).execute(monad, List.of(signal(1.0)), BUDGET));
+        carried = policy.derive(reference.getLast(), List.of(capturingTarget.getId()), 1);
+        reference.add(directCycle(capturingTarget, carried).execute(monad, List.of(signal(1.0)), BUDGET));
+        reference.add(directCycle(capturingTarget, Optional.empty()).execute(monad, List.of(signal(1.0)), BUDGET));
+
+        assertEquals(2, scopedTarget.getHistorySize());
+        assertEquals(capturingTarget.getFrequencyState(), scopedTarget.getFrequencyState());
+        assertEquals(capturingTarget.getEnergy(), scopedTarget.getEnergy());
+        assertEquals(reference, List.of(first, second, third, fourth));
+        assertEquals(1, feedbackConsumedCount(second));
+        assertEquals(1, feedbackConsumedCount(third));
+        assertEquals(0, feedbackConsumedCount(first));
+        assertEquals(0, feedbackConsumedCount(fourth));
+    }
+
+    @Test
+    void feedbackLeavesNoBindingAfterTheExecutionEnds() {
+        var target = feedbackTarget();
+        var runtime = NeuronRuntime.builder()
+                .monad(monad)
+                .feedbackAdaptation(new DeterministicBaselineAdaptationPolicy(), List.of(target))
+                .actionCapability(succeeding(), 1)
+                .defaultBudget(BUDGET)
+                .build();
+        var feedback = new DeterministicOutcomeFeedbackPolicy()
+                .derive(runtime.execute(List.of(signal(1.0))), List.of(target.getId()), 0)
+                .orElseThrow();
+
+        runtime.execute(CycleInput.of(List.of(signal(1.0))).withPriorFeedback(feedback));
+        runtime.execute(List.of(signal(1.0)));
+        runtime.execute(List.of(signal(1.0), signal(2.0)), BUDGET);
+
+        assertEquals(1, target.getHistorySize());
+    }
+
+    @Test
+    void feedbackFromAnotherMonadFailsBeforeAnyNodeChanges() {
+        var target = feedbackTarget();
+        var runtime = NeuronRuntime.builder()
+                .monad(monad)
+                .feedbackAdaptation(new DeterministicBaselineAdaptationPolicy(), List.of(target))
+                .actionCapability(succeeding(), 1)
+                .defaultBudget(BUDGET)
+                .build();
+        var foreign = new OutcomeFeedback(
+                uuid(999), 0L, ActionStatus.SUCCEEDED, 0, FeedbackDisposition.REINFORCE,
+                List.of(FeedbackEntry.of(target.getId(), 1.0)), List.of());
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> runtime.execute(CycleInput.of(List.of(signal(1.0))).withPriorFeedback(foreign)));
+        assertEquals(0, target.getHistorySize());
+        assertEquals(new FrequencyState(2.0, 10.0, 0.0), target.getFrequencyState());
+    }
+
+    @Test
+    void feedbackFailsLoudlyWhenNoFeedbackStageIsConfigured() {
+        var runtime = NeuronRuntime.builder().monad(monad).defaultBudget(BUDGET).build();
+        var feedback = OutcomeFeedback.neutral(uuid(1), 0L, ActionStatus.TIMED_OUT, List.of());
+
+        var failure = assertThrows(
+                IllegalStateException.class,
+                () -> runtime.execute(CycleInput.of(List.of(signal(1.0))).withPriorFeedback(feedback)));
+
+        assertTrue(failure.getMessage().contains("feedback"));
+    }
+
+    @Test
+    void aGenericScopedFeedbackStageAlsoEnablesPriorFeedback() {
+        var target = feedbackTarget();
+        var runtime = NeuronRuntime.builder()
+                .monad(monad)
+                .stage(new ScopedFeedbackAdaptationCognitiveStage(
+                        new DeterministicBaselineAdaptationPolicy(), List.of(target)))
+                .actionCapability(succeeding(), 1)
+                .defaultBudget(BUDGET)
+                .build();
+        var feedback = new DeterministicOutcomeFeedbackPolicy()
+                .derive(runtime.execute(List.of(signal(1.0))), List.of(target.getId()), 0)
+                .orElseThrow();
+
+        runtime.execute(CycleInput.of(List.of(signal(1.0))).withPriorFeedback(feedback));
+
+        assertEquals(1, target.getHistorySize());
+    }
+
+    @Test
+    void feedbackStageCannotShareThePositionWithAnotherAdaptationStage() {
+        var target = feedbackTarget();
+
+        assertThrows(IllegalArgumentException.class, () -> NeuronRuntime.builder()
+                .monad(monad)
+                .stage(new AdaptationCognitiveStage(NoOpAdaptationPolicy.INSTANCE, List.of(target)))
+                .feedbackAdaptation(new DeterministicBaselineAdaptationPolicy(), List.of(target))
+                .build());
+        assertThrows(NullPointerException.class, () -> NeuronRuntime.builder()
+                .feedbackAdaptation(null, List.of(target)));
+        assertThrows(NullPointerException.class, () -> NeuronRuntime.builder()
+                .feedbackAdaptation(new DeterministicBaselineAdaptationPolicy(), (List<Node>) null));
+        assertThrows(NullPointerException.class, () -> NeuronRuntime.builder()
+                .feedbackAdaptation(new DeterministicBaselineAdaptationPolicy(), (Aeon) null));
+    }
+
+    @Test
+    void feedbackAdaptationCanTargetAnAeon() {
+        var member = feedbackTarget();
+        var aeon = new Aeon(uuid(60), AeonPurpose.EVOLUTION);
+        aeon.addMember(member);
+        var runtime = NeuronRuntime.builder()
+                .monad(monad)
+                .feedbackAdaptation(new DeterministicBaselineAdaptationPolicy(), aeon)
+                .actionCapability(succeeding(), 1)
+                .defaultBudget(BUDGET)
+                .build();
+        var feedback = new DeterministicOutcomeFeedbackPolicy()
+                .derive(runtime.execute(List.of(signal(1.0))), List.of(member.getId()), 0)
+                .orElseThrow();
+
+        runtime.execute(CycleInput.of(List.of(signal(1.0))).withPriorFeedback(feedback));
+
+        assertEquals(1, member.getHistorySize());
+    }
+
+    @Test
+    void aBudgetInTheCycleInputOverridesTheDefault() {
+        var override = new CognitiveBudget(11, 21, 31);
+        var runtime = NeuronRuntime.builder().monad(monad).defaultBudget(BUDGET).build();
+
+        var result = runtime.execute(CycleInput.of(List.of(signal(1.0))).withBudget(override));
+
+        assertEquals(override, result.snapshot().budget());
+    }
+
+    @Test
+    void aCycleInputWithoutAnyBudgetFailsClearly() {
+        var runtime = NeuronRuntime.builder().monad(monad).build();
+
+        var failure = assertThrows(
+                IllegalStateException.class,
+                () -> runtime.execute(CycleInput.of(List.of(signal(1.0)))));
+
+        assertTrue(failure.getMessage().contains("budget"));
+    }
+
+    private ActionCapability succeeding() {
+        return request -> new ActionResult(ActionStatus.SUCCEEDED, request.maxObservations(), List.of());
+    }
+
+    private Node feedbackTarget() {
+        return new Node.Builder()
                 .id(uuid(30))
                 .type(NodeType.PROCESSOR)
                 .frequencyState(new FrequencyState(2.0, 10.0, 0.0))
                 .energy(1.0)
                 .build();
-        ActionCapability capability = request -> new ActionResult(
-                ActionStatus.SUCCEEDED, request.maxObservations(), List.of());
-        var origin = NeuronRuntime.builder()
-                .monad(monad)
-                .stage(new AdaptationCognitiveStage(NoOpAdaptationPolicy.INSTANCE, List.of(target)))
-                .actionCapability(capability, 1)
-                .build()
-                .execute(List.of(signal(1.0)), BUDGET);
-        var feedback = new DeterministicOutcomeFeedbackPolicy()
-                .derive(origin, List.of(target.getId()), 0)
-                .orElseThrow();
-        assertEquals(0, target.getHistorySize());
+    }
 
-        // ADR 0021: the caller builds the runtime for cycle N+1 with the feedback derived from cycle N.
-        var next = NeuronRuntime.builder()
-                .monad(monad)
-                .stage(new FeedbackAdaptationCognitiveStage(
-                        new DeterministicBaselineAdaptationPolicy(), List.of(target), feedback))
-                .actionCapability(capability, 1)
-                .build();
+    private DeterministicCognitiveCycle directCycle(Node target, Optional<OutcomeFeedback> prior) {
+        var stages = new ArrayList<CognitiveStage>();
+        stages.add(prior.isPresent()
+                ? new FeedbackAdaptationCognitiveStage(
+                        new DeterministicBaselineAdaptationPolicy(), List.of(target), prior.get())
+                : new ScopedFeedbackAdaptationCognitiveStage(
+                        new DeterministicBaselineAdaptationPolicy(), List.of(target)));
+        stages.add(new ActionCognitiveStage(succeeding(), 1));
+        return new DeterministicCognitiveCycle(stages);
+    }
 
-        next.execute(List.of(signal(1.0)), BUDGET);
-        assertEquals(1, target.getHistorySize());
-
-        // A reused runtime keeps its captured artifact, so the same feedback adapts the Node again.
-        next.execute(List.of(signal(1.0)), BUDGET);
-        assertEquals(2, target.getHistorySize());
+    private long feedbackConsumedCount(CognitiveCycleResult result) {
+        return result.snapshot().traceEntries().stream()
+                .map(entry -> entry.event())
+                .filter(CognitiveTraceEvent.FeedbackConsumed.class::isInstance)
+                .count();
     }
 
     private CognitiveStage recording(CognitiveStageKind kind, List<CognitiveStageKind> order) {

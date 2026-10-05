@@ -2,9 +2,13 @@ package monada.neuron.host;
 
 import monada.neuron.action.ActionCapability;
 import monada.neuron.action.ActionCognitiveStage;
+import monada.neuron.aeon.Aeon;
 import monada.neuron.context.CognitiveBudget;
+import monada.neuron.evolution.AdaptationPolicy;
+import monada.neuron.evolution.ScopedFeedbackAdaptationCognitiveStage;
 import monada.neuron.memory.ResonanceMemoryCognitiveStage;
 import monada.neuron.memory.ResonanceMemoryPort;
+import monada.neuron.model.Node;
 import monada.neuron.monad.CognitiveCycleResult;
 import monada.neuron.monad.CognitiveStage;
 import monada.neuron.monad.DeterministicCognitiveCycle;
@@ -34,26 +38,30 @@ import java.util.UUID;
  * <p>Like {@link PrimaryMonad} and the cycle context, a runtime is not thread-safe: executions must
  * be sequential, and the Monad's Aeon registrations must not change while a cycle is running.
  *
- * <p>The composition is reused as-is by every execution, so a stage that captures per-cycle input
- * when it is created keeps and reapplies it each time. {@code FeedbackAdaptationCognitiveStage} is
- * the main case: it holds one prior-cycle {@code OutcomeFeedback}, and ADR 0021 makes carrying
- * feedback forward the caller's explicit choice. A feedback loop therefore builds a new runtime for
- * each cycle with the feedback derived from the previous one; construction is a single cycle and one
- * list copy, not a rebuild of Neuron.
+ * <p>The composition is static and shared by every execution; cycle-local data travels in
+ * {@link CycleInput}. In particular, the feedback a caller carries from one cycle to the next
+ * (ADR 0021) is passed as {@link CycleInput#priorFeedback()} to a runtime configured with
+ * {@link Builder#feedbackAdaptation}, so one runtime serves a whole feedback loop. A stage that
+ * captures one cycle's input when it is created, such as {@code FeedbackAdaptationCognitiveStage}, still
+ * reapplies it on every execution when added with {@link Builder#stage}; use
+ * {@code feedbackAdaptation} for reusable runtimes.
  */
 public final class NeuronRuntime {
 
     private final PrimaryMonad monad;
     private final DeterministicCognitiveCycle cycle;
     private final Optional<CognitiveBudget> defaultBudget;
+    private final boolean consumesPriorFeedback;
 
     private NeuronRuntime(
             PrimaryMonad monad,
             DeterministicCognitiveCycle cycle,
-            Optional<CognitiveBudget> defaultBudget) {
+            Optional<CognitiveBudget> defaultBudget,
+            boolean consumesPriorFeedback) {
         this.monad = monad;
         this.cycle = cycle;
         this.defaultBudget = defaultBudget;
+        this.consumesPriorFeedback = consumesPriorFeedback;
     }
 
     /** Starts the explicit typed composition of a runtime. */
@@ -72,14 +80,38 @@ public final class NeuronRuntime {
      * @throws IllegalStateException when no default budget was configured
      */
     public CognitiveCycleResult execute(List<Signal> inputSignals) {
-        var budget = defaultBudget.orElseThrow(() -> new IllegalStateException(
-                "no default budget configured; pass a CognitiveBudget to execute"));
-        return execute(inputSignals, budget);
+        return execute(CycleInput.of(inputSignals));
     }
 
     /** Executes one cycle over ordered initial signals with an explicit budget for this call. */
     public CognitiveCycleResult execute(List<Signal> inputSignals, CognitiveBudget budget) {
-        return cycle.execute(monad, inputSignals, budget);
+        return execute(CycleInput.of(inputSignals).withBudget(budget));
+    }
+
+    /**
+     * Executes one cycle over the cycle-local {@code input}.
+     *
+     * <p>The budget is the input's, else the runtime default. Prior feedback is consumed by the
+     * feedback adaptation stage for this execution only and is not retained afterwards.
+     *
+     * @throws IllegalStateException when no budget is available, or when prior feedback is supplied
+     *         but no feedback adaptation stage is configured, because it would otherwise be ignored
+     */
+    public CognitiveCycleResult execute(CycleInput input) {
+        Objects.requireNonNull(input, "input must not be null");
+        var budget = input.budget().or(() -> defaultBudget).orElseThrow(() -> new IllegalStateException(
+                "no default budget configured; pass a CognitiveBudget with the input"));
+        var feedback = input.priorFeedback();
+        if (feedback.isEmpty()) {
+            return cycle.execute(monad, input.signals(), budget);
+        }
+        if (!consumesPriorFeedback) {
+            throw new IllegalStateException(
+                    "prior feedback supplied but no feedback adaptation stage is configured");
+        }
+        return ScopedFeedbackAdaptationCognitiveStage.callWith(
+                feedback.get(),
+                () -> cycle.execute(monad, input.signals(), budget));
     }
 
     /** Collects an immutable runtime composition; stages are normalized to canonical order. */
@@ -102,7 +134,8 @@ public final class NeuronRuntime {
          * Adds any cognitive stage; its canonical position is its own {@code kind()}.
          *
          * <p>The stage instance is shared by every execution of the built runtime, so it must not
-         * hold input that is only valid for one cycle (see {@link NeuronRuntime}).
+         * hold input that is only valid for one cycle (see {@link NeuronRuntime}); prior-cycle feedback
+         * belongs to {@link #feedbackAdaptation}.
          */
         public Builder stage(CognitiveStage stage) {
             stages.add(Objects.requireNonNull(stage, "stage must not be null"));
@@ -119,7 +152,22 @@ public final class NeuronRuntime {
             return stage(new ActionCognitiveStage(capability, maxObservations));
         }
 
-        /** Sets the budget used by {@link NeuronRuntime#execute(List)}. */
+        /**
+         * Adds the reusable feedback adaptation stage, configured only with its policy and targets.
+         *
+         * <p>It consumes the {@link CycleInput#priorFeedback()} of each execution, so a feedback loop
+         * needs one runtime rather than one per cycle.
+         */
+        public Builder feedbackAdaptation(AdaptationPolicy policy, List<Node> targetNodes) {
+            return stage(new ScopedFeedbackAdaptationCognitiveStage(policy, targetNodes));
+        }
+
+        /** Adds the reusable feedback adaptation stage targeting the member Nodes of an Aeon. */
+        public Builder feedbackAdaptation(AdaptationPolicy policy, Aeon targetAeon) {
+            return stage(new ScopedFeedbackAdaptationCognitiveStage(policy, targetAeon));
+        }
+
+        /** Sets the budget used when an execution supplies none. */
         public Builder defaultBudget(CognitiveBudget defaultBudget) {
             this.defaultBudget = Objects.requireNonNull(defaultBudget, "defaultBudget must not be null");
             return this;
@@ -141,7 +189,10 @@ public final class NeuronRuntime {
             for (var stage : stagePlan) {
                 stage.validate(monad);
             }
-            return new NeuronRuntime(monad, cycle, Optional.ofNullable(defaultBudget));
+            var consumesPriorFeedback = stagePlan.stream()
+                    .anyMatch(ScopedFeedbackAdaptationCognitiveStage.class::isInstance);
+            return new NeuronRuntime(
+                    monad, cycle, Optional.ofNullable(defaultBudget), consumesPriorFeedback);
         }
     }
 }

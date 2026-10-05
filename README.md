@@ -204,11 +204,21 @@ CognitiveCycleResult result = runtime.execute(inputSignals);            // defau
 CognitiveCycleResult bounded = runtime.execute(inputSignals, budget);   // per-call budget
 ```
 
+To close the feedback loop of [ADR 0021](docs/adr/0021-cross-cycle-outcome-feedback-handoff.md) with the same
+runtime, configure `.feedbackAdaptation(adaptationPolicy, targetNodes)` once and hand each cycle the feedback
+derived from the previous one:
+
+```java
+CycleInput next = feedbackPolicy.derive(result, targetNodeIds, ordinal)   // Optional<OutcomeFeedback>
+        .map(feedback -> CycleInput.of(nextSignals).withPriorFeedback(feedback))
+        .orElseGet(() -> CycleInput.of(nextSignals));
+CognitiveCycleResult nextResult = runtime.execute(next);
+```
+
 The result is the cycle's own `CognitiveCycleResult` (termination, stage results, output signals,
 snapshot) and failures propagate as `CognitiveCycleException`. The host prepares input Signals and
-interprets the outputs; a runtime is sequential and not thread-safe. Its stages are shared by every
-execution, so a stage that captures one cycle's input (such as feedback from a previous cycle) belongs
-in a runtime built for that cycle. See
+interprets the outputs; a runtime is sequential and not thread-safe. Its composition is static, and
+per-cycle data (signals, budget override, prior feedback) travels in `CycleInput`. See
 [ADR 0022](docs/adr/0022-embeddable-host-runtime-facade.md).
 
 ## Design Principles
