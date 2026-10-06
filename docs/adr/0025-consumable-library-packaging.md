@@ -9,9 +9,12 @@ Accepted
 Monada Forge consumes Neuron as an embedded Java dependency (ADR 0022 to ADR 0024), but the root project was
 shaped as a standalone application: it applied `application`, had no explicit publication, and enabled
 `jdk.incubator.vector` for every compile, test, run, and Javadoc task. A host needs a clean artifact boundary,
-no transitive evaluation/benchmark code, and no obligation to opt into an incubating JDK module. The Vector
-API classes are already reached only reflectively (ADR 0013, ADR 0017), and no incubator type appears in
-public signatures, so the optional SIMD backend already degrades to the scalar reference path.
+no transitive evaluation/benchmark code, and no obligation to opt into an incubating JDK module. The
+portable/adaptive path reaches the Vector backend reflectively (ADR 0013, ADR 0017), and no incubator type
+appears in public signatures, so the optional SIMD backend already degrades to the scalar reference path.
+`VectorBatchResonanceEvaluator` itself remains a public class in the artifact with direct links to the Vector
+API internally; it is safe as long as a consumer does not load it without the module, which only the
+reflective selection path does, guarded by the module check.
 
 ## Decision
 
