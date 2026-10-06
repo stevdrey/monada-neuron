@@ -9,14 +9,10 @@ import monada.neuron.memory.ResonanceMemoryResult;
 import monada.neuron.memory.ResonanceMemoryStatus;
 
 import java.io.UncheckedIOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.PriorityQueue;
@@ -40,15 +36,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class ResonanceStoreMemoryAdapter implements ResonanceMemoryPort, AutoCloseable {
 
-    private static final String REFERENCE_PREFIX = "rs-";
-    private static final int REFERENCE_HEX_LENGTH = 32;
-
-    private final MonadaMemory memory;
+    private final ResonanceStoreRecall storeRecall;
     private final ResonanceStoreAdapterConfig config;
+    private final OpaqueReference opaqueReference = new OpaqueReference();
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    private ResonanceStoreMemoryAdapter(MonadaMemory memory, ResonanceStoreAdapterConfig config) {
-        this.memory = memory;
+    private ResonanceStoreMemoryAdapter(ResonanceStoreRecall storeRecall, ResonanceStoreAdapterConfig config) {
+        this.storeRecall = storeRecall;
         this.config = config;
     }
 
@@ -57,9 +51,7 @@ public final class ResonanceStoreMemoryAdapter implements ResonanceMemoryPort, A
         Objects.requireNonNull(storePath, "storePath must not be null");
         var stableConfig = Objects.requireNonNull(config, "config must not be null");
         try {
-            return new ResonanceStoreMemoryAdapter(
-                    MonadaMemory.open(storePath, stableConfig.memoryOptions()),
-                    stableConfig);
+            return using(MonadaMemory.open(storePath, stableConfig.memoryOptions()), stableConfig);
         } catch (RuntimeException e) {
             throw new ResonanceStoreAdapterException("Cannot open Resonance Store at " + storePath, e);
         }
@@ -69,8 +61,25 @@ public final class ResonanceStoreMemoryAdapter implements ResonanceMemoryPort, A
     public static ResonanceStoreMemoryAdapter using(
             MonadaMemory memory,
             ResonanceStoreAdapterConfig config) {
+        Objects.requireNonNull(memory, "memory must not be null");
+        return using(
+                (query, limit, threshold) -> memory.resonate(query)
+                        .topK(limit)
+                        .threshold(threshold)
+                        .execute()
+                        .results(),
+                config);
+    }
+
+    /**
+     * Binds the adapter to an arbitrary store-side recall operation. This is the seam that lets the
+     * Neuron-owned translation and merge work run without a real store.
+     */
+    public static ResonanceStoreMemoryAdapter using(
+            ResonanceStoreRecall storeRecall,
+            ResonanceStoreAdapterConfig config) {
         return new ResonanceStoreMemoryAdapter(
-                Objects.requireNonNull(memory, "memory must not be null"),
+                Objects.requireNonNull(storeRecall, "storeRecall must not be null"),
                 Objects.requireNonNull(config, "config must not be null"));
     }
 
@@ -101,11 +110,7 @@ public final class ResonanceStoreMemoryAdapter implements ResonanceMemoryPort, A
         var querySignals = request.querySignals();
         for (var signalIndex = 0; signalIndex < querySignals.size(); signalIndex++) {
             var query = config.queryEncoder().encode(querySignals.get(signalIndex));
-            var recall = memory.resonate(query)
-                    .topK(limit)
-                    .threshold(config.threshold())
-                    .execute();
-            var storeResults = recall.results();
+            var storeResults = storeRecall.recall(query, limit, config.threshold());
             for (var rank = 0; rank < storeResults.size(); rank++) {
                 var candidate = candidate(storeResults.get(rank), signalIndex, rank);
                 bestByAtom.merge(candidate.atomId(), candidate, this::better);
@@ -148,21 +153,11 @@ public final class ResonanceStoreMemoryAdapter implements ResonanceMemoryPort, A
     private ResonanceMemoryResult toResult(Candidate candidate) {
         try {
             return new ResonanceMemoryResult(
-                    reference(candidate.atomId()),
+                    opaqueReference.of(candidate.atomId()),
                     config.signalDecoder().decode(candidate.content()),
                     candidate.score());
         } catch (IllegalArgumentException e) {
             throw new MalformedStoreOutputException();
-        }
-    }
-
-    private String reference(String atomId) {
-        try {
-            var digest = MessageDigest.getInstance("SHA-256")
-                    .digest(atomId.getBytes(StandardCharsets.UTF_8));
-            return REFERENCE_PREFIX + HexFormat.of().formatHex(digest).substring(0, REFERENCE_HEX_LENGTH);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 is required by the Java platform", e);
         }
     }
 

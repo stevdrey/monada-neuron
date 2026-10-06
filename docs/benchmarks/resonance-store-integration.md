@@ -105,7 +105,8 @@ checkout has uncommitted changes.
 | `NeuronCycle.FullCycle.ReplayedMemoryResponse` | same cycle with a no-I/O port replaying the responses recorded from the real store, so downstream stages process identical Signals |
 
 Limits: adapter translation overhead (codec, bounded merge, SHA-256 references) is **not** measured here: a
-wall-clock loop is not a reliable microbenchmark, so it is left to a JMH follow-up (ADR 0018). "Cold" (`FirstRecall`) means a freshly opened handle in a warmed JVM: JIT and OS page cache are already
+wall-clock loop is not a reliable microbenchmark, so it is measured with JMH in
+[resonance-store-adapter-overhead.md](resonance-store-adapter-overhead.md) (ADR 0018). "Cold" (`FirstRecall`) means a freshly opened handle in a warmed JVM: JIT and OS page cache are already
 warm from earlier checks, and only the first-touch cost of the handle is included. Cycles use fresh `PrimaryMonad`/topology state per iteration. Adapters and stores opened per iteration
 are released in the untimed iteration setup, so they do not stay reachable into later rows. Warm-up and
 measurement counts differ per row and are recorded in each row's diagnostics (`warmupIterations`,
