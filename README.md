@@ -195,7 +195,6 @@ wiring the cycle's stages itself. Memory and action capabilities are optional an
 var runtime = NeuronRuntime.builder()
         .monad(primaryMonad)                          // your PrimaryMonad with its registered Aeons
         .stage(reasoningStage)                        // any CognitiveStage, in any order
-        .perceptionCapability(perception, 16)         // optional: host observation -> up to 16 OBSERVATION signals
         .memoryPort(memoryPort, 8)                    // optional: recall up to 8 results
         .actionCapability(actionCapability, 4)        // optional: up to 4 observations
         .defaultBudget(new CognitiveBudget(1_000, 4_000, 256))
@@ -205,17 +204,25 @@ CognitiveCycleResult result = runtime.execute(inputSignals);            // defau
 CognitiveCycleResult bounded = runtime.execute(inputSignals, budget);   // per-call budget
 ```
 
-A runtime with a perception capability takes its initial signals from the host adapter, which resolves the
-opaque `HostExecutionContext` ([ADR 0024](docs/adr/0024-host-perception-capability-boundary.md)); executions
-therefore supply the context and no signals. Neuron does not prescribe a universal text or task encoder.
+Alternatively, a runtime with a perception capability takes its initial signals from the host adapter, which
+resolves the opaque `HostExecutionContext` ([ADR 0024](docs/adr/0024-host-perception-capability-boundary.md)).
+Such a runtime is signal-less: executions supply the context and no signals, and a non-empty signal list is
+rejected. Neuron does not prescribe a universal text or task encoder.
 
 ```java
-CognitiveCycleResult perceived = runtime.execute(
+var perceiving = NeuronRuntime.builder()
+        .monad(primaryMonad)
+        .stage(reasoningStage)
+        .perceptionCapability(perception, 16)         // host observation -> up to 16 OBSERVATION signals
+        .defaultBudget(new CognitiveBudget(1_000, 4_000, 256))
+        .build();
+
+CognitiveCycleResult perceived = perceiving.execute(
         CycleInput.of(List.of()).withHostContext(hostContext));
 ```
 
-To close the feedback loop of [ADR 0021](docs/adr/0021-cross-cycle-outcome-feedback-handoff.md) with the same
-runtime, configure `.feedbackAdaptation(adaptationPolicy, targetNodes)` once and hand each cycle the feedback
+To close the feedback loop of [ADR 0021](docs/adr/0021-cross-cycle-outcome-feedback-handoff.md) with the
+signal-driven runtime, configure `.feedbackAdaptation(adaptationPolicy, targetNodes)` once and hand each cycle the feedback
 derived from the previous one:
 
 ```java
