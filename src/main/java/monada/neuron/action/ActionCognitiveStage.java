@@ -37,8 +37,8 @@ public final class ActionCognitiveStage implements CognitiveStage {
             List<Signal> inputSignals,
             CognitiveContext context) {
         Objects.requireNonNull(monad, "monad must not be null");
-        var request = new ActionRequest(inputSignals, maxObservations);
         Objects.requireNonNull(context, "context must not be null");
+        var request = new ActionRequest(inputSignals, maxObservations, context.hostContext());
         var result = Objects.requireNonNull(capability.execute(request), "action result must not be null");
         return new ActionCognitiveStageResult(new ActionOutcome(request, result));
     }

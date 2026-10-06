@@ -91,7 +91,8 @@ public final class NeuronRuntime {
     /**
      * Executes one cycle over the cycle-local {@code input}.
      *
-     * <p>The budget is the input's, else the runtime default. Prior feedback is consumed by the
+     * <p>The budget is the input's, else the runtime default. The input's host context, if any, is
+     * passed explicitly to the cycle and reaches only action requests of this execution. Prior feedback is consumed by the
      * feedback adaptation stage for this execution only and is not retained afterwards.
      *
      * @throws IllegalStateException when no budget is available, or when prior feedback is supplied
@@ -103,7 +104,7 @@ public final class NeuronRuntime {
                 "no default budget configured; pass a CognitiveBudget with the input"));
         var feedback = input.priorFeedback();
         if (feedback.isEmpty()) {
-            return cycle.execute(monad, input.signals(), budget);
+            return cycle.execute(monad, input.signals(), budget, input.hostContext());
         }
         if (!consumesPriorFeedback) {
             throw new IllegalStateException(
@@ -111,7 +112,7 @@ public final class NeuronRuntime {
         }
         return ScopedFeedbackAdaptationCognitiveStage.callWith(
                 feedback.get(),
-                () -> cycle.execute(monad, input.signals(), budget));
+                () -> cycle.execute(monad, input.signals(), budget, input.hostContext()));
     }
 
     /** Collects an immutable runtime composition; stages are normalized to canonical order. */

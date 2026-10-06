@@ -10,6 +10,7 @@ import monada.neuron.signal.Signal;
 
 import java.util.ArrayList;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.UUID;
 
@@ -26,6 +27,7 @@ public final class CognitiveContext implements AutoCloseable {
     private static final long TRACE_ENTRY_OMITTED = -1L;
 
     private final CognitiveBudget budget;
+    private final Optional<HostExecutionContext> hostContext;
     private final ArrayList<CognitiveSignalOccurrence> signalOccurrences;
     private final ArrayList<CognitiveAeonResult> aeonResults;
     private final ArrayList<CognitiveTraceEntry> traceEntries;
@@ -41,7 +43,20 @@ public final class CognitiveContext implements AutoCloseable {
 
     /** Creates an active context with the supplied explicit bounds. */
     public CognitiveContext(CognitiveBudget budget) {
+        this(budget, Optional.empty());
+    }
+
+    /**
+     * Creates an active context that also carries the host execution it belongs to.
+     *
+     * <p>The host context has exactly this cycle's lifetime and is exposed only to stages that call
+     * external capabilities; it is never recorded in the trace or
+     * snapshot. An {@code ActionRequest} copies it for the capability and is retained by its
+     * {@code ActionOutcome} in the returned cycle result (ADR 0023).
+     */
+    public CognitiveContext(CognitiveBudget budget, Optional<HostExecutionContext> hostContext) {
         this.budget = Objects.requireNonNull(budget, "budget must not be null");
+        this.hostContext = Objects.requireNonNull(hostContext, "hostContext must not be null");
         this.signalOccurrences = new ArrayList<>(initialCapacity(budget.maxSignals()));
         this.aeonResults = new ArrayList<>(initialCapacity(budget.maxSteps()));
         this.traceEntries = new ArrayList<>(initialCapacity(budget.maxTraceEntries()));
@@ -50,6 +65,11 @@ public final class CognitiveContext implements AutoCloseable {
     /** Returns the immutable resource budget for this cycle. */
     public CognitiveBudget budget() {
         return budget;
+    }
+
+    /** Returns the host execution this cycle runs for, or empty for a host-less low-level cycle. */
+    public Optional<HostExecutionContext> hostContext() {
+        return hostContext;
     }
 
     /** Returns the lifecycle state; the instance is never reset to ACTIVE. */
