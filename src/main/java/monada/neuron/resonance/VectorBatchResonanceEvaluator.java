@@ -233,9 +233,13 @@ public final class VectorBatchResonanceEvaluator implements BatchResonanceEvalua
         return AVAILABLE;
     }
 
-    /** Returns the active vector species used by this evaluator, or {@code null} if unavailable. */
-    public VectorSpecies<Double> species() {
-        return SPECIES;
+    /**
+     * Returns the description of the active vector species used by this evaluator.
+     *
+     * <p>Only a string is exposed so no {@code jdk.incubator.vector} type appears in the published API.
+     */
+    public String speciesName() {
+        return SPECIES.toString();
     }
 
     /** Returns the vector lane count (width) of this evaluator, or 1 if unavailable. */

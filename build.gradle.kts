@@ -60,7 +60,7 @@ publishing {
 }
 
 // Builds a standalone consumer project against the published artifact, with no incubator flags.
-val cleanConsumerRepo by tasks.registering(Delete::class) {
+tasks.register<Delete>("cleanConsumerRepo") {
     delete(layout.buildDirectory.dir("consumer-repo"))
 }
 
@@ -76,14 +76,17 @@ tasks.register<Exec>("consumerSmokeTest") {
     val repoUri = layout.buildDirectory.dir("consumer-repo").get().asFile.toURI()
     inputs.dir(fixtureDir.dir("src"))
     inputs.file(fixtureDir.file("build.gradle.kts"))
-    // Re-use the Gradle distribution running this build, so no wrapper jar is required.
-    val gradleExecutable = gradle.gradleHomeDir!!.resolve("bin/gradle").absolutePath
-    commandLine(
-        gradleExecutable,
+    // Use the project wrapper with the launcher of the host OS; .bat files need a command shell.
+    val launcher = if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
+        listOf("cmd", "/c", layout.projectDirectory.file("gradlew.bat").asFile.absolutePath)
+    } else {
+        listOf(layout.projectDirectory.file("gradlew").asFile.absolutePath)
+    }
+    commandLine(launcher + listOf(
         "-p", fixtureDir.asFile.absolutePath,
         "test", "--rerun-tasks", "--refresh-dependencies",
         "-PneuronRepo=$repoUri"
-    )
+    ))
 }
 
 tasks.test {

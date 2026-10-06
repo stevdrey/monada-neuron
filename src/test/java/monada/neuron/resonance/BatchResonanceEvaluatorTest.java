@@ -11,6 +11,7 @@ import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -37,7 +38,7 @@ class BatchResonanceEvaluatorTest {
                     if (vectorBatch instanceof VectorBatchResonanceEvaluator v) {
                         if (v.isAvailable()) {
                             assertTrue(v.vectorWidth() >= 2);
-                            assertTrue(v.species() != null);
+                            assertFalse(v.speciesName().isEmpty());
                         }
                     }
                 });

@@ -31,7 +31,10 @@ public signatures, so the optional SIMD backend already degrades to the scalar r
   `./gradlew consumerSmokeTest` publishes to a repository-local directory (`build/consumer-repo`) and builds
   `consumer-fixture/`, a standalone Gradle build that embeds a `NeuronRuntime` without any incubator flag,
   verifies the scalar fallback, and verifies that evaluation/JMH are absent from its classpath. The task
-  starts the Gradle distribution running the build, so it needs no wrapper jar.
+  runs the tracked Gradle wrapper (`gradlew` or `cmd /c gradlew.bat` by host OS).
+- **Public API guard.** `PublicApiIncubatorLeakTest` reflects over every published class and fails if any
+  public or protected signature mentions a `jdk.incubator.*` type (for example the evaluator reports its
+  vector species as a string via `speciesName()`).
 
 ## Alternatives
 

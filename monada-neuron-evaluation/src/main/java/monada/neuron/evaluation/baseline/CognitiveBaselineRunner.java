@@ -224,7 +224,7 @@ public final class CognitiveBaselineRunner {
                             "pairCount", String.valueOf(scale),
                             "vectorApiAvailable", String.valueOf(vectorEvaluator.isAvailable()),
                             "vectorWidth", String.valueOf(vectorEvaluator.vectorWidth()),
-                            "vectorSpecies", String.valueOf(vectorEvaluator.species()))));
+                            "vectorSpecies", vectorEvaluator.speciesName())));
         }
         return results;
     }
