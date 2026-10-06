@@ -191,21 +191,56 @@ class PerceptionCognitiveStageTest {
 
     @Test
     void resultRecordRejectsCountersThatDisagreeWithAdmission() {
-        var signal = observation(1.0);
+        var first = observation(1.0);
+        var second = observation(2.0);
         var outcome = new PerceptionOutcome(
                 new PerceptionRequest(2),
-                new PerceptionResult(PerceptionStatus.SUCCEEDED, 2, List.of(signal)));
+                new PerceptionResult(PerceptionStatus.SUCCEEDED, 2, List.of(first, second)));
+        var complete = ObservationAdmission.COMPLETE;
+        var truncated = ObservationAdmission.TRUNCATED;
 
         assertAll(
                 () -> assertThrows(IllegalArgumentException.class,
-                        () -> new PerceptionCognitiveStageResult(outcome, 0, ObservationAdmission.COMPLETE)),
+                        () -> new PerceptionCognitiveStageResult(outcome, 1, List.of(first), truncated)),
                 () -> assertThrows(IllegalArgumentException.class,
-                        () -> new PerceptionCognitiveStageResult(outcome, 3, ObservationAdmission.TRUNCATED)),
+                        () -> new PerceptionCognitiveStageResult(outcome, 2, List.of(first), complete)),
                 () -> assertThrows(IllegalArgumentException.class,
-                        () -> new PerceptionCognitiveStageResult(outcome, 2, ObservationAdmission.COMPLETE)),
+                        () -> new PerceptionCognitiveStageResult(outcome, 2, List.of(first, second), truncated)),
                 () -> assertThrows(IllegalArgumentException.class,
-                        () -> new PerceptionCognitiveStageResult(outcome, 1, ObservationAdmission.TRUNCATED)),
-                () -> assertEquals(1, new PerceptionCognitiveStageResult(outcome).producedSignalCount()));
+                        () -> new PerceptionCognitiveStageResult(outcome, 2, List.of(second), truncated)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new PerceptionCognitiveStageResult(
+                                outcome, 2, List.of(first, second, observation(3.0)), complete)),
+                () -> assertEquals(2, new PerceptionCognitiveStageResult(outcome).producedSignalCount()));
+    }
+
+    @Test
+    void fullBudgetTruncationKeepsTheSuccessfulOutcomeAndAdmitsNoSignal() {
+        var produced = observation(1.0);
+        var outcome = new PerceptionOutcome(
+                new PerceptionRequest(1),
+                new PerceptionResult(PerceptionStatus.SUCCEEDED, 1, List.of(produced)));
+
+        var admitted = new PerceptionCognitiveStageResult(outcome).withAdmittedOutputSignals(List.of());
+
+        assertAll(
+                () -> assertEquals(PerceptionStatus.SUCCEEDED, admitted.outcome().result().status()),
+                () -> assertEquals(List.of(produced), admitted.outcome().result().signals()),
+                () -> assertEquals(1, admitted.producedSignalCount()),
+                () -> assertEquals(0, admitted.admittedSignalCount()),
+                () -> assertEquals(List.of(), admitted.outputSignals()),
+                () -> assertEquals(ObservationAdmission.TRUNCATED, admitted.signalAdmission()),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> admitted.withAdmittedOutputSignals(List.of(observation(9.0)))));
+    }
+
+    @Test
+    void theStageRejectsInputSignalsWhenExecutedDirectly() {
+        var stage = new PerceptionCognitiveStage(
+                request -> new PerceptionResult(PerceptionStatus.EMPTY, request.maxSignals(), List.of()), 1);
+
+        assertThrows(IllegalArgumentException.class, () -> stage.execute(
+                monad(), List.of(observation(1.0)), new CognitiveContext(BUDGET, Optional.empty())));
     }
 
     @Test

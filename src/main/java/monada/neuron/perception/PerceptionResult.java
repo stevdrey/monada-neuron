@@ -40,29 +40,4 @@ public record PerceptionResult(
             throw new IllegalArgumentException(status + " results must not contain signals");
         }
     }
-
-    /**
-     * Returns this result with only the cycle-admitted ordered signal prefix retained.
-     *
-     * <p>The status is the adapter's report and is never changed by admission: a cycle budget limits what
-     * the cycle keeps, not what the adapter observed.
-     *
-     * @throws IllegalArgumentException when the argument is not an ordered prefix of {@link #signals()}
-     */
-    public PerceptionResult withAdmittedSignalPrefix(List<Signal> admittedSignals) {
-        var stable = List.copyOf(Objects.requireNonNull(admittedSignals, "admittedSignals must not be null"));
-        if (stable.size() > signals.size()) {
-            throw new IllegalArgumentException("admittedSignals cannot exceed original signal count");
-        }
-        for (var index = 0; index < stable.size(); index++) {
-            if (!signals.get(index).equals(stable.get(index))) {
-                throw new IllegalArgumentException(
-                        "admittedSignals must be an ordered prefix of the original signals");
-            }
-        }
-        if (stable.size() == signals.size()) {
-            return this;
-        }
-        return new PerceptionResult(status, signalLimit, stable);
-    }
 }

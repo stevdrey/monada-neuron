@@ -13,7 +13,6 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PerceptionContractsTest {
@@ -105,27 +104,5 @@ class PerceptionContractsTest {
         assertThrows(IllegalArgumentException.class, () -> new PerceptionOutcome(request, result));
         assertThrows(NullPointerException.class, () -> new PerceptionOutcome(null, result));
         assertThrows(NullPointerException.class, () -> new PerceptionOutcome(request, null));
-    }
-
-    @Test
-    void admittedPrefixKeepsTheAdapterStatusAndRejectsAnythingButAnOrderedPrefix() {
-        var first = observation(1.0);
-        var second = observation(2.0);
-        var third = observation(3.0);
-        var result = new PerceptionResult(PerceptionStatus.SUCCEEDED, 3, List.of(first, second, third));
-        var outcome = new PerceptionOutcome(new PerceptionRequest(3), result);
-
-        var prefix = outcome.withAdmittedSignalPrefix(List.of(first, second));
-
-        assertAll(
-                () -> assertEquals(List.of(first, second), prefix.result().signals()),
-                // the cycle budget limits what is kept; it never turns a success into a partial one
-                () -> assertEquals(PerceptionStatus.SUCCEEDED, prefix.result().status()),
-                () -> assertEquals(3, prefix.result().signalLimit()),
-                () -> assertSame(result, result.withAdmittedSignalPrefix(List.of(first, second, third))),
-                () -> assertThrows(IllegalArgumentException.class,
-                        () -> result.withAdmittedSignalPrefix(List.of(second))),
-                () -> assertThrows(IllegalArgumentException.class,
-                        () -> result.withAdmittedSignalPrefix(List.of(first, second, third, observation(4.0)))));
     }
 }

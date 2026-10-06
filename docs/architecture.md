@@ -328,7 +328,7 @@ and phase remain unchanged. Each adaptation decision is recorded as a `NodeAdapt
 `PERCEPTION` can instead use `PerceptionCognitiveStage`, backed by a Neuron-owned `PerceptionCapability`
 (ADR 0024). It is a *source* stage: it asks the capability for at most `maxSignals` `OBSERVATION` signals,
 resolved by the host adapter from the request-scoped `HostExecutionContext`, and exposes a
-`PerceptionOutcome` with the admitted request and typed result. `SUCCEEDED` and `PARTIALLY_COMPLETED` carry
+`PerceptionOutcome` with the request and the unmodified adapter result; the cycle-admitted signal prefix, possibly empty, is kept separately in the stage result. `SUCCEEDED` and `PARTIALLY_COMPLETED` carry
 signals in adapter order; `EMPTY`, `REJECTED`, `UNAVAILABLE`, `TIMED_OUT`, and expected `FAILED` carry none
 and, when a later stage is configured, end the cycle with `NO_SIGNALS` without failing it; a perception-only
 cycle completes with empty output. The adapter's `PARTIALLY_COMPLETED` and the cycle's

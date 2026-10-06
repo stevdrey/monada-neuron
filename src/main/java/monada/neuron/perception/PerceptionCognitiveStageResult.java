@@ -10,59 +10,74 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Observable perception-stage result retaining its typed outcome and admitted signal prefix.
+ * Observable perception-stage result retaining the adapter's outcome and, separately, the signals the
+ * cycle admitted.
  *
- * <p>{@link #outcome()} keeps the status the adapter reported, whatever the cycle budget admitted. The
- * cycle-specific facts live here: how many signals the adapter produced and whether the cycle admitted
- * all of them. {@code PerceptionStatus.PARTIALLY_COMPLETED} and {@code ObservationAdmission.TRUNCATED}
- * are independent: the first describes the adapter's observation, the second the cycle's capacity.
+ * <p>{@link #outcome()} is the immutable truth of what the adapter reported, including its status and
+ * every signal it produced; the cycle budget never rewrites it. The cycle-specific facts live here: how
+ * many signals the adapter produced, which ordered prefix the cycle admitted (possibly none), and whether
+ * that truncated the output. {@code PerceptionStatus.PARTIALLY_COMPLETED} and
+ * {@code ObservationAdmission.TRUNCATED} are independent: the first describes the adapter's observation,
+ * the second the cycle's capacity.
  *
- * @param outcome the request and the adapter result, holding only the admitted signals
+ * @param outcome the request and the unmodified adapter result
  * @param producedSignalCount signals the adapter produced before cycle admission
+ * @param admittedSignals the ordered prefix of the produced signals the cycle admitted
  * @param signalAdmission whether the cycle admitted every produced signal
  */
 public record PerceptionCognitiveStageResult(
         PerceptionOutcome outcome,
         int producedSignalCount,
+        List<Signal> admittedSignals,
         ObservationAdmission signalAdmission) implements CognitiveStageResult {
 
     /**
-     * Requires a typed outcome and counters that agree with it and with the admission flag.
+     * Requires a typed outcome, an admitted ordered prefix of its signals, and an admission flag that
+     * agrees with the counters.
      *
-     * @throws IllegalArgumentException if fewer signals were produced than admitted, more than the request
-     *     limit, or the admission flag disagrees with the counters
+     * @throws IllegalArgumentException if the produced count disagrees with the outcome, the admitted
+     *     signals are not an ordered prefix of the produced ones, or the admission flag disagrees with them
      */
     public PerceptionCognitiveStageResult {
         Objects.requireNonNull(outcome, "outcome must not be null");
         Objects.requireNonNull(signalAdmission, "signalAdmission must not be null");
-        var admitted = outcome.result().signals().size();
-        if (producedSignalCount < admitted) {
+        admittedSignals = List.copyOf(Objects.requireNonNull(admittedSignals, "admittedSignals must not be null"));
+        var produced = outcome.result().signals();
+        if (producedSignalCount != produced.size()) {
             throw new IllegalArgumentException(
-                    "producedSignalCount must not be below the admitted count: "
-                            + producedSignalCount + " < " + admitted);
+                    "producedSignalCount must match the outcome's signals: "
+                            + producedSignalCount + " != " + produced.size());
         }
-        if (producedSignalCount > outcome.request().maxSignals()) {
+        if (admittedSignals.size() > produced.size()) {
             throw new IllegalArgumentException(
-                    "producedSignalCount must not exceed the request limit: "
-                            + producedSignalCount + " > " + outcome.request().maxSignals());
+                    "admittedSignals cannot exceed the produced count: "
+                            + admittedSignals.size() + " > " + produced.size());
         }
-        var truncated = producedSignalCount > admitted;
+        for (var index = 0; index < admittedSignals.size(); index++) {
+            if (!produced.get(index).equals(admittedSignals.get(index))) {
+                throw new IllegalArgumentException(
+                        "admittedSignals must be an ordered prefix of the produced signals");
+            }
+        }
+        var truncated = admittedSignals.size() < producedSignalCount;
         if (truncated != (signalAdmission == ObservationAdmission.TRUNCATED)) {
             throw new IllegalArgumentException(
                     "signalAdmission " + signalAdmission + " disagrees with produced "
-                            + producedSignalCount + " and admitted " + admitted + " signals");
+                            + producedSignalCount + " and admitted " + admittedSignals.size() + " signals");
         }
     }
 
     /** Creates a result whose signals were all admitted. */
     public PerceptionCognitiveStageResult(PerceptionOutcome outcome) {
-        this(outcome, Objects.requireNonNull(outcome, "outcome must not be null").result().signals().size(),
+        this(outcome,
+                Objects.requireNonNull(outcome, "outcome must not be null").result().signals().size(),
+                outcome.result().signals(),
                 ObservationAdmission.COMPLETE);
     }
 
     /** Returns how many of the produced signals the cycle admitted. */
     public int admittedSignalCount() {
-        return outcome.result().signals().size();
+        return admittedSignals.size();
     }
 
     /** Returns the fixed perception position in the canonical cycle. */
@@ -80,20 +95,23 @@ public record PerceptionCognitiveStageResult(
     /** Returns the observations in adapter-defined deterministic order. */
     @Override
     public List<Signal> outputSignals() {
-        return outcome.result().signals();
+        return admittedSignals;
     }
 
     /**
-     * Keeps the adapter-reported status and the produced count while dropping every signal the cycle
-     * budget rejected, and records whether that truncated the output.
+     * Keeps the outcome and the produced count unchanged, stores the admitted prefix separately, and
+     * records whether that truncated the output. Admitting no signal is representable.
      */
     @Override
     public PerceptionCognitiveStageResult withAdmittedOutputSignals(List<Signal> admittedOutputSignals) {
-        var admitted = outcome.withAdmittedSignalPrefix(admittedOutputSignals);
-        var truncated = producedSignalCount > admitted.result().signals().size();
+        var admitted = List.copyOf(Objects.requireNonNull(
+                admittedOutputSignals, "admittedOutputSignals must not be null"));
         return new PerceptionCognitiveStageResult(
-                admitted,
+                outcome,
                 producedSignalCount,
-                truncated ? ObservationAdmission.TRUNCATED : ObservationAdmission.COMPLETE);
+                admitted,
+                admitted.size() < producedSignalCount
+                        ? ObservationAdmission.TRUNCATED
+                        : ObservationAdmission.COMPLETE);
     }
 }

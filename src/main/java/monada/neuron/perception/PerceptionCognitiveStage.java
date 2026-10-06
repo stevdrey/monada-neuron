@@ -50,6 +50,9 @@ public final class PerceptionCognitiveStage implements CognitiveStage {
             CognitiveContext context) {
         Objects.requireNonNull(monad, "monad must not be null");
         Objects.requireNonNull(context, "context must not be null");
+        if (!Objects.requireNonNull(inputSignals, "inputSignals must not be null").isEmpty()) {
+            throw new IllegalArgumentException("perception source stage must not receive input signals");
+        }
         var request = new PerceptionRequest(maxSignals, context.hostContext());
         var result = Objects.requireNonNull(capability.perceive(request), "perception result must not be null");
         return new PerceptionCognitiveStageResult(new PerceptionOutcome(request, result));
