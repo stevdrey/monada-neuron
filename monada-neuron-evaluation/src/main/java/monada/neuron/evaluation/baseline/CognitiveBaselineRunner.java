@@ -19,6 +19,7 @@ import monada.neuron.evaluation.workload.DeterministicActionFixture;
 import monada.neuron.evaluation.workload.DeterministicMemoryFixture;
 import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator;
 import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator.CognitiveCycleSetup;
+import monada.neuron.evaluation.workload.FullCycleCalibrator;
 import monada.neuron.evaluation.workload.FullCycleValidity;
 import monada.neuron.evolution.AdaptationConfig;
 import monada.neuron.evolution.AdaptationPolicy;
@@ -669,12 +670,21 @@ public final class CognitiveBaselineRunner {
         var budget = new CognitiveBudget(5_000, 5_000, 10_000);
         var validity = new FullCycleValidity();
 
+        var propagation = new FullCycleCalibrator(generator, validity).calibrate(
+                () -> generator.generateGraph(50, 3),
+                () -> generator.generateGraph(50, 3),
+                policy,
+                memoryPort,
+                actionCap,
+                initialSignals,
+                budget);
         Supplier<CognitiveCycleSetup> freshSetup = () -> generator.generateFullCycleSetup(
                 generator.generateGraph(50, 3),
                 generator.generateGraph(50, 3),
                 policy,
                 memoryPort,
-                actionCap);
+                actionCap,
+                propagation);
 
         var sampleSetup = freshSetup.get();
         var sample = sampleSetup.cycle().execute(sampleSetup.monad(), initialSignals, budget);
@@ -695,7 +705,6 @@ public final class CognitiveBaselineRunner {
             setupHolder[0] = freshSetup.get();
         };
 
-        var propagation = DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION;
         var diagnostics = new LinkedHashMap<>(rowDiagnostics);
         diagnostics.put("baselineRevision", "issue-48-corrected");
         diagnostics.put("supersedes", "issue-14-truncated-perception-only");
@@ -705,12 +714,17 @@ public final class CognitiveBaselineRunner {
         diagnostics.put("acceptedSignals", String.valueOf(sample.snapshot().acceptedSignals()));
         diagnostics.put("stepBudgetExhausted", String.valueOf(sample.snapshot().stepBudgetExhausted()));
         diagnostics.put("signalBudgetExhausted", String.valueOf(sample.snapshot().signalBudgetExhausted()));
+        diagnostics.put("traceBudgetExhausted", String.valueOf(sample.snapshot().traceBudgetExhausted()));
+        diagnostics.put("omittedTraceEntries", String.valueOf(sample.snapshot().omittedTraceEntries()));
         diagnostics.put("initialSignalCount", String.valueOf(initialSignals.size()));
         diagnostics.put("budgetSteps", String.valueOf(budget.maxSteps()));
         diagnostics.put("budgetSignals", String.valueOf(budget.maxSignals()));
         diagnostics.put("budgetTraceEntries", String.valueOf(budget.maxTraceEntries()));
         diagnostics.put("propagation", "ResonanceThresholdRoutingPolicy(0.5), maxSteps="
                 + propagation.maxSteps() + ", maxHops=" + propagation.maxHops());
+        diagnostics.put("propagationMaxHops", String.valueOf(propagation.maxHops()));
+        diagnostics.put("propagationCalibrationRung", String.valueOf(
+                DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION_LADDER.indexOf(propagation)));
         diagnostics.put("traceEntriesCount", String.valueOf(sample.snapshot().traceEntries().size()));
         diagnostics.put("stateResetPerIteration", "true");
         diagnostics.put("validationInWindow", "false");

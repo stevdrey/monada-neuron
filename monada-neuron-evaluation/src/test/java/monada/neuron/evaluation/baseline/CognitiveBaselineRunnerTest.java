@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -59,7 +60,23 @@ class CognitiveBaselineRunnerTest {
             assertEquals("5", diagnostics.get("stagesExecuted"), row.benchmarkName());
             assertEquals("false", diagnostics.get("stepBudgetExhausted"), row.benchmarkName());
             assertEquals("false", diagnostics.get("signalBudgetExhausted"), row.benchmarkName());
+            assertEquals("false", diagnostics.get("traceBudgetExhausted"), row.benchmarkName());
+            assertEquals("0", diagnostics.get("omittedTraceEntries"), row.benchmarkName());
+            assertEquals("0", diagnostics.get("propagationCalibrationRung"), row.benchmarkName());
             assertEquals("issue-48-corrected", diagnostics.get("baselineRevision"), row.benchmarkName());
         }
+    }
+
+    @Test
+    void customSeedWhoseTopologyNeedsMoreHopsStillExecutesAllFiveStages() {
+        var report = new CognitiveBaselineRunner(10_365L, true).runBaselineSuite();
+
+        var row = report.results().stream()
+                .filter(r -> r.benchmarkName().equals("DeterministicCognitiveCycle.FullCycle"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("COMPLETED", row.diagnostics().get("termination"));
+        assertEquals("5", row.diagnostics().get("stagesExecuted"));
+        assertNotEquals("0", row.diagnostics().get("propagationCalibrationRung"));
     }
 }

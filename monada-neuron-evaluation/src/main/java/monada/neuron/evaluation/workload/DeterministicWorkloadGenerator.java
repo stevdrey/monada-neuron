@@ -63,12 +63,22 @@ public final class DeterministicWorkloadGenerator {
             CognitiveStageKind.ACTION);
 
     /**
-     * Bounded per-Aeon propagation used by the full-cycle workload: resonance-threshold routing (0.5),
-     * at most 2,000 steps and 8 hops. Same configuration as the Issue #31 integration evaluation; it lets
-     * both Aeon stages finish on the standard 50-node, degree-3 topologies.
+     * Ordered, finite propagation bounds for the full-cycle workload: resonance-threshold routing (0.5),
+     * 2,000 steps, and 8, 16, 32, then 64 hops.
+     *
+     * <p>The propagation engine revisits nodes, so the hop depth a topology needs depends on the seed. The
+     * first rung is the bound proven in the Issue #31 evaluation for the default seed; a
+     * {@link FullCycleCalibrator} picks the smallest rung whose cycle really executes all five stages and
+     * fails explicitly when none does. No rung is unbounded.
      */
-    public static final PropagationConfig FULL_CYCLE_PROPAGATION = new PropagationConfig(
-            2_000, 8, new ResonanceThresholdRoutingPolicy(new ScalarResonanceMetric(), 0.5));
+    public static final List<PropagationConfig> FULL_CYCLE_PROPAGATION_LADDER = List.of(
+            fullCycleRung(8),
+            fullCycleRung(16),
+            fullCycleRung(32),
+            fullCycleRung(64));
+
+    /** First rung of {@link #FULL_CYCLE_PROPAGATION_LADDER}; the default of the five-argument overload. */
+    public static final PropagationConfig FULL_CYCLE_PROPAGATION = FULL_CYCLE_PROPAGATION_LADDER.getFirst();
 
     /** Finite cycle budget under which the full-cycle workload completes without exhausting any limit. */
     public static final CognitiveBudget FULL_CYCLE_BUDGET = new CognitiveBudget(20_000, 20_000, 40_000);
@@ -81,6 +91,10 @@ public final class DeterministicWorkloadGenerator {
     public static final PropagationConfig LEGACY_TRUNCATING_PROPAGATION = PropagationConfig.routeAll(50, 4);
 
     private final long seed;
+
+    private static PropagationConfig fullCycleRung(int maxHops) {
+        return new PropagationConfig(2_000, maxHops, new ResonanceThresholdRoutingPolicy(new ScalarResonanceMetric(), 0.5));
+    }
 
     /**
      * Creates a workload generator with the default seed.

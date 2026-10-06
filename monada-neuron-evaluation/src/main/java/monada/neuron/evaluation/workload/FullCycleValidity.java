@@ -65,7 +65,7 @@ public final class FullCycleValidity {
         }
     }
 
-    private static void check(boolean condition, String message) {
+    private void check(boolean condition, String message) {
         if (!condition) {
             throw new IllegalStateException("invalid full-cycle workload: " + message);
         }
