@@ -76,12 +76,11 @@ tasks.register<Exec>("consumerSmokeTest") {
     val repoUri = layout.buildDirectory.dir("consumer-repo").get().asFile.toURI()
     inputs.dir(fixtureDir.dir("src"))
     inputs.file(fixtureDir.file("build.gradle.kts"))
-    // Use the project wrapper with the launcher of the host OS; .bat files need a command shell.
-    val launcher = if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
-        listOf("cmd", "/c", layout.projectDirectory.file("gradlew.bat").asFile.absolutePath)
-    } else {
-        listOf(layout.projectDirectory.file("gradlew").asFile.absolutePath)
-    }
+    // Run the project wrapper from the project directory with the host OS launcher. The relative name
+    // avoids quoting an absolute path (which may contain spaces) through `cmd /c` on Windows.
+    workingDir = layout.projectDirectory.asFile
+    val windows = System.getProperty("os.name").lowercase().contains("win")
+    val launcher = if (windows) listOf("cmd", "/c", "gradlew.bat") else listOf("./gradlew")
     commandLine(launcher + listOf(
         "-p", fixtureDir.asFile.absolutePath,
         "test", "--rerun-tasks", "--refresh-dependencies",

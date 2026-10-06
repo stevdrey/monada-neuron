@@ -30,9 +30,13 @@ class PublicApiIncubatorLeakTest {
     @Test
     void publishedSignaturesDoNotExposeIncubatorTypes() throws Exception {
         Path classesRoot = Paths.get(Main.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        assertTrue(Files.isDirectory(classesRoot), "expected a compiled classes directory, got " + classesRoot);
+        List<String> classNames = classNames(classesRoot);
+        assertTrue(classNames.contains("monada.neuron.host.NeuronRuntime"),
+                "the scan must cover the published classes, found " + classNames.size());
         List<String> leaks = new ArrayList<>();
 
-        for (String className : classNames(classesRoot)) {
+        for (String className : classNames) {
             Class<?> type = Class.forName(className, false, Main.class.getClassLoader());
             if (!isExposed(type.getModifiers())) {
                 continue;

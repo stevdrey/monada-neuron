@@ -5,6 +5,10 @@ import monada.neuron.resonance.AdaptiveBatchResonanceEvaluator;
 import monada.neuron.resonance.BatchResonanceEvaluator;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
+import java.nio.file.Path;
+import java.util.Arrays;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -34,9 +38,15 @@ class ConsumerSmokeTest {
 
     @Test
     void evaluationAndBenchmarkCodeAreNotOnTheConsumerClasspath() {
-        for (String entry : System.getProperty("java.class.path").split(java.io.File.pathSeparator)) {
-            assertFalse(entry.contains("monada-neuron-evaluation"), entry);
-            assertFalse(entry.contains("jmh"), entry);
+        var fileNames = Arrays.stream(System.getProperty("java.class.path").split(File.pathSeparator))
+                .map(entry -> Path.of(entry).getFileName().toString())
+                .toList();
+
+        assertTrue(fileNames.stream().anyMatch(name -> name.startsWith("monada-neuron-0.1.0")),
+                "the Neuron artifact must be on the consumer classpath: " + fileNames);
+        for (String name : fileNames) {
+            assertFalse(name.startsWith("monada-neuron-evaluation"), name);
+            assertFalse(name.startsWith("jmh-"), name);
         }
     }
 }
