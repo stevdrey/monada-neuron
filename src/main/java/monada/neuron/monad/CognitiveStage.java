@@ -52,4 +52,15 @@ public interface CognitiveStage {
     default boolean acceptsTypedOnlyHandOff() {
         return false;
     }
+
+    /**
+     * Returns whether this stage produces signals from the host instead of consuming a predecessor's.
+     *
+     * <p>The deterministic cycle owns the rules: a source must be the first configured stage, runs with
+     * an empty initial batch, and a cycle with a source stage rejects non-empty initial signals before
+     * executing anything. Stages that consume signals keep the default.
+     */
+    default boolean isSource() {
+        return false;
+    }
 }

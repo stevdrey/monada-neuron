@@ -43,7 +43,14 @@ public final class DeterministicCognitiveCycle implements CognitiveCycle {
                 throw new IllegalArgumentException("duplicate cognitive stage: " + stage.kind());
             }
         }
-        this.stages = List.copyOf(stagesByKind.values());
+        var normalized = List.copyOf(stagesByKind.values());
+        for (var index = 1; index < normalized.size(); index++) {
+            if (normalized.get(index).isSource()) {
+                throw new IllegalArgumentException(
+                        "a source stage must be the first stage: " + normalized.get(index).kind());
+            }
+        }
+        this.stages = normalized;
     }
 
     /** Executes all configured stages in canonical order over one fresh bounded context. */
@@ -71,6 +78,12 @@ public final class DeterministicCognitiveCycle implements CognitiveCycle {
                 inputSignals,
                 "inputSignals must not be null"));
         Objects.requireNonNull(budget, "budget must not be null");
+        var hasSource = !stages.isEmpty() && stages.getFirst().isSource();
+        if (hasSource && !stableInputs.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "a cycle with source stage " + stages.getFirst().kind()
+                            + " must not receive initial signals, got: " + stableInputs.size());
+        }
         validateBindings(monad);
 
         var context = new CognitiveContext(budget, hostContext);
@@ -89,11 +102,12 @@ public final class DeterministicCognitiveCycle implements CognitiveCycle {
 
             for (var stage : stages) {
                 currentStage = stage;
+                var source = stage.isSource();
                 var typedHandOff = !(stage instanceof AeonCognitiveStage)
                         && stage.acceptsTypedOnlyHandOff()
                         && !stageResults.isEmpty()
                         && stageResults.getLast().retainsTypedHandOff();
-                if (currentSignals.isEmpty() && !typedHandOff) {
+                if (currentSignals.isEmpty() && !typedHandOff && !source) {
                     return complete(
                             monad,
                             CognitiveCycleTermination.NO_SIGNALS,
@@ -102,10 +116,10 @@ public final class DeterministicCognitiveCycle implements CognitiveCycle {
                             context);
                 }
 
-                var stageInputs = stage instanceof AeonCognitiveStage
+                var stageInputs = stage instanceof AeonCognitiveStage || source
                         ? currentSignals
                         : admitStageInputs(stage.kind(), currentSignals, context);
-                if (stageInputs.isEmpty() && (!currentSignals.isEmpty() || !typedHandOff)) {
+                if (!source && stageInputs.isEmpty() && (!currentSignals.isEmpty() || !typedHandOff)) {
                     return complete(
                             monad,
                             CognitiveCycleTermination.CONTEXT_BUDGET_EXHAUSTED,

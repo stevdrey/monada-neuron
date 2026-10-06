@@ -16,8 +16,8 @@ import java.util.Optional;
  * static: the ordered initial signals, an optional budget that overrides the runtime default, and the
  * optional {@link OutcomeFeedback} a caller carries forward from the previous cycle (ADR 0021), and the
  * optional {@link HostExecutionContext} that correlates this execution with the host's own work item
- * (ADR 0023). The host context lives for this execution only and is handed explicitly to action
- * capabilities through {@code ActionRequest}.
+ * (ADR 0023). The host context lives for this execution only and is handed explicitly to perception
+ * and action capabilities through {@code PerceptionRequest} and {@code ActionRequest}.
  *
  * @param signals ordered initial signals
  * @param budget budget for this execution, or empty to use the runtime's default
