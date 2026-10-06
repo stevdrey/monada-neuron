@@ -325,6 +325,18 @@ feedback is provided without a target signal, amplitude and energy scale proport
 and phase remain unchanged. Each adaptation decision is recorded as a `NodeAdapted` event in
 `CognitiveContext` without persisting feedback state to disk or duplicating Monada Resonance Store.
 
+`PERCEPTION` can instead use `PerceptionCognitiveStage`, backed by a Neuron-owned `PerceptionCapability`
+(ADR 0024). It is a *source* stage: it asks the capability for at most `maxSignals` `OBSERVATION` signals,
+resolved by the host adapter from the request-scoped `HostExecutionContext`, and exposes a
+`PerceptionOutcome` with the admitted request and typed result. `SUCCEEDED` and `PARTIALLY_COMPLETED` carry
+signals in adapter order; `EMPTY`, `REJECTED`, `UNAVAILABLE`, `TIMED_OUT`, and expected `FAILED` carry none
+and end the cycle with `NO_SIGNALS` without failing it. The adapter's `PARTIALLY_COMPLETED` and the cycle's
+`TRUNCATED` admission are independent: a budget never rewrites a reported status. A source must be the first
+stage, runs with empty initial signals, and a cycle with a source stage rejects initial signals before
+executing anything. A `PerceptionCognitiveStage` and an `AeonCognitiveStage` are alternatives for the
+single `PERCEPTION` position. Neuron prescribes no universal text or task encoder, and the scalar
+`FrequencyState` is not claimed to be a semantic embedding.
+
 `ACTION` can instead use `ActionCognitiveStage`, backed by a Neuron-owned `ActionCapability`.
 It submits one ordered, bounded Signal batch and exposes an `ActionOutcome` containing the admitted
 request and typed result. `SUCCEEDED` and `PARTIALLY_COMPLETED` may retain observations in
@@ -447,11 +459,12 @@ External Java hosts, such as Monada Forge, embed Neuron through `monada.neuron.h
 
 ```text
 Host application
-  -> prepares Signals from its own domain input        (host-owned)
+  -> prepares Signals from its own domain input        (host-owned), or
+  -> supplies a HostExecutionContext and a PerceptionCapability that resolves it into OBSERVATION signals
   -> NeuronRuntime.execute(signals[, budget])
        -> DeterministicCognitiveCycle (built once)     (Neuron-owned semantics)
             -> stages in canonical order
-            -> optional ResonanceMemoryPort / ActionCapability
+            -> optional PerceptionCapability / ResonanceMemoryPort / ActionCapability
   <- CognitiveCycleResult or CognitiveCycleException
   -> interprets outputs and action observations        (host-owned)
 ```
@@ -485,7 +498,8 @@ its shared stages retain nothing. The `ActionRequest` is kept by `ActionOutcome`
 is rejected on construction, and an expired or unknown reference is resolved (and refused with an expected
 `ActionStatus`) by the host adapter, not by Neuron. Heavy domain context stays with the host. The low-level
 cycle, stage, memory, and action APIs remain public for experiments and focused tests, and no preview, incubator, or native type is part of the
-host-facing contract.
+host-facing contract. A runtime configured with `perceptionCapability(capability, maxSignals)` takes its initial signals from the
+adapter, so its executions supply a host context and no signals.
 
 ## Target Module Boundaries
 
