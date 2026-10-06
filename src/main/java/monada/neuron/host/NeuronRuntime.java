@@ -13,6 +13,8 @@ import monada.neuron.monad.CognitiveCycleResult;
 import monada.neuron.monad.CognitiveStage;
 import monada.neuron.monad.DeterministicCognitiveCycle;
 import monada.neuron.monad.PrimaryMonad;
+import monada.neuron.perception.PerceptionCapability;
+import monada.neuron.perception.PerceptionCognitiveStage;
 import monada.neuron.signal.Signal;
 
 import java.util.ArrayList;
@@ -31,8 +33,8 @@ import java.util.UUID;
  * {@link CognitiveCycleResult}, and operational failures propagate as
  * {@link monada.neuron.monad.CognitiveCycleException}.
  *
- * <p>Memory and action capabilities are optional. They are reached only through
- * {@link ResonanceMemoryPort} and {@link ActionCapability}; the runtime exposes no persistence,
+ * <p>Perception, memory and action capabilities are optional. They are reached only through
+ * {@link PerceptionCapability}, {@link ResonanceMemoryPort} and {@link ActionCapability}; the runtime exposes no persistence,
  * provider, or host-domain types. The host owns input preparation and output interpretation.
  *
  * <p>Like {@link PrimaryMonad} and the cycle context, a runtime is not thread-safe: executions must
@@ -95,8 +97,13 @@ public final class NeuronRuntime {
      * passed explicitly to the cycle and reaches only action requests of this execution. Prior feedback is consumed by the
      * feedback adaptation stage for this execution only and is not retained afterwards.
      *
+     * <p>A runtime with a perception capability takes its signals from that capability, so the input must
+     * carry none; the cycle rejects initial signals before executing anything.
+     *
      * @throws IllegalStateException when no budget is available, or when prior feedback is supplied
      *         but no feedback adaptation stage is configured, because it would otherwise be ignored
+     * @throws IllegalArgumentException when a perception stage is configured and the input carries
+     *         initial signals
      */
     public CognitiveCycleResult execute(CycleInput input) {
         Objects.requireNonNull(input, "input must not be null");
@@ -141,6 +148,16 @@ public final class NeuronRuntime {
         public Builder stage(CognitiveStage stage) {
             stages.add(Objects.requireNonNull(stage, "stage must not be null"));
             return this;
+        }
+
+        /**
+         * Adds the optional perception source stage backed by the given capability and signal limit.
+         *
+         * <p>It occupies the single PERCEPTION position, so it excludes a PERCEPTION Aeon stage, and the
+         * executions of the built runtime must supply no initial signals (ADR 0024).
+         */
+        public Builder perceptionCapability(PerceptionCapability capability, int maxSignals) {
+            return stage(new PerceptionCognitiveStage(capability, maxSignals));
         }
 
         /** Adds the optional memory-recall stage backed by the given port and result limit. */
