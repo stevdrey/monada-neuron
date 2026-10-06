@@ -185,6 +185,48 @@ monada-neuron-langchain-adapter
 
 The exact module structure may change as the project matures, but the architectural boundaries should remain clear.
 
+## Consuming Neuron as a Library
+
+Monada Neuron is published as a plain Java library artifact. Java 27 is the supported baseline, and the artifact has
+no runtime dependencies.
+
+| | |
+| --- | --- |
+| Coordinates | `monada.neuron:monada-neuron:0.1.0-SNAPSHOT` |
+| JDK | 27 |
+| Contents | Core contracts and runtime, including the host API (`monada.neuron.host`), plus sources and Javadoc jars |
+
+Publish to your local Maven repository (no remote repository is involved):
+
+```bash
+./gradlew publishToMavenLocal
+```
+
+Then depend on it from another Gradle project:
+
+```kotlin
+repositories {
+    mavenLocal()
+}
+
+dependencies {
+    implementation("monada.neuron:monada-neuron:0.1.0-SNAPSHOT")
+}
+```
+
+**Vector API.** The SIMD resonance backend uses the incubating `jdk.incubator.vector` module and is optional. A
+consumer on the portable path needs no extra flag and no incubator type appears in the API. Without the module, Neuron
+falls back to the scalar reference implementation; to opt into SIMD, run the JVM with
+`--add-modules jdk.incubator.vector`.
+
+**Core library vs. evaluation.** `monada-neuron-evaluation` (benchmarks, JMH, baseline runners) is a
+development-only module. It is not part of the published artifact and never a transitive dependency.
+
+To verify the contract end to end, `./gradlew consumerSmokeTest` publishes to a repository-local directory and builds
+the standalone `consumer-fixture/` project against it with no incubator flags. The standalone demo entry point is run
+with `./gradlew runDemo`; it is a plain task, so it does not affect library consumers. See
+[ADR 0025](docs/adr/0025-consumable-library-packaging.md).
+
 ## Embedding Neuron in a Host Application
 
 A Java host configures a `NeuronRuntime` once and executes bounded cognitive cycles with it, without
