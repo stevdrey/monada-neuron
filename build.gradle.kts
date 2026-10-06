@@ -65,7 +65,7 @@ tasks.register<Delete>("cleanConsumerRepo") {
 }
 
 tasks.named("publishMavenJavaPublicationToConsumerSmokeRepository") {
-    dependsOn(cleanConsumerRepo)
+    dependsOn("cleanConsumerRepo")
 }
 
 tasks.register<Exec>("consumerSmokeTest") {
