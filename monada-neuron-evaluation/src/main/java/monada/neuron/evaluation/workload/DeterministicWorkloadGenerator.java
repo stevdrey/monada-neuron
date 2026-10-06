@@ -6,6 +6,7 @@ import monada.neuron.aeon.Aeon;
 import monada.neuron.aeon.AeonPurpose;
 import monada.neuron.aeon.CognitiveAeonCoordinator;
 import monada.neuron.aeon.DeterministicAeonCoordinator;
+import monada.neuron.context.CognitiveBudget;
 import monada.neuron.evolution.AdaptationCognitiveStage;
 import monada.neuron.evolution.AdaptationPolicy;
 import monada.neuron.memory.ResonanceMemoryCognitiveStage;
@@ -27,7 +28,9 @@ import monada.neuron.monad.CognitiveStageKind;
 import monada.neuron.monad.DeterministicCognitiveCycle;
 import monada.neuron.monad.PrimaryMonad;
 import monada.neuron.runtime.graph.DeterministicSignalPropagationEngine;
+import monada.neuron.resonance.ScalarResonanceMetric;
 import monada.neuron.runtime.graph.PropagationConfig;
+import monada.neuron.runtime.graph.ResonanceThresholdRoutingPolicy;
 import monada.neuron.signal.NodeProcessingResult;
 import monada.neuron.signal.NodeProcessor;
 import monada.neuron.signal.Signal;
@@ -50,6 +53,32 @@ public final class DeterministicWorkloadGenerator {
 
     /** Default seed used for reproducible baseline benchmarks. */
     public static final long DEFAULT_SEED = 42L;
+
+    /** The five canonical stages, in order, that a valid full-cycle workload must execute. */
+    public static final List<CognitiveStageKind> FULL_CYCLE_ORDER = List.of(
+            CognitiveStageKind.PERCEPTION,
+            CognitiveStageKind.MEMORY_RECALL,
+            CognitiveStageKind.REASONING,
+            CognitiveStageKind.ADAPTATION,
+            CognitiveStageKind.ACTION);
+
+    /**
+     * Bounded per-Aeon propagation used by the full-cycle workload: resonance-threshold routing (0.5),
+     * at most 2,000 steps and 8 hops. Same configuration as the Issue #31 integration evaluation; it lets
+     * both Aeon stages finish on the standard 50-node, degree-3 topologies.
+     */
+    public static final PropagationConfig FULL_CYCLE_PROPAGATION = new PropagationConfig(
+            2_000, 8, new ResonanceThresholdRoutingPolicy(new ScalarResonanceMetric(), 0.5));
+
+    /** Finite cycle budget under which the full-cycle workload completes without exhausting any limit. */
+    public static final CognitiveBudget FULL_CYCLE_BUDGET = new CognitiveBudget(20_000, 20_000, 40_000);
+
+    /**
+     * Historical Issue #14 propagation ({@code routeAll(50, 4)}). It truncates PERCEPTION on the standard
+     * topologies and ends the cycle with {@code STAGE_LIMIT_REACHED} before {@code MEMORY_RECALL}, so it is
+     * not a valid full-cycle workload. Kept only to document and regression-test that defect.
+     */
+    public static final PropagationConfig LEGACY_TRUNCATING_PROPAGATION = PropagationConfig.routeAll(50, 4);
 
     private final long seed;
 
@@ -349,7 +378,8 @@ public final class DeterministicWorkloadGenerator {
     }
 
     /**
-     * Builds a representative 5-stage Primary Monad cognitive cycle with deterministic fixtures.
+     * Builds a representative 5-stage Primary Monad cognitive cycle with deterministic fixtures, bounded by
+     * {@link #FULL_CYCLE_PROPAGATION} so all five stages execute on the standard topologies.
      *
      * @param perceptionTopology topology for perception stage
      * @param reasoningTopology topology for reasoning stage
@@ -371,15 +401,15 @@ public final class DeterministicWorkloadGenerator {
                 policy,
                 memoryPort,
                 actionCapability,
-                PropagationConfig.routeAll(50, 4));
+                FULL_CYCLE_PROPAGATION);
     }
 
     /**
      * Generates a full cognitive cycle with an explicit per-Aeon propagation bound.
      *
-     * <p>The default bound (50 steps, 4 hops) truncates the perception stage on the standard
-     * benchmark topologies, which ends the cycle before memory recall; callers that must reach later
-     * stages pass a larger bound.
+     * <p>{@link #LEGACY_TRUNCATING_PROPAGATION} truncates the perception stage on the standard
+     * benchmark topologies, which ends the cycle before memory recall; the five-argument overload uses
+     * {@link #FULL_CYCLE_PROPAGATION} so every stage executes.
      *
      * @param propagationConfig propagation limits shared by both Aeon stages
      */

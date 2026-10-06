@@ -8,10 +8,11 @@ The `:monada-neuron-evaluation` subproject provides an isolated benchmarking and
 
 For the end-to-end evaluation against a real Resonance Store, see [resonance-store-integration.md](resonance-store-integration.md).
 
-> **Caveat (found in Issue #31):** the `DeterministicCognitiveCycle.FullCycle` baseline uses
-> `PropagationConfig.routeAll(50, 4)`, which ends the perception stage with `STAGE_LIMIT_REACHED` on the
-> generated topologies. The cycle therefore stops before memory recall, so its numbers reflect the
-> perception stage only. The integration evaluation uses threshold routing so all five stages run.
+> **Resolved (Issue #48):** earlier `DeterministicCognitiveCycle.FullCycle` numbers (Issue #14 / #43) were
+> produced with `PropagationConfig.routeAll(50, 4)`, which ended the perception stage with
+> `STAGE_LIMIT_REACHED` before `MEMORY_RECALL`; they measured the perception stage only. "FullCycle" now
+> means that all five stages execute and the cycle terminates `COMPLETED`. See
+> [Full-Cycle Validity (Issue #48)](#full-cycle-validity-issue-48).
 
 ## Architecture & Module Isolation
 
@@ -440,6 +441,76 @@ The runner writes `feedback-loop.json` and `feedback-loop.md` (default `build/re
 
 Results and the interpretation limits are recorded in ADR 0021.
 
+## Full-Cycle Validity (Issue #48)
+
+**Defect.** `DeterministicWorkloadGenerator.generateFullCycleSetup(...)` hard-coded
+`PropagationConfig.routeAll(50, 4)`. On the standard 50-node, degree-3 topologies this bound is exhausted in
+`PERCEPTION` (stage status `LIMIT_REACHED`), so the cycle ends with `STAGE_LIMIT_REACHED` and
+`MEMORY_RECALL`, `REASONING`, `ADAPTATION`, and `ACTION` never run. The `FullCycle` and
+`CognitiveCycle.Adaptation.*` rows, and the JMH `CognitiveCycleBenchmark`, all shared that setup.
+`FullCycleValidityTest.legacyRouteAllBoundTruncatesPerceptionBeforeMemoryRecall` reproduces it.
+
+**Corrected configuration (evaluation-only; production code and defaults unchanged).**
+
+| Parameter | Historical (#14, invalid) | Corrected (#48) |
+| :--- | :--- | :--- |
+| Routing | route all | `ResonanceThresholdRoutingPolicy(ScalarResonanceMetric, 0.5)` (same as #31) |
+| `maxSteps` per Aeon stage | 50 | 2,000 |
+| `maxHops` per Aeon stage | 4 | 8 |
+| Cycle budget (runner) | 5,000 steps / 5,000 signals / 10,000 trace | unchanged |
+| Cycle budget (JMH) | 2,000 / 2,000 / 5,000 | unchanged |
+
+All bounds stay finite. Constants: `DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION` (corrected) and
+`LEGACY_TRUNCATING_PROPAGATION` (kept only to document and regression-test the defect).
+
+**Semantic assertions** (`FullCycleValidity`, applied before any measurement is accepted):
+
+- stage order is exactly `PERCEPTION -> MEMORY_RECALL -> REASONING -> ADAPTATION -> ACTION`;
+- termination is `COMPLETED`; step, signal, and trace budgets are not exhausted;
+- memory fixture response is `COMPLETE` and non-empty; action fixture is `SUCCEEDED` with fully admitted
+  `OBSERVATION` signals;
+- a same-seed replay from an independent setup is equal to the validated sample, and every measured
+  iteration equals it. Comparison happens in the next iteration's untimed setup and after the row, so
+  validation is not in the timed window (`validationInWindow=false`). Fresh topology/policy state per
+  iteration is unchanged. The JMH benchmark validates both variants in `@Setup(Level.Trial)`.
+
+**Hardware of the corrected baseline.** This run used different, more powerful hardware than the historical
+Java 27 baseline:
+
+| | Historical #43 baseline | Corrected #48 baseline |
+| :--- | :--- | :--- |
+| CPU | Intel Core i7-6500U @ 2.50 GHz, 2 cores / 4 threads, AVX2 | AMD Ryzen 7 7730U, 8 cores / 16 threads, 16 MiB L3 |
+| RAM | 16 GB | 14 GiB usable (about 8 GiB in use by other processes during the run) |
+| Storage | HDD | NVMe SSD (Micron 2500, 477 GB) |
+| JVM | Zulu OpenJDK 27+35, G1 | Azul Zulu 27, G1, 3,832 MB max heap |
+
+The measured workloads are CPU- and allocation-bound and do not read or write the disk inside the timed
+window, so storage is not expected to affect the latencies; the SSD can only affect JVM start-up and report
+writing, which are outside the measurement. This was not isolated experimentally. Absolute numbers must not be
+compared across the two machines; only the validity facts (stages, termination, steps, signals) are
+hardware-independent.
+
+**Corrected baseline** (seed 42, full mode, Java 27 Azul Zulu, Linux amd64, 16 processors, G1; every row:
+`termination=COMPLETED`, 5 stages, 15 processed steps, 80 accepted signals, 105 trace entries, no budget
+exhausted):
+
+| Benchmark | Workload Scale | Mean | p50 | p95 | Throughput | Alloc / Op |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: |
+| `DeterministicCognitiveCycle.FullCycle` | 5 stages, 5 initial signals | 232.80 µs | 224.46 µs | 342.71 µs | 4,295 ops/s | 41.56 KB |
+| `CognitiveCycle.Adaptation.NoOp` | 50 target nodes | 191.99 µs | 189.63 µs | 248.84 µs | 5,209 ops/s | 37.27 KB |
+| `CognitiveCycle.Adaptation.BaselinePolicy` | 50 target nodes | 200.10 µs | 198.74 µs | 263.11 µs | 4,997 ops/s | 41.57 KB |
+
+Isolated JMH (`-f 1 -wi 2 -i 3 -r 1s CognitiveCycleBenchmark`, 30-node topologies, avgt):
+`benchmarkCognitiveCycleNoOp` 5.367 ± 0.581 µs/op, `benchmarkCognitiveCycleBaseline` 6.256 ± 0.863 µs/op.
+
+**Interpretation.** The difference from the historical rows is a **workload-validity correction**, not a
+performance change: the old rows ran only a truncated perception stage and skipped four stages, while the corrected rows run
+all five with a different routing policy, so the amount of work differs. Do not read the new
+numbers as a regression or an improvement. The historical #14 / #43 rows below remain as historical
+evidence for the perception-only workload, were not rewritten, and are **superseded** by this baseline for
+any "full cycle" claim. They were captured on different hardware (see their sections), so the two sets are
+also not hardware-comparable.
+
 ## Baseline Results (Java 26 Reference)
 
 Captured on Linux x86_64 with Java 26 (Eclipse Adoptium OpenJDK 64-Bit Server VM):
@@ -460,7 +531,7 @@ Captured on Linux x86_64 with Java 26 (Eclipse Adoptium OpenJDK 64-Bit Server VM
 | `GraphPropagation.ThresholdRouting` | Large (2,000 nodes, deg 8) | ~11.1 µs | ~9.1 µs | ~20.1 µs | ~90,300 ops/s | ~2.79 KB |
 | `AeonCoordinator.Direct` | 10 inputs, 100 members | ~2.92 ms | ~1.90 ms | ~6.38 ms | ~343 ops/s | ~1.32 MB |
 | `AeonCoordinator.Contextual` | 10 inputs, 100 members | ~6.76 ms | ~6.28 ms | ~10.15 ms | ~148 ops/s | ~5.21 MB |
-| `DeterministicCognitiveCycle.FullCycle` | 5 stages, 5 initial signals | ~582.4 µs | ~497.7 µs | ~1.13 ms | ~1,717 ops/s | ~255.4 KB |
+| `DeterministicCognitiveCycle.FullCycle` (historical #14, perception-only, superseded) | 5 stages, 5 initial signals | ~582.4 µs | ~497.7 µs | ~1.13 ms | ~1,717 ops/s | ~255.4 KB |
 | `CognitiveCycle.Adaptation.NoOp` | 50 target nodes | ~470.3 µs | ~372.2 µs | ~959.1 µs | ~2,126 ops/s | ~255.4 KB |
 | `CognitiveCycle.Adaptation.BaselinePolicy` | 50 target nodes | ~328.5 µs | ~290.4 µs | ~518.4 µs | ~3,044 ops/s | ~255.4 KB |
 
@@ -510,7 +581,7 @@ Captured on Linux x86_64 with Java 27 via Issue #43:
 | `CompactGraphPropagation.RouteAll` | Large (2,000 nodes, deg 8) | 2.90 ms | 2.71 ms | 4.17 ms | ~345 ops/s | 1.22 MB |
 | `AeonCoordinator.Direct` | 10 inputs, 100 members | 9.27 ms | 9.07 ms | 11.48 ms | ~108 ops/s | 1.49 MB |
 | `AeonCoordinator.Contextual` | 10 inputs, 100 members | 12.04 ms | 11.42 ms | 16.79 ms | ~83 ops/s | 4.88 MB |
-| `DeterministicCognitiveCycle.FullCycle` | 5 stages, 5 initial signals | 553.32 µs | 513.22 µs | 715.48 µs | ~1,807 ops/s | 231.72 KB |
+| `DeterministicCognitiveCycle.FullCycle` (historical #43, perception-only, superseded) | 5 stages, 5 initial signals | 553.32 µs | 513.22 µs | 715.48 µs | ~1,807 ops/s | 231.72 KB |
 | `CognitiveCycle.Adaptation.NoOp` | 50 target nodes | 507.71 µs | 468.33 µs | 682.16 µs | ~1,970 ops/s | 231.72 KB |
 | `CognitiveCycle.Adaptation.BaselinePolicy` | 50 target nodes | 820.66 µs | 510.76 µs | 1.84 ms | ~1,219 ops/s | 231.72 KB |
 | `NodeStateLayout.ObjectConstruction` | 100,000 nodes | 60.65 ms | 59.52 ms | 66.65 ms | ~1,649,000 ops/s | 405.6 B |

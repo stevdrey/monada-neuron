@@ -3,6 +3,7 @@ package monada.neuron.evaluation.baseline;
 import monada.neuron.evaluation.metrics.EvaluationReport;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,5 +41,25 @@ class CognitiveBaselineRunnerTest {
         assertTrue(hasCycle, "Should contain DeterministicCognitiveCycle benchmark");
         assertTrue(hasAdaptation, "Should contain Adaptation comparison benchmark");
         assertTrue(hasNodeStateLayout, "Should contain the FFM state-layout experiment");
+    }
+
+    @Test
+    void fullCycleRowsReportAllFiveStagesCompleted() {
+        var report = new CognitiveBaselineRunner(42L, true).runBaselineSuite();
+
+        var cycleRows = report.results().stream()
+                .filter(r -> r.benchmarkName().equals("DeterministicCognitiveCycle.FullCycle")
+                        || r.benchmarkName().startsWith("CognitiveCycle.Adaptation."))
+                .toList();
+
+        assertEquals(3, cycleRows.size());
+        for (var row : cycleRows) {
+            var diagnostics = row.diagnostics();
+            assertEquals("COMPLETED", diagnostics.get("termination"), row.benchmarkName());
+            assertEquals("5", diagnostics.get("stagesExecuted"), row.benchmarkName());
+            assertEquals("false", diagnostics.get("stepBudgetExhausted"), row.benchmarkName());
+            assertEquals("false", diagnostics.get("signalBudgetExhausted"), row.benchmarkName());
+            assertEquals("issue-48-corrected", diagnostics.get("baselineRevision"), row.benchmarkName());
+        }
     }
 }

@@ -19,9 +19,12 @@ import monada.neuron.evaluation.workload.DeterministicActionFixture;
 import monada.neuron.evaluation.workload.DeterministicMemoryFixture;
 import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator;
 import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator.CognitiveCycleSetup;
+import monada.neuron.evaluation.workload.FullCycleValidity;
 import monada.neuron.evolution.AdaptationConfig;
+import monada.neuron.evolution.AdaptationPolicy;
 import monada.neuron.evolution.DeterministicBaselineAdaptationPolicy;
 import monada.neuron.evolution.NoOpAdaptationPolicy;
+import monada.neuron.monad.CognitiveCycleResult;
 import monada.neuron.resonance.BatchResonanceEvaluator;
 import monada.neuron.resonance.FrequencyStateBatch;
 import monada.neuron.resonance.ScalarBatchResonanceEvaluator;
@@ -43,11 +46,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ForkJoinPool;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /**
  * Main baseline runner that executes deterministic, reproducible cognitive workloads
@@ -607,125 +613,125 @@ public final class CognitiveBaselineRunner {
     }
 
     private List<BenchmarkRunResult> benchmarkCognitiveCycles() {
-        int warmups = quickMode ? 2 : 5;
-        int iterations = quickMode ? 5 : 15;
-
-        var memoryPort = new DeterministicMemoryFixture();
-        var actionCap = new DeterministicActionFixture();
         var policy = new DeterministicBaselineAdaptationPolicy(AdaptationConfig.DEFAULT);
         var initialSignals = generator.generateSignals(quickMode ? 2 : 5);
+        return List.of(measureValidatedCycle(
+                "DeterministicCognitiveCycle.FullCycle",
+                "5 stages, " + initialSignals.size() + " initial signals",
+                policy,
+                initialSignals,
+                Map.of("stages", DeterministicWorkloadGenerator.FULL_CYCLE_ORDER.stream()
+                        .map(Enum::name)
+                        .collect(Collectors.joining(" -> ")))));
+    }
+
+    private List<BenchmarkRunResult> benchmarkAdaptationComparison() {
+        var initialSignals = generator.generateSignals(quickMode ? 2 : 5);
+        var noOpPolicy = NoOpAdaptationPolicy.INSTANCE;
+        var baselinePolicy = new DeterministicBaselineAdaptationPolicy(AdaptationConfig.DEFAULT);
+
+        return List.of(
+                measureValidatedCycle(
+                        "CognitiveCycle.Adaptation.NoOp",
+                        "50 target nodes",
+                        noOpPolicy,
+                        initialSignals,
+                        Map.of("policy", "NoOpAdaptationPolicy", "targetNodeCount", "50")),
+                measureValidatedCycle(
+                        "CognitiveCycle.Adaptation.BaselinePolicy",
+                        "50 target nodes",
+                        baselinePolicy,
+                        initialSignals,
+                        Map.of(
+                                "policy", "DeterministicBaselineAdaptationPolicy",
+                                "targetNodeCount", "50",
+                                "learningRate", String.valueOf(AdaptationConfig.DEFAULT.learningRate()))));
+    }
+
+    /**
+     * Measures one full cognitive cycle after proving it executes all five canonical stages.
+     *
+     * <p>The sample result must pass {@link FullCycleValidity}, and an independent setup from the same seed
+     * must produce an equal result. Validation stays outside the timed window: the workload only keeps its
+     * result, which is compared with the validated sample in the next iteration's untimed setup and once more
+     * after the row. Every iteration still starts from a freshly generated topology and policy state.
+     */
+    private BenchmarkRunResult measureValidatedCycle(
+            String benchmarkName,
+            String workloadScale,
+            AdaptationPolicy policy,
+            List<Signal> initialSignals,
+            Map<String, String> rowDiagnostics) {
+        int warmups = quickMode ? 2 : 5;
+        int iterations = quickMode ? 5 : 15;
+        var memoryPort = new DeterministicMemoryFixture();
+        var actionCap = new DeterministicActionFixture();
         var budget = new CognitiveBudget(5_000, 5_000, 10_000);
+        var validity = new FullCycleValidity();
 
-        // Pre-generate sample for diagnostic inspection
-        var samplePerception = generator.generateGraph(50, 3);
-        var sampleReasoning = generator.generateGraph(50, 3);
-        var sampleSetup = generator.generateFullCycleSetup(samplePerception, sampleReasoning, policy, memoryPort, actionCap);
-        var sampleSnapshot = sampleSetup.cycle().execute(sampleSetup.monad(), initialSignals, budget);
+        Supplier<CognitiveCycleSetup> freshSetup = () -> generator.generateFullCycleSetup(
+                generator.generateGraph(50, 3),
+                generator.generateGraph(50, 3),
+                policy,
+                memoryPort,
+                actionCap);
 
-        // Holder to store fresh setup recreated before each iteration outside measurement interval
+        var sampleSetup = freshSetup.get();
+        var sample = sampleSetup.cycle().execute(sampleSetup.monad(), initialSignals, budget);
+        validity.require(sample);
+        var replaySetup = freshSetup.get();
+        if (!sample.equals(replaySetup.cycle().execute(replaySetup.monad(), initialSignals, budget))) {
+            throw new IllegalStateException(
+                    "invalid full-cycle workload: same-seed replay differs from the validated sample");
+        }
+
         var setupHolder = new CognitiveCycleSetup[1];
+        var lastResult = new CognitiveCycleResult[1];
         Runnable iterationSetup = () -> {
-            var perceptionTop = generator.generateGraph(50, 3);
-            var reasoningTop = generator.generateGraph(50, 3);
-            setupHolder[0] = generator.generateFullCycleSetup(perceptionTop, reasoningTop, policy, memoryPort, actionCap);
+            if (lastResult[0] != null && !sample.equals(lastResult[0])) {
+                throw new IllegalStateException(
+                        "invalid full-cycle workload: measured iteration diverged from the validated sample");
+            }
+            setupHolder[0] = freshSetup.get();
         };
 
-        var results = new ArrayList<BenchmarkRunResult>();
-        results.add(collector.measure(
-                "DeterministicCognitiveCycle.FullCycle",
-                "5 stages, 5 initial signals",
+        var propagation = DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION;
+        var diagnostics = new LinkedHashMap<>(rowDiagnostics);
+        diagnostics.put("baselineRevision", "issue-48-corrected");
+        diagnostics.put("supersedes", "issue-14-truncated-perception-only");
+        diagnostics.put("termination", sample.termination().name());
+        diagnostics.put("stagesExecuted", String.valueOf(sample.stageResults().size()));
+        diagnostics.put("processedSteps", String.valueOf(sample.snapshot().processedSteps()));
+        diagnostics.put("acceptedSignals", String.valueOf(sample.snapshot().acceptedSignals()));
+        diagnostics.put("stepBudgetExhausted", String.valueOf(sample.snapshot().stepBudgetExhausted()));
+        diagnostics.put("signalBudgetExhausted", String.valueOf(sample.snapshot().signalBudgetExhausted()));
+        diagnostics.put("initialSignalCount", String.valueOf(initialSignals.size()));
+        diagnostics.put("budgetSteps", String.valueOf(budget.maxSteps()));
+        diagnostics.put("budgetSignals", String.valueOf(budget.maxSignals()));
+        diagnostics.put("budgetTraceEntries", String.valueOf(budget.maxTraceEntries()));
+        diagnostics.put("propagation", "ResonanceThresholdRoutingPolicy(0.5), maxSteps="
+                + propagation.maxSteps() + ", maxHops=" + propagation.maxHops());
+        diagnostics.put("traceEntriesCount", String.valueOf(sample.snapshot().traceEntries().size()));
+        diagnostics.put("stateResetPerIteration", "true");
+        diagnostics.put("validationInWindow", "false");
+
+        var row = collector.measure(
+                benchmarkName,
+                workloadScale,
                 warmups,
                 iterations,
                 1,
                 iterationSetup,
                 () -> {
                     var setup = setupHolder[0];
-                    var snapshot = setup.cycle().execute(setup.monad(), initialSignals, budget);
-                    if (snapshot.snapshot().traceEntries().isEmpty()) {
-                        throw new IllegalStateException("empty cycle snapshot");
-                    }
+                    lastResult[0] = setup.cycle().execute(setup.monad(), initialSignals, budget);
                 },
-                Map.of(
-                        "stages", "PERCEPTION -> MEMORY_RECALL -> REASONING -> ADAPTATION -> ACTION",
-                        "initialSignalCount", String.valueOf(initialSignals.size()),
-                        "budgetSteps", "5000",
-                        "traceEntriesCount", String.valueOf(sampleSnapshot.snapshot().traceEntries().size()),
-                        "stateResetPerIteration", "true")));
-
-        return results;
-    }
-
-    private List<BenchmarkRunResult> benchmarkAdaptationComparison() {
-        int warmups = quickMode ? 2 : 5;
-        int iterations = quickMode ? 5 : 15;
-
-        var memoryPort = new DeterministicMemoryFixture();
-        var actionCap = new DeterministicActionFixture();
-
-        var noOpPolicy = NoOpAdaptationPolicy.INSTANCE;
-        var baselinePolicy = new DeterministicBaselineAdaptationPolicy(AdaptationConfig.DEFAULT);
-
-        var initialSignals = generator.generateSignals(quickMode ? 2 : 5);
-        var budget = new CognitiveBudget(5_000, 5_000, 10_000);
-
-        var noOpSetupHolder = new CognitiveCycleSetup[1];
-        Runnable noOpIterationSetup = () -> {
-            var pTop = generator.generateGraph(50, 3);
-            var rTop = generator.generateGraph(50, 3);
-            noOpSetupHolder[0] = generator.generateFullCycleSetup(pTop, rTop, noOpPolicy, memoryPort, actionCap);
-        };
-
-        var baselineSetupHolder = new CognitiveCycleSetup[1];
-        Runnable baselineIterationSetup = () -> {
-            var pTop = generator.generateGraph(50, 3);
-            var rTop = generator.generateGraph(50, 3);
-            baselineSetupHolder[0] = generator.generateFullCycleSetup(pTop, rTop, baselinePolicy, memoryPort, actionCap);
-        };
-
-        var results = new ArrayList<BenchmarkRunResult>();
-
-        // No-Op Adaptation Cycle
-        results.add(collector.measure(
-                "CognitiveCycle.Adaptation.NoOp",
-                "50 target nodes",
-                warmups,
-                iterations,
-                1,
-                noOpIterationSetup,
-                () -> {
-                    var setup = noOpSetupHolder[0];
-                    var snapshot = setup.cycle().execute(setup.monad(), initialSignals, budget);
-                    if (snapshot.snapshot().traceEntries().isEmpty()) {
-                        throw new IllegalStateException("empty cycle snapshot");
-                    }
-                },
-                Map.of(
-                        "policy", "NoOpAdaptationPolicy",
-                        "targetNodeCount", "50",
-                        "stateResetPerIteration", "true")));
-
-        // Baseline Adaptation Policy Cycle
-        results.add(collector.measure(
-                "CognitiveCycle.Adaptation.BaselinePolicy",
-                "50 target nodes",
-                warmups,
-                iterations,
-                1,
-                baselineIterationSetup,
-                () -> {
-                    var setup = baselineSetupHolder[0];
-                    var snapshot = setup.cycle().execute(setup.monad(), initialSignals, budget);
-                    if (snapshot.snapshot().traceEntries().isEmpty()) {
-                        throw new IllegalStateException("empty cycle snapshot");
-                    }
-                },
-                Map.of(
-                        "policy", "DeterministicBaselineAdaptationPolicy",
-                        "targetNodeCount", "50",
-                        "learningRate", String.valueOf(AdaptationConfig.DEFAULT.learningRate()),
-                        "stateResetPerIteration", "true")));
-
-        return results;
+                diagnostics);
+        if (!sample.equals(lastResult[0])) {
+            throw new IllegalStateException(
+                    "invalid full-cycle workload: final measured iteration diverged from the validated sample");
+        }
+        return row;
     }
 
     private List<BenchmarkRunResult> benchmarkBackendSelection() {

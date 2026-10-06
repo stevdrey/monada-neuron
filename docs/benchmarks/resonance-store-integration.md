@@ -73,11 +73,11 @@ score) are asserted as sets, never by physical position.
 | Lifecycle | temporary store directory deleted on close |
 
 The full-cycle scenario uses threshold-routed propagation
-(`ResonanceThresholdRoutingPolicy`, 0.5). The generator's default `routeAll(50, 4)` bound truncates the
-perception stage on the standard topologies (`STAGE_LIMIT_REACHED`), which ends the cycle before memory
-recall; the existing `DeterministicCognitiveCycle.FullCycle` baseline therefore currently exercises
-perception only. `DeterministicWorkloadGenerator.generateFullCycleSetup` gained an overload taking an
-explicit `PropagationConfig`; the original signature keeps its behavior.
+(`ResonanceThresholdRoutingPolicy`, 0.5). The former `routeAll(50, 4)` generator default truncated the
+perception stage on the standard topologies (`STAGE_LIMIT_REACHED`); Issue #48 changed the generator default
+to this same bound (`DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION`), so the Neuron-only
+`DeterministicCognitiveCycle.FullCycle` baseline now executes all five stages too. The explicit
+`PropagationConfig` overload of `generateFullCycleSetup` remains.
 
 ## Measurement method
 
