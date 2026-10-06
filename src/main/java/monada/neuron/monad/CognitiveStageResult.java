@@ -21,8 +21,11 @@ public interface CognitiveStageResult {
      * Returns this result with the cycle-admitted output prefix.
      *
      * <p>The deterministic cycle owns signal-budget admission for extension stages. Implementations
-     * that retain typed metadata may override this method, but must not retain rejected output
-     * candidates in the returned result.
+     * that retain typed metadata may override this method. The returned {@link #outputSignals()} must
+     * be exactly the admitted prefix, so a rejected candidate is never offered to the next stage. An
+     * implementation whose typed outcome is the immutable report of an external capability may keep that
+     * outcome, including the candidates it produced, as long as the admitted prefix and the truncation
+     * are recorded separately (see {@code PerceptionCognitiveStageResult}).
      */
     default CognitiveStageResult withAdmittedOutputSignals(List<Signal> admittedOutputSignals) {
         return new CognitiveStageResultSnapshot(kind(), status(), admittedOutputSignals);
