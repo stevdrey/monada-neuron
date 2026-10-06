@@ -6,6 +6,7 @@ import monada.neuron.aeon.Aeon;
 import monada.neuron.aeon.AeonPurpose;
 import monada.neuron.aeon.CognitiveAeonCoordinator;
 import monada.neuron.aeon.DeterministicAeonCoordinator;
+import monada.neuron.context.CognitiveBudget;
 import monada.neuron.evolution.AdaptationCognitiveStage;
 import monada.neuron.evolution.AdaptationPolicy;
 import monada.neuron.memory.ResonanceMemoryCognitiveStage;
@@ -27,7 +28,9 @@ import monada.neuron.monad.CognitiveStageKind;
 import monada.neuron.monad.DeterministicCognitiveCycle;
 import monada.neuron.monad.PrimaryMonad;
 import monada.neuron.runtime.graph.DeterministicSignalPropagationEngine;
+import monada.neuron.resonance.ScalarResonanceMetric;
 import monada.neuron.runtime.graph.PropagationConfig;
+import monada.neuron.runtime.graph.ResonanceThresholdRoutingPolicy;
 import monada.neuron.signal.NodeProcessingResult;
 import monada.neuron.signal.NodeProcessor;
 import monada.neuron.signal.Signal;
@@ -51,7 +54,47 @@ public final class DeterministicWorkloadGenerator {
     /** Default seed used for reproducible baseline benchmarks. */
     public static final long DEFAULT_SEED = 42L;
 
+    /** The five canonical stages, in order, that a valid full-cycle workload must execute. */
+    public static final List<CognitiveStageKind> FULL_CYCLE_ORDER = List.of(
+            CognitiveStageKind.PERCEPTION,
+            CognitiveStageKind.MEMORY_RECALL,
+            CognitiveStageKind.REASONING,
+            CognitiveStageKind.ADAPTATION,
+            CognitiveStageKind.ACTION);
+
+    /**
+     * Ordered, finite propagation bounds for the full-cycle workload: resonance-threshold routing (0.5),
+     * 2,000 steps, and 8, 16, 32, then 64 hops.
+     *
+     * <p>The propagation engine revisits nodes, so the hop depth a topology needs depends on the seed. The
+     * first rung is the bound proven in the Issue #31 evaluation for the default seed; a
+     * {@link FullCycleCalibrator} picks the smallest rung whose cycle really executes all five stages and
+     * fails explicitly when none does. No rung is unbounded.
+     */
+    public static final List<PropagationConfig> FULL_CYCLE_PROPAGATION_LADDER = List.of(
+            fullCycleRung(8),
+            fullCycleRung(16),
+            fullCycleRung(32),
+            fullCycleRung(64));
+
+    /** First rung of {@link #FULL_CYCLE_PROPAGATION_LADDER}, the bound proven for the default seed. */
+    public static final PropagationConfig FULL_CYCLE_PROPAGATION = FULL_CYCLE_PROPAGATION_LADDER.getFirst();
+
+    /** Finite cycle budget under which the full-cycle workload completes without exhausting any limit. */
+    public static final CognitiveBudget FULL_CYCLE_BUDGET = new CognitiveBudget(20_000, 20_000, 40_000);
+
+    /**
+     * Historical Issue #14 propagation ({@code routeAll(50, 4)}). It truncates PERCEPTION on the standard
+     * topologies and ends the cycle with {@code STAGE_LIMIT_REACHED} before {@code MEMORY_RECALL}, so it is
+     * not a valid full-cycle workload. Kept only to document and regression-test that defect.
+     */
+    public static final PropagationConfig LEGACY_TRUNCATING_PROPAGATION = PropagationConfig.routeAll(50, 4);
+
     private final long seed;
+
+    private static PropagationConfig fullCycleRung(int maxHops) {
+        return new PropagationConfig(2_000, maxHops, new ResonanceThresholdRoutingPolicy(new ScalarResonanceMetric(), 0.5));
+    }
 
     /**
      * Creates a workload generator with the default seed.
@@ -349,39 +392,22 @@ public final class DeterministicWorkloadGenerator {
     }
 
     /**
-     * Builds a representative 5-stage Primary Monad cognitive cycle with deterministic fixtures.
+     * Generates a full cognitive cycle with an explicit per-Aeon propagation bound.
      *
-     * @param perceptionTopology topology for perception stage
-     * @param reasoningTopology topology for reasoning stage
+     * <p>Builds a representative 5-stage Primary Monad cognitive cycle with deterministic fixtures. The
+     * propagation bound is explicit because no single bound is valid for every seed:
+     * {@link #LEGACY_TRUNCATING_PROPAGATION} truncates the perception stage on the standard topologies and ends
+     * the cycle before memory recall, {@link #FULL_CYCLE_PROPAGATION} suits the default seed, and a
+     * {@link FullCycleCalibrator} selects a valid rung of {@link #FULL_CYCLE_PROPAGATION_LADDER} for any other
+     * seed. Validate the result with {@link FullCycleValidity} before accepting a measurement.
+     *
+     * @param perceptionTopology topology for the perception stage
+     * @param reasoningTopology topology for the reasoning stage
      * @param policy adaptation policy (e.g. baseline or no-op)
      * @param memoryPort deterministic memory fixture
      * @param actionCapability deterministic action fixture
-     * @return a prepared Monad and cycle setup
-     */
-    public CognitiveCycleSetup generateFullCycleSetup(
-
-            GraphTopology perceptionTopology,
-            GraphTopology reasoningTopology,
-            AdaptationPolicy policy,
-            ResonanceMemoryPort memoryPort,
-            ActionCapability actionCapability) {
-        return generateFullCycleSetup(
-                perceptionTopology,
-                reasoningTopology,
-                policy,
-                memoryPort,
-                actionCapability,
-                PropagationConfig.routeAll(50, 4));
-    }
-
-    /**
-     * Generates a full cognitive cycle with an explicit per-Aeon propagation bound.
-     *
-     * <p>The default bound (50 steps, 4 hops) truncates the perception stage on the standard
-     * benchmark topologies, which ends the cycle before memory recall; callers that must reach later
-     * stages pass a larger bound.
-     *
      * @param propagationConfig propagation limits shared by both Aeon stages
+     * @return a prepared Monad and cycle setup
      */
     public CognitiveCycleSetup generateFullCycleSetup(
             GraphTopology perceptionTopology,

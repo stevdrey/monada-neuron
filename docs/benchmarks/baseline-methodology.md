@@ -8,10 +8,11 @@ The `:monada-neuron-evaluation` subproject provides an isolated benchmarking and
 
 For the end-to-end evaluation against a real Resonance Store, see [resonance-store-integration.md](resonance-store-integration.md).
 
-> **Caveat (found in Issue #31):** the `DeterministicCognitiveCycle.FullCycle` baseline uses
-> `PropagationConfig.routeAll(50, 4)`, which ends the perception stage with `STAGE_LIMIT_REACHED` on the
-> generated topologies. The cycle therefore stops before memory recall, so its numbers reflect the
-> perception stage only. The integration evaluation uses threshold routing so all five stages run.
+> **Resolved (Issue #48):** earlier `DeterministicCognitiveCycle.FullCycle` numbers (Issue #14 / #43) were
+> produced with `PropagationConfig.routeAll(50, 4)`, which ended the perception stage with
+> `STAGE_LIMIT_REACHED` before `MEMORY_RECALL`; they measured the perception stage only. "FullCycle" now
+> means that all five stages execute and the cycle terminates `COMPLETED`. See
+> [Full-Cycle Validity (Issue #48)](#full-cycle-validity-issue-48).
 
 ## Architecture & Module Isolation
 
@@ -46,7 +47,7 @@ To guarantee reliable and reproducible baselines, the harness enforces five key 
 
 3. **Pure Arithmetic Separation & Fresh-State JMH Microbenchmarks**:
    - `AdaptationPolicyBenchmark` cleanly separates non-mutating `NoOpAdaptationPolicy` (~12.5 ns/op), pure mathematical decision derivation `benchmarkBaselinePolicyDecisionArithmetic` (~46.6 ns/op), and full adaptation on fresh node fixtures per invocation.
-   - `CognitiveCycleBenchmark` provides a non-mutating 5-stage full cycle baseline (`benchmarkCognitiveCycleNoOp`, ~74.4 µs/op) and an isolated baseline cycle with fresh setup per invocation (`benchmarkCognitiveCycleBaseline`, ~65.4 µs/op).
+   - `CognitiveCycleBenchmark` provides a non-mutating 5-stage full cycle baseline (`benchmarkCognitiveCycleNoOp`, ~74.4 µs/op) and an isolated baseline cycle with fresh setup per invocation (`benchmarkCognitiveCycleBaseline`, ~65.4 µs/op). *Both figures are historical, perception-only, and superseded by the Issue #48 correction below.*
 
 4. **Retained Graph Footprint Modeling**:
    - Represents the 64-bit HotSpot JVM heap layout for the current `Node` object graph (~224 bytes/node base + ~32 bytes/directed edge, including the topology-version counter; the bounded history of Issue #34 keeps its ring indices in a lazily allocated holder, so it does not change the per-node base). The estimate assumes classic 12-byte object headers; JDK 27 enables compact 8-byte headers by default. A direct measurement of retained heap per node without edges (400,000 nodes, serial GC) gave 218.8 B under classic headers and 186.8 B under compact headers, and was unchanged by the bounded history (218.8 B and 187.1 B).
@@ -440,6 +441,92 @@ The runner writes `feedback-loop.json` and `feedback-loop.md` (default `build/re
 
 Results and the interpretation limits are recorded in ADR 0021.
 
+## Full-Cycle Validity (Issue #48)
+
+**Defect.** `DeterministicWorkloadGenerator.generateFullCycleSetup(...)` hard-coded
+`PropagationConfig.routeAll(50, 4)`. On the standard 50-node, degree-3 topologies this bound is exhausted in
+`PERCEPTION` (stage status `LIMIT_REACHED`), so the cycle ends with `STAGE_LIMIT_REACHED` and
+`MEMORY_RECALL`, `REASONING`, `ADAPTATION`, and `ACTION` never run. The `FullCycle` and
+`CognitiveCycle.Adaptation.*` rows, and the JMH `CognitiveCycleBenchmark`, all shared that setup.
+`FullCycleValidityTest.legacyRouteAllBoundTruncatesPerceptionBeforeMemoryRecall` reproduces it.
+
+**Affected historical rows (all perception-only, superseded, not rewritten):** `DeterministicCognitiveCycle.FullCycle`, `CognitiveCycle.Adaptation.NoOp`, and `CognitiveCycle.Adaptation.BaselinePolicy` in the Java 26 and Java 27 end-to-end tables, and `CognitiveCycleBenchmark.benchmarkCognitiveCycleNoOp` / `benchmarkCognitiveCycleBaseline` in both JMH tables and the Java 27 analysis that quotes them. For the adaptation rows the adaptation stage never ran, so they did not compare adaptation policies at all.
+
+**Corrected configuration (evaluation-only; production code and defaults unchanged).**
+
+| Parameter | Historical (#14, invalid) | Corrected (#48) |
+| :--- | :--- | :--- |
+| Routing | route all | `ResonanceThresholdRoutingPolicy(ScalarResonanceMetric, 0.5)` (same as #31) |
+| `maxSteps` per Aeon stage | 50 | 2,000 |
+| `maxHops` per Aeon stage | 4 | 8, calibrated per seed to 16, 32, or 64 only when the smaller bound truncates |
+| Cycle budget (runner) | 5,000 steps / 5,000 signals / 10,000 trace | unchanged |
+| Cycle budget (JMH) | 2,000 / 2,000 / 5,000 | unchanged |
+
+All bounds stay finite. Constants: `DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION_LADDER` (hops 8, 16,
+32, 64 at 2,000 steps), `FULL_CYCLE_PROPAGATION` (its first rung, proven for the default seed) and `LEGACY_TRUNCATING_PROPAGATION`
+(kept only to document and regression-test the defect). `generateFullCycleSetup` takes the propagation bound
+explicitly (there is no default overload), so a caller can never inherit a bound that silently truncates its seed.
+
+**Per-seed calibration.** The propagation engine revisits nodes, so the hop depth that a topology needs depends on
+the seed: for example `--seed 10365` reaches the 8-hop limit in PERCEPTION. `FullCycleCalibrator` therefore runs a
+fresh cycle per rung and selects the smallest rung that passes `FullCycleValidity`; seed 42 (the default) keeps the
+first rung, so its numbers are unaffected. The chosen rung is reported as `propagationMaxHops` and
+`propagationCalibrationRung`. Only a propagation truncation moves on to a larger rung. An exhausted cycle budget
+or any other validity failure (for example a fixture mismatch) stops immediately with its own message instead of
+being blamed on the hop bound, and a seed that is still truncated at 64 hops fails naming the seed and the stage
+where the last rung stopped; a truncated workload is never accepted. `FullCycleCalibratorTest` covers the default
+seed, seed 10365, a sweep of seeds 0-99, and each failure path.
+
+**Semantic assertions** (`FullCycleValidity`, applied before any measurement is accepted):
+
+- stage order is exactly `PERCEPTION -> MEMORY_RECALL -> REASONING -> ADAPTATION -> ACTION`;
+- termination is `COMPLETED`; step, signal, and trace budgets are not exhausted;
+- the memory response is `COMPLETE`, non-empty, and equal to the reference memory behavior replayed over the
+  perception output; the action request carries the adaptation output and its result equals the reference action
+  behavior, is `SUCCEEDED`, and fully admitted. The reference is the deterministic memory/action fixtures
+  (`FullCycleValidity` constructor arguments), whose literal behavior is pinned in `DeterministicFixturesTest`;
+- a same-seed replay from an independent setup is equal to the validated sample, and every measured
+  iteration equals it. Comparison happens in the next iteration's untimed setup and after the row, so
+  validation is not in the timed window (`validationInWindow=false`). Fresh topology/policy state per
+  iteration is unchanged. The JMH benchmark validates both variants in `@Setup(Level.Trial)`.
+
+**Hardware of the corrected baseline.** This run used different, more powerful hardware than the historical
+Java 27 baseline:
+
+| | Historical #43 baseline | Corrected #48 baseline |
+| :--- | :--- | :--- |
+| CPU | Intel Core i7-6500U @ 2.50 GHz, 2 cores / 4 threads, AVX2 | AMD Ryzen 7 7730U, 8 cores / 16 threads, 16 MiB L3 |
+| RAM | 16 GB | 14 GiB usable (about 8 GiB in use by other processes during the run) |
+| Storage | HDD | NVMe SSD (Micron 2500, 477 GB) |
+| JVM | Zulu OpenJDK 27+35, G1 | Azul Zulu 27, G1, 3,832 MB max heap |
+
+The measured workloads are CPU- and allocation-bound and do not read or write the disk inside the timed
+window, so storage is not expected to affect the latencies; the SSD can only affect JVM start-up and report
+writing, which are outside the measurement. This was not isolated experimentally. Absolute numbers must not be
+compared across the two machines; only the validity facts (stages, termination, steps, signals) are
+hardware-independent.
+
+**Corrected baseline** (seed 42, full mode, Java 27 Azul Zulu, Linux amd64, 16 processors, G1; every row:
+`termination=COMPLETED`, 5 stages, 15 processed steps, 80 accepted signals, 105 trace entries, no budget
+exhausted):
+
+| Benchmark | Workload Scale | Mean | p50 | p95 | Throughput | Alloc / Op |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: |
+| `DeterministicCognitiveCycle.FullCycle` | 5 stages, 5 initial signals | 232.80 µs | 224.46 µs | 342.71 µs | 4,295 ops/s | 41.56 KB |
+| `CognitiveCycle.Adaptation.NoOp` | 50 target nodes | 191.99 µs | 189.63 µs | 248.84 µs | 5,209 ops/s | 37.27 KB |
+| `CognitiveCycle.Adaptation.BaselinePolicy` | 50 target nodes | 200.10 µs | 198.74 µs | 263.11 µs | 4,997 ops/s | 41.57 KB |
+
+Isolated JMH (`-f 1 -wi 2 -i 3 -r 1s CognitiveCycleBenchmark`, 30-node topologies, avgt):
+`benchmarkCognitiveCycleNoOp` 5.367 ± 0.581 µs/op, `benchmarkCognitiveCycleBaseline` 6.256 ± 0.863 µs/op.
+
+**Interpretation.** The difference from the historical rows is a **workload-validity correction**, not a
+performance change: the old rows ran only a truncated perception stage and skipped four stages, while the corrected rows run
+all five with a different routing policy, so the amount of work differs. Do not read the new
+numbers as a regression or an improvement. The historical #14 / #43 rows below remain as historical
+evidence for the perception-only workload, were not rewritten, and are **superseded** by this baseline for
+any "full cycle" claim. They were captured on different hardware (see their sections), so the two sets are
+also not hardware-comparable.
+
 ## Baseline Results (Java 26 Reference)
 
 Captured on Linux x86_64 with Java 26 (Eclipse Adoptium OpenJDK 64-Bit Server VM):
@@ -460,9 +547,9 @@ Captured on Linux x86_64 with Java 26 (Eclipse Adoptium OpenJDK 64-Bit Server VM
 | `GraphPropagation.ThresholdRouting` | Large (2,000 nodes, deg 8) | ~11.1 µs | ~9.1 µs | ~20.1 µs | ~90,300 ops/s | ~2.79 KB |
 | `AeonCoordinator.Direct` | 10 inputs, 100 members | ~2.92 ms | ~1.90 ms | ~6.38 ms | ~343 ops/s | ~1.32 MB |
 | `AeonCoordinator.Contextual` | 10 inputs, 100 members | ~6.76 ms | ~6.28 ms | ~10.15 ms | ~148 ops/s | ~5.21 MB |
-| `DeterministicCognitiveCycle.FullCycle` | 5 stages, 5 initial signals | ~582.4 µs | ~497.7 µs | ~1.13 ms | ~1,717 ops/s | ~255.4 KB |
-| `CognitiveCycle.Adaptation.NoOp` | 50 target nodes | ~470.3 µs | ~372.2 µs | ~959.1 µs | ~2,126 ops/s | ~255.4 KB |
-| `CognitiveCycle.Adaptation.BaselinePolicy` | 50 target nodes | ~328.5 µs | ~290.4 µs | ~518.4 µs | ~3,044 ops/s | ~255.4 KB |
+| `DeterministicCognitiveCycle.FullCycle` (historical #14, perception-only, superseded) | 5 stages, 5 initial signals | ~582.4 µs | ~497.7 µs | ~1.13 ms | ~1,717 ops/s | ~255.4 KB |
+| `CognitiveCycle.Adaptation.NoOp` (historical #14, perception-only, superseded) | 50 target nodes | ~470.3 µs | ~372.2 µs | ~959.1 µs | ~2,126 ops/s | ~255.4 KB |
+| `CognitiveCycle.Adaptation.BaselinePolicy` (historical #14, perception-only, superseded) | 50 target nodes | ~328.5 µs | ~290.4 µs | ~518.4 µs | ~3,044 ops/s | ~255.4 KB |
 
 ### JMH Microbenchmark Results (Steady-State JIT Microbenchmarks)
 
@@ -476,8 +563,8 @@ Captured on Linux x86_64 with Java 26 (Eclipse Adoptium OpenJDK 64-Bit Server VM
 | `AdaptationPolicyBenchmark.benchmarkNoOpPolicy` | N/A | avgt | ~12.5 | ns/op |
 | `AdaptationPolicyBenchmark.benchmarkBaselinePolicyDecisionArithmetic` | N/A | avgt | ~46.6 | ns/op |
 | `AdaptationPolicyBenchmark.benchmarkBaselinePolicyFull` | N/A | avgt | ~120.4 | ns/op |
-| `CognitiveCycleBenchmark.benchmarkCognitiveCycleNoOp` | N/A | avgt | ~96.2 | µs/op |
-| `CognitiveCycleBenchmark.benchmarkCognitiveCycleBaseline` | N/A | avgt | ~110.4 | µs/op |
+| `CognitiveCycleBenchmark.benchmarkCognitiveCycleNoOp` (historical #14, perception-only, superseded) | N/A | avgt | ~96.2 | µs/op |
+| `CognitiveCycleBenchmark.benchmarkCognitiveCycleBaseline` (historical #14, perception-only, superseded) | N/A | avgt | ~110.4 | µs/op |
 
 
 ## Baseline Results (Java 27 Baseline)
@@ -510,9 +597,9 @@ Captured on Linux x86_64 with Java 27 via Issue #43:
 | `CompactGraphPropagation.RouteAll` | Large (2,000 nodes, deg 8) | 2.90 ms | 2.71 ms | 4.17 ms | ~345 ops/s | 1.22 MB |
 | `AeonCoordinator.Direct` | 10 inputs, 100 members | 9.27 ms | 9.07 ms | 11.48 ms | ~108 ops/s | 1.49 MB |
 | `AeonCoordinator.Contextual` | 10 inputs, 100 members | 12.04 ms | 11.42 ms | 16.79 ms | ~83 ops/s | 4.88 MB |
-| `DeterministicCognitiveCycle.FullCycle` | 5 stages, 5 initial signals | 553.32 µs | 513.22 µs | 715.48 µs | ~1,807 ops/s | 231.72 KB |
-| `CognitiveCycle.Adaptation.NoOp` | 50 target nodes | 507.71 µs | 468.33 µs | 682.16 µs | ~1,970 ops/s | 231.72 KB |
-| `CognitiveCycle.Adaptation.BaselinePolicy` | 50 target nodes | 820.66 µs | 510.76 µs | 1.84 ms | ~1,219 ops/s | 231.72 KB |
+| `DeterministicCognitiveCycle.FullCycle` (historical #43, perception-only, superseded) | 5 stages, 5 initial signals | 553.32 µs | 513.22 µs | 715.48 µs | ~1,807 ops/s | 231.72 KB |
+| `CognitiveCycle.Adaptation.NoOp` (historical #43, perception-only, superseded) | 50 target nodes | 507.71 µs | 468.33 µs | 682.16 µs | ~1,970 ops/s | 231.72 KB |
+| `CognitiveCycle.Adaptation.BaselinePolicy` (historical #43, perception-only, superseded) | 50 target nodes | 820.66 µs | 510.76 µs | 1.84 ms | ~1,219 ops/s | 231.72 KB |
 | `NodeStateLayout.ObjectConstruction` | 100,000 nodes | 60.65 ms | 59.52 ms | 66.65 ms | ~1,649,000 ops/s | 405.6 B |
 | `NodeStateLayout.HeapSoASnapshotConstruction` | 100,000 nodes | 19.08 ms | 16.09 ms | 33.49 ms | ~5,242,000 ops/s | 101.1 B |
 | `NodeStateLayout.FfmSnapshotConstruction` | 100,000 nodes | 17.95 ms | 17.25 ms | 22.74 ms | ~5,572,000 ops/s | 68.0 B |
@@ -528,8 +615,8 @@ Measured with 3 forks, 3 warmups, and 5 measurement iterations (1 second each) o
 | `AdaptationPolicyBenchmark.benchmarkNoOpPolicy` | N/A | ~12.5 | 10.05 ± 1.26 | ns/op | ~20% faster |
 | `AdaptationPolicyBenchmark.benchmarkBaselinePolicyDecisionArithmetic` | N/A | ~46.6 | 44.06 ± 4.65 | ns/op | ~6% faster |
 | `AdaptationPolicyBenchmark.benchmarkBaselinePolicyFull` | N/A | ~120.4 | 86.09 ± 3.54 | ns/op | ~28% faster |
-| `CognitiveCycleBenchmark.benchmarkCognitiveCycleNoOp` | N/A | ~96.2 | 41.98 ± 1.28 | µs/op | ~56% faster |
-| `CognitiveCycleBenchmark.benchmarkCognitiveCycleBaseline` | N/A | ~110.4 | 42.62 ± 1.16 | µs/op | ~61% faster |
+| `CognitiveCycleBenchmark.benchmarkCognitiveCycleNoOp` (historical #43, perception-only, superseded) | N/A | ~96.2 | 41.98 ± 1.28 | µs/op | ~56% faster |
+| `CognitiveCycleBenchmark.benchmarkCognitiveCycleBaseline` (historical #43, perception-only, superseded) | N/A | ~110.4 | 42.62 ± 1.16 | µs/op | ~61% faster |
 
 #### Steady-State Microbenchmarks: Aeon Coordination (`AeonCoordinationBenchmark`)
 
@@ -582,11 +669,11 @@ When evaluating the comparative performance between the Java 26 reference number
    - To definitively determine whether the large CLI runner deltas reflect an actual runtime regression or test harness/environment variance, isolated JMH benchmarks were executed with fresh forks (3 forks, 3 warmups, 5 measurement iterations) on the suspect workloads:
      - **Aeon Coordination**: `benchmarkSequentialDirect` runs at **553.6 µs/op** (~0.55 ms) and `benchmarkSequentialContextual` at **1,012.7 µs/op** (~1.01 ms)—showing that the 9.27 ms and 12.04 ms CLI figures are not reproduced under isolated steady-state measurement (and run in under ~1.0 ms even across a 200-node topology).
      - **Adaptation Policy**: Non-mutating no-op runs in **10.05 ns/op** (vs ~12.5 ns in Java 26), arithmetic decision runs in **44.06 ns/op** (vs ~46.6 ns), and full adaptation on fresh nodes runs in **86.09 ns/op** (vs ~120.4 ns, a 28% improvement).
-     - **Cognitive Cycle**: Full cycle with baseline adaptation runs in **42.62 µs/op** (vs ~110.4 µs in Java 26, a 61% improvement).
+     - **Cognitive Cycle** *(historical, perception-only, superseded by Issue #48; not a valid full-cycle comparison)*: the truncated cycle with baseline adaptation ran in **42.62 µs/op** (vs ~110.4 µs in Java 26).
 3. **Core Conclusion**:
    - **The large deltas in the unified runner were not reproduced under isolated JMH measurement and therefore are treated as harness/environment variance rather than evidence of a Java 27 runtime regression.**
 4. **Allocation and Invariant Integrity Preserved**:
-   - Memory allocation per operation is virtually identical between Java 26 and Java 27 across all workloads (`ScalarResonanceMetric.score` at 32.0 B, FFM layout at 68.0 B, Cognitive Cycle at ~231 KB vs ~255 KB).
+   - Memory allocation per operation is virtually identical between Java 26 and Java 27 across all workloads (`ScalarResonanceMetric.score` at 32.0 B, FFM layout at 68.0 B, Cognitive Cycle at ~231 KB vs ~255 KB, both perception-only and superseded).
    - 100% of unit tests, architectural invariants, and deterministic oracle validations pass without degradation.
    - Architectural decisions and thresholds (`DEFAULT_CROSSOVER_THRESHOLD = 4`) remain fully validated on Java 27.
 

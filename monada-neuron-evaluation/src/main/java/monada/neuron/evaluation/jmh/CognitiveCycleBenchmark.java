@@ -5,6 +5,7 @@ import monada.neuron.evaluation.workload.DeterministicActionFixture;
 import monada.neuron.evaluation.workload.DeterministicMemoryFixture;
 import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator;
 import monada.neuron.evaluation.workload.DeterministicWorkloadGenerator.CognitiveCycleSetup;
+import monada.neuron.evaluation.workload.FullCycleValidity;
 import monada.neuron.evolution.AdaptationConfig;
 import monada.neuron.evolution.DeterministicBaselineAdaptationPolicy;
 import monada.neuron.evolution.NoOpAdaptationPolicy;
@@ -64,9 +65,22 @@ public class CognitiveCycleBenchmark {
                     reasoningTop,
                     NoOpAdaptationPolicy.INSTANCE,
                     memoryPort,
-                    actionCap);
+                    actionCap,
+                    DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION);
             initialSignals = generator.generateSignals(3);
             budget = new CognitiveBudget(2_000, 2_000, 5_000);
+
+            // Refuse to benchmark a cycle that does not execute all five stages (Issue #48).
+            var validity = new FullCycleValidity();
+            validity.require(noOpSetup.cycle().execute(noOpSetup.monad(), initialSignals, budget));
+            var baselineProbe = generator.generateFullCycleSetup(
+                    generator.generateGraph(30, 3),
+                    generator.generateGraph(30, 3),
+                    new DeterministicBaselineAdaptationPolicy(AdaptationConfig.DEFAULT),
+                    memoryPort,
+                    actionCap,
+                    DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION);
+            validity.require(baselineProbe.cycle().execute(baselineProbe.monad(), initialSignals, budget));
         }
     }
 
@@ -88,7 +102,8 @@ public class CognitiveCycleBenchmark {
                     reasoningTop,
                     policy,
                     memoryPort,
-                    actionCap);
+                    actionCap,
+                    DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION);
         }
     }
 
