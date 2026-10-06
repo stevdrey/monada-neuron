@@ -65,7 +65,8 @@ public class CognitiveCycleBenchmark {
                     reasoningTop,
                     NoOpAdaptationPolicy.INSTANCE,
                     memoryPort,
-                    actionCap);
+                    actionCap,
+                    DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION);
             initialSignals = generator.generateSignals(3);
             budget = new CognitiveBudget(2_000, 2_000, 5_000);
 
@@ -77,7 +78,8 @@ public class CognitiveCycleBenchmark {
                     generator.generateGraph(30, 3),
                     new DeterministicBaselineAdaptationPolicy(AdaptationConfig.DEFAULT),
                     memoryPort,
-                    actionCap);
+                    actionCap,
+                    DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION);
             validity.require(baselineProbe.cycle().execute(baselineProbe.monad(), initialSignals, budget));
         }
     }
@@ -100,7 +102,8 @@ public class CognitiveCycleBenchmark {
                     reasoningTop,
                     policy,
                     memoryPort,
-                    actionCap);
+                    actionCap,
+                    DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION);
         }
     }
 

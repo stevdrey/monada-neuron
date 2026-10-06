@@ -87,7 +87,8 @@ class DeterministicWorkloadGeneratorTest {
                 reasoningTop,
                 NoOpAdaptationPolicy.INSTANCE,
                 new DeterministicMemoryFixture(),
-                new DeterministicActionFixture());
+                new DeterministicActionFixture(),
+                DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION);
 
         assertNotNull(setup.monad());
         assertNotNull(setup.cycle());

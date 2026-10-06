@@ -463,23 +463,28 @@ Results and the interpretation limits are recorded in ADR 0021.
 | Cycle budget (JMH) | 2,000 / 2,000 / 5,000 | unchanged |
 
 All bounds stay finite. Constants: `DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION_LADDER` (hops 8, 16,
-32, 64 at 2,000 steps), `FULL_CYCLE_PROPAGATION` (its first rung, the default) and `LEGACY_TRUNCATING_PROPAGATION`
-(kept only to document and regression-test the defect).
+32, 64 at 2,000 steps), `FULL_CYCLE_PROPAGATION` (its first rung, proven for the default seed) and `LEGACY_TRUNCATING_PROPAGATION`
+(kept only to document and regression-test the defect). `generateFullCycleSetup` takes the propagation bound
+explicitly (there is no default overload), so a caller can never inherit a bound that silently truncates its seed.
 
 **Per-seed calibration.** The propagation engine revisits nodes, so the hop depth that a topology needs depends on
 the seed: for example `--seed 10365` reaches the 8-hop limit in PERCEPTION. `FullCycleCalibrator` therefore runs a
 fresh cycle per rung and selects the smallest rung that passes `FullCycleValidity`; seed 42 (the default) keeps the
 first rung, so its numbers are unaffected. The chosen rung is reported as `propagationMaxHops` and
-`propagationCalibrationRung`. If no rung up to 64 hops is valid, the run fails with a message naming the seed and
-the stage where the last rung stopped; it never accepts a truncated workload. `FullCycleCalibratorTest` covers the
-default seed, seed 10365, and a sweep of seeds 0-99.
+`propagationCalibrationRung`. Only a propagation truncation moves on to a larger rung. An exhausted cycle budget
+or any other validity failure (for example a fixture mismatch) stops immediately with its own message instead of
+being blamed on the hop bound, and a seed that is still truncated at 64 hops fails naming the seed and the stage
+where the last rung stopped; a truncated workload is never accepted. `FullCycleCalibratorTest` covers the default
+seed, seed 10365, a sweep of seeds 0-99, and each failure path.
 
 **Semantic assertions** (`FullCycleValidity`, applied before any measurement is accepted):
 
 - stage order is exactly `PERCEPTION -> MEMORY_RECALL -> REASONING -> ADAPTATION -> ACTION`;
 - termination is `COMPLETED`; step, signal, and trace budgets are not exhausted;
-- memory fixture response is `COMPLETE` and non-empty; action fixture is `SUCCEEDED` with fully admitted
-  `OBSERVATION` signals;
+- the memory response is `COMPLETE`, non-empty, and equal to the reference memory behavior replayed over the
+  perception output; the action request carries the adaptation output and its result equals the reference action
+  behavior, is `SUCCEEDED`, and fully admitted. The reference is the deterministic memory/action fixtures
+  (`FullCycleValidity` constructor arguments), whose literal behavior is pinned in `DeterministicFixturesTest`;
 - a same-seed replay from an independent setup is equal to the validated sample, and every measured
   iteration equals it. Comparison happens in the next iteration's untimed setup and after the row, so
   validation is not in the timed window (`validationInWindow=false`). Fresh topology/policy state per

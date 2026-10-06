@@ -74,10 +74,11 @@ score) are asserted as sets, never by physical position.
 
 The full-cycle scenario uses threshold-routed propagation
 (`ResonanceThresholdRoutingPolicy`, 0.5). The former `routeAll(50, 4)` generator default truncated the
-perception stage on the standard topologies (`STAGE_LIMIT_REACHED`); Issue #48 changed the generator default
-to this same bound (`DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION`), so the Neuron-only
-`DeterministicCognitiveCycle.FullCycle` baseline now executes all five stages too. The explicit
-`PropagationConfig` overload of `generateFullCycleSetup` remains.
+perception stage on the standard topologies (`STAGE_LIMIT_REACHED`); Issue #48 moved the Neuron-only
+`DeterministicCognitiveCycle.FullCycle` baseline to the same bound
+(`DeterministicWorkloadGenerator.FULL_CYCLE_PROPAGATION`, calibrated per seed), so it now executes all five
+stages too. `generateFullCycleSetup` has a single overload with an explicit `PropagationConfig`: no bound is valid
+for every seed, so every caller states its own instead of inheriting a default that can silently truncate.
 
 ## Measurement method
 

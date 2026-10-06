@@ -77,7 +77,7 @@ public final class DeterministicWorkloadGenerator {
             fullCycleRung(32),
             fullCycleRung(64));
 
-    /** First rung of {@link #FULL_CYCLE_PROPAGATION_LADDER}; the default of the five-argument overload. */
+    /** First rung of {@link #FULL_CYCLE_PROPAGATION_LADDER}, the bound proven for the default seed. */
     public static final PropagationConfig FULL_CYCLE_PROPAGATION = FULL_CYCLE_PROPAGATION_LADDER.getFirst();
 
     /** Finite cycle budget under which the full-cycle workload completes without exhausting any limit. */
@@ -392,40 +392,22 @@ public final class DeterministicWorkloadGenerator {
     }
 
     /**
-     * Builds a representative 5-stage Primary Monad cognitive cycle with deterministic fixtures, bounded by
-     * {@link #FULL_CYCLE_PROPAGATION} so all five stages execute on the standard topologies.
+     * Generates a full cognitive cycle with an explicit per-Aeon propagation bound.
      *
-     * @param perceptionTopology topology for perception stage
-     * @param reasoningTopology topology for reasoning stage
+     * <p>Builds a representative 5-stage Primary Monad cognitive cycle with deterministic fixtures. The
+     * propagation bound is explicit because no single bound is valid for every seed:
+     * {@link #LEGACY_TRUNCATING_PROPAGATION} truncates the perception stage on the standard topologies and ends
+     * the cycle before memory recall, {@link #FULL_CYCLE_PROPAGATION} suits the default seed, and a
+     * {@link FullCycleCalibrator} selects a valid rung of {@link #FULL_CYCLE_PROPAGATION_LADDER} for any other
+     * seed. Validate the result with {@link FullCycleValidity} before accepting a measurement.
+     *
+     * @param perceptionTopology topology for the perception stage
+     * @param reasoningTopology topology for the reasoning stage
      * @param policy adaptation policy (e.g. baseline or no-op)
      * @param memoryPort deterministic memory fixture
      * @param actionCapability deterministic action fixture
-     * @return a prepared Monad and cycle setup
-     */
-    public CognitiveCycleSetup generateFullCycleSetup(
-
-            GraphTopology perceptionTopology,
-            GraphTopology reasoningTopology,
-            AdaptationPolicy policy,
-            ResonanceMemoryPort memoryPort,
-            ActionCapability actionCapability) {
-        return generateFullCycleSetup(
-                perceptionTopology,
-                reasoningTopology,
-                policy,
-                memoryPort,
-                actionCapability,
-                FULL_CYCLE_PROPAGATION);
-    }
-
-    /**
-     * Generates a full cognitive cycle with an explicit per-Aeon propagation bound.
-     *
-     * <p>{@link #LEGACY_TRUNCATING_PROPAGATION} truncates the perception stage on the standard
-     * benchmark topologies, which ends the cycle before memory recall; the five-argument overload uses
-     * {@link #FULL_CYCLE_PROPAGATION} so every stage executes.
-     *
      * @param propagationConfig propagation limits shared by both Aeon stages
+     * @return a prepared Monad and cycle setup
      */
     public CognitiveCycleSetup generateFullCycleSetup(
             GraphTopology perceptionTopology,
