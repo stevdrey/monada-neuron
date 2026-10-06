@@ -94,8 +94,8 @@ public final class NeuronRuntime {
      * Executes one cycle over the cycle-local {@code input}.
      *
      * <p>The budget is the input's, else the runtime default. The input's host context, if any, is
-     * passed explicitly to the cycle and reaches only action requests of this execution. Prior feedback is consumed by the
-     * feedback adaptation stage for this execution only and is not retained afterwards.
+     * passed explicitly to the cycle and reaches only the perception and action requests of this execution.
+     * Prior feedback is consumed by the feedback adaptation stage for this execution only and is not retained afterwards.
      *
      * <p>A runtime with a perception capability takes its signals from that capability, so the input must
      * carry none; the cycle rejects initial signals before executing anything.

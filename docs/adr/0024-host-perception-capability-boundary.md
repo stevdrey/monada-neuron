@@ -34,7 +34,9 @@ Add a Neuron-owned perception capability in `monada.neuron.perception`, mirrorin
   initial signals with `IllegalArgumentException` before creating a context or running any stage.
   `NeuronRuntime.Builder.perceptionCapability(capability, maxSignals)` only adds the stage.
 - **Host context.** The stage copies `CognitiveContext.hostContext()` into the request, as the Action stage
-  does; no ambient state is introduced.
+  does; no ambient state is introduced. The `PerceptionRequest` is retained by the `PerceptionOutcome` in the
+  returned `CognitiveCycleResult`, so a host that retains that result retains the references, exactly as with
+  `ActionOutcome` (ADR 0023); it is not part of the trace or snapshot.
 - **Mutual exclusion.** The stage and a PERCEPTION `AeonCognitiveStage` are alternatives for the single
   position; the existing duplicate-position check rejects both.
 - **No prescribed encoder.** Neuron defines no universal text or task encoder and does not claim that the
