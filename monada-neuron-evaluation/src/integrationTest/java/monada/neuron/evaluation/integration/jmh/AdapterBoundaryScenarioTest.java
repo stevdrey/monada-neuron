@@ -57,7 +57,7 @@ final class AdapterBoundaryScenarioTest {
     }
 
     @Test
-    void highDuplicationStillYieldsMaxResultsAtomsAndTiesResolveBySignalOrder() {
+    void highDuplicationStillYieldsMaxResultsAtoms() {
         var scenario = new AdapterBoundaryScenario(8, 5, DuplicateProfile.HIGH);
         var response = scenario.mergeOnlyAdapter().recall(scenario.request());
 
