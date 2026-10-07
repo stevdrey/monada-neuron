@@ -38,6 +38,7 @@ unaffected. No network, credentials, or external services are used.
 monada-neuron-evaluation
   ├── main         store-free baseline runner, JMH, workload generator
   ├── integration  fixture corpus, temporary store, evaluation, report, runner   (optional)
+  │                + jmh/ adapter-boundary JMH benchmarks and substitute-store fixtures        (optional)
   └── integrationTest                                                            (optional)
         │ depends on
         ▼
@@ -45,7 +46,11 @@ monada-neuron-resonance-adapter ──► monada-resonance-store (composite buil
 ```
 
 The evaluation may depend on the adapter; production cognition never depends on evaluation code. Store
-types (`MonadaMemory`) appear only in `TemporaryResonanceStore` and the adapter.
+types stay at the adapter / evaluation-integration boundary: `MonadaMemory` appears only in
+`TemporaryResonanceStore` and the adapter, and the adapter-boundary JMH fixtures (`integration/jmh`,
+[overhead benchmark](resonance-store-adapter-overhead.md)) use only the result types `ResonanceResult`,
+`KnowledgeAtom`, and `MonadaMemoryOptions` to build a store-free substitute for the adapter's recall seam.
+Neither source set is part of the core or the baseline `main` evaluation code.
 
 ## Fixture (`rs-integration-v1`)
 

@@ -29,6 +29,9 @@ No benchmark duplicates production logic. The adapter gained two small public se
   pass a substitute, so they execute the **real** `ResonanceStoreMemoryAdapter.recall(...)`.
 - `OpaqueReference`: the SHA-256 + truncated-hex reference derivation, so it can be timed directly.
 
+Store-library types in the benchmark code are limited to result/option types (`ResonanceResult`,
+`KnowledgeAtom`, `MonadaMemoryOptions`) used by the fixtures; `MonadaMemory` is never opened or called.
+
 The benchmarks live in the `integration` source set of `monada-neuron-evaluation` (they need the optional
 adapter module, so they exist only when the sibling `monada-resonance-store` checkout is present) under
 `monada.neuron.evaluation.integration.jmh`.
@@ -92,35 +95,35 @@ Time per operation (ns) +/- error, allocation in bytes per operation (`gc.alloc.
 
 | Benchmark | Time | Alloc / op |
 | :--- | :--- | :--- |
-| Query encoding, 1 Signal | 97.7 +/- 2.2 ns | 296 B |
-| Query encoding, 3 Signals (per batch) | 360 +/- 4.7 ns | 968 B |
-| Query encoding, 8 Signals (per batch) | 1 155 +/- 45 ns | 2 776 B |
-| Decoding, 64 chars | 140 +/- 1.4 ns | 440 B |
-| Decoding, 1 KiB | 618 +/- 8.2 ns | 1 405 B |
-| Decoding, 16 KiB | 10 003 +/- 94 ns | 16 755 B |
-| Opaque reference (SHA-256) | 139 +/- 3.1 ns | 560 B |
+| Query encoding, 1 Signal | 98.6 +/- 2.1 ns | 296 B |
+| Query encoding, 3 Signals (per batch) | 372 +/- 9.8 ns | 968 B |
+| Query encoding, 8 Signals (per batch) | 1 152 +/- 62 ns | 2 776 B |
+| Decoding, 64 chars | 152 +/- 2.1 ns | 440 B |
+| Decoding, 1 KiB | 654 +/- 28 ns | 1 395 B |
+| Decoding, 16 KiB | 10 176 +/- 65 ns | 16 760 B |
+| Opaque reference (SHA-256) | 141 +/- 4.7 ns | 544 B |
 
-### Merge only (`ResonanceStoreAdapterMergeBenchmark`, trivial codecs), ns/op and B/op
-
-| querySignals x maxResults | NONE | MODERATE | HIGH |
-| :--- | :--- | :--- | :--- |
-| 1 x 1 | 220 / 960 | 220 / 955 | 225 / 960 |
-| 3 x 5 | 1 537 / 4 648 | 1 334 / 4 336 | 1 256 / 4 248 |
-| 3 x 10 | 3 498 / 9 152 | 3 017 / 8 640 | 2 557 / 8 224 |
-| 8 x 10 | 7 720 / 13 157 | 5 370 / 11 797 | 3 696 / 10 541 |
-| 8 x 32 | 35 489 / 42 270 | 22 806 / 37 347 | 11 898 / 33 939 |
-
-### Combined adapter-side boundary (`ResonanceStoreAdapterBoundaryBenchmark`), ns/op and B/op
+### Merge only (`ResonanceStoreAdapterMergeBenchmark`, trivial codecs), ns/op / B/op
 
 | querySignals x maxResults | NONE | MODERATE | HIGH |
 | :--- | :--- | :--- | :--- |
-| 1 x 1 | 544 / 1 736 | 551 / 1 720 | 562 / 1 712 |
-| 1 x 5 | 1 891 / 6 312 | 1 949 / 6 336 | 2 112 / 6 309 |
-| 3 x 1 | 877 / 2 528 | 857 / 2 480 | 917 / 2 480 |
-| **3 x 5** (the #31 shape) | **2 758 +/- 56 / 7 896** | 2 518 +/- 42 / 7 584 | 2 549 +/- 32 / 7 512 |
-| 3 x 10 | 5 488 / 14 672 | 5 884 / 14 168 | 4 619 / 13 760 |
-| 8 x 10 | 10 561 / 20 616 | 8 699 / 19 224 | 6 796 / 17 992 |
-| 8 x 32 | 39 492 / 60 320 | 31 502 / 55 568 | 18 778 / 50 971 |
+| 1 x 1 | 221 / 960 | 233 / 960 | 229 / 949 |
+| 3 x 5 | 1 685 / 4 664 | 1 344 / 4 347 | 1 323 / 4 253 |
+| 3 x 10 | 3 739 / 9 045 | 3 063 / 8 632 | 2 634 / 8 232 |
+| 8 x 10 | 9 039 / 13 165 | 5 583 / 11 699 | 3 859 / 10 648 |
+| 8 x 32 | 36 587 / 42 270 | 24 349 / 38 200 | 12 201 / 33 768 |
+
+### Combined adapter-side boundary (`ResonanceStoreAdapterBoundaryBenchmark`), ns/op / B/op
+
+| querySignals x maxResults | NONE | MODERATE | HIGH |
+| :--- | :--- | :--- | :--- |
+| 1 x 1 | 503 / 1 723 | 534 / 1 744 | 574 / 1 760 |
+| 1 x 5 | 1 878 / 6 352 | 2 030 / 6 371 | 2 129 / 6 360 |
+| 3 x 1 | 869 / 2 528 | 856 / 2 480 | 886 / 2 480 |
+| **3 x 5** (the #31 shape) | **2 750 +/- 38 / 7 912** | 2 640 +/- 32 / 7 595 | 2 567 +/- 31 / 7 512 |
+| 3 x 10 | 5 404 / 14 680 | 5 160 / 14 168 | 4 675 / 13 771 |
+| 8 x 10 | 11 442 / 20 616 | 8 784 / 19 248 | 6 996 / 17 987 |
+| 8 x 32 | 41 017 / 60 320 | 31 684 / 55 568 | 20 502 / 50 971 |
 
 GC counts are 80-220 per 5 s iteration set at these rates (young collections of short-lived garbage); GC
 time stays in the low milliseconds per measurement and is not a distinct cost here.
@@ -128,29 +131,32 @@ time stays in the low milliseconds per measurement and is not a distinct cost he
 ## Reading the results
 
 - **Scaling.** The boundary cost scales roughly linearly with the number of returned results and the
-  number of query Signals: about 0.4 us per returned result at `maxResults` 32 with one Signal
-  (12.3 us / 32), and about 0.54 us for the fixed 1 x 1 case. Allocation follows the same shape: roughly
+  number of query Signals: about 0.37 us per returned result at `maxResults` 32 with one Signal
+  (11.9 us / 32), and about 0.5 us for the fixed 1 x 1 case. Allocation follows the same shape: roughly
   1.2 KB per returned result.
-- **SHA-256 is a material share of the merge.** One reference costs about 139 ns and 560 B, and exactly
-  one is derived per retained result. At 1 x 32 with no duplicates that is 32 x 139 = about 4.4 us of the
-  6.8 us merge (roughly two thirds); at 3 x 5 it is about 0.7 us of 1.5 us (45%). At these sizes
+- **SHA-256 is a material share of the merge.** One reference costs about 141 ns and 544 B, and exactly
+  one is derived per retained result. At 1 x 32 with no duplicates that is 32 x 141 = about 4.5 us of the
+  7.2 us merge (roughly 63%); at 3 x 5 it is about 0.7 us of 1.7 us (about 42%). At these sizes
   reference derivation is the largest single contributor to the merge.
 - **Dedup is not the cost driver.** More duplicates make the merge cheaper (fewer retained candidates and
   fewer heap operations); `HIGH` at 8 x 32 is about a third of `NONE`. The decoder (which also hashes) adds
-  roughly the same per-result cost as a reference at 64-character content (140 ns), and grows with content
+  roughly the same per-result cost as a reference at 64-character content (152 ns), and grows with content
   size (about 10 us for 16 KiB).
-- **Codec share.** At 3 x 5, the boundary (about 2.7 us) minus the merge (about 1.5 us) leaves about
-  1.2 us for encoding three Signals (about 0.36 us) plus decoding the five retained results (about
-  0.7 us), consistent with the component rows. Boundary and merge rows are separate JMH runs, so the
+- **Codec share.** At 3 x 5, the boundary (about 2.75 us) minus the merge (about 1.7 us) leaves about
+  1.1 us for encoding three Signals (about 0.37 us) plus decoding the five retained results (about
+  0.76 us), consistent with the component rows. Boundary and merge rows are separate JMH runs, so the
   subtraction is approximate.
+- **Fixture notes.** Consecutive store ranks of one Signal share a score and Signals with the same index
+  modulo 3 tie on equal ranks, so both tie-breakers decide the order; the substitute store keeps the last
+  query it received, so the encoder output is observable work and cannot be optimized away.
 
 ## Relating this to the real-store numbers (Issue #31)
 
 The integration evaluation's sample run (exploratory, a different session and a 4-processor machine, so
 the comparison is **qualitative only**) reports a warm real-store recall of about 10.8 ms for 3 queries at
-`K` = 5 and a real-store full cycle of about 8.2 ms. The same shape here costs about 2.5-2.8 us of
+`K` = 5 and a real-store full cycle of about 8.2 ms. The same shape here costs about 2.6-2.75 us of
 Neuron-owned work: roughly four orders of magnitude (about 0.03%) below the store recall. Even the
-largest cell (8 Signals x 32 results, 39 us) is far below a single warm store recall measured on the small
+largest cell (8 Signals x 32 results, 41 us) is far below a single warm store recall measured on the small
 fixture corpus.
 
 Conclusion supported by this evidence: for the integration-evaluation shape, adapter-side translation and

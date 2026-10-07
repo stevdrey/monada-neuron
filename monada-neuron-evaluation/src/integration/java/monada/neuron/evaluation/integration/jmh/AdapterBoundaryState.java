@@ -42,8 +42,10 @@ public class AdapterBoundaryState {
     public void setUp() {
         var scenario = new AdapterBoundaryScenario(querySignals, maxResults, DuplicateProfile.valueOf(duplicates));
         request = scenario.request();
-        mergeOnlyAdapter = scenario.mergeOnlyAdapter();
-        boundaryAdapter = scenario.boundaryAdapter();
+        var mergeStore = scenario.cursorStore();
+        var boundaryStore = scenario.cursorStore();
+        mergeOnlyAdapter = scenario.mergeOnlyAdapter(mergeStore);
+        boundaryAdapter = scenario.boundaryAdapter(boundaryStore);
 
         var oracle = new AdapterBoundaryOracle();
         var firstMerge = mergeOnlyAdapter.recall(request);
@@ -52,10 +54,22 @@ public class AdapterBoundaryState {
         if (!firstMerge.equals(mergeOnlyAdapter.recall(request))) {
             throw new IllegalStateException("Merge-only adapter output is not stable across recalls");
         }
+        requireQuery(AdapterBoundaryScenario.constantQuery(), mergeStore.lastQuery());
         var firstBoundary = boundaryAdapter.recall(request);
+        // The encoder output must reach the store, so encoding is observable work in the benchmark.
+        requireQuery(
+                scenario.defaultConfig().queryEncoder().encode(scenario.signals().getLast()),
+                boundaryStore.lastQuery());
         oracle.validate(scenario, firstBoundary);
         if (!firstBoundary.equals(boundaryAdapter.recall(request))) {
             throw new IllegalStateException("Boundary adapter output is not stable across recalls");
+        }
+    }
+
+    private void requireQuery(String expected, String actual) {
+        if (!expected.equals(actual)) {
+            throw new IllegalStateException(
+                    "Substitute store received query '" + actual + "' instead of '" + expected + "'");
         }
     }
 }

@@ -63,6 +63,17 @@ final class StubStoreRecallAdapterTest {
     }
 
     @Test
+    void equalScoresWithinOneSignalResolveByStoreRank() {
+        var response = adapter((query, limit, threshold) ->
+                List.of(result("a", 0.7), result("b", 0.7), result("c", 0.7)))
+                .recall(new ResonanceMemoryRequest(List.of(StoreFixtures.signal(1.0)), 2));
+
+        assertEquals(
+                List.of(reference("a"), reference("b")),
+                response.results().stream().map(ResonanceMemoryResult::reference).toList());
+    }
+
+    @Test
     void forwardsLimitAndThresholdToTheStore() {
         var seen = new int[1];
         var config = ResonanceStoreAdapterConfig.defaults();

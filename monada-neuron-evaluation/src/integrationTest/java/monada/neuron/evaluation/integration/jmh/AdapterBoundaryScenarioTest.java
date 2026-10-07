@@ -66,6 +66,32 @@ final class AdapterBoundaryScenarioTest {
     }
 
     @Test
+    void fixtureExercisesStoreRankTiesWithinOneSignal() {
+        for (var profile : DuplicateProfile.values()) {
+            var scenario = new AdapterBoundaryScenario(3, 5, profile);
+            var results = scenario.storeResults(0);
+            var tied = false;
+            for (var rank = 1; rank < results.size(); rank++) {
+                tied |= results.get(rank).score() == results.get(rank - 1).score()
+                        && !results.get(rank).atom().id().equals(results.get(rank - 1).atom().id());
+            }
+            // Shared profiles reuse atoms across signals, never within one, so ranks stay distinct atoms.
+            assertTrue(tied, "expected tied scores at different ranks for " + profile);
+        }
+    }
+
+    @Test
+    void substituteStoreExposesTheEncodedQuery() {
+        var scenario = new AdapterBoundaryScenario(3, 5, DuplicateProfile.NONE);
+        var store = scenario.cursorStore();
+        scenario.boundaryAdapter(store).recall(scenario.request());
+
+        assertEquals(
+                scenario.defaultConfig().queryEncoder().encode(scenario.signals().getLast()),
+                store.lastQuery());
+    }
+
+    @Test
     void substituteStoreAnswersEachRecallFromTheFirstSignalAgain() {
         var scenario = new AdapterBoundaryScenario(3, 5, DuplicateProfile.MODERATE);
         var adapter = scenario.mergeOnlyAdapter();

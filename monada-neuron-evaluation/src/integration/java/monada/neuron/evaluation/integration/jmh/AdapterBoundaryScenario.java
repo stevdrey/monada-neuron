@@ -26,8 +26,8 @@ import java.util.UUID;
  *
  * <p>Each query Signal owns a prebuilt, best-first list of exactly {@code maxResults} store results,
  * so the candidate count is {@code querySignals x maxResults}, the bound the adapter contract allows.
- * Scores are shaped so that distinct query Signals tie on equal ranks, which exercises the
- * signal-order and store-rank tie-breakers. {@link DuplicateProfile} controls how many ranks resolve
+ * Scores are shaped so that consecutive ranks of one Signal tie (store-rank tie-breaker) and distinct
+ * query Signals tie on equal ranks (signal-order tie-breaker). {@link DuplicateProfile} controls how many ranks resolve
  * to the same atom across query Signals.
  *
  * <p>Everything is built eagerly in the constructor so benchmarks keep construction out of the
@@ -116,32 +116,65 @@ public final class AdapterBoundaryScenario {
      * {@code querySignals} calls. It is stateful and for single-threaded benchmark use only; the
      * adapter issues exactly one store recall per query Signal, in Signal order.
      */
-    public ResonanceStoreRecall cursorStore() {
-        var results = storeResults;
-        return new ResonanceStoreRecall() {
-            private int cursor;
-
-            @Override
-            public List<ResonanceResult> recall(String query, int limit, double threshold) {
-                var current = results.get(cursor);
-                cursor = cursor + 1 == results.size() ? 0 : cursor + 1;
-                return current;
-            }
-        };
+    public CursorStore cursorStore() {
+        return new CursorStore(storeResults);
     }
 
     /** Adapter with trivial codecs, isolating bounded merge, references, and result construction. */
-    public ResonanceStoreMemoryAdapter mergeOnlyAdapter() {
+    public ResonanceStoreMemoryAdapter mergeOnlyAdapter(CursorStore store) {
         SignalQueryEncoder encoder = signal -> CONSTANT_QUERY;
         RecalledSignalDecoder decoder = content -> CONSTANT_SIGNAL;
-        return ResonanceStoreMemoryAdapter.using(cursorStore(), config(encoder, decoder));
+        return ResonanceStoreMemoryAdapter.using(store, config(encoder, decoder));
     }
 
     /** Adapter with the production default codecs: all Neuron-owned work, no store. */
-    public ResonanceStoreMemoryAdapter boundaryAdapter() {
+    public ResonanceStoreMemoryAdapter boundaryAdapter(CursorStore store) {
         var defaults = ResonanceStoreAdapterConfig.defaults();
-        return ResonanceStoreMemoryAdapter.using(
-                cursorStore(), config(defaults.queryEncoder(), defaults.signalDecoder()));
+        return ResonanceStoreMemoryAdapter.using(store, config(defaults.queryEncoder(), defaults.signalDecoder()));
+    }
+
+    /** {@link #mergeOnlyAdapter(CursorStore)} over a fresh substitute store. */
+    public ResonanceStoreMemoryAdapter mergeOnlyAdapter() {
+        return mergeOnlyAdapter(cursorStore());
+    }
+
+    /** {@link #boundaryAdapter(CursorStore)} over a fresh substitute store. */
+    public ResonanceStoreMemoryAdapter boundaryAdapter() {
+        return boundaryAdapter(cursorStore());
+    }
+
+    /** Query the merge-only adapter's constant encoder produces for every Signal. */
+    public static String constantQuery() {
+        return CONSTANT_QUERY;
+    }
+
+    /**
+     * Substitute store answering from prebuilt lists. It retains the last query it received so the
+     * encoder's output has an observable effect (the string escapes to the heap and cannot be
+     * optimized away) and so setup can verify the encoder actually fed the store.
+     */
+    public static final class CursorStore implements ResonanceStoreRecall {
+
+        private final List<List<ResonanceResult>> results;
+        private int cursor;
+        private String lastQuery;
+
+        private CursorStore(List<List<ResonanceResult>> results) {
+            this.results = results;
+        }
+
+        @Override
+        public List<ResonanceResult> recall(String query, int limit, double threshold) {
+            lastQuery = query;
+            var current = results.get(cursor);
+            cursor = cursor + 1 == results.size() ? 0 : cursor + 1;
+            return current;
+        }
+
+        /** Query received by the most recent store call, or {@code null} before the first call. */
+        public String lastQuery() {
+            return lastQuery;
+        }
     }
 
     /** Production default codecs, for oracles that need the same translation. */
@@ -170,8 +203,9 @@ public final class AdapterBoundaryScenario {
             var results = new ArrayList<ResonanceResult>(maxResults);
             for (var rank = 0; rank < maxResults; rank++) {
                 var atomKey = duplicates.shared(rank) ? "shared-" + rank : "atom-" + signalIndex + "-" + rank;
-                // Signals with the same index modulo 3 tie exactly on equal ranks.
-                var score = 1.0 - rank * 0.01 - (signalIndex % 3) * 0.002;
+                // Consecutive ranks share a score (store-rank ties within a Signal), and Signals with
+                // the same index modulo 3 tie exactly on equal ranks (signal-order ties).
+                var score = 1.0 - (rank / 2) * 0.01 - (signalIndex % 3) * 0.002;
                 results.add(new ResonanceResult(atom(atomKey), score));
             }
             perSignal.add(List.copyOf(results));
