@@ -99,6 +99,7 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
         "integrationImplementation"(project(":monada-neuron-resonance-adapter"))
         "integrationImplementation"("com.monada:monada-api")
         "integrationImplementation"("com.monada:monada-core")
+        "integrationAnnotationProcessor"("org.openjdk.jmh:jmh-generator-annprocess:1.37")
         "integrationTestImplementation"(platform("org.junit:junit-bom:5.10.0"))
         "integrationTestImplementation"("org.junit.jupiter:junit-jupiter")
         "integrationTestRuntimeOnly"("org.junit.platform:junit-platform-launcher")
@@ -116,6 +117,20 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
             args(Regex("\"([^\"]*)\"|(\\S+)").findAll(project.property("benchmarkArgs").toString())
                 .map { it.groups[1]?.value ?: it.groups[2]!!.value }
                 .toList())
+        }
+    }
+
+    // Adapter-boundary JMH (Issue #49). Lives with the integration source set because it needs the
+    // optional adapter; the generic `jmh` task only sees `main`.
+    tasks.register<JavaExec>("jmhResonanceStoreAdapter") {
+        group = "benchmark"
+        description = "Runs JMH for the Neuron-side Resonance Store adapter translation and merge overhead (Issue #49)"
+        classpath = integration.runtimeClasspath
+        mainClass.set("org.openjdk.jmh.Main")
+        if (project.hasProperty("jmhArgs")) {
+            args(project.property("jmhArgs").toString().split(" "))
+        } else {
+            args("-bm", "avgt", "-f", "3", "-wi", "3", "-i", "5", "-r", "1s", "-prof", "gc", "ResonanceStoreAdapter")
         }
     }
 

@@ -69,9 +69,14 @@ Deferred: no artifact repository exists yet; a composite build keeps sources aut
 - Recall quality depends on the injected codec; the defaults are for reproducibility only.
 - The store's Java 26 toolchain must be installed alongside Java 27 for adapter builds.
 
+- The adapter delegates each store query to the public `ResonanceStoreRecall` seam (production wraps
+  `MonadaMemory`) and derives references through `OpaqueReference`. Behavior is unchanged; the seam lets
+  the Neuron-owned translation and merge work run, and be benchmarked, without a store or duplicated logic.
+
 ## Follow-Up
 
 - Domain-meaningful Signal codec.
 - Remote transport and timeouts/virtual threads only if deployment requires them.
 - Publish the store to a versioned repository and replace the composite build with a version range.
-- Measure adapter translation overhead separately from store recall.
+- ~~Measure adapter translation overhead separately from store recall.~~ Done in Issue #49 with JMH; see
+  [adapter overhead benchmark](../benchmarks/resonance-store-adapter-overhead.md).

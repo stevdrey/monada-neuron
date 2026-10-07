@@ -38,6 +38,7 @@ unaffected. No network, credentials, or external services are used.
 monada-neuron-evaluation
   ├── main         store-free baseline runner, JMH, workload generator
   ├── integration  fixture corpus, temporary store, evaluation, report, runner   (optional)
+  │                + jmh/ adapter-boundary JMH benchmarks and substitute-store fixtures        (optional)
   └── integrationTest                                                            (optional)
         │ depends on
         ▼
@@ -45,7 +46,11 @@ monada-neuron-resonance-adapter ──► monada-resonance-store (composite buil
 ```
 
 The evaluation may depend on the adapter; production cognition never depends on evaluation code. Store
-types (`MonadaMemory`) appear only in `TemporaryResonanceStore` and the adapter.
+types stay at the adapter / evaluation-integration boundary: `MonadaMemory` appears only in
+`TemporaryResonanceStore` and the adapter, and the adapter-boundary JMH fixtures (`integration/jmh`,
+[overhead benchmark](resonance-store-adapter-overhead.md)) use only the result types `ResonanceResult`,
+`KnowledgeAtom`, and `MonadaMemoryOptions` to build a store-free substitute for the adapter's recall seam.
+Neither source set is part of the core or the baseline `main` evaluation code.
 
 ## Fixture (`rs-integration-v1`)
 
@@ -105,7 +110,8 @@ checkout has uncommitted changes.
 | `NeuronCycle.FullCycle.ReplayedMemoryResponse` | same cycle with a no-I/O port replaying the responses recorded from the real store, so downstream stages process identical Signals |
 
 Limits: adapter translation overhead (codec, bounded merge, SHA-256 references) is **not** measured here: a
-wall-clock loop is not a reliable microbenchmark, so it is left to a JMH follow-up (ADR 0018). "Cold" (`FirstRecall`) means a freshly opened handle in a warmed JVM: JIT and OS page cache are already
+wall-clock loop is not a reliable microbenchmark, so it is measured with JMH in
+[resonance-store-adapter-overhead.md](resonance-store-adapter-overhead.md) (ADR 0018). "Cold" (`FirstRecall`) means a freshly opened handle in a warmed JVM: JIT and OS page cache are already
 warm from earlier checks, and only the first-touch cost of the handle is included. Cycles use fresh `PrimaryMonad`/topology state per iteration. Adapters and stores opened per iteration
 are released in the untimed iteration setup, so they do not stay reachable into later rows. Warm-up and
 measurement counts differ per row and are recorded in each row's diagnostics (`warmupIterations`,
