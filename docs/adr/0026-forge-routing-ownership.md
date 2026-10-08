@@ -37,12 +37,13 @@ experimental routing extension in a new `monada.neuron.routing` package. Type na
 - **A decision is advice.** `RoutingDecision` is `Selected`, `Abstain` or `NoEligibleRoute`. It reserves nothing, grants no
   authorization, is never an `ActionStatus`, and Forge revalidates before executing. Hard constraints are evaluated first and
   cannot be bypassed by learned preference. Authorization to spend is never inferred.
+- **Versioning.** `RouteVersion` is a caller-assigned positive number ordered numerically; transient availability lives in the catalog snapshot, outside the versioned descriptor, so availability changes never discard learned history. State is admitted by scope, feature schema, route and policy versions, not by `catalogVersion`. Overflow is a dedicated host-set descriptor field, independent of billing mode and tier.
 - **Identity in a typed envelope.** Scope, task, execution, attempt, stage and route identity, version and fingerprints
   travel in typed routing records. `Signal` is unchanged. A selected route maps to a `Proposition` whose `code` is the route's
   index in the catalog snapshot that produced the decision; it is an in-cycle vehicle and never an identity.
 - **Composition seam.** The routing policy is a pure function the host calls (Level A). An optional thin
   `RoutingReasoningStage` (Level B) occupies the existing `REASONING` position and obtains its per-execution inputs from a
-  host-implemented resolver keyed by `HostExecutionContext`, as `PerceptionCapability` does. No new stage kind, no change to
+  host-implemented resolver keyed by `HostExecutionContext`, as `PerceptionCapability` does. Because `ReasoningCognitiveStageResult` is a final record that cannot carry the decision, Level B returns a new `RoutingCognitiveStageResult` that retains the full `RoutingDecision` and the hypothesis hand-off. No new stage kind, no change to
   `CycleInput`, `NeuronRuntime` or the canonical order, and no orchestrator.
 - **Reference policy.** A fixed lexicographic list (host tier, host fallback priority, learned preference when compatible and
   sufficiently supported, known comparable resource estimate, canonical route id) instead of an unexplained blended scalar.
@@ -51,8 +52,7 @@ experimental routing extension in a new `monada.neuron.routing` package. Type na
   `VALIDATED_ACCEPTED` with stage-local attribution; unknown, pending, cancelled and environmental outcomes are neutral;
   absent attribution means no update. `RoutingFeedback` is a separate artifact; `OutcomeFeedback` is unchanged.
 - **Caller-owned bounded state.** Preference is bound to caller-owned `Node` instances and updated through the existing
-  `AdaptationPolicy`, not a new learning engine. The caller holds applied-revision bookkeeping. A correction that supersedes an
-  applied reward is handled by an explicit reset and an ordered replay from the Store export up to a cutoff, because Node
+  `AdaptationPolicy`, not a new learning engine. The caller holds a mutable state store with applied-revision bookkeeping and hands `decide` only an immutable `RoutingPreference` value snapshot, which also carries the cutoff it was built at; a snapshot newer than the request cutoff makes the policy abstain. Cohort Nodes start from a nonzero baseline amplitude, since the score-only adaptation path is multiplicative. A correction that supersedes any applied reward or penalty is handled by an explicit reset and an ordered replay (optionally from a checkpoint, with the ledger bound equal to the rebuild bound) from the Store export up to a cutoff, because Node
   adaptation is not exactly invertible. Capacity exhaustion is reported and never evicts silently or crosses scopes.
 - **Cost semantics.** Usage, hypothetical API cost, actual billing and subscription activity are different quantities.
   Hypothetical cost and pairwise comparison come only from Store evaluation tooling or host annotations; Neuron's production

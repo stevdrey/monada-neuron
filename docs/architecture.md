@@ -525,13 +525,13 @@ adaptation. Forge owns authorization, execution, context collection, evidence ju
 cutoffs used for replay. The Store owns persistence, recall and exports. Workflow-stage choice (Forge), worker/model route
 choice (this extension) and hardware backend selection (`RuntimeBackendSelector`) are three separate decisions.
 
-The extension is additive and opt-in. It keeps `Signal` identity-free (route identity travels in a typed envelope and in the
-opaque `HostExecutionContext`), keeps the canonical stage order, and adds no stage kind or `CycleInput` field. The composition
-seam is a pure `decide` function called by the host, with an optional thin `REASONING`-position adapter whose inputs come from a
-host resolver. A decision reserves nothing and is never an `ActionStatus`; a worker invocation result is not validated task
+The extension is additive and opt-in. It keeps `Signal` identity-free: route identity travels only in typed routing records, and the opaque
+`HostExecutionContext` serves solely as a key the host adapter uses to resolve routing inputs, never as a carrier of route identity. It keeps the canonical stage order, and adds no stage kind or `CycleInput` field. The composition
+seam is a pure `decide` function called by the host on an immutable preference snapshot, with an optional thin `REASONING`-position adapter
+whose inputs come from a host resolver and whose typed result retains the full decision. A decision reserves nothing and is never an `ActionStatus`; a worker invocation result is not validated task
 acceptance. Learning reuses the existing Node-bound `AdaptationPolicy` path through a separate `RoutingFeedback` artifact
-(`OutcomeFeedback` is unchanged), with caller-owned bounded state and an explicit reset-and-replay when corrected evidence
-supersedes an applied reward. Unknown resource values are never zero, and hypothetical API cost, actual billing and
+(`OutcomeFeedback` is unchanged), with caller-owned bounded state and an explicit reset-and-replay (optionally from a checkpoint) when corrected evidence
+supersedes any applied reward or penalty. Unknown resource values are never zero, and hypothetical API cost, actual billing and
 subscription activity stay distinct. No routing quality, cost or accuracy claim is made until the replay evaluation (#67)
 supplies a reproducible workload with controls.
 
