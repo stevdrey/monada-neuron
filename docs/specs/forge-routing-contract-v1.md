@@ -169,8 +169,10 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 - Requirements, permitted modes and `overflowPermitted` **originate from host policy, never from task-generated text**.
   `overflowPermitted` defaults to `false`; only the host may set it, and Neuron must never infer authorization to spend.
 - `RouteDescriptor` is a caller **observation**, not proof of capability or authorization: it names worker, provider, model,
-  effort and `billingMode` (`API_METERED`, `SUBSCRIPTION`, `LOCAL`, `UNKNOWN`) as opaque tokens, plus a `tier`, a host
-  `fallbackPriority` and an `overflowClass`. Neuron imports no provider SDK and performs no discovery or quota polling.
+  effort and `billingMode` (`API_METERED`, `SUBSCRIPTION`, `LOCAL`, `UNKNOWN`) as opaque tokens, plus a `tier` and an
+  `overflowClass`. The host `fallbackPriority` is **not** a descriptor field: it is a per-route annotation of the `RouteCatalog`
+  snapshot, with availability and `ResourceEstimate` (Section 2). Neuron imports no provider SDK and performs no discovery or
+  quota polling.
 - **Overflow is a dedicated host-set field**, `overflowClass` (`STANDARD` or `OVERFLOW`), independent of `billingMode` and
   `tier`. A route is `OVERFLOW_NOT_PERMITTED` exactly when `overflowClass = OVERFLOW` and `overflowPermitted = false`. Neuron
   never derives overflow from billing mode, price, or tier, so two implementations cannot disagree about the same catalog.
@@ -191,24 +193,40 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 
 | Variant | Meaning | Mandatory content |
 | --- | --- | --- |
-| `Selected` | Exactly one recommended route. | Route `(RouteId, RouteVersion)`, `catalogVersion`, `decisionRef`, ranked candidates (at most 8) with the rule that placed each, `basis` (`COLD_START`, `HOST_PRIORITY`, `LEARNED_PREFERENCE`, ...), `overflowUsed`, policy id/version, state binding, cutoff. |
-| `Abstain` | Eligible routes exist but the policy declines to advise. | Typed reason (`POLICY_TRADEOFF_UNRESOLVED`, `INSUFFICIENT_EVIDENCE`, `STATE_INCOMPATIBLE`, `REQUIRED_METRIC_UNKNOWN`), the eligible candidates, exclusion reasons for the excluded routes, `decisionRef`. |
-| `NoEligibleRoute` | The hard constraints exclude every route. | One structured exclusion reason for **every catalog route**, `decisionRef`. |
+| `Selected` | Exactly one recommended route. | Common provenance (below), route `(RouteId, RouteVersion)`, ranked candidates (at most 8) with the rule that placed each, `basis` (`COLD_START`, `HOST_PRIORITY`, `LEARNED_PREFERENCE`, ...), `overflowUsed`, and the `cohortBinding` (below). |
+| `Abstain` | At least one route is eligible but the policy declines to advise. | Common provenance, typed reason (`POLICY_TRADEOFF_UNRESOLVED`, `INSUFFICIENT_EVIDENCE`, `STATE_INCOMPATIBLE`, `REQUIRED_METRIC_UNKNOWN`), the eligible candidates, exclusion reasons for the excluded routes. |
+| `NoEligibleRoute` | The hard constraints exclude every route. | Common provenance and one structured exclusion reason for **every catalog route**. |
+
+**Common provenance, on every variant.** `decisionRef`, `catalogVersion`, `policyId` + `policyVersion`, the `cutoff`, and the
+state binding: the `RoutingPreference`'s `appliedCutoff`, `mappingVersion`, `policyId`/`policyVersion`, and the validation
+result (`COMPATIBLE`, `INCOMPATIBLE(reason)` or `NOT_EVALUATED`). A retained Level B result can therefore identify and replay
+the inputs of an abstention or of a no-route decision without host-side state.
+
+**Cohort binding.** Whenever the policy computes a `cohortBucket` from the request's `TaskFeatures`, `Selected` records the
+immutable `cohortBinding(cohortBucket, mappingVersion, featureSchemaVersion)`. `RoutingOutcome` copies it together with
+`decisionRef`, and Forge records it with the stage in the Store as a caller-approved descriptor so that a later export returns
+it (Store #95 and #101 must be checked for this in #64). A rebuild assigns a cohort **only** from this binding; features are
+never recomputed from a request object that no longer exists. A `RoutingObservation` without a binding is not eligible for
+learning and is reported as `MISSING_COHORT_BINDING`.
 
 - `decisionRef = (scopeId, taskId, executionId, attemptId, stageId, requestOrdinal)`. It is how a later outcome is matched
   to the exact decision that produced it.
 - Every variant lists an exclusion reason **for each excluded catalog route only**, at most 32 (the catalog bound).
   Eligible routes are never given an exclusion reason; they appear separately as the ranked or eligible candidates. A
   `NoEligibleRoute` therefore has a reason for every route, and a `Selected` has reasons only for the routes it excluded.
-  Missing mandatory capability, unavailability, unknown availability, or an unknown *required* limit make a route ineligible
-  (fail closed). An unknown *optional ranking* metric is not an eligibility failure.
+  Missing mandatory capability, unavailability, unknown availability, a known limit that is too small, or an unknown
+  *required* limit make a route ineligible (fail closed). An unknown *optional ranking* metric is not an eligibility failure.
 - **Exclusion-reason precedence.** A route that violates several constraints gets exactly one *primary* reason, the first
   that applies in this fixed order, so equal inputs always give equal decisions:
   `STAGE_INCOMPATIBLE`, `ROUTE_UNAVAILABLE`, `AVAILABILITY_UNKNOWN`, `MODE_NOT_PERMITTED`, `OVERFLOW_NOT_PERMITTED`,
-  `MISSING_CAPABILITY`, `REQUIRED_LIMIT_UNKNOWN`. Every other violated reason is listed in `additionalReasons` in the same
-  order (at most 6).
-- `Abstain(STATE_INCOMPATIBLE)` is also returned when the supplied `RoutingPreference` is newer than the request cutoff or
-  fails an admission rule of Section 2; the host then decides, for example by re-asking with an empty preference.
+  `MISSING_CAPABILITY`, `REQUIRED_LIMIT_EXCEEDED` (a known limit is below what the request requires, for example a context
+  ceiling), `REQUIRED_LIMIT_UNKNOWN` (the limit is required but unknown). Every other violated reason is listed in
+  `additionalReasons` in the same order (at most 7).
+- **Eligibility is evaluated before state.** If no route is eligible the result is `NoEligibleRoute` even when the supplied
+  `RoutingPreference` is incompatible; the state is then not consulted and its provenance result is `NOT_EVALUATED`.
+  `Abstain(STATE_INCOMPATIBLE)` is returned only when at least one route is eligible and the `RoutingPreference` is newer than
+  the request cutoff or fails an admission rule of Section 2; the host then decides, for example by re-asking with an empty
+  preference.
 - **Learned preference never bypasses a hard constraint.** Eligibility is evaluated first and is final.
 - `Abstain` is distinct from `NoEligibleRoute`: abstention is a policy statement and the host falls back to its own default;
   no-eligible-route is a constraint fact. The host decides what to do in both cases.
@@ -313,7 +331,7 @@ Rejected seams (ADR 0026): a routing field on `CycleInput`; a new canonical stag
 | Preference cohorts (Node-bound) per scope | 256 | **Report `CAPACITY_EXHAUSTED`, do not learn**; never evict silently, never spill into another scope |
 | Applied-revision entries per scope | 4,096 (equal to the rebuild bound) | `CAPACITY_EXHAUSTED`; nothing is evicted silently. The caller compacts through a `RoutingStateCheckpoint` (Section 7) or starts a new scope |
 | Observations replayed per rebuild call | 4,096 | Caller pages through the Store export (page size 1–500) and may continue from a checkpoint |
-| Node history per preference Node | `Node.historyLimit`, default 256 | Existing ring buffer (ADR 0021) |
+| Node history per preference Node | 0 (`historyLimit = 0`) | History disabled for routing cohorts (Section 7) |
 
 Validation failures of a caller-built value are contract violations and throw, like every Neuron record. Capacity and
 compatibility conditions of *admitted, well-formed* data are expected results and are reported, never thrown.
@@ -425,9 +443,12 @@ The adaptive state (#66) reuses the existing generic learning path; **no second 
   observations, never amplitude.
 - **Complete initial Node state.** The score-only path also moves Node energy, and every transition appends to the Node's
   history, so restoring only the amplitude would leave superseded effects behind. The versioned mapping therefore defines a
-  full `initialNodeState`: amplitude (`baselineAmplitude`), frequency, phase, energy and `historyLimit`. **Reset replaces each
-  cohort Node with a new Node built from that state**; it never patches fields in place. A checkpoint snapshot stores
-  amplitude, frequency, phase and energy per cohort, and a Node restored from it is built the same way.
+  full `initialNodeState`: amplitude (`baselineAmplitude`), frequency, phase, energy and `historyLimit`, **with
+  `historyLimit = 0`**. A zero limit disables the Node's history (`Node.Builder.historyLimit`, ADR 0021), `decide` never reads
+  it, and a routing cohort's state is therefore exactly its four numeric channels. **Reset replaces each cohort Node with a new
+  Node built from that state**; it never patches fields in place. A checkpoint snapshot stores amplitude, frequency, phase and
+  energy per cohort, and a Node restored from it is built the same way, so a checkpoint restore and a from-scratch replay are
+  identical in every retained field, with no history left to differ.
 - *Derivation without consumption leaves state bit-identical.* Consumed feedback changes only eligible bound targets in the
   same scope.
 - **Applied-revision bookkeeping is caller-owned**: for each applied observation the caller retains
@@ -448,9 +469,10 @@ The adaptive state (#66) reuses the existing generic learning path; **no second 
 - **Checkpoint and compaction.** The applied-revision ledger is bounded at 4,096 entries per scope, the same as one rebuild
   call, so a rebuild can never exhaust the ledger it is rebuilding. To go beyond it, the caller writes a
   `RoutingStateCheckpoint(policyId, policyVersion, appliedCutoff, preferenceSnapshot, ledgerDigest)` and compacts the entries it covers. A rebuild may
-  start from the latest checkpoint whose `appliedCutoff` is not newer than the earliest superseded revision and replay only
-  later observations. Starting from a valid checkpoint must give a state **identical** to a rebuild from scratch (#67 verifies
-  this). A superseded revision at or before the checkpoint invalidates it and forces a full rebuild.
+  start from the latest checkpoint whose `appliedCutoff` is **strictly less than** the ledger sequence of the earliest
+  superseded revision (an inclusive checkpoint at that sequence already contains the obsolete effect) and replay only later
+  observations. Starting from a valid checkpoint must give a state **identical** to a rebuild from scratch (#67 verifies
+  this). A superseded revision at or before the checkpoint's `appliedCutoff` invalidates it and forces a full rebuild.
 - **Fallback.** For cold start, unknown route, incompatible state, or insufficient evidence, rule 3 of the ordering is skipped
   and the decision is exactly the #62 baseline. Preference can reorder eligible routes only; it never changes authorization,
   mandatory quality gates or API permissions. There is no exploration.
@@ -458,9 +480,8 @@ The adaptive state (#66) reuses the existing generic learning path; **no second 
 Retained-footprint model (**modeled, not measured**; a 64-bit HotSpot with compressed references, as in ADR 0021): a
 `RoutingFeedback` is about 64 B plus 36 B per entry (at most about 2.4 KB at 64 entries); the applied-revision ledger at
 about 64 B per entry is at most about 256 KiB at 4,096 entries; a checkpoint is the snapshot plus a digest (a few KB at 256
-cohorts); preference Nodes at the default history limit of 256 and about
-44 B per retained state are at most about 2.75 MiB for 256 cohorts, and about 176 KiB at a history limit of 16, which a
-routing deployment should prefer. Measured allocation and latency are deferred to #67 and must not be inferred from this model.
+cohorts); preference Nodes have `historyLimit = 0`, so they retain no history and cost only the Node and its four numeric
+channels, on the order of 100 B each, a few tens of KiB for 256 cohorts (a model, not a measurement). Measured allocation and latency are deferred to #67 and must not be inferred from this model.
 
 ## 8. Algorithm, Data Structures and Complexity
 
