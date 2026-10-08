@@ -241,8 +241,10 @@ therefore uses the Store's **existing opaque artifact reference plus a host-owne
 extension**:
 
 - **Payload.** A versioned `RoutingEnvelope` (`forge-routing/1`) with `decisionRef`, the route `(RouteId, RouteVersion)`,
-  `catalogVersion`, routing `policyId`/`policyVersion`, `evaluationPolicy`, the `cohortBinding`, and the chosen
-  `executionMode`. It is serialized canonically (fixed field order, UTF-8) and held by **Forge**, not Neuron and not the Store.
+  an **immutable snapshot of the selected route's descriptor** (`worker`, `provider`, `model`, `effort` and `billingMode`, with
+  absent values explicit), `catalogVersion`, routing `policyId`/`policyVersion`, `evaluationPolicy`, the `cohortBinding`, and
+  the chosen `executionMode`. Because the snapshot is inside the digest-protected payload, no catalog or descriptor resolution
+  operation exists or is needed, and the resolver returns only the envelope. It is serialized canonically (fixed field order, UTF-8) and held by **Forge**, not Neuron and not the Store.
 - **Binding in the Store.** On the `STAGE_RECORDED` event of the routed stage Forge adds one `ArtifactRef` with kind
   `neuron-routing-envelope/1`, `reference` = a host-issued opaque `envelopeRef` (at most 128 code points, within the Store's
   512-code-point opaque limit), and `digest` = the lower-case hexadecimal SHA-256 of the canonical payload. The reference
@@ -251,12 +253,21 @@ extension**:
 - **Resolution ownership.** Neuron defines the host port `RoutingEnvelopeResolver` (in #64): `resolve(scopeId, envelopeRef) ->
   RoutingEnvelope | missing`. The host implements it over its own storage. Neuron never fetches by itself and never writes the
   Store.
-- **Verification.** The translator recomputes the digest of the resolved payload. It also checks that the payload's
-  `decisionRef` and route match the exported stage's route descriptor (worker, provider, model, effort) as far as the descriptor
-  expresses them.
+- **Verification, in this order.** (1) *Integrity:* the translator recomputes the SHA-256 of the resolved canonical payload and
+  compares it with the recorded digest; this only proves the bytes are the recorded ones. (2) *Identity:* the envelope's
+  `decisionRef` scope, task, execution and attempt must equal the corresponding fields of the exported event's `ExperienceRef`
+  (`scope`, `task`, `execution`, `attempt`; a stage event always has an attempt), and the envelope's `stageId` must equal the
+  exported stage's `stage` token, so Forge must record the Store `stage` as the `stageId` (at most 128 code points). `stageKind`
+  lives only in the envelope and the `TaskFeatures`; it is not compared with the Store. (3) *Descriptor:* the envelope's descriptor
+  snapshot must equal the exported `RouteDescriptor` field by field (`worker`, `provider`, `model`, `effort` and `billingMode`;
+  an absent value matches only an absent value). `decisionRef` is an identity, not a worker descriptor, and the opaque route
+  identity `(RouteId, RouteVersion)` is never compared with worker, provider, model or effort.
 - **Missing-data behavior.** An observation is not eligible for learning, never guessed or recomputed, and is reported with a
   typed reason: `MISSING_ENVELOPE_REFERENCE` (no such `ArtifactRef` on the stage), `ENVELOPE_UNRESOLVED` (the resolver returns
-  missing), `ENVELOPE_DIGEST_MISMATCH` (payload does not match the recorded digest) or `ENVELOPE_ROUTE_MISMATCH`.
+  missing), `ENVELOPE_DIGEST_MISMATCH` (payload does not match the recorded digest) `ENVELOPE_IDENTITY_MISMATCH` (an envelope for another scope, task, execution, attempt or stage, which must never be admitted as
+  the current stage's observation) or `ENVELOPE_ROUTE_MISMATCH` (the descriptor differs from the exported one). A route mismatch
+  also covers Forge deliberately executing a different route than the advised one: that is not learned, consistent with
+  'a selected-but-unexecuted candidate receives no credit' (Section 6).
   `MISSING_COHORT_BINDING` remains for a resolved envelope that has no `cohortBinding`.
 - **Alternative.** A native Store field for this envelope would be a Store contract extension and a prerequisite of its own;
   it is not assumed here and could replace the resolver later without changing Neuron's semantics.
@@ -726,7 +737,10 @@ are dependencies, not baseline capabilities. Each Neuron issue must re-check the
 
 **Downstream integration verification (#64, #68).** With a real execution memory, the loop *record, close and reopen, export,
 translate* must preserve the exact decision, `(RouteId, RouteVersion)` and cohort binding; a correction must recover the earliest
-superseded sequence; and checkpoint validation after compaction must give the same result as a full rebuild. This contract
+superseded sequence; and checkpoint validation after compaction must give the same result as a full rebuild. A matching stage and
+envelope must translate successfully; an envelope whose descriptor differs from the recorded worker, provider, model, effort or
+billing mode must be rejected with `ENVELOPE_ROUTE_MISMATCH` even when its digest is valid; and an envelope from another
+task, execution, attempt or stage must be rejected with `ENVELOPE_IDENTITY_MISMATCH`. This contract
 defines the mechanism and its dependencies and does not implement Store capabilities.
 
 **API exports versus evaluation-only annotations.** The production `monada-api` export carries outcome, derived acceptance,
