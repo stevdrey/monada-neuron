@@ -1,6 +1,6 @@
 # Forge Routing Contract v1
 
-Status: **proposed contract, not implemented.** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
+Status: **proposed contract; only `TaskFeatures` and its signal encoder (#60, Section 15) are implemented.** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
 Issue: [#59](https://github.com/stevdrey/monada-neuron/issues/59) (Forge Routing 1/10).
 
 This document is the normative v1 contract that issues #60–#68 implement. Later issues may refine exact Java
@@ -153,7 +153,7 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 
 | Type (proposed) | Introduced by | Role |
 | --- | --- | --- |
-| `TaskFeatures` | #60 | Caller-approved, bounded, typed task/stage characteristics with explicit unknown values, canonical order and schema version. |
+| `TaskFeatures` | #60 (implemented, Section 15) | Caller-approved, bounded, typed task/stage characteristics with explicit unknown values, canonical order and schema version. |
 | `RouteDescriptor`, `RouteCatalog` | #61 | `RouteDescriptor` is the versioned behavioral description of one route (worker/provider/model/effort, `billingMode`, `overflowClass`, `tier`, capabilities, stage compatibility, ceilings). `RouteCatalog` is an immutable snapshot of descriptors **plus a per-route availability value, which is outside the versioned descriptor**. |
 | `RoutingRequest` | #61 | One stage request, defined with eligibility because every hard constraint is a request value: envelope, `TaskFeatures`, hard requirements, permitted execution modes, `overflowPermitted`. |
 | `RoutingPolicy` | #62 | Versioned, explicit, rule-based policy; `decide(RoutingRequest, RouteCatalog, RoutingPreference) -> RoutingDecision`; the policy carries its `ResourceObjective`. |
@@ -814,3 +814,84 @@ file.
 - `docs/adr/0026-forge-routing-ownership.md` (new).
 - `docs/architecture.md`: "Forge Routing Extension (proposed)" section.
 - `README.md`: pointer under the host-embedding section.
+
+## 15. Implemented: `TaskFeatures` and the Signal Encoder (#60)
+
+Package `monada.neuron.routing.features`. This section describes **implemented behavior** and refines the proposal in
+Section 3; it does not change the semantics above. `Signal`, `FrequencyState`, the Store encoders and
+`HostExecutionContext` are untouched, and nothing in the package is wired into a cycle (opt-in, called by a host-side
+`PerceptionCapability` or by Level A code).
+
+### 15.1 Typed features
+
+`TaskFeatures(schemaVersion, stageKind, category, languages, domains, changeSize, contextSize, tests, security)`, schema
+`task-features/1`. Every field except `schemaVersion` is a `Feature<T>`: `Known(value)` or `Unknown`; unknown is never a
+measured zero, an empty set or a default. There is no task, project, execution, route or price field and no outcome, so
+none of them can enter similarity; correlation stays in the routing envelope (#61).
+
+| Rule | Behavior |
+| --- | --- |
+| Tokens (`stageKind`, `category`, tags, `schemaVersion`) | 1-128 code points, no control characters, no leading/trailing whitespace; `IllegalArgumentException` otherwise. Compared by `String.equals`, never normalized. |
+| Tag sets (`languages`, `domains`) | At most 8 tags each; duplicates rejected; stored in **code point order** (not UTF-16 unit order) as an immutable copy. Known-empty set differs from unknown set. |
+| Numerics (`changeSize`, `contextSize`) | Non-negative `long` in host-defined units; negative rejected. Values above the policy ceiling are valid and saturate only in Signals. |
+| `tests`, `security` | `Requirement.REQUIRED` / `NOT_REQUIRED` or unknown. |
+| Capacity | 6 scalar features + 2 x 8 tags = 22 <= contract bound of 32. Overflow throws (a caller-built value). |
+| Ownership | The caller's input is copied; later mutation cannot change a snapshot. Equivalent input in any order gives equal records. |
+
+### 15.2 Encoding policy `task-encoding-default` v1
+
+An `EncodingPolicy` is explicit and versioned: vocabularies (ordered, at most 32 tokens each; **order is part of the
+policy**) for stage kind, category, language and domain, plus saturation ceilings. Any change to a vocabulary, ceiling or the
+arithmetic needs a new policy version. The default vocabularies are illustrative and host-replaceable. No hashing is used.
+
+For dimension index `i` (`STAGE_KIND`=0, `CATEGORY`=1, `LANGUAGES`=2, `DOMAINS`=3, `CHANGE_SIZE`=4, `CONTEXT_SIZE`=5, `TESTS`=6,
+`SECURITY`=7): `frequency = 10*i + 8*ratio`, so bands are disjoint (`(10i, 10i+8]`).
+
+| Value | Signal `FrequencyState(amplitude, frequency, phase)` |
+| --- | --- |
+| Categorical token, vocabulary index `k` of `n` | `(1.0, 10i + 8(k+1)/(n+1), 0.0)` |
+| Token outside the vocabulary (`OTHER`) | `(1.0, 10i + 8, 0.0)`; reported in `otherBucketDimensions` |
+| Number `v`, ceiling bit length `L` | `(1.0, 10i + 8*min(bitLength(v), L)/L, 0.0)`; integer arithmetic only; `v > ceiling` reported in `saturatedDimensions` |
+| `Requirement` | `NOT_REQUIRED` = `(1.0, 10i + 8/3, 0.0)`, `REQUIRED` = `(1.0, 10i + 16/3, 0.0)` |
+| **Unknown** | `(0.0, 0.0, PI)`: silent, phase-marked; different from any known value, from a measured zero and from `FrequencyState.ZERO` |
+| Tag set | one Signal per tag in canonical order; none for a known-empty set; one unknown marker for an unknown set |
+
+Default ceilings are 65,535 (`L`=16) for change size and 1,048,575 (`L`=20) for context size. All Signals are
+`SignalKind.OBSERVATION`.
+
+Golden fixture (asserted in `TaskFeatureEncoderTest`): `implement`, `bugfix`, `{rust, java}`, `{backend}`, change size 100,
+context size 1,048,575, tests `REQUIRED`, security `NOT_REQUIRED` encodes to frequencies
+`3.2, 10+8/7, 20+8/9, 20+56/9, 30+8/7, 43.5, 58, 60+16/3, 70+8/3`, all with amplitude 1 and phase 0 (`bitLength(100)`=7, so
+`40 + 8*7/16 = 43.5`).
+
+### 15.3 Result, collisions and schema mismatch
+
+`TaskFeatureEncoder.encode(TaskFeatures)` returns a sealed `EncodingResult`:
+
+- `Encoded(features, signals, policyId, policyVersion, saturatedDimensions, otherBucketDimensions)` retains the **typed
+  features next to the Signals**. The Signals are a lossy ordinal layout: distinct out-of-vocabulary tokens share the `OTHER`
+  position, values above a ceiling share the maximum, and a vocabulary of `n` tokens is spread over `n+1` positions. These are
+  documented collisions, not semantic similarity. **Exact eligibility must use the typed fields**, never Signal equality.
+- `SchemaMismatch(expected, actual)` when `schemaVersion` is not `task-features/1`. It is a reported result, not an
+  exception, and the encoder never guesses.
+
+The encoder reads only its argument: no repository, task text, secret, `HostExecutionContext` reference, clock or randomness.
+
+### 15.4 Complexity and footprint
+
+With `F` features and `T <= 16` tags: construction `O(F + T log T)`; `encode` `O(F)` time with point lookups in
+vocabulary maps built once per encoder (never iterated, so hash order cannot affect output); extra space `O(F)`, at most
+22 Signals plus their `FrequencyState` objects. **Modeled, not measured:** about 64 B per Signal and `FrequencyState` pair plus
+about 4 B per list reference, so a full encoding retains roughly 1.5 KiB (22 x 64 B + 16 B + 88 B), asserted only as
+"at most 2 KiB" in the test. No latency or allocation measurement exists, and no cache, parallelism, SIMD or GPU is used.
+
+### 15.5 Verification and evidence gaps
+
+```bash
+./gradlew test
+./gradlew consumerSmokeTest
+```
+
+Evidence gaps: no claim that this layout improves routing or that Signal resonance reflects task similarity; the default
+vocabularies and the unknown marker are unvalidated policy choices; allocation and latency are unmeasured (#67); the
+encoder is not yet consumed by `RoutingRequest` (#61) or a `PerceptionCapability`.
