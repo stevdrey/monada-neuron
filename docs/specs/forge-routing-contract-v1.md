@@ -139,8 +139,9 @@ Version compatibility:
 | `scopeId` | Must equal the request's scope. A different scope is never admitted or merged. The `RoutingPreference` and `RoutingStateCheckpoint` carry `scopeId` explicitly, so an empty snapshot is still checkable. |
 | `featureSchemaVersion` | Must equal the version the state's cohort mapping was built for. The `RoutingPreference` and `RoutingStateCheckpoint` carry it explicitly, so a valid cold-start snapshot (same bindings, zero cohorts) is distinguishable from one reused from another scope or schema. |
 | `(RouteId, RouteVersion)` | Must equal the route of the candidate. A different `RouteVersion` has its own cohort and inherits nothing. |
-| `policyId` + `policyVersion` | Must match for every policy-bound artifact: `RoutingFeedback`, applied-revision entries, `RoutingStateCheckpoint` **and the `RoutingPreference` snapshot itself**. A snapshot built under another policy makes `decide` return `Abstain(STATE_INCOMPATIBLE)`. Changing the policy is an explicit migration: the caller builds a new state by a full rebuild under the new policy and never reuses Nodes learned under the old one. |
-| `mappingVersion` | Must equal the version of the `CohortMapping` the policy uses for the request. `mappingVersion` identifies the **complete state-transition definition**: the feature-to-bucket assignment, the `initialNodeState` (including the Node type and identity rule), the **full `AdaptationConfig`** (`learningRate`, amplitude and energy bounds, `energyStep`, and every other field) and the `RoutingFeedback` scoring configuration. It must change when any of them changes, so a snapshot built under another definition makes `decide` return `Abstain(STATE_INCOMPATIBLE)`. A new `mappingVersion` **starts a cold state**: stored observations keep only their old `cohortBinding`, which cannot be recomputed because the features are not retained (Section 3.2), so history under the old version is not migrated. The old state stays valid for the old version. A host that still owns the original features may re-export observations with bindings for the new version; the state is then an ordinary rebuild under that version. Changing only the policy remains a full rebuild (bindings are policy-independent). An observation whose `cohortBinding.mappingVersion` differs from the state's is not applied and is reported as `MAPPING_MISMATCH`. |
+| `policyId` + `policyVersion` | **Provenance, not an admission key.** The routing policy only orders eligible routes at decision time; it never changes the values stored in the state, so changing it needs no rebuild and no cold start. Snapshots, checkpoints, ledger entries and `RoutingFeedback` record the policy that produced them for audit. Anything that changes **what is learned** (attribution and learning-eligibility rules, feedback scores) is part of `mappingVersion` below, which is the admission key. |
+| `evaluationPolicy` (id, version) | The state is **partitioned by evaluation policy**: the `RoutingPreference`, checkpoint, ledger entries and observations carry it, and it must equal the request's. Evidence judged under different evaluation policies is non-comparable, so observations under another one are not applied (`EVALUATION_POLICY_MISMATCH`) and a changed policy starts a separate cold state; the host keeps one state per `(scopeId, evaluationPolicy)`. |
+| `mappingVersion` | Must equal the version of the `CohortMapping` the policy uses for the request. `mappingVersion` identifies the **complete state-transition definition**: the feature-to-bucket assignment, the `initialNodeState` (including the Node type and identity rule), the **full `AdaptationConfig`** (`learningRate`, amplitude and energy bounds, `energyStep`, and every other field) the `RoutingFeedback` scoring configuration and the attribution and learning-eligibility rules that decide what is learned. It must change when any of them changes, so a snapshot built under another definition makes `decide` return `Abstain(STATE_INCOMPATIBLE)`. A new `mappingVersion` **starts a cold state**: stored observations keep only their old `cohortBinding`, which cannot be recomputed because the features are not retained (Section 3.2), so history under the old version is not migrated. The old state stays valid for the old version. A host that still owns the original features may re-export observations with bindings for the new version; the state is then an ordinary rebuild under that version. An observation whose `cohortBinding.mappingVersion` differs from the state's is not applied and is reported as `MAPPING_MISMATCH`. |
 | `catalogVersion` | **Not an admission key.** A new catalog snapshot in which a route keeps its `(RouteId, RouteVersion)` reuses that route's history; a route that is added, removed or re-versioned follows the `(RouteId, RouteVersion)` rule above. |
 | `processedCutoff` | Must not exceed the request cutoff (see above). |
 - Store samples are consumed only as `execution-sample/1`. An unsupported schema is reported, never guessed.
@@ -222,8 +223,11 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 | `NoEligibleRoute` | The hard constraints exclude every route. | Common provenance and one structured exclusion reason for **every catalog route**. |
 
 **Common provenance, on every variant.** `decisionRef`, `catalogVersion`, `policyId` + `policyVersion`, the `cutoff`, and the
-state binding: the `RoutingPreference`'s `scopeId`, `featureSchemaVersion`, `processedCutoff`, `mappingVersion`, `policyId`/`policyVersion`, and the validation
-result (`COMPATIBLE`, `INCOMPATIBLE(reason)` or `NOT_EVALUATED`). A retained Level B result can therefore identify and replay
+state binding: the `RoutingPreference`'s `scopeId`, `featureSchemaVersion`, `processedCutoff`, `mappingVersion`, `evaluationPolicy`, `policyId`/`policyVersion` (provenance), and the validation
+result: `COMPATIBLE`, `NOT_EVALUATED`, or `INCOMPATIBLE(reasons)`. A snapshot can fail several checks at once, so
+`INCOMPATIBLE` retains **every** mismatch as an ordered list in this fixed order (at most 5): `SCOPE_MISMATCH`,
+`FEATURE_SCHEMA_MISMATCH`, `EVALUATION_POLICY_MISMATCH`, `MAPPING_VERSION_MISMATCH`, `PROCESSED_CUTOFF_NEWER`; the first is the
+primary reason, so equal inputs give equal provenance. A retained Level B result can therefore identify and replay
 the inputs of an abstention or of a no-route decision without host-side state.
 
 **Cohort binding.** Whenever the policy computes a `cohortBucket` from the request's `TaskFeatures`, `Selected` records the
@@ -294,7 +298,7 @@ semantics.
 | `Signal` | Unchanged. Encoded features, if used, are `OBSERVATION` Signals produced by the #60 encoder inside a host `PerceptionCapability` (ADR 0024). The typed `TaskFeatures` are kept next to the Signals and are what hard constraints use, so Signal collisions or information loss can never substitute for an exact constraint. |
 | `Proposition(domain, code)` | For `Selected` only: `domain` is the routing domain the host configures when wiring; `code` is the **zero-based index of the route in the canonical route order (Section 2) of the catalog snapshot that produced the decision**. It is an in-cycle vehicle, not an identity: it is only meaningful together with `catalogVersion`, and routing feedback never uses it to identify a route. |
 | `Hypothesis` | One hypothesis for the selected route. Ranking among alternatives stays in `RoutingDecision`, which is authoritative; the existing `EVALUATION` stage's score is a generic evidence score (ADR 0020) and must not re-rank routes. `Abstain` and `NoEligibleRoute` produce **no** hypothesis. |
-| `Evidence` | Optional `SignalEvidence` for the request's encoded Signal; optional `MemoryReferenceEvidence` carrying opaque `ExperienceRef` strings (bounded by `ResonanceMemoryResult.MAX_REFERENCE_LENGTH`) for the experience behind a preference. Recall similarity is never evidence of quality. |
+| `Evidence` | **No `SignalEvidence` in v1 on a Level B result**: the routing stage is a source with no admitted Signals when hypotheses are validated (`validateProvenance` precedes admission of its output), so a Signal occurrence would be rejected. Level A hypotheses built outside a cycle are not affected. Optional `MemoryReferenceEvidence` carrying opaque `ExperienceRef` strings (bounded by `ResonanceMemoryResult.MAX_REFERENCE_LENGTH`) for the experience behind a preference. Recall similarity is never evidence of quality. |
 | `ActionRequest` | Unchanged. The host correlates through the opaque `HostExecutionContext` (ADR 0023). An `ActionResult` reports worker *invocation*, not task acceptance (Section 5). |
 | `OutcomeFeedback` | Unchanged and untouched. Routing learning uses `RoutingFeedback` (Section 6). |
 
@@ -432,7 +436,7 @@ Resource data is carried, not computed, in Neuron's production code (no billing 
 feedback is byte-for-byte unchanged.
 
 Matching: feedback is derived only when an outcome matches its exact `decisionRef`, route `(RouteId, RouteVersion)`, scope,
-stage, `featureSchemaVersion` and `policyId`/`policyVersion`. A selected-but-unexecuted candidate receives **no credit**.
+stage, `featureSchemaVersion` and evaluation policy; the producing decision's routing policy is recorded as provenance. A selected-but-unexecuted candidate receives **no credit**.
 
 | Observation | Disposition | Rule |
 | --- | --- | --- |
@@ -440,6 +444,7 @@ stage, `featureSchemaVersion` and `policyId`/`policyVersion`. A selected-but-une
 | Proven mandatory quality failure attributable to the executed route's stage | `PENALIZE` | Bounded negative credit; a weak signal against the choice. |
 | `ACCEPTED_UNVALIDATED` because mandatory evidence is `UNKNOWN`, missing, from a mismatched policy, or the outcome is an imported claim | `NEUTRAL` | No reward and no penalty; the missing evidence is reported. |
 | `ACCEPTED_UNVALIDATED` because an effective mandatory observation of the accepted attempt is `FAIL` (for example after a correction) | `PENALIZE` | A proven mandatory failure is a failure of the gate regardless of the derived label; it follows the row above for `NOT_ACCEPTED`. |
+| `NOT_ACCEPTED` (rejected, failed or cancelled work) with **no** attributable proven mandatory failure | `NEUTRAL` | Reason `NO_ATTRIBUTABLE_FAILURE`: a refusal, a rejection or an unjudged failure without gate evidence is not a proven failure of the route, so it is never penalized. |
 | `PENDING`, `CANCELLED` | `NEUTRAL` | Says nothing about the route. |
 | Environmental failure (unavailable, timed out) | `NEUTRAL` | Says nothing about the route. |
 | Multi-stage chain accepted but no stage-local attribution | No update | Chain acceptance alone cannot identify which worker deserves credit; attribution evidence is retained, not invented. |
@@ -492,22 +497,33 @@ The adaptive state (#66) reuses the existing generic learning path; **no second 
   `historyLimit = 0`**. A zero limit disables the Node's history (`Node.Builder.historyLimit`, ADR 0021), `decide` never reads
   it, and a routing cohort's state is therefore exactly its four numeric channels. **The state also fixes the Node's two other
   required fields**: a stable `NodeType` (a versioned constant of the mapping) and a deterministic identity, the name-based UUID
-  of the canonical `cohortKey` string plus the `mappingVersion` (`UUID.nameUUIDFromBytes`, set with `Node.Builder.id`), so no
-  randomness is used and a reset or restore recreates the same identity. **Reset replaces each cohort Node with a new
+  (`UUID.nameUUIDFromBytes`, set with `Node.Builder.id`) of a **collision-free byte string**: UTF-8 (never the default
+  charset) of the fixed tag `forge-routing/1/node`, then in this order `scopeId`, `evaluationPolicy` id and version,
+  `stageKind`, `cohortBucket`, `RouteId` and `mappingVersion`, each as a 4-byte big-endian length followed by its UTF-8 bytes,
+  and finally `RouteVersion` as an 8-byte big-endian `long`. No delimiter is used, so distinct keys cannot collide on
+  concatenation, and no randomness is used and a reset or restore recreates the same identity. **Reset replaces each cohort Node with a new
   Node built from that state**; it never patches fields in place. A checkpoint snapshot stores amplitude, frequency, phase and
   energy per cohort, and a Node restored from it is built the same way, so a checkpoint restore and a from-scratch replay are
   identical in every retained field, with no history left to differ.
-- *Derivation without consumption leaves state bit-identical.* Consumed feedback changes only eligible bound targets in the
-  same scope.
+- *Derivation without consumption leaves the cohort values and supporting counts bit-identical.* Consumed feedback changes only
+  eligible bound targets in the same scope. Processing an observation, even a neutral, rejected or ineligible one that changes
+  no Node, still advances `processedCutoff` to its sequence (or to the export's high-watermark), because the watermark records
+  what was examined, not what changed; the snapshot is therefore not bit-identical in its watermark.
 - **Applied-revision bookkeeping is caller-owned**: for each applied observation the caller retains
-  `(ExperienceRef, revision, feedbackId, cohortKey)` so each effective revision is applied exactly once and a superseded one
-  is detectable. This is not a hidden history.
+  `(ExperienceRef, revision, ledgerSequence, feedbackId, cohortKey)` so each effective revision is applied exactly once and a
+  superseded one is detectable. The original `ledgerSequence` is kept because checkpoint validity needs the sequence of the
+  revision being replaced, which the replacing revision (a later sequence) does not give. A `RoutingObservation` that replaces
+  an earlier revision also carries `supersedesSequence`, the sequence of the earliest revision it replaces (the Store history
+  exposes every revision with its sequence; #64 must verify the export carries it), so a checkpoint check never needs a lookup
+  and works after compaction. This is not a hidden history.
 - **Reset and rebuild.** Node adaptation is not exactly invertible (bounds and saturation), so when **any already-applied
   non-neutral revision, reward or penalty, is superseded** by a different revision, the old effect cannot be subtracted and a
   replacement cannot undo saturation or ordering effects. The caller **resets** the affected scope's preference Nodes to the
   baseline and **replays the effective observations in the applied order** `(ledgerSequence, ExperienceRef)` up to the cutoff, in
   pages of at most 500 from a Store `ADAPTER_READY` export. A rebuilt state must equal the state built from scratch from the same
-  corrected export. Route changes never silently inherit another route's cohort.
+  corrected export. The rebuild runs on a **staged copy**: the live state is swapped in only after the whole replay succeeds. A
+  failure, including `CAPACITY_EXHAUSTED` from a 257th cohort, leaves the previous state unchanged and no partial state is ever
+  observable by `decide`; the caller knows the previous state predates the correction and decides whether to keep using it. Route changes never silently inherit another route's cohort.
 - **Dormant cohorts.** A rebuild replays observations by their own `(RouteId, RouteVersion)`, **not** by the current catalog.
   A route that is absent from the current catalog keeps its replayed cohort, marked `DORMANT`: it is never consulted by
   `decide` and never counted toward `minSupportingObservations` for another route. When an identical `(RouteId, RouteVersion)`
@@ -516,8 +532,8 @@ The adaptive state (#66) reuses the existing generic learning path; **no second 
   a dormant cohort (after which a later rebuild would recreate it from the export unless the caller excludes that route).
 - **Checkpoint and compaction.** The applied-revision ledger is bounded at 4,096 entries per scope, the same as one rebuild
   call, so a rebuild can never exhaust the ledger it is rebuilding. To go beyond it, the caller writes a
-  `RoutingStateCheckpoint(scopeId, featureSchemaVersion, policyId, policyVersion, processedCutoff, preferenceSnapshot, ledgerDigest)` and compacts the entries it covers. A rebuild may
-  start from the latest checkpoint whose `processedCutoff` is **strictly less than** the ledger sequence of the earliest
+  `RoutingStateCheckpoint(scopeId, featureSchemaVersion, evaluationPolicy, mappingVersion, policyId, policyVersion, processedCutoff, preferenceSnapshot, ledgerDigest)` and compacts the entries it covers. A rebuild may
+  start from the latest checkpoint whose `processedCutoff` is **strictly less than** the `supersedesSequence` of the earliest
   superseded revision (an inclusive checkpoint at that sequence already contains the obsolete effect) and replay only later
   observations. Starting from a valid checkpoint must give a state **identical** to a rebuild from scratch (#67 verifies
   this). A superseded revision at or before the checkpoint's `processedCutoff` invalidates it and forces a full rebuild.
@@ -604,7 +620,7 @@ overflowUsed=true)`; the decision records that spending was permitted by the hos
 The `sub-a` run for `task-17` completes (worker invocation succeeded) and the Store holds outcome `PENDING`. No feedback is
 derived. Later the outcome becomes `ACCEPTED` with origin `IMPORTED_CLAIM`, or the mandatory `TESTS` observation is `UNKNOWN`:
 derived status `ACCEPTED_UNVALIDATED`. Feedback is `NEUTRAL` with reason `MISSING_MANDATORY_EVIDENCE`; the preference
-snapshot is bit-identical before and after. The success of the invocation is never counted as reward.
+cohort values and counts are bit-identical before and after, and only `processedCutoff` advances to the examined sequence. The success of the invocation is never counted as reward.
 
 ### 9.4 Rejected work
 
