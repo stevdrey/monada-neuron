@@ -140,7 +140,7 @@ Version compatibility:
 | `featureSchemaVersion` | Must equal the version the state's cohort mapping was built for. The `RoutingPreference` and `RoutingStateCheckpoint` carry it explicitly, so a valid cold-start snapshot (same bindings, zero cohorts) is distinguishable from one reused from another scope or schema. |
 | `(RouteId, RouteVersion)` | Must equal the route of the candidate. A different `RouteVersion` has its own cohort and inherits nothing. |
 | `policyId` + `policyVersion` | Must match for every policy-bound artifact: `RoutingFeedback`, applied-revision entries, `RoutingStateCheckpoint` **and the `RoutingPreference` snapshot itself**. A snapshot built under another policy makes `decide` return `Abstain(STATE_INCOMPATIBLE)`. Changing the policy is an explicit migration: the caller builds a new state by a full rebuild under the new policy and never reuses Nodes learned under the old one. |
-| `mappingVersion` | Must equal the version of the `CohortMapping` the policy uses for the request. It changes whenever the feature-to-bucket assignment or the `initialNodeState` changes, so a snapshot built under another mapping makes `decide` return `Abstain(STATE_INCOMPATIBLE)`; changing it is an explicit migration by full rebuild, like a policy change. An observation whose `cohortBinding.mappingVersion` differs from the state's is not applied and is reported as `MAPPING_MISMATCH`. |
+| `mappingVersion` | Must equal the version of the `CohortMapping` the policy uses for the request. `mappingVersion` identifies the **complete state-transition definition**: the feature-to-bucket assignment, the `initialNodeState` (including the Node type and identity rule), the **full `AdaptationConfig`** (`learningRate`, amplitude and energy bounds, `energyStep`, and every other field) and the `RoutingFeedback` scoring configuration. It must change when any of them changes, so a snapshot built under another definition makes `decide` return `Abstain(STATE_INCOMPATIBLE)`. A new `mappingVersion` **starts a cold state**: stored observations keep only their old `cohortBinding`, which cannot be recomputed because the features are not retained (Section 3.2), so history under the old version is not migrated. The old state stays valid for the old version. A host that still owns the original features may re-export observations with bindings for the new version; the state is then an ordinary rebuild under that version. Changing only the policy remains a full rebuild (bindings are policy-independent). An observation whose `cohortBinding.mappingVersion` differs from the state's is not applied and is reported as `MAPPING_MISMATCH`. |
 | `catalogVersion` | **Not an admission key.** A new catalog snapshot in which a route keeps its `(RouteId, RouteVersion)` reuses that route's history; a route that is added, removed or re-versioned follows the `(RouteId, RouteVersion)` rule above. |
 | `processedCutoff` | Must not exceed the request cutoff (see above). |
 - Store samples are consumed only as `execution-sample/1`. An unsupported schema is reported, never guessed.
@@ -154,7 +154,7 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 | --- | --- | --- |
 | `TaskFeatures` | #60 | Caller-approved, bounded, typed task/stage characteristics with explicit unknown values, canonical order and schema version. |
 | `RouteDescriptor`, `RouteCatalog` | #61 | `RouteDescriptor` is the versioned behavioral description of one route (worker/provider/model/effort, `billingMode`, `overflowClass`, `tier`, capabilities, stage compatibility, ceilings). `RouteCatalog` is an immutable snapshot of descriptors **plus a per-route availability value, which is outside the versioned descriptor**. |
-| `RoutingRequest` | #62 | One stage request: envelope, `TaskFeatures`, hard requirements, permitted execution modes, `overflowPermitted`. |
+| `RoutingRequest` | #61 | One stage request, defined with eligibility because every hard constraint is a request value: envelope, `TaskFeatures`, hard requirements, permitted execution modes, `overflowPermitted`. |
 | `RoutingPolicy` | #62 | Versioned, explicit, rule-based policy; `decide(RoutingRequest, RouteCatalog, RoutingPreference) -> RoutingDecision`; the policy carries its `ResourceObjective`. |
 | `ResourceEstimate` | #61 | Host-supplied, per-route annotation inside the `RouteCatalog` snapshot: `(RouteId, RouteVersion, dimension, unit, value, provenance)` with `value` Known, Unknown or NotMeasured (Section 5). At most one estimate per route and dimension (Section 3.1), and at most 4 dimensions per route. |
 | `RoutingDecision` | #62 | Sealed: `Selected`, `Abstain`, `NoEligibleRoute`. |
@@ -189,7 +189,11 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
   | `permittedModes` (set) | `executionModes` (set) | Non-empty intersection, else `MODE_NOT_PERMITTED`. `Selected` records the mode as the intersection's first element in code point order. |
   | context size | context ceiling (known limit) | Request above a known ceiling is `REQUIRED_LIMIT_EXCEEDED`; an unknown required ceiling is `REQUIRED_LIMIT_UNKNOWN`. |
 
-  A route value that is absent is the empty set (or no locality), so the route is ineligible: fail closed. Neuron never infers
+  An absent route value is the empty set (or no locality) and the rules above are applied literally. An **empty required set
+  is always satisfied**, whatever the route declares, so `requiredCapabilities = {}` and `requiredTools = {}` match a route
+  with absent `capabilities` or `tools`. A **non-empty** required set is not satisfied by an absent route value
+  (`MISSING_CAPABILITY`). Fail-closed absence therefore decides only the fields that always need a positive match: `stages`
+  (`STAGE_INCOMPATIBLE`), `locality` (`LOCALITY_NOT_PERMITTED`) and `executionModes` (`MODE_NOT_PERMITTED`). Neuron never infers
   stages, tools, locality or modes from provider, model or billing tokens.
 - **Overflow is a dedicated host-set field**, `overflowClass` (`STANDARD` or `OVERFLOW`), independent of `billingMode` and
   `tier`. A route is `OVERFLOW_NOT_PERMITTED` exactly when `overflowClass = OVERFLOW` and `overflowPermitted = false`. Neuron
@@ -214,7 +218,7 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 | Variant | Meaning | Mandatory content |
 | --- | --- | --- |
 | `Selected` | Exactly one recommended route. | Common provenance (below), route `(RouteId, RouteVersion)`, ranked candidates (at most 8) with the rule that placed each, `basis` (`COLD_START`, `HOST_PRIORITY`, `LEARNED_PREFERENCE`, ...), `overflowUsed`, and the `cohortBinding` (below). |
-| `Abstain` | At least one route is eligible but the policy declines to advise. | Common provenance, typed reason (`POLICY_TRADEOFF_UNRESOLVED`, `INSUFFICIENT_EVIDENCE`, `STATE_INCOMPATIBLE`, `REQUIRED_METRIC_UNKNOWN`), the eligible candidates, exclusion reasons for the excluded routes. |
+| `Abstain` | At least one route is eligible but the policy declines to advise. | Common provenance, typed reason (`POLICY_TRADEOFF_UNRESOLVED` or `STATE_INCOMPATIBLE`; these are the only v1 reasons, defined in Section 3.3 and Section 3.2), the eligible candidates, exclusion reasons for the excluded routes. |
 | `NoEligibleRoute` | The hard constraints exclude every route. | Common provenance and one structured exclusion reason for **every catalog route**. |
 
 **Common provenance, on every variant.** `decisionRef`, `catalogVersion`, `policyId` + `policyVersion`, the `cutoff`, and the
@@ -269,8 +273,16 @@ learning and is reported as `MISSING_COHORT_BINDING`.
 5. canonical route order: `RouteId` by code point, then `RouteVersion` numerically (Section 2; total order, final tie-breaker).
 
 Because rule 5 always breaks ties, a `Selected` decision exists whenever at least one route is eligible and no abstention
-condition holds. `Abstain(POLICY_TRADEOFF_UNRESOLVED)` is returned only when the host policy marks a tradeoff as one it
-refuses to auto-resolve (for example, `abstainOnTierConflict`).
+condition holds. v1 has exactly two abstention triggers:
+
+- `Abstain(STATE_INCOMPATIBLE)` when a route is eligible and the preference snapshot fails admission (Section 2).
+- `Abstain(POLICY_TRADEOFF_UNRESOLVED)` when the policy parameter `maxAutoSelectTier` (a host-set integer, default
+  unbounded) is set and the best eligible route has a `tier` above it, so the host must confirm a lower-priority tier such as
+  paid overflow before it is advised. With the default, this never fires.
+
+Insufficient learned evidence and unknown resource estimates are **not** abstention reasons: they only skip rules 3 and 4,
+and rule 5 still yields a `Selected` decision (Section 7 fallback). A later contract version may add reasons with their exact
+conditions.
 
 ### 3.4 Mapping a decision to cognitive artifacts
 
@@ -302,6 +314,14 @@ Forge
 **Level B, optional: a thin reasoning-stage adapter.** `RoutingReasoningStage` occupies the existing `REASONING` position and
 calls the same pure policy. It gets its per-execution inputs through a host-implemented resolver keyed by the cycle's
 `HostExecutionContext`, the same pattern as `PerceptionCapability`:
+
+`RoutingReasoningStage` is a **source stage** (`CognitiveStage.isSource()` is true), exactly like `PerceptionCognitiveStage`
+(ADR 0024), because it is driven by the host context and not by input Signals. Without that, the deterministic cycle ends
+with `NO_SIGNALS` before calling a non-source stage that has no input, and the resolver would never run. The cycle's existing
+source rules apply: the stage must be the first, runs with empty initial Signals, and a cycle with a source stage rejects
+non-empty initial Signals. #62 must confirm that the cycle accepts a `REASONING` source and extend its source rule additively
+if it does not. The composition restriction is explicit: a routing cycle cannot also have a `PerceptionCapability` source or
+initial Signals; a host that needs both runs routing as its own cycle, or uses Level A.
 
 ```text
 CycleInput.hostContext -> CognitiveContext.hostContext()
@@ -470,7 +490,10 @@ The adaptive state (#66) reuses the existing generic learning path; **no second 
   history, so restoring only the amplitude would leave superseded effects behind. The versioned mapping therefore defines a
   full `initialNodeState`: amplitude (`baselineAmplitude`), frequency, phase, energy and `historyLimit`, **with
   `historyLimit = 0`**. A zero limit disables the Node's history (`Node.Builder.historyLimit`, ADR 0021), `decide` never reads
-  it, and a routing cohort's state is therefore exactly its four numeric channels. **Reset replaces each cohort Node with a new
+  it, and a routing cohort's state is therefore exactly its four numeric channels. **The state also fixes the Node's two other
+  required fields**: a stable `NodeType` (a versioned constant of the mapping) and a deterministic identity, the name-based UUID
+  of the canonical `cohortKey` string plus the `mappingVersion` (`UUID.nameUUIDFromBytes`, set with `Node.Builder.id`), so no
+  randomness is used and a reset or restore recreates the same identity. **Reset replaces each cohort Node with a new
   Node built from that state**; it never patches fields in place. A checkpoint snapshot stores amplitude, frequency, phase and
   energy per cohort, and a Node restored from it is built the same way, so a checkpoint restore and a from-scratch replay are
   identical in every retained field, with no history left to differ.
@@ -498,6 +521,11 @@ The adaptive state (#66) reuses the existing generic learning path; **no second 
   superseded revision (an inclusive checkpoint at that sequence already contains the obsolete effect) and replay only later
   observations. Starting from a valid checkpoint must give a state **identical** to a rebuild from scratch (#67 verifies
   this). A superseded revision at or before the checkpoint's `processedCutoff` invalidates it and forces a full rebuild.
+- **Atomic application.** Applying a `RoutingFeedback` is all-or-nothing. The caller **preflights** the ledger capacity (the
+  entries it would add against the 4,096 bound) and the cohort capacity before mutating anything. If either would be
+  exceeded the result is `CAPACITY_EXHAUSTED` and the Nodes, the applied-revision ledger, the supporting-observation counts and
+  `processedCutoff` are **all left unchanged**, so a retry after compaction applies the feedback exactly once and a later
+  correction can still detect the original revision. `processedCutoff` advances only on success of the whole batch.
 - **Fallback.** For a valid cold-start snapshot (right bindings, no cohorts), a candidate route without a cohort, or
   insufficient supporting evidence, rule 3 of the ordering is skipped and the decision is exactly the #62 baseline. An
   **incompatible** state never falls back: the abstention of Section 3.2 is authoritative, so it yields
@@ -543,7 +571,18 @@ Catalog `cat-demo` version `7`; every identifier is fictional; no provider name 
 | `sub-b` v1 | `SUBSCRIPTION` | 1 | `STANDARD` | `java` | `AVAILABLE` |
 | `api-x` v1 | `API_METERED` | 2 | `OVERFLOW` | `java`, `long-context` | `AVAILABLE` |
 
-Scope `scope-demo`. Policy `route-lex` version `1` (Section 3.3), `minSupportingObservations = 3`.
+Every example route also carries the mandatory values below, and every request has the matching ones, unless an example says
+otherwise; without them a route would be ineligible (Section 3.1):
+
+| Route value | All three routes | Request value (all requests) |
+| --- | --- | --- |
+| `stages` | `{plan, implement, review, qa}` | `stageKind` as stated per example |
+| `executionModes` | `{sandboxed}` | `permittedModes = {sandboxed}` |
+| `locality` | `hosted` | `allowedLocalities = {hosted}` |
+| `tools` | `{edit, test}` | `requiredTools = {}` |
+
+Scope `scope-demo`. Policy `route-lex` version `1` (Section 3.3), `minSupportingObservations = 3`, `maxAutoSelectTier`
+unset.
 
 ### 9.1 Cold start
 
@@ -637,12 +676,12 @@ per-dimension evidence, usage counters with provenance, exact refs and revisions
 comparison annotations are produced only by `monada-evaluation` tooling.** Neuron's production code must not depend on
 `monada-evaluation`; hypothetical cost reaches Neuron only through an explicit host-supplied annotation seam.
 
-Neuron implementation order (a dependency graph, not a claim that any item exists). Every type an issue uses is introduced by that issue or by a declared prerequisite; where this contract moves a type earlier than the issue text says (`RoutingPreference`, `CohortMapping`, `RoutingObservation`), this contract prevails and the issue bodies are to be aligned:
+Neuron implementation order (a dependency graph, not a claim that any item exists). Every type an issue uses is introduced by that issue or by a declared prerequisite; where this contract moves a type earlier than the issue text says (`RoutingRequest`, `RoutingPreference`, `CohortMapping`, `RoutingObservation`), this contract prevails and the issue bodies are to be aligned:
 
 ```text
 #59 contract  (this document)
   -> #60 TaskFeatures + encoder
-       -> #61 RouteCatalog (immutable snapshot identity) + ResourceEstimate + eligibility
+       -> #61 RoutingRequest + RouteCatalog (immutable snapshot identity) + ResourceEstimate + eligibility   (needs #60)
             -> #62 RoutingPolicy + RoutingDecision + CohortMapping + RoutingPreference (value, EMPTY, admission)
                  + composition seam                               (needs #60, #61)
                  -> #63 RoutingOutcome + RoutingObservation + evidence + learning eligibility   (needs #62)
