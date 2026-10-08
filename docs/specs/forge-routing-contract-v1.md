@@ -108,7 +108,7 @@ Provenance fields, all opaque strings of at most 128 code points compared by equ
 | `contextFingerprint` | Fingerprint of the context Forge gathered. |
 | `constraintsFingerprint` | Fingerprint of the host constraints in force. |
 | `featureSchemaVersion` | Version of the `TaskFeatures` schema and encoder (#60). |
-| `catalogVersion` | Version of the `RouteCatalog` snapshot (#61). It identifies the snapshot that produced a decision (audit and `Proposition.code` mapping); it is **not** an admission key for state or observations. |
+| `catalogVersion` | **Immutable identity of one `RouteCatalog` snapshot** (#61). It must change whenever any snapshot content changes: the route set, any descriptor, availability, `fallbackPriority` or a `ResourceEstimate`. The same `catalogVersion` always means identical content, and reusing a version for different content is a host contract violation. Neuron stores no catalogs, so a host that needs exact replay retains each snapshot by version. `Proposition.code` is meaningful only together with this version. It identifies the snapshot behind a decision (audit and `Proposition.code` mapping); it is **not** an admission key for state or observations. |
 | `policyId` + `policyVersion` | The `RoutingPolicy` (ordering rules and parameters) that decided. |
 | `evaluationPolicy` (id, version) | The Forge evidence policy; matches the Store's `evaluationPolicy`. |
 
@@ -140,6 +140,7 @@ Version compatibility:
 | `featureSchemaVersion` | Must equal the version the state's cohort mapping was built for. The `RoutingPreference` and `RoutingStateCheckpoint` carry it explicitly, so a valid cold-start snapshot (same bindings, zero cohorts) is distinguishable from one reused from another scope or schema. |
 | `(RouteId, RouteVersion)` | Must equal the route of the candidate. A different `RouteVersion` has its own cohort and inherits nothing. |
 | `policyId` + `policyVersion` | Must match for every policy-bound artifact: `RoutingFeedback`, applied-revision entries, `RoutingStateCheckpoint` **and the `RoutingPreference` snapshot itself**. A snapshot built under another policy makes `decide` return `Abstain(STATE_INCOMPATIBLE)`. Changing the policy is an explicit migration: the caller builds a new state by a full rebuild under the new policy and never reuses Nodes learned under the old one. |
+| `mappingVersion` | Must equal the version of the `CohortMapping` the policy uses for the request. It changes whenever the feature-to-bucket assignment or the `initialNodeState` changes, so a snapshot built under another mapping makes `decide` return `Abstain(STATE_INCOMPATIBLE)`; changing it is an explicit migration by full rebuild, like a policy change. An observation whose `cohortBinding.mappingVersion` differs from the state's is not applied and is reported as `MAPPING_MISMATCH`. |
 | `catalogVersion` | **Not an admission key.** A new catalog snapshot in which a route keeps its `(RouteId, RouteVersion)` reuses that route's history; a route that is added, removed or re-versioned follows the `(RouteId, RouteVersion)` rule above. |
 | `processedCutoff` | Must not exceed the request cutoff (see above). |
 - Store samples are consumed only as `execution-sample/1`. An unsupported schema is reported, never guessed.
@@ -155,13 +156,13 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 | `RouteDescriptor`, `RouteCatalog` | #61 | `RouteDescriptor` is the versioned behavioral description of one route (worker/provider/model/effort, `billingMode`, `overflowClass`, `tier`, capabilities, stage compatibility, ceilings). `RouteCatalog` is an immutable snapshot of descriptors **plus a per-route availability value, which is outside the versioned descriptor**. |
 | `RoutingRequest` | #62 | One stage request: envelope, `TaskFeatures`, hard requirements, permitted execution modes, `overflowPermitted`. |
 | `RoutingPolicy` | #62 | Versioned, explicit, rule-based policy; `decide(RoutingRequest, RouteCatalog, RoutingPreference) -> RoutingDecision`; the policy carries its `ResourceObjective`. |
-| `ResourceEstimate` | #61 | Host-supplied, per-route annotation inside the `RouteCatalog` snapshot: `(RouteId, RouteVersion, dimension, unit, value, provenance)` with `value` Known, Unknown or NotMeasured (Section 5). At most 4 dimensions per route. |
+| `ResourceEstimate` | #61 | Host-supplied, per-route annotation inside the `RouteCatalog` snapshot: `(RouteId, RouteVersion, dimension, unit, value, provenance)` with `value` Known, Unknown or NotMeasured (Section 5). At most one estimate per route and dimension (Section 3.1), and at most 4 dimensions per route. |
 | `RoutingDecision` | #62 | Sealed: `Selected`, `Abstain`, `NoEligibleRoute`. |
 | `RoutingOutcome` | #63 | Host-evaluated result of executing a decision, with evidence and provenance. |
-| `RoutingObservation` | #64 | Neutral, Store-independent translation of one effective execution sample. |
+| `RoutingObservation` | #63 | Neutral, Store-independent record of one effective execution sample, defined with `RoutingOutcome` so feedback derivation needs only #63. #64 only *produces* it from Store exports. |
 | `RoutingFeedback` | #65 | Bounded artifact derived from an observation; separate from `OutcomeFeedback`. |
-| `RoutingPreference` | #66 | **Immutable value snapshot** of cohort preference values plus `processedCutoff` and the mapping version, taken from the caller's mutable state and passed to `decide`. |
-| `RoutingStateStore` (caller-owned, mutable) | #66 | The caller's `Node` bindings, applied-revision ledger and `RoutingStateCheckpoint`. It is never passed to `decide`. |
+| `RoutingPreference`, `CohortMapping` | #62 | `CohortMapping` is the pure, versioned `TaskFeatures -> cohortBucket` function with its `mappingVersion`. `RoutingPreference` is the **immutable value snapshot** of cohort preference values plus `processedCutoff` and the mapping version, taken from the caller's mutable state and passed to `decide`. #62 defines the value type, its valid empty cold-start form (`EMPTY` for a scope, schema, mapping and policy) and its admission validation, so `decide` needs no later type; #66 only builds non-empty snapshots from the caller's state. |
+| `RoutingStateStore` (caller-owned, mutable) | #66 | The caller's `Node` bindings, applied-revision ledger and `RoutingStateCheckpoint`; it produces the `RoutingPreference` snapshots. It is never passed to `decide`. |
 | `RoutingCognitiveStageResult` | #62 | Level B stage result that retains the full `RoutingDecision` together with the hypothesis hand-off (Section 3.5). |
 
 ### 3.1 Request, catalog and policy inputs
@@ -181,6 +182,7 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 
   | Request value | Route value | Rule |
   | --- | --- | --- |
+  | `stageKind` | `stages` (set of stage tokens) | Member, else `STAGE_INCOMPATIBLE`. There is no wildcard in v1: a route is compatible only with the stages it lists. |
   | `requiredCapabilities` | `capabilities` (set) | Subset, else `MISSING_CAPABILITY`. |
   | `requiredTools` | `tools` (set) | Subset, else `MISSING_CAPABILITY`. |
   | `allowedLocalities` (set) | `locality` (one token) | Member, else `LOCALITY_NOT_PERMITTED`. |
@@ -188,7 +190,7 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
   | context size | context ceiling (known limit) | Request above a known ceiling is `REQUIRED_LIMIT_EXCEEDED`; an unknown required ceiling is `REQUIRED_LIMIT_UNKNOWN`. |
 
   A route value that is absent is the empty set (or no locality), so the route is ineligible: fail closed. Neuron never infers
-  tools, locality or modes from provider, model or billing tokens.
+  stages, tools, locality or modes from provider, model or billing tokens.
 - **Overflow is a dedicated host-set field**, `overflowClass` (`STANDARD` or `OVERFLOW`), independent of `billingMode` and
   `tier`. A route is `OVERFLOW_NOT_PERMITTED` exactly when `overflowClass = OVERFLOW` and `overflowPermitted = false`. Neuron
   never derives overflow from billing mode, price, or tier, so two implementations cannot disagree about the same catalog.
@@ -201,7 +203,9 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 - **Resource estimates have a carrier.** Per-route `ResourceEstimate` values travel in the catalog snapshot and are host
   supplied, never computed by Neuron. The objective that selects among cost, latency or usage is a *policy* parameter,
   `ResourceObjective(dimension, direction)`, not a request field, so a request cannot steer it. Two estimates are comparable
-  only if they share `dimension`, `unit` and, for money, currency and pricing assumptions, and both are Known.
+  only if they share `dimension`, `unit` and, for money, currency and pricing assumptions, and both are Known. A catalog
+  holds **at most one `ResourceEstimate` per `(RouteId, RouteVersion, dimension)`** and is rejected at construction otherwise,
+  so the objective's `dimension` selects exactly one estimate per route and rule 4 has nothing to choose between.
 - Selecting a route **reserves nothing**. Forge must revalidate authorization, availability and quota immediately before
   executing.
 
@@ -338,7 +342,7 @@ Rejected seams (ADR 0026): a routing field on `CycleInput`; a new canonical stag
 | --- | --- | --- |
 | Identifier / token length | 128 code points | `IllegalArgumentException` at construction |
 | Routes per catalog | 32 | Catalog rejected at construction |
-| Capability, tool and execution-mode tokens per route (each set) | 16 | Catalog rejected |
+| Capability, tool, stage and execution-mode tokens per route (each set) | 16 | Catalog rejected |
 | Hard requirements per request (capabilities, tools, localities and modes, each set) | 16 | Request rejected |
 | Typed features per `TaskFeatures` | 32 | Rejected; unknown values are explicit, never dropped |
 | Ranked candidates in a decision | 8 | Truncation is explicit (`candidatesTruncated`) |
@@ -494,8 +498,11 @@ The adaptive state (#66) reuses the existing generic learning path; **no second 
   superseded revision (an inclusive checkpoint at that sequence already contains the obsolete effect) and replay only later
   observations. Starting from a valid checkpoint must give a state **identical** to a rebuild from scratch (#67 verifies
   this). A superseded revision at or before the checkpoint's `processedCutoff` invalidates it and forces a full rebuild.
-- **Fallback.** For cold start, unknown route, incompatible state, or insufficient evidence, rule 3 of the ordering is skipped
-  and the decision is exactly the #62 baseline. Preference can reorder eligible routes only; it never changes authorization,
+- **Fallback.** For a valid cold-start snapshot (right bindings, no cohorts), a candidate route without a cohort, or
+  insufficient supporting evidence, rule 3 of the ordering is skipped and the decision is exactly the #62 baseline. An
+  **incompatible** state never falls back: the abstention of Section 3.2 is authoritative, so it yields
+  `Abstain(STATE_INCOMPATIBLE)` when a route is eligible, and the host decides, for example by re-asking with a valid empty
+  snapshot. Preference can reorder eligible routes only; it never changes authorization,
   mandatory quality gates or API permissions. There is no exploration.
 
 Retained-footprint model (**modeled, not measured**; a 64-bit HotSpot with compressed references, as in ADR 0021): a
@@ -630,18 +637,20 @@ per-dimension evidence, usage counters with provenance, exact refs and revisions
 comparison annotations are produced only by `monada-evaluation` tooling.** Neuron's production code must not depend on
 `monada-evaluation`; hypothetical cost reaches Neuron only through an explicit host-supplied annotation seam.
 
-Neuron implementation order (a dependency graph, not a claim that any item exists):
+Neuron implementation order (a dependency graph, not a claim that any item exists). Every type an issue uses is introduced by that issue or by a declared prerequisite; where this contract moves a type earlier than the issue text says (`RoutingPreference`, `CohortMapping`, `RoutingObservation`), this contract prevails and the issue bodies are to be aligned:
 
 ```text
 #59 contract  (this document)
   -> #60 TaskFeatures + encoder
-       -> #61 RouteCatalog + eligibility
-            -> #62 RoutingPolicy + RoutingDecision + composition seam
-                 -> #63 RoutingOutcome + evidence + learning eligibility
-                      -> #64 Store export -> RoutingObservation      (also needs Store #94 #95 #97 #101)
-                      -> #65 RoutingFeedback + credit assignment      (needs #62, #63)
-                           -> #66 caller-owned preference state       (needs #60, #61, #62, #65)
-                                -> #67 temporal replay evaluation     (needs #62-#66, Store #99 #100)
+       -> #61 RouteCatalog (immutable snapshot identity) + ResourceEstimate + eligibility
+            -> #62 RoutingPolicy + RoutingDecision + CohortMapping + RoutingPreference (value, EMPTY, admission)
+                 + composition seam                               (needs #60, #61)
+                 -> #63 RoutingOutcome + RoutingObservation + evidence + learning eligibility   (needs #62)
+                      -> #64 Store export -> RoutingObservation   (needs #60, #63; Store #94 #95 #97 #101)
+                      -> #65 RoutingFeedback + credit assignment  (needs #62, #63)
+                           -> #66 RoutingStateStore, checkpoints, Node bindings, snapshot production
+                                                                  (needs #60, #61, #62, #65)
+                                -> #67 temporal replay evaluation (needs #62-#66, Store #99 #100)
                                      -> #68 published API + JPMS consumer loop
 ```
 

@@ -39,6 +39,7 @@ experimental routing extension in a new `monada.neuron.routing` package. Type na
   cannot be bypassed by learned preference. Authorization to spend is never inferred.
 - **Versioning.** `RouteVersion` is a caller-assigned positive number ordered numerically; transient availability and the host `fallbackPriority` live in the catalog snapshot, outside the versioned descriptor, so changing them never discards learned history; `tier` and `overflowClass` stay versioned. Catalog identity `(RouteId, RouteVersion)` must be unique, and a preference snapshot is bound to the policy that built it, so changing policy requires an explicit full rebuild. State is admitted by scope, feature schema, route and policy versions, not by `catalogVersion`. Overflow is a dedicated host-set descriptor field, independent of billing mode and tier.
 - **Route-side constraints.** Tools, locality and execution modes are typed, versioned descriptor values matched exactly against the request; an absent value fails closed.
+- **Snapshot identity and state admission.** `catalogVersion` is an immutable snapshot identity that changes with any content change, there is at most one resource estimate per route and dimension, and a state is also admitted only when its cohort `mappingVersion` matches. An incompatible state always yields an abstention and never silently falls back to the baseline. Stage compatibility is a typed route value matched exactly.
 - **Cohort binding.** The cohort of a decision is recorded in the decision, copied to the outcome and stored with the stage, so delayed observations are replayed into the right cohort without the original request.
 - **Identity in a typed envelope.** Scope, task, execution, attempt, stage and route identity, version and fingerprints
   travel in typed routing records. `Signal` is unchanged. A selected route maps to a `Proposition` whose `code` is the route's
@@ -118,7 +119,7 @@ Rejected as a non-goal: persistence belongs to the Store (ADR 0001, ADR 0018).
 
 ## Follow-Up Work
 
-- #60 to #68 implement the contract in dependency order; each must re-inspect `main`, the merged prerequisites, and the exact
+- #60 to #68 implement the contract in dependency order (the shared value types `RoutingPreference`, `CohortMapping` and `RoutingObservation` are introduced early, by #62 and #63, so no issue depends on a later one); each must re-inspect `main`, the merged prerequisites, and the exact
   Store public API before use, and may refine signatures but not semantics without updating the contract and this ADR.
 - Decide in a later ADR, if a concrete need appears, whether a resource-aware or exploration policy is added, and how routing
   chains into a PERCEPTION Aeon (ADR 0024 deferred this).
