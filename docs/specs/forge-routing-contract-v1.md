@@ -1,0 +1,551 @@
+# Forge Routing Contract v1
+
+Status: **proposed contract, not implemented.** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
+Issue: [#59](https://github.com/stevdrey/monada-neuron/issues/59) (Forge Routing 1/10).
+
+This document is the normative v1 contract that issues #60–#68 implement. Later issues may refine exact Java
+signatures, but must not change the semantics defined here without updating this document and ADR 0026 first.
+
+Normative words: **must**, **must not**, **should** and **may** carry their usual specification meaning.
+
+Every type and package name below (`monada.neuron.routing`, `TaskFeatures`, `RouteCatalog`, `RoutingDecision`, ...) is a
+**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them exists. Types that do exist are named with
+their current package and are described only as they exist today.
+
+## Background
+
+Monada Forge coordinates coding agents. For each workflow stage it needs a vendor-neutral recommendation of which
+authorized worker/model route to use, informed by validated outcomes of earlier work. ADR 0001 keeps long-term memory in
+Monada Resonance Store; the Store's accepted
+[execution-memory contract v1](https://github.com/stevdrey/monada-resonance-store/blob/main/docs/specs/execution-memory-contract-v1.md)
+defines the ledger, outcomes, quality evidence, usage and `execution-sample/1` exports. This contract defines what Neuron
+adds on top: routing advice, outcome-driven adaptation, and the host-facing envelopes that carry identity and provenance.
+
+## Current State
+
+Inspected `main` at `d1dd569` (Java 27). Already implemented and **reused unchanged**:
+
+- `monada.neuron.host.NeuronRuntime` and `CycleInput` (ADR 0022); `HostExecutionContext` / `HostReference`, opaque and
+  request-scoped (ADR 0023); `PerceptionCapability` and `ActionCapability` boundaries (ADR 0024, ADR 0011).
+- Typed `Hypothesis`, `Evidence`, `Proposition(int domain, long code)` and `HypothesisEvaluation` (ADR 0019, ADR 0020).
+- Caller-carried `OutcomeFeedback` and `FeedbackAdaptationCognitiveStage` (ADR 0021), `AdaptationPolicy` and the bounded
+  `Node` history.
+- `RuntimeBackendSelector`, which selects *internal computational backends* (SCALAR/VECTOR_API, object/CSR graph, ...). It
+  never selects external workers or models.
+
+Not present: any typed route, worker catalog, routing decision, or routing outcome. `ActionRequest` carries Signals and an
+opaque host context, not a route. `Signal` carries no identity (ADR 0005).
+
+## Goal
+
+Define a small, vendor-neutral, **experimental and opt-in** routing extension:
+
+1. stage-level worker/model recommendations that are advice only;
+2. evidence-driven learning from validated outcomes, with explicit credit assignment;
+3. exact ownership, identity, provenance and version rules so replay is possible;
+4. an explicit composition seam into the existing host and cognitive APIs.
+
+## Non-Goals
+
+No production code, build or dependency change, provider/network call, Forge or Store change, persistent learned state,
+automatic execution, quota polling, exploration policy, background loop, or second orchestrator. This document does not
+implement or promise any of #60–#68.
+
+## 1. Ownership and Boundaries
+
+| Concern | Neuron | Forge (host) | Resonance Store |
+| --- | --- | --- | --- |
+| Which workflow stage runs next | No | **Owns** | No |
+| Which worker/model route to *recommend* for a stage | **Owns** (advice) | Consumes advice | No |
+| Which internal hardware/algorithm backend runs | `RuntimeBackendSelector` (unchanged) | No | No |
+| Route authorization, quota, spending permission | No: never infers it | **Owns** | No |
+| Context gathering, task text, repository access | No | **Owns** | No |
+| Executing the worker | No | **Owns** | No |
+| Judging evidence (tests, security, review, ...) | No: never inspects code or calls a judge | **Owns** | No |
+| Issuing IDs, ordinals, cutoffs, timestamps | No: never generates them | **Owns** | No: records what the caller supplies |
+| Eligibility filtering of a caller-supplied catalog | **Owns** (deterministic, fail closed) | Supplies the catalog | No |
+| Routing preference/adaptation state | **Owns the semantics**; state is caller-held | Holds the snapshot | No |
+| Persisting experience, outcomes, usage | No | Records through the Store API | **Owns** (ledger, projections, recall, export) |
+| Recall similarity and ranking of stored experience | No | Optional consumer | **Owns** |
+| Hypothetical API cost and pairwise comparison | No arithmetic in Neuron's production code | Optional consumer | Evaluation tooling only (#99, #100) |
+
+Three decisions are deliberately distinct and must never be conflated:
+
+| Decision | Owner | Contract |
+| --- | --- | --- |
+| Workflow-stage choice (plan, implement, review, QA, ...) | Forge | Out of v1 scope. A stage is an opaque caller token. |
+| Worker/model route choice for one stage | Neuron (advice) | This contract. |
+| Hardware/algorithm backend choice | Neuron runtime | `RuntimeBackendSelector`; untouched. |
+
+## 2. Identity, Provenance and Versioning
+
+Identifier rules mirror the Store contract so that one value means the same thing in both repositories.
+
+- `ScopeId`, `TaskId`, `ExecutionId`, `AttemptId`, `StageId`, `RouteId` and `StageKind` are **caller-issued opaque tokens**:
+  1–128 Unicode code points, no control characters, no leading or trailing whitespace, compared with exact
+  `String.equals`. Neuron never generates, parses, normalizes or hashes them.
+- A `RouteId` is stable across versions of the same route; `RouteVersion` changes when the route's behavior or descriptor
+  changes. A route is identified by `(RouteId, RouteVersion)`.
+- The correlation envelope is typed and explicit. It never travels in `Signal` (ADR 0005), never in
+  `HostExecutionContext` beyond the existing opaque references (ADR 0023), and never in `ResonanceMemoryRequest`.
+- All timestamps are caller-supplied. No routing code calls a clock, a random generator, or reads the environment.
+
+Provenance fields, all opaque strings of at most 128 code points compared by equality only:
+
+| Field | Meaning |
+| --- | --- |
+| `sourceFingerprint` | Source revision of the work (e.g. a Git SHA); descriptive, never resolved by Neuron. |
+| `contextFingerprint` | Fingerprint of the context Forge gathered. |
+| `constraintsFingerprint` | Fingerprint of the host constraints in force. |
+| `featureSchemaVersion` | Version of the `TaskFeatures` schema and encoder (#60). |
+| `catalogVersion` | Version of the `RouteCatalog` snapshot (#61). |
+| `policyId` + `policyVersion` | The `RoutingPolicy` (ordering rules and parameters) that decided. |
+| `evaluationPolicy` (id, version) | The Forge evidence policy; matches the Store's `evaluationPolicy`. |
+
+Ordinals and cutoff:
+
+- `requestOrdinal` is a caller-issued, strictly increasing 64-bit integer per scope that numbers routing requests.
+- Observations carry the Store `ExperienceRef` string, its `revision`, and its ledger sequence; the **applied order** of
+  observations is `(ledgerSequence ascending, ExperienceRef ascending)`, the Store's total order.
+- `cutoff` is a caller-supplied ledger sequence (inclusive). An observation with a greater sequence is excluded from any
+  decision or rebuild "as of" that cutoff, so no future acceptance, correction or usage can leak backward.
+
+Version compatibility:
+
+- The contract identifier is `forge-routing/1`. Every envelope carries it. An unknown major version must be rejected, never
+  reinterpreted. Minor additions must be additive.
+- State, observations and feedback are admitted only when scope, `featureSchemaVersion`, `policyId`/`policyVersion` (where
+  the artifact is policy-bound) and `catalogVersion` rules below hold; otherwise they are reported as incompatible and not
+  applied (Section 7).
+- Store samples are consumed only as `execution-sample/1`. An unsupported schema is reported, never guessed.
+
+## 3. Proposed Types
+
+Immutable records and sealed variants with defensive copies and eager validation, in `monada.neuron.routing`. Bounds are
+maxima fixed by this contract; an implementation may lower a bound but must not raise it without a contract revision.
+
+| Type (proposed) | Introduced by | Role |
+| --- | --- | --- |
+| `TaskFeatures` | #60 | Caller-approved, bounded, typed task/stage characteristics with explicit unknown values, canonical order and schema version. |
+| `RouteDescriptor`, `RouteCatalog` | #61 | Immutable snapshot of caller-supplied routes (worker/provider/model/effort/billing mode, capabilities, stage compatibility, ceilings, availability). |
+| `RoutingRequest` | #62 | One stage request: envelope, `TaskFeatures`, hard requirements, permitted execution modes, `overflowPermitted`. |
+| `RoutingPolicy` | #62 | Versioned, explicit, rule-based policy; `decide(RoutingRequest, RouteCatalog, RoutingPreference) -> RoutingDecision`. |
+| `RoutingDecision` | #62 | Sealed: `Selected`, `Abstain`, `NoEligibleRoute`. |
+| `RoutingOutcome` | #63 | Host-evaluated result of executing a decision, with evidence and provenance. |
+| `RoutingObservation` | #64 | Neutral, Store-independent translation of one effective execution sample. |
+| `RoutingFeedback` | #65 | Bounded artifact derived from an observation; separate from `OutcomeFeedback`. |
+| `RoutingPreference` (state) | #66 | Caller-held, bounded snapshot of Node-bound preference plus applied-revision bookkeeping. |
+
+### 3.1 Request, catalog and policy inputs
+
+- `RoutingRequest` holds `contractVersion`, `scopeId`, `taskId`, `executionId`, `attemptId`, `stageId`, `stageKind`,
+  `requestOrdinal`, the provenance fingerprints, `TaskFeatures`, hard requirements (required capabilities, context size,
+  tool and locality constraints), permitted execution modes, `overflowPermitted` and the cutoff.
+- Requirements, permitted modes and `overflowPermitted` **originate from host policy, never from task-generated text**.
+  `overflowPermitted` defaults to `false`; only the host may set it, and Neuron must never infer authorization to spend.
+- `RouteDescriptor` is a caller **observation**, not proof of capability or authorization: it names worker, provider, model,
+  effort and `billingMode` (`API_METERED`, `SUBSCRIPTION`, `LOCAL`, `UNKNOWN`) as opaque tokens, plus a `tier` and host
+  `fallbackPriority`. Neuron imports no provider SDK and performs no discovery or quota polling.
+- Selecting a route **reserves nothing**. Forge must revalidate authorization, availability and quota immediately before
+  executing.
+
+### 3.2 `RoutingDecision`
+
+| Variant | Meaning | Mandatory content |
+| --- | --- | --- |
+| `Selected` | Exactly one recommended route. | Route `(RouteId, RouteVersion)`, `catalogVersion`, `decisionRef`, ranked candidates (at most 8) with the rule that placed each, `basis` (`COLD_START`, `HOST_PRIORITY`, `LEARNED_PREFERENCE`, ...), `overflowUsed`, policy id/version, state binding, cutoff. |
+| `Abstain` | Eligible routes exist but the policy declines to advise. | Typed reason (`POLICY_TRADEOFF_UNRESOLVED`, `INSUFFICIENT_EVIDENCE`, `STATE_INCOMPATIBLE`, `REQUIRED_METRIC_UNKNOWN`), the eligible candidates, `decisionRef`. |
+| `NoEligibleRoute` | The hard constraints exclude every route. | One structured exclusion reason **per catalog route**, `decisionRef`. |
+
+- `decisionRef = (scopeId, taskId, executionId, attemptId, stageId, requestOrdinal)`. It is how a later outcome is matched
+  to the exact decision that produced it.
+- Every variant lists exclusion reasons for every candidate, at most 32 (the catalog bound). Reasons are typed enums such
+  as `MISSING_CAPABILITY`, `STAGE_INCOMPATIBLE`, `AVAILABILITY_UNKNOWN`, `REQUIRED_LIMIT_UNKNOWN`,
+  `OVERFLOW_NOT_PERMITTED`, `MODE_NOT_PERMITTED`. Missing mandatory capability, unknown availability, or an unknown *required*
+  limit make a route ineligible (fail closed). An unknown *optional ranking* metric is not an eligibility failure.
+- **Learned preference never bypasses a hard constraint.** Eligibility is evaluated first and is final.
+- `Abstain` is distinct from `NoEligibleRoute`: abstention is a policy statement and the host falls back to its own default;
+  no-eligible-route is a constraint fact. The host decides what to do in both cases.
+- A decision is **never** reinterpreted as `ActionStatus.SUCCEEDED` or any other `ActionStatus`.
+
+### 3.3 Reference ordering (lexicographic, no blended scalar)
+
+`RoutingPolicy` v1 orders **eligible** routes by this fixed lexicographic list; a policy that changes it is a new
+`policyVersion`:
+
+1. host `tier` ascending (subscription/local routes are tier 1, permitted API overflow tier 2 in the default host policy,
+   i.e. subscription-first, as a *configurable host table*, not a Neuron constant);
+2. host `fallbackPriority` ascending;
+3. learned preference descending, **only when** the supplied `RoutingPreference` is compatible and has at least
+   `minSupportingObservations` (policy parameter, default 3) for that candidate's cohort; otherwise this rule is skipped for
+   every candidate, never partially applied;
+4. known comparable resource estimate ascending, **only when every remaining candidate has a known comparable value**
+   (unknown is never cheapest or fastest, and never zero);
+5. `RouteId` ascending, then `RouteVersion` ascending (total order, final tie-breaker).
+
+Because rule 5 always breaks ties, a `Selected` decision exists whenever at least one route is eligible and no abstention
+condition holds. `Abstain(POLICY_TRADEOFF_UNRESOLVED)` is returned only when the host policy marks a tradeoff as one it
+refuses to auto-resolve (for example, `abstainOnTierConflict`).
+
+### 3.4 Mapping a decision to cognitive artifacts
+
+The route identity lives in the typed envelope. It is never encoded into `Signal`, `FrequencyState`, or `Proposition`
+semantics.
+
+| Neuron artifact | Mapping |
+| --- | --- |
+| `Signal` | Unchanged. Encoded features, if used, are `OBSERVATION` Signals produced by the #60 encoder inside a host `PerceptionCapability` (ADR 0024). The typed `TaskFeatures` are kept next to the Signals and are what hard constraints use, so Signal collisions or information loss can never substitute for an exact constraint. |
+| `Proposition(domain, code)` | For `Selected` only: `domain` is the routing domain the host configures when wiring; `code` is the **zero-based index of the route in the canonical (RouteId, RouteVersion) order of the catalog snapshot that produced the decision**. It is an in-cycle vehicle, not an identity: it is only meaningful together with `catalogVersion`, and routing feedback never uses it to identify a route. |
+| `Hypothesis` | One hypothesis for the selected route. Ranking among alternatives stays in `RoutingDecision`, which is authoritative; the existing `EVALUATION` stage's score is a generic evidence score (ADR 0020) and must not re-rank routes. `Abstain` and `NoEligibleRoute` produce **no** hypothesis. |
+| `Evidence` | Optional `SignalEvidence` for the request's encoded Signal; optional `MemoryReferenceEvidence` carrying opaque `ExperienceRef` strings (bounded by `ResonanceMemoryResult.MAX_REFERENCE_LENGTH`) for the experience behind a preference. Recall similarity is never evidence of quality. |
+| `ActionRequest` | Unchanged. The host correlates through the opaque `HostExecutionContext` (ADR 0023). An `ActionResult` reports worker *invocation*, not task acceptance (Section 5). |
+| `OutcomeFeedback` | Unchanged and untouched. Routing learning uses `RoutingFeedback` (Section 6). |
+
+### 3.5 Composition seam
+
+The seam is chosen once here; #62 implements it. Two levels, both additive and opt-in:
+
+**Level A, the default: a pure function called by the host.**
+
+```text
+Forge
+  -> builds RoutingRequest + RouteCatalog (+ holds RoutingPreference)
+  -> RoutingPolicy.decide(request, catalog, preference) -> RoutingDecision      [pure, no cycle, no I/O]
+  -> Forge authorizes, revalidates, executes, judges                            [Forge-owned]
+```
+
+**Level B, optional: a thin reasoning-stage adapter.** `RoutingReasoningStage` occupies the existing `REASONING` position and
+calls the same pure policy. It gets its per-execution inputs through a host-implemented resolver keyed by the cycle's
+`HostExecutionContext`, the same pattern as `PerceptionCapability`:
+
+```text
+CycleInput.hostContext -> CognitiveContext.hostContext()
+  -> RoutingReasoningStage -> RoutingInputResolver (host adapter) -> RoutingInput(request, catalog, preference)
+  -> RoutingPolicy.decide(...) -> ReasoningCognitiveStageResult(HypothesisSet with the selected route)
+```
+
+Rules for both levels:
+
+- No new `CognitiveStageKind`, no change to the canonical order, no change to `CycleInput`, `CognitiveStage` or
+  `NeuronRuntime` signatures, and no stage that holds per-cycle data (ADR 0022, ADR 0023).
+- No second orchestrator, scheduler, singleton or session. Neuron never starts a cycle and never executes the route.
+- The runtime remains sequential and not thread-safe; a `NeuronRuntime` must not be reused concurrently.
+
+Rejected seams (ADR 0026): a routing field on `CycleInput`; a new canonical stage; routing inside `ActionCapability`
+(conflates advice with execution); state inside `PrimaryMonad`.
+
+## 4. Bounds and Limits
+
+| Limit | v1 maximum | Overflow behavior |
+| --- | --- | --- |
+| Identifier / token length | 128 code points | `IllegalArgumentException` at construction |
+| Routes per catalog | 32 | Catalog rejected at construction |
+| Capability tokens per route | 16 | Catalog rejected |
+| Hard requirements per request | 16 | Request rejected |
+| Typed features per `TaskFeatures` | 32 | Rejected; unknown values are explicit, never dropped |
+| Ranked candidates in a decision | 8 | Truncation is explicit (`candidatesTruncated`) |
+| Exclusion reasons in a decision | one per catalog route (32) | n/a |
+| Feedback entries per `RoutingFeedback` | 64 | Rejected at construction (same bound as `OutcomeFeedback`) |
+| Preference cohorts (Node-bound) per scope | 256 | **Report `CAPACITY_EXHAUSTED`, do not learn**; never evict silently, never spill into another scope |
+| Applied-revision entries | 1,024 | `CAPACITY_EXHAUSTED`; the caller resets and rebuilds, nothing is evicted silently |
+| Observations per rebuild call | 4,096 | Caller pages through the Store export (page size 1–500) |
+| Node history per preference Node | `Node.historyLimit`, default 256 | Existing ring buffer (ADR 0021) |
+
+Validation failures of a caller-built value are contract violations and throw, like every Neuron record. Capacity and
+compatibility conditions of *admitted, well-formed* data are expected results and are reported, never thrown.
+
+## 5. Outcomes, Evidence and Delayed Feedback
+
+Three things are kept strictly separate:
+
+1. **Worker invocation result.** An `ActionResult` or a host-reported run status. `SUCCEEDED` means the worker finished. It
+   is **not** validated task acceptance.
+2. **Quality evidence.** Dimensions `CORRECTNESS`, `TESTS`, `SECURITY`, `ARCHITECTURE`, `MAINTAINABILITY`, `COMPLEXITY`, each
+   `PASS`, `FAIL`, `UNKNOWN` or justified `NOT_APPLICABLE`, with evaluator and policy versions. Forge judges; Neuron does not.
+3. **Derived acceptance.** Taken from the Store's definition, never recomputed differently: `VALIDATED_ACCEPTED`,
+   `ACCEPTED_UNVALIDATED`, `NOT_ACCEPTED`, `PENDING`. An "accepted" flag alone is insufficient; effective-evidence
+   precedence follows Store v1 Section 8 (a later applicable `FAIL`/`UNKNOWN` overrides an earlier `PASS`).
+
+Lifecycle of delayed feedback, reusing the cross-cycle handoff pattern of ADR 0021 (no queue, store or session in Neuron):
+
+```text
+t0  Forge: RoutingPolicy.decide(...)            -> RoutingDecision (advice)
+t1  Forge: authorize, revalidate, execute       -> worker invocation result (provisional)
+t2  Forge: records stage + usage in the Store   -> outcome PENDING
+t3  Forge: records evidence                     -> evidence rows; outcome may become ACCEPTED/REJECTED
+t4  Forge: may record a CORRECTION              -> new revision; the earlier row stays history
+t5  Host: exports samples (cutoff) and builds RoutingObservation   -> Neuron applies RoutingFeedback to the held state
+t6  Later cycle / later decide(...) reads the updated snapshot
+```
+
+Learning eligibility (#63) must explicitly report: missing evidence, stale policy or artifact revision, contradictory
+evidence, pending or cancelled work, provenance mismatch, and environmental failure. Environmental failures (unavailable,
+timed out) stay distinguishable from invalid generated work and never penalize.
+
+### Resource values
+
+Resource data is carried, not computed, in Neuron's production code (no billing arithmetic in #63).
+
+- A resource value is one of **Known** (a non-negative value with provenance `REPORTED` or `ESTIMATED`; a known `0` is a real
+  zero), **Unknown** (reported but unmeasurable) or **NotMeasured** (absent). Unknown and not-measured are never zero, never
+  cheapest, never fastest, and never proof of success.
+- `RouteDescriptor.billingMode` and the cost kinds below are different things:
+
+| Quantity | Meaning |
+| --- | --- |
+| Usage counters | Reported or estimated token/request counts with provenance, taken from the Store export. |
+| Hypothetical API cost | Evaluation-time arithmetic over a caller-supplied, dated price snapshot (provider, model, currency, assumptions). Labelled hypothetical for **every** billing mode. Comes only from Store evaluation tooling (#99) or host-supplied annotations. |
+| Actual billing | An amount the caller explicitly recorded. Reported separately, never inferred from usage. |
+| Subscription activity | Never presented as API billing. |
+
+- Currencies are never summed across; each is reported alone.
+- Four quantities stay distinct and none substitutes for another: **recall similarity**, **hypothesis evaluation score**,
+  **derived acceptance**, and **cost**. Quality gates precede resource optimization: cost may order only candidates that
+  already satisfy every mandatory gate, and low cost never offsets a failed mandatory gate.
+
+## 6. Credit Assignment and Feedback
+
+`RoutingFeedback` is a separate typed artifact (#65). `OutcomeFeedback`, `NoOpOutcomeFeedbackPolicy`,
+`DeterministicOutcomeFeedbackPolicy` and `FeedbackAdaptationCognitiveStage` keep their exact behavior; a cycle without routing
+feedback is byte-for-byte unchanged.
+
+Matching: feedback is derived only when an outcome matches its exact `decisionRef`, route `(RouteId, RouteVersion)`, scope,
+stage, `featureSchemaVersion` and `policyId`/`policyVersion`. A selected-but-unexecuted candidate receives **no credit**.
+
+| Observation | Disposition | Rule |
+| --- | --- | --- |
+| `VALIDATED_ACCEPTED` and sufficient stage-local attribution to the executed route | `REINFORCE` | Positive credit to that route's cohort only. |
+| Proven mandatory quality failure attributable to the executed route's stage | `PENALIZE` | Bounded negative credit; a weak signal against the choice. |
+| `ACCEPTED_UNVALIDATED` (unknown or missing mandatory evidence, imported claim) | `NEUTRAL` | No reward and no penalty; the missing evidence is reported. |
+| `PENDING`, `CANCELLED` | `NEUTRAL` | Says nothing about the route. |
+| Environmental failure (unavailable, timed out) | `NEUTRAL` | Says nothing about the route. |
+| Multi-stage chain accepted but no stage-local attribution | No update | Chain acceptance alone cannot identify which worker deserves credit; attribution evidence is retained, not invented. |
+| Mixed-route repair chain | Stage-local only | Never full credit to every participant. |
+| Invalid, unsupported or contradictory evidence | Rejected with a reason | Not applied. |
+
+- Scores are bounded to `[-1, 1]`, are never zero for `REINFORCE`/`PENALIZE`, and their sign matches the disposition. The
+  scoring configuration must keep the ordering invariants of ADR 0021 (a partial result never outscores a full one, and a
+  refusal is never penalized harder than an execution failure).
+- Cost may refine a preference only by comparing **validated, directly comparable, complete** measurements under declared
+  objectives. Incomplete usage never produces a "cheap" reward.
+- Direct comparable pairs and observational cohorts are kept apart. Two executions are *directly comparable* only when scope,
+  task, `sourceFingerprint`, `contextFingerprint`, `constraintsFingerprint`, and evaluation policy id/version all match
+  (Store v1 Section 10). Only then may a pairwise statement be made. Cross-task cohort summaries are **observational evidence
+  for that corpus**, with no causal or general model-superiority claim.
+
+## 7. Bounded Caller-Owned Preference State
+
+The adaptive state (#66) reuses the existing generic learning path; **no second learning engine is introduced**.
+
+- A `RoutingPreference` is an immutable snapshot the host holds and passes to `decide`. Neuron keeps no registry, session,
+  history, timer or background task.
+- Preference is bound to caller-owned `Node` instances by an explicit, versioned mapping
+  `cohortKey -> Node`, where `cohortKey = (scopeId, stageKind, cohortBucket, RouteId, RouteVersion)`. `cohortBucket` comes from
+  a versioned mapping of `TaskFeatures` (bounded; an unknown feature value maps to an explicit `UNKNOWN` bucket, never to a
+  measured zero).
+- Updates go through `AdaptationPolicy` / `DeterministicBaselineAdaptationPolicy` and the bounded Node history, applied only
+  from `RoutingFeedback` artifacts after the producing execution. A Node amplitude is a **preference ordinal, not a
+  calibrated success probability**, and must not be presented as one.
+- *Derivation without consumption leaves state bit-identical.* Consumed feedback changes only eligible bound targets in the
+  same scope.
+- **Applied-revision bookkeeping is caller-owned**: for each applied observation the caller retains
+  `(ExperienceRef, revision, feedbackId, cohortKey)` so each effective revision is applied exactly once and a superseded one
+  is detectable. This is not a hidden history.
+- **Reset and rebuild.** Node adaptation is not exactly invertible (bounds and saturation), so a correction that supersedes
+  an already-applied reward cannot be subtracted. The caller **resets** the preference Nodes and **replays the effective
+  observations in the applied order** `(ledgerSequence, ExperienceRef)` up to the cutoff, in pages of at most 500 from a Store
+  `ADAPTER_READY` export. A rebuilt state must equal the state built from scratch from the same corrected export. A removed or
+  re-versioned route simply has no bound cohort and is skipped. Route changes never silently inherit another route's cohort.
+- **Fallback.** For cold start, unknown route, incompatible state, or insufficient evidence, rule 3 of the ordering is skipped
+  and the decision is exactly the #62 baseline. Preference can reorder eligible routes only; it never changes authorization,
+  mandatory quality gates or API permissions. There is no exploration.
+
+Retained-footprint model (**modeled, not measured**; a 64-bit HotSpot with compressed references, as in ADR 0021): a
+`RoutingFeedback` is about 64 B plus 36 B per entry (at most about 2.4 KB at 64 entries); the applied-revision ledger at
+about 64 B per entry is at most about 64 KiB at 1,024 entries; preference Nodes at the default history limit of 256 and about
+44 B per retained state are at most about 2.75 MiB for 256 cohorts, and about 176 KiB at a history limit of 16, which a
+routing deployment should prefer. Measured allocation and latency are deferred to #67 and must not be inferred from this model.
+
+## 8. Algorithm, Data Structures and Complexity
+
+Let `R` be routes (at most 32), `Q` requirements (at most 16), `K` ranked candidates (at most 8) and `C` cohorts (at most 256).
+
+| Operation | Time | Extra space | Notes |
+| --- | --- | --- | --- |
+| Eligibility filter | `O(R·Q)` | `O(R)` | Linear scan over an immutable array sorted by `(RouteId, RouteVersion)`. |
+| Order eligible routes | `O(R log R)` | `O(R)` | Fixed lexicographic comparator; at most 32 elements, so a plain sort is clearer than a heap. |
+| Preference lookup | `O(1)` expected per candidate | none | Point lookup in a cohort-key map; **never iterated for ordering**, so hash iteration order cannot affect results. |
+| `decide` overall | `O(R·Q + R log R)` | `O(R)` | No allocation beyond the decision; no cache, parallelism, SIMD or GPU. |
+| Apply one feedback | `O(E)`, `E` at most 64 entries | `O(E)` | Existing `FeedbackAdaptationCognitiveStage` cost model. |
+| Rebuild from `N` observations | `O(N·E)` | `O(C)` | Bounded by 4,096 observations per call; exported in pages. |
+
+Data-structure rationale (access pattern first): the catalog is read-mostly and tiny, so a sorted immutable array gives
+deterministic iteration and good locality with no per-route collection objects; cohort lookup is a point query, so a map with
+deterministic canonical keys is enough, and any snapshot export iterates keys sorted by canonical string. Collections are
+copied defensively and immutable once published. No premature cache, parallelism or primitive layout is justified at
+`R ≤ 32` and `C ≤ 256`; revisit only if a #67 measurement shows a hotspot.
+
+Determinism: total orders everywhere (Section 3.3, Section 2), no wall-clock lookup, no randomness, no dependence on hash or
+thread order. Equal inputs produce equal decisions and equal rebuilt states.
+
+## 9. Examples
+
+Catalog `cat-demo` version `7`; every identifier is fictional; no provider name or limit is encoded.
+
+| Route | Billing | Tier | Capabilities |
+| --- | --- | ---: | --- |
+| `sub-a` v1 | `SUBSCRIPTION` | 1 | `java` |
+| `sub-b` v1 | `SUBSCRIPTION` | 1 | `java` |
+| `api-x` v1 | `API_METERED` | 2 | `java`, `long-context` |
+
+Scope `scope-demo`. Policy `route-lex` version `1` (Section 3.3), `minSupportingObservations = 3`.
+
+### 9.1 Cold start
+
+Request `r-101`, task `task-17`, stage `s-impl`, `stageKind = implement`, requires `{java}`, `overflowPermitted = false`, empty
+preference. Eligible: `sub-a`, `sub-b` (`api-x` is `OVERFLOW_NOT_PERMITTED`). Tiers and priorities tie, rule 3 is skipped (no
+evidence), rule 4 is skipped (no resource data), rule 5 picks `sub-a`.
+Result: `Selected(sub-a v1, basis=COLD_START, rulesApplied=[tier, fallbackPriority, routeId])`. This is advice; Forge
+revalidates and runs it.
+
+### 9.2 No eligible route, then explicit overflow
+
+Request `r-102` requires `{java, long-context}`, `overflowPermitted = false`. `sub-a` and `sub-b` are `MISSING_CAPABILITY`;
+`api-x` is `OVERFLOW_NOT_PERMITTED`. Result: `NoEligibleRoute` with three reasons. Neuron does not escalate on its own. Only
+after Forge's own quota check does it re-ask with `overflowPermitted = true` (`r-103`), which yields `Selected(api-x v1,
+overflowUsed=true)`; the decision records that spending was permitted by the host, not inferred.
+
+### 9.3 Missing evidence
+
+The `sub-a` run for `task-17` completes (worker invocation succeeded) and the Store holds outcome `PENDING`. No feedback is
+derived. Later the outcome becomes `ACCEPTED` with origin `IMPORTED_CLAIM`, or the mandatory `TESTS` observation is `UNKNOWN`:
+derived status `ACCEPTED_UNVALIDATED`. Feedback is `NEUTRAL` with reason `MISSING_MANDATORY_EVIDENCE`; the preference
+snapshot is bit-identical before and after. The success of the invocation is never counted as reward.
+
+### 9.4 Rejected work
+
+`task-18`, stage `implement`, routed to `sub-b`. Stage-local evidence shows mandatory `TESTS` is `FAIL` under evaluation policy
+`forge-gates` v`1`, the current outcome is `REJECTED`, derived status `NOT_ACCEPTED`. The failure is attributable to the
+executed route's stage, so `RoutingFeedback` is `PENALIZE` for the cohort of `sub-b`. A `TIMED_OUT` run of `sub-b` would instead
+yield `NEUTRAL`, because it says nothing about the generated work.
+
+### 9.5 Corrected evidence
+
+`task-17` on `sub-a` was `VALIDATED_ACCEPTED`: observation `X1` (revision 1, ledger sequence 41) produced `REINFORCE`, recorded
+in the applied-revision ledger. Forge then records a correction: `X1` revision 2 (sequence 58) sets mandatory `TESTS` to `FAIL`,
+so the effective status is `ACCEPTED_UNVALIDATED` and the effective feedback becomes `NEUTRAL`. The caller detects that `X1` was
+applied at revision 1, resets the preference Nodes, and replays the effective observations in `(sequence, ref)` order up to the
+cutoff. The rebuilt state equals one built from scratch from the corrected export, as if the reward had never been applied.
+Nothing is subtracted from the old state.
+
+### 9.6 Later-cycle update
+
+After three or more `VALIDATED_ACCEPTED` outcomes favor `sub-b` over `sub-a` in cohort `(implement, bucket-m)`, the preference
+becomes active for that cohort. For request `r-140` (`task-31`) with requires `{java}`, tiers and priorities tie, rule 3 now
+orders `sub-b` first: `Selected(sub-b v1, basis=LEARNED_PREFERENCE)`. If `sub-b` were ineligible, preference could not promote it;
+if `api-x` is permitted it stays tier 2, so a learned preference cannot jump the tier order.
+
+### 9.7 Plan / implement / review / QA
+
+Each stage is a separate request with its own catalog compatibility and cohort; no stage's outcome credits another without
+stage-local evidence.
+
+| `stageKind` | Typical hard requirements (host-set) | Cohort | Credit rule |
+| --- | --- | --- | --- |
+| `plan` | `long-context`, no tool execution | `(plan, bucket)` | Reviewer acceptance of the plan, attributed to the planning route. |
+| `implement` | `java`, tool use, locality | `(implement, bucket)` | Mandatory `TESTS` and `CORRECTNESS` on the attempt. |
+| `review` | independent route from the implementing one | `(review, bucket)` | Findings confirmed by later evidence; a review route is not credited for the implementer's tests. |
+| `qa` | `TESTS`, `SECURITY` observations available | `(qa, bucket)` | Mandatory gates of the QA policy. |
+
+### 9.8 Subscription-first with explicit API overflow
+
+Default host table: `SUBSCRIPTION`/`LOCAL` → tier 1, permitted `API_METERED` → tier 2. While `overflowPermitted = false`, API
+routes are `OVERFLOW_NOT_PERMITTED`, so no selection or preference can reach them. After Forge sets it to `true`, tier 1 routes
+still rank first among eligible ones, so overflow is chosen only when no tier 1 route is eligible (for example 9.2) or the host
+policy defines another table. The numeric quota, the provider, and the decision to spend are all outside Neuron.
+
+## 10. Store Dependencies and Implementation Order
+
+The Store's execution-memory v1 contract is accepted but **not implemented**; Store issues
+[#94](https://github.com/stevdrey/monada-resonance-store/issues/94)-[#102](https://github.com/stevdrey/monada-resonance-store/issues/102)
+are dependencies, not baseline capabilities. Each Neuron issue must re-check the exact public Store API before use.
+
+| Store issue | Capability | Neuron consumer |
+| --- | --- | --- |
+| #94 | Consumable library publications | #68 |
+| #95, #96, #97 | Records, ledger, `ExecutionMemory` facade (history, revisions, idempotency) | #64, #68 |
+| #98 | Scoped projections and bounded recall | Optional host experience recall; never ranking authority |
+| #99 | Attempt-chain usage and hypothetical `CostToAcceptedOutcome` | #67 (evaluation-only) |
+| #100 | Pairwise comparison and Pareto diagnostics | #67 (evaluation-only) |
+| #101 | `exportSamples` (`execution-sample/1`) | #64 |
+| #102 | End-to-end Store evaluation | Informational |
+
+**API exports versus evaluation-only annotations.** The production `monada-api` export carries outcome, derived acceptance,
+per-dimension evidence, usage counters with provenance, exact refs and revisions, and the ledger checkpoint. **Cost and
+comparison annotations are produced only by `monada-evaluation` tooling.** Neuron's production code must not depend on
+`monada-evaluation`; hypothetical cost reaches Neuron only through an explicit host-supplied annotation seam.
+
+Neuron implementation order (a dependency graph, not a claim that any item exists):
+
+```text
+#59 contract  (this document)
+  -> #60 TaskFeatures + encoder
+       -> #61 RouteCatalog + eligibility
+            -> #62 RoutingPolicy + RoutingDecision + composition seam
+                 -> #63 RoutingOutcome + evidence + learning eligibility
+                      -> #64 Store export -> RoutingObservation      (also needs Store #94 #95 #97 #101)
+                      -> #65 RoutingFeedback + credit assignment      (needs #62, #63)
+                           -> #66 caller-owned preference state       (needs #60, #61, #62, #65)
+                                -> #67 temporal replay evaluation     (needs #62-#66, Store #99 #100)
+                                     -> #68 published API + JPMS consumer loop
+```
+
+## 11. Compatibility
+
+Everything in this contract is additive and opt-in.
+
+| Surface | v1 routing extension |
+| --- | --- |
+| `Signal`, `FrequencyState`, `Node` | Unchanged; no identity or route on `Signal`. |
+| `CycleInput`, `NeuronRuntime`, `CognitiveStage`, `CognitiveStageKind` | Unchanged signatures and defaults; no new stage kind. |
+| `HostExecutionContext`, `ActionRequest`, `PerceptionRequest` | Unchanged; the context stays opaque. |
+| `OutcomeFeedback`, `OutcomeFeedbackPolicy`, `FeedbackAdaptationCognitiveStage` | Unchanged behavior. |
+| `RuntimeBackendSelector` and hardware backends | Unchanged; independent of route choice. |
+| Vector API, scalar fallback | Unchanged; no new preview, incubator or native requirement, no JDK or Gradle change. |
+| `ResonanceMemoryPort` | Receives no routing envelope, as with host context. |
+| Dependencies | No new dependency; no provider SDK, no Store type in root contracts. |
+
+## 12. Limits and Remaining Evidence Gaps
+
+- **No effectiveness claim.** This document makes no claim that routing improves quality, acceptance or cost. #67 may report
+  coverage and chosen-route outcomes on a reproducible workload with controls; replay on Store exports observes only the route
+  that was actually chosen and cannot prove counterfactual or online improvement.
+- Footprint figures in Section 7 are a model. Latency and allocation are unmeasured until #67.
+- Unknown or incomplete evidence can bias routing; the contract's answer is to refuse unsupported inferences (neutral or no
+  update), not to estimate them.
+- Descriptors are caller observations. A wrong catalog yields wrong advice; Forge's revalidation before execution is the
+  safety boundary.
+- Stable provenance and schema/policy versions are required for replay; corrections and scope boundaries must not silently
+  contaminate learned state, which is why mismatches are reported and rebuilds are explicit.
+- `NeuronRuntime` is sequential and not thread-safe; the preference snapshot must be passed by the host, not shared mutably.
+- The Store's contract is not yet implemented, so end-to-end behavior with real exports is unverified until #64 and #68.
+
+## 13. Verification (this issue)
+
+This issue is documentation-only: no runtime change and no new tests. From the repository root:
+
+```bash
+git diff --stat origin/main -- . ':!docs' ':!README.md'
+./gradlew test
+```
+
+The first command must print nothing (no code, build or dependency change). The second is optional and shows the build is
+untouched. Relative links and examples are validated by inspection and by resolving every `](...)` target to an existing
+file.
+
+## 14. Documentation Updates
+
+- `docs/specs/forge-routing-contract-v1.md` (this file, new).
+- `docs/adr/0026-forge-routing-ownership.md` (new).
+- `docs/architecture.md`: "Forge Routing Extension (proposed)" section.
+- `README.md`: pointer under the host-embedding section.

@@ -503,6 +503,38 @@ cycle, stage, memory, and action APIs remain public for experiments and focused 
 host-facing contract. A runtime configured with `perceptionCapability(capability, maxSignals)` takes its initial signals from the
 adapter, so its executions supply a host context and no signals.
 
+## Forge Routing Extension (proposed contract, not implemented)
+
+Monada Forge needs vendor-neutral, stage-level recommendations of which authorized worker/model route to use, learned
+from validated outcomes. [Forge Routing Contract v1](specs/forge-routing-contract-v1.md) and
+[ADR 0026](adr/0026-forge-routing-ownership.md) define that extension. **No routing type exists at this baseline**; the names
+below are proposals that issues #60 to #68 implement in dependency order, and the Store capabilities it depends on (Store
+issues #94 to #102) are likewise pending.
+
+```text
+Forge (host)
+  -> builds RoutingRequest + RouteCatalog, holds RoutingPreference           (host-owned inputs and state)
+  -> RoutingPolicy.decide(...) -> Selected | Abstain | NoEligibleRoute        (Neuron-owned, pure, advice only)
+  -> authorizes, revalidates, executes, judges evidence                       (Forge-owned)
+  -> records outcome and evidence in the Store; later exports samples         (Store-owned)
+  -> Neuron derives RoutingFeedback from validated, attributable outcomes     (explicit, caller-held, bounded)
+```
+
+Ownership: Neuron owns the recommendation, deterministic fail-closed eligibility filtering, and the semantics of routing
+adaptation. Forge owns authorization, execution, context collection, evidence judgment, and the identifiers, ordinals and
+cutoffs used for replay. The Store owns persistence, recall and exports. Workflow-stage choice (Forge), worker/model route
+choice (this extension) and hardware backend selection (`RuntimeBackendSelector`) are three separate decisions.
+
+The extension is additive and opt-in. It keeps `Signal` identity-free (route identity travels in a typed envelope and in the
+opaque `HostExecutionContext`), keeps the canonical stage order, and adds no stage kind or `CycleInput` field. The composition
+seam is a pure `decide` function called by the host, with an optional thin `REASONING`-position adapter whose inputs come from a
+host resolver. A decision reserves nothing and is never an `ActionStatus`; a worker invocation result is not validated task
+acceptance. Learning reuses the existing Node-bound `AdaptationPolicy` path through a separate `RoutingFeedback` artifact
+(`OutcomeFeedback` is unchanged), with caller-owned bounded state and an explicit reset-and-replay when corrected evidence
+supersedes an applied reward. Unknown resource values are never zero, and hypothetical API cost, actual billing and
+subscription activity stay distinct. No routing quality, cost or accuracy claim is made until the replay evaluation (#67)
+supplies a reproducible workload with controls.
+
 ## Target Module Boundaries
 
 As the repository grows, prefer boundaries similar to:

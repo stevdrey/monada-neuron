@@ -280,6 +280,15 @@ interprets the outputs; a runtime is sequential and not thread-safe. Its composi
 per-cycle data (signals, budget override, prior feedback) travels in `CycleInput`. See
 [ADR 0022](docs/adr/0022-embeddable-host-runtime-facade.md).
 
+## Forge Routing (proposed, not implemented)
+
+Monada Forge needs vendor-neutral, stage-level worker/model recommendations that learn from validated outcomes. The
+versioned contract is defined in [Forge Routing Contract v1](docs/specs/forge-routing-contract-v1.md) and recorded in
+[ADR 0026](docs/adr/0026-forge-routing-ownership.md). It is documentation only: the routing types it names are proposals that
+issues #60 to #68 implement, all additive and opt-in, and the Monada Resonance Store capabilities it depends on are not yet
+available. A routing decision is advice. Forge keeps authorization, execution and evidence judgment, and Monada Resonance Store
+keeps persistent experience.
+
 ## Design Principles
 
 ### 1. Do not build an LLM wrapper
