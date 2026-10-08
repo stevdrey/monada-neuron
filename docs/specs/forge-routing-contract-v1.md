@@ -232,10 +232,34 @@ the inputs of an abstention or of a no-route decision without host-side state.
 
 **Cohort binding.** Whenever the policy computes a `cohortBucket` from the request's `TaskFeatures`, `Selected` records the
 immutable `cohortBinding(cohortBucket, bucketMappingVersion, mappingVersion, featureSchemaVersion)`. `RoutingOutcome` copies it together with
-`decisionRef`, and Forge records it with the stage in the Store as a caller-approved descriptor so that a later export returns
-it (Store #95 and #101 must be checked for this in #64). A rebuild assigns a cohort **only** from this binding; features are
-never recomputed from a request object that no longer exists. A `RoutingObservation` without a binding is not eligible for
-learning and is reported as `MISSING_COHORT_BINDING`.
+`decisionRef`. A rebuild assigns a cohort **only** from this binding; features are never recomputed from a request object
+that no longer exists.
+
+**Routing envelope transport (v1 mechanism).** The Store baseline has no routing field: `RouteDescriptor` carries only worker,
+provider, model, effort and billing mode, and `StageRecorded` carries the stage, route, timing, usage and `ArtifactRef`s. v1
+therefore uses the Store's **existing opaque artifact reference plus a host-owned resolver**, and needs **no Store contract
+extension**:
+
+- **Payload.** A versioned `RoutingEnvelope` (`forge-routing/1`) with `decisionRef`, the route `(RouteId, RouteVersion)`,
+  `catalogVersion`, routing `policyId`/`policyVersion`, `evaluationPolicy`, the `cohortBinding`, and the chosen
+  `executionMode`. It is serialized canonically (fixed field order, UTF-8) and held by **Forge**, not Neuron and not the Store.
+- **Binding in the Store.** On the `STAGE_RECORDED` event of the routed stage Forge adds one `ArtifactRef` with kind
+  `neuron-routing-envelope/1`, `reference` = a host-issued opaque `envelopeRef` (at most 128 code points, within the Store's
+  512-code-point opaque limit), and `digest` = the lower-case hexadecimal SHA-256 of the canonical payload. The reference
+  therefore travels with that event and with every correction of it (a `CORRECTION` carries the full replacement payload), so
+  identity and revision are bound by the stage event's own `ExperienceRef` and revision. A stage has at most one such reference.
+- **Resolution ownership.** Neuron defines the host port `RoutingEnvelopeResolver` (in #64): `resolve(scopeId, envelopeRef) ->
+  RoutingEnvelope | missing`. The host implements it over its own storage. Neuron never fetches by itself and never writes the
+  Store.
+- **Verification.** The translator recomputes the digest of the resolved payload. It also checks that the payload's
+  `decisionRef` and route match the exported stage's route descriptor (worker, provider, model, effort) as far as the descriptor
+  expresses them.
+- **Missing-data behavior.** An observation is not eligible for learning, never guessed or recomputed, and is reported with a
+  typed reason: `MISSING_ENVELOPE_REFERENCE` (no such `ArtifactRef` on the stage), `ENVELOPE_UNRESOLVED` (the resolver returns
+  missing), `ENVELOPE_DIGEST_MISMATCH` (payload does not match the recorded digest) or `ENVELOPE_ROUTE_MISMATCH`.
+  `MISSING_COHORT_BINDING` remains for a resolved envelope that has no `cohortBinding`.
+- **Alternative.** A native Store field for this envelope would be a Store contract extension and a prerequisite of its own;
+  it is not assumed here and could replace the resolver later without changing Neuron's semantics.
 
 - `decisionRef = (scopeId, taskId, executionId, attemptId, stageId, requestOrdinal)`. It is how a later outcome is matched
   to the exact decision that produced it.
@@ -351,11 +375,14 @@ policy a second time or keep side state. The deterministic cycle normalizes ever
 The stage **emits no Signals**: its output list is empty, because route identity must not enter Signals. The typed hand-off
 (`retainsTypedHandOff()`) keeps the cycle alive only for a following stage that opts in with `acceptsTypedOnlyHandOff()`, such
 as `EVALUATION`; any other following stage ends the cycle with `NO_SIGNALS`, which is expected and not a failure. The host
-reads the decision from `CognitiveCycleResult.stageResults()`. The output-Signal admission override therefore still matters
-for any Signals a future version might add.
+reads the decision from `CognitiveCycleResult.stageResults()`. The output-Signal admission override is kept so the result stays
+correct under the cycle's normalization; an empty output cannot be truncated, and `CognitiveBudget` rejects `maxSignals <= 0`,
+so v1 has no truncation case.
 
-#62 must test that the decision and the hypotheses survive a cycle budget that truncates the output Signals, using a budget
-that admits zero signals.
+#62 must test, with a **valid minimum positive budget** (`maxSteps >= 1`, `maxSignals >= 1`), empty initial and output Signals
+and retained typed decision and hypotheses, that: normalization preserves the full `RoutingCognitiveStageResult`; a following
+`EVALUATION` stage receives the typed hand-off; and a following stage without typed-only support ends the cycle with the
+documented `NO_SIGNALS` termination. A future Signal-emitting variant defines its own truncation test.
 
 Rules for both levels:
 
@@ -520,9 +547,12 @@ The adaptive state (#66) reuses the existing generic learning path; **no second 
   `(ExperienceRef, revision, ledgerSequence, feedbackId, cohortKey)` so each effective revision is applied exactly once and a
   superseded one is detectable. The original `ledgerSequence` is kept because checkpoint validity needs the sequence of the
   revision being replaced, which the replacing revision (a later sequence) does not give. A `RoutingObservation` that replaces
-  an earlier revision also carries `supersedesSequence`, the sequence of the earliest revision it replaces (the Store history
-  exposes every revision with its sequence; #64 must verify the export carries it), so a checkpoint check never needs a lookup
-  and works after compaction. This is not a hidden history.
+  an earlier revision also carries `supersedesSequence`, the sequence of the earliest revision it replaces. The **translator
+  (#64) obtains it once, at translation time**, from the export when `execution-sample/1` carries every revision with its ledger
+  sequence, and otherwise from **bounded, read-only Store `history` reads** (pages of at most 500, snapshot cursor, caller-owned
+  handle, never `feedback()`), which this contract explicitly permits for this purpose. It then stores the value in the
+  `RoutingObservation`, so a later checkpoint check needs no read and works after compaction; only the translation step reads
+  history. This is not a hidden history.
 - **Reset and rebuild.** Node adaptation is not exactly invertible (bounds and saturation), so when **any already-applied
   non-neutral revision, reward or penalty, is superseded** by a different revision, the old effect cannot be subtracted and a
   replacement cannot undo saturation or ordering effects. The caller **resets** the affected scope's preference Nodes to the
@@ -687,12 +717,17 @@ are dependencies, not baseline capabilities. Each Neuron issue must re-check the
 | Store issue | Capability | Neuron consumer |
 | --- | --- | --- |
 | #94 | Consumable library publications | #68 |
-| #95, #96, #97 | Records, ledger, `ExecutionMemory` facade (history, revisions, idempotency) | #64, #68 |
+| #95, #96, #97 | Records, ledger, `ExecutionMemory` facade (history, revisions, idempotency); `ArtifactRef` carries the routing envelope reference (Section 3.2); bounded `history` reads give correction ancestry when the export lacks it | #64, #68 |
 | #98 | Scoped projections and bounded recall | Optional host experience recall; never ranking authority |
 | #99 | Attempt-chain usage and hypothetical `CostToAcceptedOutcome` | #67 (evaluation-only) |
 | #100 | Pairwise comparison and Pareto diagnostics | #67 (evaluation-only) |
 | #101 | `exportSamples` (`execution-sample/1`) | #64 |
 | #102 | End-to-end Store evaluation | Informational |
+
+**Downstream integration verification (#64, #68).** With a real execution memory, the loop *record, close and reopen, export,
+translate* must preserve the exact decision, `(RouteId, RouteVersion)` and cohort binding; a correction must recover the earliest
+superseded sequence; and checkpoint validation after compaction must give the same result as a full rebuild. This contract
+defines the mechanism and its dependencies and does not implement Store capabilities.
 
 **API exports versus evaluation-only annotations.** The production `monada-api` export carries outcome, derived acceptance,
 per-dimension evidence, usage counters with provenance, exact refs and revisions, and the ledger checkpoint. **Cost and
