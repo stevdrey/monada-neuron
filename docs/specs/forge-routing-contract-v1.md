@@ -141,7 +141,7 @@ Version compatibility:
 | `(RouteId, RouteVersion)` | Must equal the route of the candidate. A different `RouteVersion` has its own cohort and inherits nothing. |
 | `policyId` + `policyVersion` | **Provenance, not an admission key.** The routing policy only orders eligible routes at decision time; it never changes the values stored in the state, so changing it needs no rebuild and no cold start. Snapshots, checkpoints, ledger entries and `RoutingFeedback` record the policy that produced them for audit. Anything that changes **what is learned** (attribution and learning-eligibility rules, feedback scores) is part of `mappingVersion` below, which is the admission key. |
 | `evaluationPolicy` (id, version) | The state is **partitioned by evaluation policy**: the `RoutingPreference`, checkpoint, ledger entries and observations carry it, and it must equal the request's. Evidence judged under different evaluation policies is non-comparable, so observations under another one are not applied (`EVALUATION_POLICY_MISMATCH`) and a changed policy starts a separate cold state; the host keeps one state per `(scopeId, evaluationPolicy)`. |
-| `mappingVersion` | Must equal the version of the `CohortMapping` the policy uses for the request. `mappingVersion` identifies the **complete state-transition definition**: the feature-to-bucket assignment, the `initialNodeState` (including the Node type and identity rule), the **full `AdaptationConfig`** (`learningRate`, amplitude and energy bounds, `energyStep`, and every other field) the `RoutingFeedback` scoring configuration and the attribution and learning-eligibility rules that decide what is learned. It must change when any of them changes, so a snapshot built under another definition makes `decide` return `Abstain(STATE_INCOMPATIBLE)`. A new `mappingVersion` **starts a cold state**: stored observations keep only their old `cohortBinding`, which cannot be recomputed because the features are not retained (Section 3.2), so history under the old version is not migrated. The old state stays valid for the old version. A host that still owns the original features may re-export observations with bindings for the new version; the state is then an ordinary rebuild under that version. An observation whose `cohortBinding.mappingVersion` differs from the state's is not applied and is reported as `MAPPING_MISMATCH`. |
+| `mappingVersion` | Must equal the `mappingVersion` of the `RoutingStateDefinition` the policy uses for the request. That version identifies the **complete state-transition definition**, which the `RoutingStateDefinition` groups (the `CohortMapping`, the `initialNodeState`, the full `AdaptationConfig` and the feedback scoring and eligibility rules) and which must change when **any** part changes; the `CohortMapping` alone has only a `bucketMappingVersion`. The definition covers: the feature-to-bucket assignment, the `initialNodeState` (including the Node type and identity rule), the **full `AdaptationConfig`** (`learningRate`, amplitude and energy bounds, `energyStep`, and every other field) the `RoutingFeedback` scoring configuration and the attribution and learning-eligibility rules that decide what is learned. It must change when any of them changes, so a snapshot built under another definition makes `decide` return `Abstain(STATE_INCOMPATIBLE)`. A new `mappingVersion` **starts a cold state**: stored observations keep only their old `cohortBinding`, which cannot be recomputed because the features are not retained (Section 3.2), so history under the old version is not migrated. The old state stays valid for the old version. A host that still owns the original features may re-export observations with bindings for the new version; the state is then an ordinary rebuild under that version. An observation whose `cohortBinding.mappingVersion` differs from the state's is not applied and is reported as `MAPPING_MISMATCH`. |
 | `catalogVersion` | **Not an admission key.** A new catalog snapshot in which a route keeps its `(RouteId, RouteVersion)` reuses that route's history; a route that is added, removed or re-versioned follows the `(RouteId, RouteVersion)` rule above. |
 | `processedCutoff` | Must not exceed the request cutoff (see above). |
 - Store samples are consumed only as `execution-sample/1`. An unsupported schema is reported, never guessed.
@@ -162,14 +162,14 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 | `RoutingOutcome` | #63 | Host-evaluated result of executing a decision, with evidence and provenance. |
 | `RoutingObservation` | #63 | Neutral, Store-independent record of one effective execution sample, defined with `RoutingOutcome` so feedback derivation needs only #63. #64 only *produces* it from Store exports. |
 | `RoutingFeedback` | #65 | Bounded artifact derived from an observation; separate from `OutcomeFeedback`. |
-| `RoutingPreference`, `CohortMapping` | #62 | `CohortMapping` is the pure, versioned `TaskFeatures -> cohortBucket` function with its `mappingVersion`. `RoutingPreference` is the **immutable value snapshot** of cohort preference values plus `processedCutoff` and the mapping version, taken from the caller's mutable state and passed to `decide`. #62 defines the value type, its valid empty cold-start form (`EMPTY` for a scope, schema, mapping and policy) and its admission validation, so `decide` needs no later type; #66 only builds non-empty snapshots from the caller's state. |
+| `RoutingPreference`, `CohortMapping`, `RoutingStateDefinition` | #62 | `CohortMapping` is the pure, versioned `TaskFeatures -> cohortBucket` function with its `bucketMappingVersion`. `RoutingStateDefinition` groups the `CohortMapping`, `initialNodeState`, `AdaptationConfig` and feedback scoring and eligibility rules under one composite `mappingVersion` that changes when any part changes. `RoutingPreference` is the **immutable value snapshot** of `scopeId`, `featureSchemaVersion`, `evaluationPolicy`, `mappingVersion`, cohort preference values, supporting counts and `processedCutoff`, taken from the caller's mutable state and passed to `decide`. #62 defines the value type, its valid empty cold-start form (`EMPTY` for a scope, feature schema, evaluation policy and mapping version) and its admission validation, so `decide` needs no later type; #66 only builds non-empty snapshots from the caller's state. |
 | `RoutingStateStore` (caller-owned, mutable) | #66 | The caller's `Node` bindings, applied-revision ledger and `RoutingStateCheckpoint`; it produces the `RoutingPreference` snapshots. It is never passed to `decide`. |
 | `RoutingCognitiveStageResult` | #62 | Level B stage result that retains the full `RoutingDecision` together with the hypothesis hand-off (Section 3.5). |
 
 ### 3.1 Request, catalog and policy inputs
 
 - `RoutingRequest` holds `contractVersion`, `scopeId`, `taskId`, `executionId`, `attemptId`, `stageId`, `stageKind`,
-  `requestOrdinal`, the provenance fingerprints, `TaskFeatures`, hard requirements (required capabilities, context size,
+  `requestOrdinal`, the provenance fingerprints, the `evaluationPolicy` (id and version) the state is partitioned by, `TaskFeatures`, hard requirements (required capabilities, context size,
   `requiredTools`, `allowedLocalities`), `permittedModes`, `overflowPermitted` and the cutoff.
 - Requirements, permitted modes and `overflowPermitted` **originate from host policy, never from task-generated text**.
   `overflowPermitted` defaults to `false`; only the host may set it, and Neuron must never infer authorization to spend.
@@ -218,7 +218,7 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 
 | Variant | Meaning | Mandatory content |
 | --- | --- | --- |
-| `Selected` | Exactly one recommended route. | Common provenance (below), route `(RouteId, RouteVersion)`, ranked candidates (at most 8) with the rule that placed each, `basis` (`COLD_START`, `HOST_PRIORITY`, `LEARNED_PREFERENCE`, ...), `overflowUsed`, and the `cohortBinding` (below). |
+| `Selected` | Exactly one recommended route. | Common provenance (below), route `(RouteId, RouteVersion)`, ranked candidates (at most 8) with the rule that placed each, `basis` (`COLD_START`, `HOST_PRIORITY`, `LEARNED_PREFERENCE`, ...), `overflowUsed`, the chosen `executionMode` (Section 3.1) and the `cohortBinding` (below). |
 | `Abstain` | At least one route is eligible but the policy declines to advise. | Common provenance, typed reason (`POLICY_TRADEOFF_UNRESOLVED` or `STATE_INCOMPATIBLE`; these are the only v1 reasons, defined in Section 3.3 and Section 3.2), the eligible candidates, exclusion reasons for the excluded routes. |
 | `NoEligibleRoute` | The hard constraints exclude every route. | Common provenance and one structured exclusion reason for **every catalog route**. |
 
@@ -231,7 +231,7 @@ primary reason, so equal inputs give equal provenance. A retained Level B result
 the inputs of an abstention or of a no-route decision without host-side state.
 
 **Cohort binding.** Whenever the policy computes a `cohortBucket` from the request's `TaskFeatures`, `Selected` records the
-immutable `cohortBinding(cohortBucket, mappingVersion, featureSchemaVersion)`. `RoutingOutcome` copies it together with
+immutable `cohortBinding(cohortBucket, bucketMappingVersion, mappingVersion, featureSchemaVersion)`. `RoutingOutcome` copies it together with
 `decisionRef`, and Forge records it with the stage in the Store as a caller-approved descriptor so that a later export returns
 it (Store #95 and #101 must be checked for this in #64). A rebuild assigns a cohort **only** from this binding; features are
 never recomputed from a request object that no longer exists. A `RoutingObservation` without a binding is not eligible for
@@ -277,10 +277,10 @@ learning and is reported as `MISSING_COHORT_BINDING`.
 5. canonical route order: `RouteId` by code point, then `RouteVersion` numerically (Section 2; total order, final tie-breaker).
 
 Because rule 5 always breaks ties, a `Selected` decision exists whenever at least one route is eligible and no abstention
-condition holds. v1 has exactly two abstention triggers:
+condition holds. v1 has exactly two abstention triggers, evaluated in this fixed order (state first, so the tier rule never runs on an incompatible state):
 
 - `Abstain(STATE_INCOMPATIBLE)` when a route is eligible and the preference snapshot fails admission (Section 2).
-- `Abstain(POLICY_TRADEOFF_UNRESOLVED)` when the policy parameter `maxAutoSelectTier` (a host-set integer, default
+- `Abstain(POLICY_TRADEOFF_UNRESOLVED)`, only when the state is compatible, when the policy parameter `maxAutoSelectTier` (a host-set integer, default
   unbounded) is set and the best eligible route has a `tier` above it, so the host must confirm a lower-priority tier such as
   paid overflow before it is advised. With the default, this never fires.
 
@@ -330,7 +330,7 @@ initial Signals; a host that needs both runs routing as its own cycle, or uses L
 ```text
 CycleInput.hostContext -> CognitiveContext.hostContext()
   -> RoutingReasoningStage -> RoutingInputResolver (host adapter) -> RoutingInput(request, catalog, preference)
-  -> RoutingPolicy.decide(...) -> RoutingCognitiveStageResult(decision, HypothesisSet with the selected route, output signals)
+  -> RoutingPolicy.decide(...) -> RoutingCognitiveStageResult(decision, HypothesisSet with the selected route; no output Signals)
 ```
 
 `ReasoningCognitiveStageResult` is a final record that retains only status, output Signals and a `HypothesisSet`, so it cannot
@@ -342,13 +342,20 @@ policy a second time or keep side state. The deterministic cycle normalizes ever
 `RoutingCognitiveStageResult` therefore **must**:
 
 - override `withAdmittedOutputSignals` to return a `RoutingCognitiveStageResult` that keeps the decision and hypotheses
-  unchanged and only replaces the output Signals with the admitted prefix;
+  unchanged and only replaces the (empty in v1) output Signals with the admitted prefix;
 - report `retainsTypedHandOff()` when it holds hypotheses, and implement `validateProvenance(context)` like
   `ReasoningCognitiveStageResult`, so the cycle keeps running to `EVALUATION` and evidence is validated;
 - be recognised by `ReasoningCognitiveStageResult.hypothesesOf`, extended **additively**; no existing signature or behavior
   changes.
 
-#62 must test that the decision and the hypotheses survive a cycle budget that truncates the output Signals.
+The stage **emits no Signals**: its output list is empty, because route identity must not enter Signals. The typed hand-off
+(`retainsTypedHandOff()`) keeps the cycle alive only for a following stage that opts in with `acceptsTypedOnlyHandOff()`, such
+as `EVALUATION`; any other following stage ends the cycle with `NO_SIGNALS`, which is expected and not a failure. The host
+reads the decision from `CognitiveCycleResult.stageResults()`. The output-Signal admission override therefore still matters
+for any Signals a future version might add.
+
+#62 must test that the decision and the hypotheses survive a cycle budget that truncates the output Signals, using a budget
+that admits zero signals.
 
 Rules for both levels:
 
@@ -370,10 +377,10 @@ Rejected seams (ADR 0026): a routing field on `CycleInput`; a new canonical stag
 | Hard requirements per request (capabilities, tools, localities and modes, each set) | 16 | Request rejected |
 | Typed features per `TaskFeatures` | 32 | Rejected; unknown values are explicit, never dropped |
 | Ranked candidates in a decision | 8 | Truncation is explicit (`candidatesTruncated`) |
-| Exclusion reasons in a decision | one per catalog route (32) | n/a |
+| Exclusion reasons in a decision | one primary reason per excluded route (at most 32) plus `additionalReasons` (at most 8 per route) | n/a |
 | Feedback entries per `RoutingFeedback` | 64 | Rejected at construction (same bound as `OutcomeFeedback`) |
-| Preference cohorts (Node-bound) per scope | 256 | **Report `CAPACITY_EXHAUSTED`, do not learn**; never evict silently, never spill into another scope |
-| Applied-revision entries per scope | 4,096 (equal to the rebuild bound) | `CAPACITY_EXHAUSTED`; nothing is evicted silently. The caller compacts through a `RoutingStateCheckpoint` (Section 7) or starts a new scope |
+| Preference cohorts (Node-bound) per state, i.e. per `(scopeId, evaluationPolicy)` | 256 | **Report `CAPACITY_EXHAUSTED`, do not learn**; never evict silently, never spill into another scope |
+| Applied-revision entries per state | 4,096 (equal to the rebuild bound) | `CAPACITY_EXHAUSTED`; nothing is evicted silently. The caller compacts through a `RoutingStateCheckpoint` (Section 7) or starts a new scope |
 | Observations replayed per rebuild call | 4,096 | Caller pages through the Store export (page size 1–500) and may continue from a checkpoint |
 | Node history per preference Node | 0 (`historyLimit = 0`) | History disabled for routing cohorts (Section 7) |
 
@@ -443,7 +450,7 @@ stage, `featureSchemaVersion` and evaluation policy; the producing decision's ro
 | `VALIDATED_ACCEPTED` and sufficient stage-local attribution to the executed route | `REINFORCE` | Positive credit to that route's cohort only. |
 | Proven mandatory quality failure attributable to the executed route's stage | `PENALIZE` | Bounded negative credit; a weak signal against the choice. |
 | `ACCEPTED_UNVALIDATED` because mandatory evidence is `UNKNOWN`, missing, from a mismatched policy, or the outcome is an imported claim | `NEUTRAL` | No reward and no penalty; the missing evidence is reported. |
-| `ACCEPTED_UNVALIDATED` because an effective mandatory observation of the accepted attempt is `FAIL` (for example after a correction) | `PENALIZE` | A proven mandatory failure is a failure of the gate regardless of the derived label; it follows the row above for `NOT_ACCEPTED`. |
+| `ACCEPTED_UNVALIDATED` because an effective mandatory observation of the accepted attempt is `FAIL` (for example after a correction) | `PENALIZE` | A proven mandatory failure is a failure of the gate regardless of the derived label; it is treated exactly like a `NOT_ACCEPTED` outcome with an attributable proven mandatory failure. |
 | `NOT_ACCEPTED` (rejected, failed or cancelled work) with **no** attributable proven mandatory failure | `NEUTRAL` | Reason `NO_ATTRIBUTABLE_FAILURE`: a refusal, a rejection or an unjudged failure without gate evidence is not a proven failure of the route, so it is never penalized. |
 | `PENDING`, `CANCELLED` | `NEUTRAL` | Says nothing about the route. |
 | Environmental failure (unavailable, timed out) | `NEUTRAL` | Says nothing about the route. |
@@ -469,8 +476,8 @@ The adaptive state (#66) reuses the existing generic learning path; **no second 
 
 - **Mutable state and immutable snapshot are separate.** The caller owns a mutable `RoutingStateStore`: the `Node` bindings,
   the applied-revision ledger and the latest checkpoint. Before each `decide` the caller copies the relevant values into an
-  immutable `RoutingPreference` (`scopeId`, `featureSchemaVersion`, `cohortKey -> preferenceValue`, supporting-observation counts, `processedCutoff`,
-  mapping version, `policyId` and `policyVersion`). `decide` sees only that snapshot, so it stays pure and deterministic, and later adaptation can never change a
+  immutable `RoutingPreference` (`scopeId`, `featureSchemaVersion`, `evaluationPolicy`, `cohortKey -> preferenceValue`, supporting-observation counts,
+  `processedCutoff`, `mappingVersion`, and the producing `policyId` and `policyVersion` as provenance). `decide` sees only that snapshot, so it stays pure and deterministic, and later adaptation can never change a
   snapshot already published or race with a concurrent read. Neuron keeps no registry, session, history, timer or background
   task.
 - Preference is bound to caller-owned `Node` instances by an explicit, versioned mapping
@@ -530,7 +537,7 @@ The adaptive state (#66) reuses the existing generic learning path; **no second 
   is reintroduced, its cohort becomes active with its history intact instead of returning cold. Dormant cohorts count toward
   the 256-cohort bound; when it is reached the state reports `CAPACITY_EXHAUSTED`, and only an explicit caller action removes
   a dormant cohort (after which a later rebuild would recreate it from the export unless the caller excludes that route).
-- **Checkpoint and compaction.** The applied-revision ledger is bounded at 4,096 entries per scope, the same as one rebuild
+- **Checkpoint and compaction.** The applied-revision ledger is bounded at 4,096 entries per state (one `(scopeId, evaluationPolicy)` partition), the same as one rebuild
   call, so a rebuild can never exhaust the ledger it is rebuilding. To go beyond it, the caller writes a
   `RoutingStateCheckpoint(scopeId, featureSchemaVersion, evaluationPolicy, mappingVersion, policyId, policyVersion, processedCutoff, preferenceSnapshot, ledgerDigest)` and compacts the entries it covers. A rebuild may
   start from the latest checkpoint whose `processedCutoff` is **strictly less than** the `supersedesSequence` of the earliest
@@ -557,7 +564,7 @@ channels, on the order of 100 B each, a few tens of KiB for 256 cohorts (a model
 
 ## 8. Algorithm, Data Structures and Complexity
 
-Let `R` be routes (at most 32), `Q` requirements (at most 16), `K` ranked candidates (at most 8) and `C` cohorts (at most 256).
+Let `R` be routes (at most 32), `Q` requirements (at most 16), `K` ranked candidates (at most 8) and `C` cohorts of one state (at most 256).
 
 | Operation | Time | Extra space | Notes |
 | --- | --- | --- | --- |
@@ -692,13 +699,13 @@ per-dimension evidence, usage counters with provenance, exact refs and revisions
 comparison annotations are produced only by `monada-evaluation` tooling.** Neuron's production code must not depend on
 `monada-evaluation`; hypothetical cost reaches Neuron only through an explicit host-supplied annotation seam.
 
-Neuron implementation order (a dependency graph, not a claim that any item exists). Every type an issue uses is introduced by that issue or by a declared prerequisite; where this contract moves a type earlier than the issue text says (`RoutingRequest`, `RoutingPreference`, `CohortMapping`, `RoutingObservation`), this contract prevails and the issue bodies are to be aligned:
+Neuron implementation order (a dependency graph, not a claim that any item exists). Every type an issue uses is introduced by that issue or by a declared prerequisite; where this contract moves a type earlier than the issue text says (`RoutingRequest`, `RoutingPreference`, `CohortMapping`, `RoutingStateDefinition`, `RoutingObservation`), this contract prevails and the issue bodies are to be aligned:
 
 ```text
 #59 contract  (this document)
   -> #60 TaskFeatures + encoder
        -> #61 RoutingRequest + RouteCatalog (immutable snapshot identity) + ResourceEstimate + eligibility   (needs #60)
-            -> #62 RoutingPolicy + RoutingDecision + CohortMapping + RoutingPreference (value, EMPTY, admission)
+            -> #62 RoutingPolicy + RoutingDecision + CohortMapping + RoutingStateDefinition + RoutingPreference (value, EMPTY, admission)
                  + composition seam                               (needs #60, #61)
                  -> #63 RoutingOutcome + RoutingObservation + evidence + learning eligibility   (needs #62)
                       -> #64 Store export -> RoutingObservation   (needs #60, #63; Store #94 #95 #97 #101)
