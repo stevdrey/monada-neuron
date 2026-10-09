@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (contract; only `TaskFeatures` and its signal encoder, issue #60, are implemented, the rest is pending issues #61 to #68)
+Accepted (contract; implemented so far: `TaskFeatures` and its signal encoder, issue #60, and the route catalog and eligibility filter, issue #61; the rest is pending issues #62 to #68)
 
 ## Context
 
