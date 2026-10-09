@@ -89,6 +89,11 @@ public record RouteCatalog(String catalogVersion, List<CatalogEntry> entries, Li
 
     /** Creates a catalog without resource estimates. */
     public static RouteCatalog of(String catalogVersion, Collection<CatalogEntry> entries) {
+        Objects.requireNonNull(entries, "entries must not be null");
+        if (entries.size() > MAX_ROUTES) {
+            throw new IllegalArgumentException(
+                    "catalog allows at most " + MAX_ROUTES + " routes, got: " + entries.size());
+        }
         return new RouteCatalog(catalogVersion, List.copyOf(entries), List.of());
     }
 
