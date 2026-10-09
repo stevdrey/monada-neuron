@@ -915,7 +915,7 @@ and no latency is measured. No cache, parallelism, SIMD or GPU is used.
 
 Evidence gaps: no claim that this layout improves routing or that Signal resonance reflects task similarity; the default
 vocabularies, the band layout and the unknown semantics are unvalidated policy choices; latency is unmeasured and allocation is a single upper-bound check (#67); the
-encoder is not yet consumed by `RoutingRequest` (#61) or a `PerceptionCapability`.
+encoder is not yet consumed by a `PerceptionCapability`; `RoutingRequest` (#61, Section 16) carries the typed `TaskFeatures` record beside its hard requirements, but nothing feeds the encoded Signals into a request or a cycle yet.
 
 ## 16. Implemented: Route Catalog and Eligibility Filtering (#61)
 
@@ -950,8 +950,8 @@ revalidate authorization, availability and quota immediately before executing an
 
 `R` <= 32 routes, `Q` <= 16 tokens per requirement set. Time `O(R*Q)` (all sets are sorted, so subset and intersection checks
 are linear merges; no hash iteration, so order cannot affect results); extra space `O(R)` for the report; no retained state,
-cache, parallelism, SIMD or GPU. **Measured once** (JDK 27, `ThreadMXBean.getThreadAllocatedBytes`, after 20,000 warm-up calls,
-one evaluation at R=32, Q=16 with every route eligible): 5,504 bytes. The test asserts a positive, readable counter (it is skipped, not passed, when allocation tracking is unsupported) and an upper bound of 16 KiB; it is a
+cache, parallelism, SIMD or GPU. **Measured** on the final implementation, including the validating and canonicalizing `EligibilityReport` constructor (JDK 27, `ThreadMXBean.getThreadAllocatedBytes`, after 20,000 warm-up calls,
+one evaluation at R=32, Q=16 with every route eligible, identical in three separate runs): 11,736 bytes. Earlier revisions measured 5,504 bytes before the report validation was added; the figure must be re-measured whenever the report construction changes. The test asserts a positive, readable counter (it is skipped, not passed, when allocation tracking is unsupported) and an upper bound of 16 KiB; it is a
 regression guard, not a benchmark, and no latency is measured. `RouteTokens` intentionally duplicates the package-private
 token rules of `features.FeatureTokens`, because #61 may not edit that package; consolidating them is follow-up work.
 
