@@ -17,29 +17,34 @@ import java.util.Objects;
  * <p>Encoding, per dimension {@code d} with index {@code i = d.ordinal()}:
  *
  * <ul>
- *   <li>frequency {@code = 10*i + 8*ratio}, so dimensions occupy disjoint bands {@code [10i, 10i+8]};
+ *   <li>frequency {@code = 3^i * (1 + ratio)} with {@code ratio} in {@code [0, 1]}, so dimensions occupy the closed,
+ *       disjoint bands {@code [3^i, 2*3^i]} and every dimension has the same within-band resonance range
+ *       ({@code F = min/max} in {@code [0.5, 1]}), which keeps the dimensions equally weighted under
+ *       {@code ScalarResonanceMetric};
  *   <li>a known value has amplitude {@code 1.0} and phase {@code 0.0};
  *   <li>a categorical token at vocabulary index {@code k} of {@code n} has {@code ratio = (k+1)/(n+1)}; a token
  *       outside the vocabulary shares {@code ratio = 1.0} (the {@code OTHER} position, a documented collision);
  *   <li>a number {@code v} has {@code ratio = min(bitLength(v), L) / L} with {@code L = bitLength(ceiling)}, using
- *       integer arithmetic only; {@code v > ceiling} saturates and is reported;
- *   <li>an unknown value is {@code FrequencyState(0.0, 0.0, PI)}: silent and phase-marked, distinct from any known
- *       value including a measured zero and from {@link FrequencyState#ZERO};
+ *       integer arithmetic only; {@code v > ceiling} saturates (exactly when {@code bitLength(v) > L}) and is reported;
+ *   <li>an unknown value is {@code FrequencyState(1.0, 2.5 * 3^i, PI)}: non-silent, so unknown matches only unknown
+ *       of the same dimension (resonance 1) and never a known value (phase opposition, resonance 0); it sits in the
+ *       gap above its band, so it still names its dimension;
  *   <li>a tag set emits one signal per tag in canonical order, nothing for a known empty set, and one unknown
  *       marker for an unknown set.
  * </ul>
  *
- * <p>This is a coarse ordinal layout, not a semantic embedding: no similarity quality is claimed. Time is
- * {@code O(F)} in the number of features and extra space is at most {@value #MAX_SIGNALS} signals. The encoder
- * is stateless apart from its immutable vocabulary indexes, performs no I/O and reads only the argument.
+ * <p>Every signal's frequency identifies its dimension, so consumers must match signals by band, never by list
+ * position (tag sets have variable length). This is a coarse ordinal layout, not a semantic embedding: no
+ * similarity quality is claimed. Time is {@code O(F)} in the number of features and extra space is at most
+ * {@value #MAX_SIGNALS} signals. The encoder is stateless apart from its immutable vocabulary indexes, performs no
+ * I/O and reads only the argument.
  */
 public final class TaskFeatureEncoder {
 
     /** Upper bound on signals per encoding: six scalar dimensions plus two full tag sets. */
     public static final int MAX_SIGNALS = 6 + 2 * TaskFeatures.MAX_TAGS;
 
-    private static final double BAND_WIDTH = 8.0;
-    private static final double BAND_STRIDE = 10.0;
+    private static final double[] BAND_BASE = bandBases();
 
     private final EncodingPolicy policy;
     private final Map<String, Integer> stageKinds;
@@ -98,6 +103,16 @@ public final class TaskFeatureEncoder {
         return Map.copyOf(map);
     }
 
+    private static double[] bandBases() {
+        double[] bases = new double[FeatureDimension.values().length];
+        double base = 1.0;
+        for (int i = 0; i < bases.length; i++) {
+            bases[i] = base;
+            base *= 3.0;
+        }
+        return bases;
+    }
+
     private static int bitLength(long value) {
         return Long.SIZE - Long.numberOfLeadingZeros(value);
     }
@@ -111,43 +126,40 @@ public final class TaskFeatureEncoder {
 
         void categorical(FeatureDimension dimension, Feature<String> feature, Map<String, Integer> vocabulary,
                 int size) {
-            switch (feature) {
-                case Feature.Known<String> known -> token(dimension, known.value(), vocabulary, size);
-                case Feature.Unknown<String> unknown -> unknown();
+            if (feature instanceof Feature.Known<String>(var value)) {
+                token(dimension, value, vocabulary, size);
+            } else {
+                unknown(dimension);
             }
         }
 
         void tags(FeatureDimension dimension, Feature<List<String>> feature, Map<String, Integer> vocabulary,
                 int size) {
-            switch (feature) {
-                case Feature.Known<List<String>> known -> {
-                    for (String tag : known.value()) {
-                        token(dimension, tag, vocabulary, size);
-                    }
+            if (feature instanceof Feature.Known<List<String>>(var values)) {
+                for (String tag : values) {
+                    token(dimension, tag, vocabulary, size);
                 }
-                case Feature.Unknown<List<String>> unknown -> unknown();
+            } else {
+                unknown(dimension);
             }
         }
 
         void numeric(FeatureDimension dimension, Feature<Long> feature, long ceiling, int ceilingBits) {
-            switch (feature) {
-                case Feature.Known<Long> known -> {
-                    long value = known.value();
-                    if (value > ceiling) {
-                        saturated.add(dimension);
-                    }
-                    int bits = Math.min(bitLength(value), ceilingBits);
-                    known(dimension, bits, ceilingBits);
+            if (feature instanceof Feature.Known<Long>(var value)) {
+                if (value > ceiling) {
+                    saturated.add(dimension);
                 }
-                case Feature.Unknown<Long> unknown -> unknown();
+                known(dimension, Math.min(bitLength(value), ceilingBits), ceilingBits);
+            } else {
+                unknown(dimension);
             }
         }
 
         void requirement(FeatureDimension dimension, Feature<Requirement> feature) {
-            switch (feature) {
-                case Feature.Known<Requirement> known ->
-                        known(dimension, known.value().ordinal() + 1, Requirement.values().length + 1);
-                case Feature.Unknown<Requirement> unknown -> unknown();
+            if (feature instanceof Feature.Known<Requirement>(var value)) {
+                known(dimension, value.ordinal() + 1, Requirement.values().length + 1);
+            } else {
+                unknown(dimension);
             }
         }
 
@@ -162,12 +174,13 @@ public final class TaskFeatureEncoder {
         }
 
         private void known(FeatureDimension dimension, int numerator, int denominator) {
-            double frequency = BAND_STRIDE * dimension.ordinal() + BAND_WIDTH * numerator / denominator;
+            double frequency = BAND_BASE[dimension.ordinal()] * (denominator + numerator) / denominator;
             signals.add(new Signal(SignalKind.OBSERVATION, new FrequencyState(1.0, frequency, 0.0)));
         }
 
-        private void unknown() {
-            signals.add(new Signal(SignalKind.OBSERVATION, new FrequencyState(0.0, 0.0, Math.PI)));
+        private void unknown(FeatureDimension dimension) {
+            double frequency = BAND_BASE[dimension.ordinal()] * 2.5;
+            signals.add(new Signal(SignalKind.OBSERVATION, new FrequencyState(1.0, frequency, Math.PI)));
         }
     }
 }

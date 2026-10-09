@@ -17,8 +17,8 @@ import java.util.Objects;
  * @param categories ordered category vocabulary
  * @param languages ordered language vocabulary
  * @param domains ordered domain vocabulary
- * @param changeSizeCeiling positive saturation ceiling for change size
- * @param contextSizeCeiling positive saturation ceiling for context size
+ * @param changeSizeCeiling saturation ceiling for change size, of the form {@code 2^k - 1}
+ * @param contextSizeCeiling saturation ceiling for context size, of the form {@code 2^k - 1}
  */
 public record EncodingPolicy(
         String id,
@@ -43,17 +43,13 @@ public record EncodingPolicy(
         categories = vocabulary(categories, "categories");
         languages = vocabulary(languages, "languages");
         domains = vocabulary(domains, "domains");
-        if (changeSizeCeiling < 1) {
-            throw new IllegalArgumentException("changeSizeCeiling must be positive, got: " + changeSizeCeiling);
-        }
-        if (contextSizeCeiling < 1) {
-            throw new IllegalArgumentException("contextSizeCeiling must be positive, got: " + contextSizeCeiling);
-        }
+        requireCeiling(changeSizeCeiling, "changeSizeCeiling");
+        requireCeiling(contextSizeCeiling, "contextSizeCeiling");
     }
 
     /**
      * The illustrative v1 policy. Its vocabularies are host-replaceable defaults, not a claim about which
-     * categories matter; ceilings are one less than a power of two so the saturation point is exact.
+     * categories matter; ceilings are one less than a power of two, as every policy requires.
      */
     public static EncodingPolicy defaultV1() {
         return new EncodingPolicy(
@@ -64,6 +60,13 @@ public record EncodingPolicy(
                 List.of("backend", "frontend", "data", "infrastructure", "security", "documentation"),
                 65_535L,
                 1_048_575L);
+    }
+
+    private static void requireCeiling(long ceiling, String name) {
+        // 2^k - 1 makes "value > ceiling" identical to "bitLength(value) > bitLength(ceiling)".
+        if (ceiling < 1 || (ceiling & (ceiling + 1)) != 0) {
+            throw new IllegalArgumentException(name + " must be of the form 2^k - 1, got: " + ceiling);
+        }
     }
 
     private static List<String> vocabulary(List<String> tokens, String name) {

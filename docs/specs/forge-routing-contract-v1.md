@@ -831,7 +831,7 @@ none of them can enter similarity; correlation stays in the routing envelope (#6
 
 | Rule | Behavior |
 | --- | --- |
-| Tokens (`stageKind`, `category`, tags, `schemaVersion`) | 1-128 code points, no control characters, no leading/trailing whitespace or Unicode space separator (including NBSP); `IllegalArgumentException` otherwise. Compared by `String.equals`, never normalized. |
+| Tokens (`stageKind`, `category`, tags, `schemaVersion`) | 1-128 code points, no control characters, no leading/trailing whitespace, Unicode space separator (including NBSP) or format character (U+200B, U+202E, ...); interior format characters such as emoji ZWJ stay valid; `IllegalArgumentException` otherwise. Compared by `String.equals`, never normalized. |
 | Tag sets (`languages`, `domains`) | At most 8 tags each; duplicates rejected; stored in **code point order** (not UTF-16 unit order) as an immutable copy. Known-empty set differs from unknown set. |
 | Numerics (`changeSize`, `contextSize`) | Non-negative `long` in host-defined units; negative rejected. Values above the policy ceiling are valid and saturate only in Signals. |
 | `tests`, `security` | `Requirement.REQUIRED` / `NOT_REQUIRED` or unknown. |
@@ -841,28 +841,40 @@ none of them can enter similarity; correlation stays in the routing envelope (#6
 ### 15.2 Encoding policy `task-encoding-default` v1
 
 An `EncodingPolicy` is explicit and versioned: vocabularies (ordered, at most 32 tokens each; **order is part of the
-policy**) for stage kind, category, language and domain, plus saturation ceilings. Any change to a vocabulary, ceiling or the
-arithmetic needs a new policy version. The default vocabularies are illustrative and host-replaceable. No hashing is used.
+policy**) for stage kind, category, language and domain, plus saturation ceilings. A ceiling must be of the form `2^k - 1`
+(rejected otherwise), so "value above the ceiling" and "bit length above the ceiling's" are the same condition and the
+saturation flag always equals the clamp. Any change to a vocabulary, ceiling or the arithmetic needs a new policy version
+(v1 was finalized before the first merge, so there is no earlier published v1). The default vocabularies are illustrative
+and host-replaceable. No hashing is used.
 
-For dimension index `i` (`STAGE_KIND`=0, `CATEGORY`=1, `LANGUAGES`=2, `DOMAINS`=3, `CHANGE_SIZE`=4, `CONTEXT_SIZE`=5, `TESTS`=6,
-`SECURITY`=7): `frequency = 10*i + 8*ratio`, so bands are disjoint (`(10i, 10i+8]`).
+The layout is chosen for `ScalarResonanceMetric` (ADR 0006: `R = A*F*P`, `F = min/max` of frequencies). For dimension index `i`
+(`STAGE_KIND`=0, `CATEGORY`=1, `LANGUAGES`=2, `DOMAINS`=3, `CHANGE_SIZE`=4, `CONTEXT_SIZE`=5, `TESTS`=6, `SECURITY`=7):
+`frequency = 3^i * (1 + ratio)` with `ratio` in `[0, 1]`. Bands are the **closed** intervals `[3^i, 2*3^i]` (a measured zero sits
+exactly at `3^i`) and are disjoint. Because the offset is multiplicative, every dimension has the same within-band range
+`F` in `[0.5, 1]`: no dimension is implicitly weighted more than another (an additive offset would make high-index dimensions
+nearly indistinguishable).
 
 | Value | Signal `FrequencyState(amplitude, frequency, phase)` |
 | --- | --- |
-| Categorical token, vocabulary index `k` of `n` | `(1.0, 10i + 8(k+1)/(n+1), 0.0)` |
-| Token outside the vocabulary (`OTHER`) | `(1.0, 10i + 8, 0.0)`; reported in `otherBucketDimensions` |
-| Number `v`, ceiling bit length `L` | `(1.0, 10i + 8*min(bitLength(v), L)/L, 0.0)`; integer arithmetic only; `v > ceiling` reported in `saturatedDimensions` |
-| `Requirement` | `NOT_REQUIRED` = `(1.0, 10i + 8/3, 0.0)`, `REQUIRED` = `(1.0, 10i + 16/3, 0.0)` |
-| **Unknown** | `(0.0, 0.0, PI)`: silent, phase-marked; different from any known value, from a measured zero and from `FrequencyState.ZERO` |
+| Categorical token, vocabulary index `k` of `n` | `(1.0, 3^i * (1 + (k+1)/(n+1)), 0.0)` |
+| Token outside the vocabulary (`OTHER`) | `(1.0, 2 * 3^i, 0.0)`; reported in `otherBucketDimensions` |
+| Number `v`, ceiling bit length `L` | `(1.0, 3^i * (1 + min(bitLength(v), L)/L), 0.0)`; integer arithmetic only; `v > ceiling` reported in `saturatedDimensions` |
+| `Requirement` | `NOT_REQUIRED` = `(1.0, 3^i * 4/3, 0.0)`, `REQUIRED` = `(1.0, 3^i * 5/3, 0.0)` |
+| **Unknown** | `(1.0, 2.5 * 3^i, PI)`: non-silent, in the gap above its band |
 | Tag set | one Signal per tag in canonical order; none for a known-empty set; one unknown marker for an unknown set |
+
+Unknown semantics (a policy choice, documented rather than hidden): an unknown value has full amplitude and opposite phase,
+so under the resonance metric it matches only an unknown of the same dimension (`R = 1`) and never a known value
+(`P = 0`, so `R = 0`). It is never silent (a silent state scores 0 even against itself), never a measured zero and never
+`FrequencyState.ZERO`. Unknown therefore does not act as a wildcard.
 
 Default ceilings are 65,535 (`L`=16) for change size and 1,048,575 (`L`=20) for context size. All Signals are
 `SignalKind.OBSERVATION`.
 
 Golden fixture (asserted in `TaskFeatureEncoderTest`): `implement`, `bugfix`, `{rust, java}`, `{backend}`, change size 100,
 context size 1,048,575, tests `REQUIRED`, security `NOT_REQUIRED` encodes to frequencies
-`3.2, 10+8/7, 20+8/9, 20+56/9, 30+8/7, 43.5, 58, 60+16/3, 70+8/3`, all with amplitude 1 and phase 0 (`bitLength(100)`=7, so
-`40 + 8*7/16 = 43.5`).
+`1.4, 24/7, 10, 16, 216/7, 1863/16 (= 116.4375), 486, 1215, 2916`, all with amplitude 1 and phase 0 (`bitLength(100)`=7, so
+`81 * (1 + 7/16) = 116.4375`; `java` is index 0 of 8, so `9 * (1 + 1/9) = 10`).
 
 ### 15.3 Result, collisions and schema mismatch
 
@@ -872,10 +884,14 @@ context size 1,048,575, tests `REQUIRED`, security `NOT_REQUIRED` encodes to fre
   features next to the Signals**. The Signals are a lossy ordinal layout: distinct out-of-vocabulary tokens share the `OTHER`
   position, values above a ceiling share the maximum, and a vocabulary of `n` tokens is spread over `n+1` positions. These are
   documented collisions, not semantic similarity. **Exact eligibility must use the typed fields**, never Signal equality.
+- Every Signal's frequency identifies its dimension (bands above, unknown markers in the gaps). Tag sets have variable length,
+  so **consumers must match Signals by band, never by list index**.
 - `SchemaMismatch(expected, actual)` when `schemaVersion` is not `task-features/1`. It is a reported result, not an
   exception, and the encoder never guesses.
 
-`Encoded` validates structural invariants in its public constructor (at most 22 `OBSERVATION` signals, valid policy token, positive version, strictly ordered dimension lists limited to numeric or categorical dimensions); consistency with `features` is guaranteed only for values the encoder produced.
+`Encoded` validates structural invariants in its public constructor (at most 22 `OBSERVATION` signals, valid policy token,
+positive version, strictly ordered dimension lists limited to numeric or categorical dimensions); consistency with `features`
+is guaranteed only for values the encoder produced.
 
 The encoder reads only its argument: no repository, task text, secret, `HostExecutionContext` reference, clock or randomness.
 
@@ -883,9 +899,11 @@ The encoder reads only its argument: no repository, task text, secret, `HostExec
 
 With `F` features and `T <= 16` tags: construction `O(F + T log T)`; `encode` `O(F)` time with point lookups in
 vocabulary maps built once per encoder (never iterated, so hash order cannot affect output); extra space `O(F)`, at most
-22 Signals plus their `FrequencyState` objects. **Modeled, not measured:** about 64 B per Signal and `FrequencyState` pair plus
-about 4 B per list reference, so a full encoding retains roughly 1.5 KiB (22 x 64 B + 16 B + 88 B), asserted only as
-"at most 2 KiB" in the test. No latency or allocation measurement exists, and no cache, parallelism, SIMD or GPU is used.
+22 Signals plus their `FrequencyState` objects. **Modeled:** about 64 B per Signal and `FrequencyState` pair plus about 4 B per
+list reference, roughly 1.5 KiB for a full encoding (22 x 64 B + 16 B + 88 B). **Measured once** (JDK 27,
+`ThreadMXBean.getThreadAllocatedBytes`, after 20,000 warm-up calls, one full-capacity `encode`): 1,896 bytes, which includes the
+two `EnumSet`s and the result record. The test asserts only an upper bound of 4 KiB; it is a regression guard, not a benchmark,
+and no latency is measured. No cache, parallelism, SIMD or GPU is used.
 
 ### 15.5 Verification and evidence gaps
 
@@ -895,5 +913,5 @@ about 4 B per list reference, so a full encoding retains roughly 1.5 KiB (22 x 6
 ```
 
 Evidence gaps: no claim that this layout improves routing or that Signal resonance reflects task similarity; the default
-vocabularies and the unknown marker are unvalidated policy choices; allocation and latency are unmeasured (#67); the
+vocabularies, the band layout and the unknown semantics are unvalidated policy choices; latency is unmeasured and allocation is a single upper-bound check (#67); the
 encoder is not yet consumed by `RoutingRequest` (#61) or a `PerceptionCapability`.

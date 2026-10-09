@@ -91,6 +91,18 @@ class TaskFeaturesTest {
     }
 
     @Test
+    void rejectsFormatCharactersAtTheBoundariesButAllowsInteriorOnes() {
+        for (String format : List.of("\u200B", "\u202E", "\uFEFF")) {
+            assertThrows(IllegalArgumentException.class, () -> base().category("java" + format).build());
+            assertThrows(IllegalArgumentException.class, () -> base().category(format + "java").build());
+            assertThrows(IllegalArgumentException.class, () -> base().domains(List.of("x" + format)).build());
+        }
+        String family = "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67";
+        assertEquals(Feature.known(family), base().category(family).build().category());
+        assertEquals(Feature.known("a\u200Bb"), base().category("a\u200Bb").build().category());
+    }
+
+    @Test
     void enforcesTagCapacityAndRejectsDuplicates() {
         List<String> eight = List.of("a", "b", "c", "d", "e", "f", "g", "h");
         List<String> nine = List.of("a", "b", "c", "d", "e", "f", "g", "h", "i");

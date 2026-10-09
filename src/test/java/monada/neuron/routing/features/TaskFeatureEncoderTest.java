@@ -1,6 +1,7 @@
 package monada.neuron.routing.features;
 
 import monada.neuron.model.FrequencyState;
+import monada.neuron.resonance.ScalarResonanceMetric;
 import monada.neuron.routing.features.EncodingResult.Encoded;
 import monada.neuron.routing.features.EncodingResult.SchemaMismatch;
 import monada.neuron.signal.Signal;
@@ -19,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TaskFeatureEncoderTest {
 
     private static final double EPS = 1e-12;
+    private static final long ALLOCATION_BOUND_BYTES = 4 * 1024;
     private final TaskFeatureEncoder encoder = new TaskFeatureEncoder(EncodingPolicy.defaultV1());
 
     private Encoded encode(TaskFeatures features) {
@@ -35,29 +37,29 @@ class TaskFeatureEncoderTest {
     @Test
     void goldenFixtureMatchesHandComputedValues() {
         TaskFeatures features = TaskFeatures.builder()
-                .stageKind("implement")                     // k=1 of n=4  -> 0  + 8*2/5  = 3.2
-                .category("bugfix")                         // k=0 of n=6  -> 10 + 8*1/7
-                .languages(List.of("rust", "java"))         // java k=0 -> 20 + 8/9 ; rust k=6 -> 20 + 8*7/9
-                .domains(List.of("backend"))                // k=0 of n=6  -> 30 + 8/7
-                .changeSize(100)                            // bitLength 7, L=16 -> 40 + 8*7/16 = 43.5
-                .contextSize(1_048_575)                     // bitLength 20, L=20 -> 50 + 8 = 58
-                .tests(Requirement.REQUIRED)                // ordinal 1 -> 2/3 -> 60 + 16/3
-                .security(Requirement.NOT_REQUIRED)         // ordinal 0 -> 1/3 -> 70 + 8/3
+                .stageKind("implement")                     // k=1 of n=4  -> 1   * (1 + 2/5)  = 1.4
+                .category("bugfix")                         // k=0 of n=6  -> 3   * (1 + 1/7)  = 24/7
+                .languages(List.of("rust", "java"))         // n=8: java k=0 -> 9 * 10/9 = 10 ; rust k=6 -> 9 * 16/9 = 16
+                .domains(List.of("backend"))                // k=0 of n=6  -> 27  * (1 + 1/7)  = 216/7
+                .changeSize(100)                            // bitLength 7, L=16 -> 81 * (1 + 7/16) = 1863/16
+                .contextSize(1_048_575)                     // bitLength 20, L=20 -> 243 * 2 = 486
+                .tests(Requirement.REQUIRED)                // 2/3 -> 729 * 5/3 = 1215
+                .security(Requirement.NOT_REQUIRED)         // 1/3 -> 2187 * 4/3 = 2916
                 .build();
 
         Encoded encoded = encode(features);
         List<Signal> s = encoded.signals();
 
         assertEquals(9, s.size());
-        assertSignal(s.get(0), 1.0, 3.2, 0.0);
-        assertSignal(s.get(1), 1.0, 10 + 8.0 / 7, 0.0);
-        assertSignal(s.get(2), 1.0, 20 + 8.0 / 9, 0.0);
-        assertSignal(s.get(3), 1.0, 20 + 56.0 / 9, 0.0);
-        assertSignal(s.get(4), 1.0, 30 + 8.0 / 7, 0.0);
-        assertSignal(s.get(5), 1.0, 43.5, 0.0);
-        assertSignal(s.get(6), 1.0, 58.0, 0.0);
-        assertSignal(s.get(7), 1.0, 60 + 16.0 / 3, 0.0);
-        assertSignal(s.get(8), 1.0, 70 + 8.0 / 3, 0.0);
+        assertSignal(s.get(0), 1.0, 1.4, 0.0);
+        assertSignal(s.get(1), 1.0, 24.0 / 7, 0.0);
+        assertSignal(s.get(2), 1.0, 10.0, 0.0);
+        assertSignal(s.get(3), 1.0, 16.0, 0.0);
+        assertSignal(s.get(4), 1.0, 216.0 / 7, 0.0);
+        assertSignal(s.get(5), 1.0, 116.4375, 0.0);
+        assertSignal(s.get(6), 1.0, 486.0, 0.0);
+        assertSignal(s.get(7), 1.0, 1215.0, 0.0);
+        assertSignal(s.get(8), 1.0, 2916.0, 0.0);
         assertEquals(features, encoded.features());
         assertEquals("task-encoding-default", encoded.policyId());
         assertEquals(1L, encoded.policyVersion());
@@ -82,18 +84,49 @@ class TaskFeatureEncoderTest {
         Encoded zero = encode(TaskFeatures.builder().changeSize(0).contextSize(0).languages(List.of()).build());
 
         assertEquals(8, unknown.signals().size());
-        for (Signal signal : unknown.signals()) {
-            assertSignal(signal, 0.0, 0.0, Math.PI);
-            assertNotEquals(new Signal(SignalKind.OBSERVATION, FrequencyState.ZERO), signal);
+        for (int i = 0; i < 8; i++) {
+            assertSignal(unknown.signals().get(i), 1.0, 2.5 * Math.pow(3, i), Math.PI);
+            assertNotEquals(new Signal(SignalKind.OBSERVATION, FrequencyState.ZERO), unknown.signals().get(i));
         }
-        // Measured zero: full amplitude at the band base (change size band starts at 40).
-        Signal measuredZero = zero.signals().stream()
-                .filter(sig -> sig.frequencyState().frequency() == 40.0).findFirst().orElseThrow();
-        assertSignal(measuredZero, 1.0, 40.0, 0.0);
-        assertNotEquals(unknown.signals().get(4), measuredZero);
-        // Known empty tag set emits nothing; unknown emits a marker.
+        // Measured zero: band base (change size band starts at 3^4 = 81), phase 0.
+        assertSignal(zero.signals().get(3), 1.0, 81.0, 0.0);
+        assertNotEquals(unknown.signals().get(4), zero.signals().get(3));
         // 8 dimensions minus the known empty language set, which emits no signal.
         assertEquals(7, zero.signals().size());
+    }
+
+    @Test
+    void unknownMatchesOnlyUnknownUnderTheResonanceMetric() {
+        ScalarResonanceMetric metric = new ScalarResonanceMetric();
+        List<Signal> unknownA = encode(TaskFeatures.builder().build()).signals();
+        List<Signal> unknownB = encode(TaskFeatures.builder().build()).signals();
+        List<Signal> known = encode(TaskFeatures.builder().stageKind("plan").category("docs").languages(List.of("go"))
+                .domains(List.of("data")).changeSize(7).contextSize(7).tests(Requirement.REQUIRED)
+                .security(Requirement.REQUIRED).build()).signals();
+
+        for (int i = 0; i < 8; i++) {
+            assertEquals(1.0, metric.score(unknownA.get(i).frequencyState(), unknownB.get(i).frequencyState()), EPS);
+            assertEquals(0.0, metric.score(unknownA.get(i).frequencyState(), known.get(i).frequencyState()), EPS);
+        }
+    }
+
+    @Test
+    void everyDimensionIsEquallyWeightedUnderTheResonanceMetric() {
+        ScalarResonanceMetric metric = new ScalarResonanceMetric();
+        // Extreme known values of each dimension: first vocabulary entry / zero versus OTHER / saturation.
+        TaskFeatures low = TaskFeatures.builder().stageKind("plan").category("bugfix").languages(List.of("java"))
+                .domains(List.of("backend")).changeSize(0).contextSize(0).tests(Requirement.NOT_REQUIRED)
+                .security(Requirement.NOT_REQUIRED).build();
+        TaskFeatures high = TaskFeatures.builder().stageKind("zz").category("zz").languages(List.of("zz"))
+                .domains(List.of("zz")).changeSize(Long.MAX_VALUE).contextSize(Long.MAX_VALUE)
+                .tests(Requirement.REQUIRED).security(Requirement.REQUIRED).build();
+        List<Signal> a = encode(low).signals();
+        List<Signal> b = encode(high).signals();
+
+        for (int i = 0; i < 8; i++) {
+            double r = metric.score(a.get(i).frequencyState(), b.get(i).frequencyState());
+            assertTrue(r >= 0.5 && r < 1.0, "dimension " + i + " resonance " + r);
+        }
     }
 
     @Test
@@ -103,14 +136,28 @@ class TaskFeatureEncoderTest {
         Encoded huge = encode(TaskFeatures.builder().changeSize(Long.MAX_VALUE).build());
 
         assertTrue(atCeiling.saturatedDimensions().isEmpty());
-        assertSignal(atCeiling.signals().get(4), 1.0, 48.0, 0.0);
+        assertSignal(atCeiling.signals().get(4), 1.0, 162.0, 0.0);
 
         assertEquals(List.of(FeatureDimension.CHANGE_SIZE, FeatureDimension.CONTEXT_SIZE), above.saturatedDimensions());
-        assertSignal(above.signals().get(4), 1.0, 48.0, 0.0);
-        assertSignal(above.signals().get(5), 1.0, 58.0, 0.0);
-        assertSignal(huge.signals().get(4), 1.0, 48.0, 0.0);
+        assertSignal(above.signals().get(4), 1.0, 162.0, 0.0);
+        assertSignal(above.signals().get(5), 1.0, 486.0, 0.0);
+        assertSignal(huge.signals().get(4), 1.0, 162.0, 0.0);
         // Saturation loses information in Signals but never in the typed features.
         assertNotEquals(atCeiling.features(), above.features());
+    }
+
+    @Test
+    void saturationFlagIsExactlyTheClampCondition() {
+        for (long value : new long[] {0, 1, 2, 3, 255, 256, 65_534, 65_535, 65_536, 131_071, 1L << 40}) {
+            Encoded encoded = encode(TaskFeatures.builder().changeSize(value).build());
+            boolean flagged = encoded.saturatedDimensions().contains(FeatureDimension.CHANGE_SIZE);
+            double frequency = encoded.signals().get(4).frequencyState().frequency();
+
+            assertEquals(value > 65_535, flagged, "value " + value);
+            // Values above the ceiling all encode at the band top; values at or below it never exceed it.
+            assertEquals(flagged, frequency == 162.0 && value > 65_535, "value " + value);
+            assertTrue(frequency <= 162.0, "value " + value);
+        }
     }
 
     @Test
@@ -119,7 +166,7 @@ class TaskFeatureEncoderTest {
         Encoded b = encode(TaskFeatures.builder().category("quantum-tuning").build());
 
         assertEquals(a.signals().get(1), b.signals().get(1));
-        assertSignal(a.signals().get(1), 1.0, 10 + 8.0, 0.0);
+        assertSignal(a.signals().get(1), 1.0, 6.0, 0.0);
         assertEquals(List.of(FeatureDimension.CATEGORY), a.otherBucketDimensions());
         assertNotEquals(a.features(), b.features());
         assertNotEquals(a.features().category(), b.features().category());
@@ -135,7 +182,7 @@ class TaskFeatureEncoderTest {
     }
 
     @Test
-    void encodingIsDeterministicAndBandsAreDisjoint() {
+    void encodingIsDeterministicAndEverySignalNamesItsDimension() {
         TaskFeatures features = TaskFeatures.builder().stageKind("qa").category("docs")
                 .languages(List.of("java", "csharp")).domains(List.of("security")).changeSize(5).contextSize(9)
                 .tests(Requirement.REQUIRED).security(Requirement.REQUIRED).build();
@@ -147,10 +194,39 @@ class TaskFeatureEncoderTest {
         int[] dimensionOfSignal = {0, 1, 2, 2, 3, 4, 5, 6, 7};
         assertEquals(dimensionOfSignal.length, first.signals().size());
         for (int i = 0; i < dimensionOfSignal.length; i++) {
-            double f = first.signals().get(i).frequencyState().frequency();
-            assertTrue(f > 10.0 * dimensionOfSignal[i] && f <= 10.0 * dimensionOfSignal[i] + 8.0,
-                    "signal " + i + " outside its band: " + f);
+            assertEquals(dimensionOfSignal[i], dimensionOf(first.signals().get(i)), "signal " + i);
         }
+    }
+
+    @Test
+    void dimensionsAreRecoverableFromFrequencyWhateverTheTagCounts() {
+        TaskFeatures few = TaskFeatures.builder().languages(List.of("java")).domains(List.of()).changeSize(0)
+                .contextSize(1_048_575).build();
+        TaskFeatures many = TaskFeatures.builder().languages(List.of("java", "go", "rust"))
+                .domains(List.of("data", "backend")).changeSize(0).contextSize(1_048_575).build();
+
+        for (TaskFeatures features : List.of(few, many, TaskFeatures.builder().build())) {
+            for (Signal signal : encode(features).signals()) {
+                int dimension = dimensionOf(signal);
+                double base = Math.pow(3, dimension);
+                double f = signal.frequencyState().frequency();
+                boolean inBand = f >= base && f <= 2 * base;
+                boolean unknownMarker = f == 2.5 * base && signal.frequencyState().phase() == Math.PI;
+                assertTrue(inBand || unknownMarker, "frequency " + f + " not in dimension " + dimension);
+            }
+        }
+        // Closed lower bound: a measured zero sits exactly on its band base.
+        assertEquals(81.0, encode(few).signals().get(3).frequencyState().frequency(), EPS);
+    }
+
+    /** Band lookup: dimension {@code i} owns frequencies in {@code [3^i, 3^(i+1))}. */
+    private static int dimensionOf(Signal signal) {
+        double frequency = signal.frequencyState().frequency();
+        int dimension = 0;
+        while (frequency >= Math.pow(3, dimension + 1)) {
+            dimension++;
+        }
+        return dimension;
     }
 
     @Test
@@ -166,7 +242,7 @@ class TaskFeatureEncoderTest {
     }
 
     @Test
-    void maximumCapacityStaysWithinTheDocumentedSignalBound() {
+    void maximumCapacityStaysWithinTheDocumentedSignalBoundAndAllocation() {
         List<String> eightLanguages = List.of("java", "kotlin", "python", "typescript", "javascript", "go", "rust",
                 "csharp");
         List<String> eightDomains = List.of("backend", "frontend", "data", "infrastructure", "security",
@@ -179,11 +255,18 @@ class TaskFeatureEncoderTest {
 
         assertEquals(TaskFeatureEncoder.MAX_SIGNALS, encoded.signals().size());
         assertEquals(22, TaskFeatureEncoder.MAX_SIGNALS);
-        // Modeled retained footprint: ~64 B per Signal+FrequencyState on a compressed-oops 64-bit HotSpot,
-        // plus an immutable list array (~16 B header + 4 B per reference). A model, not a measurement.
-        long modeledBytes = encoded.signals().size() * 64L + 16 + 4L * encoded.signals().size();
-        assertTrue(modeledBytes <= 2048, "modeled footprint " + modeledBytes);
         assertEquals(List.of(FeatureDimension.DOMAINS), encoded.otherBucketDimensions());
+
+        // Measured (not modeled) allocation of one full-capacity encode; an upper-bound check, not a benchmark.
+        var threads = (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
+        long thread = Thread.currentThread().threadId();
+        for (int i = 0; i < 20_000; i++) {
+            encoder.encode(full);
+        }
+        long before = threads.getThreadAllocatedBytes(thread);
+        encoder.encode(full);
+        long allocated = threads.getThreadAllocatedBytes(thread) - before;
+        assertTrue(allocated <= ALLOCATION_BOUND_BYTES, "allocated " + allocated + " bytes");
     }
 
     @Test
@@ -199,6 +282,15 @@ class TaskFeatureEncoderTest {
                 ok.categories(), ok.languages(), ok.domains(), 10, 10));
         assertThrows(IllegalArgumentException.class, () -> new EncodingPolicy("p", 1, ok.stageKinds(),
                 ok.categories(), ok.languages(), ok.domains(), 0, 10));
+        for (long bad : new long[] {-1, 0, 2, 100, 65_536, 1L << 40}) {
+            assertThrows(IllegalArgumentException.class, () -> new EncodingPolicy("p", 1, ok.stageKinds(),
+                    ok.categories(), ok.languages(), ok.domains(), bad, 1), "ceiling " + bad);
+            assertThrows(IllegalArgumentException.class, () -> new EncodingPolicy("p", 1, ok.stageKinds(),
+                    ok.categories(), ok.languages(), ok.domains(), 1, bad), "ceiling " + bad);
+        }
+        for (long good : new long[] {1, 3, 255, 65_535, Long.MAX_VALUE}) {
+            new EncodingPolicy("p", 1, ok.stageKinds(), ok.categories(), ok.languages(), ok.domains(), good, good);
+        }
         assertFalse(ok.stageKinds().isEmpty());
     }
 
@@ -208,7 +300,7 @@ class TaskFeatureEncoderTest {
         Encoded encoded = assertInstanceOf(Encoded.class,
                 new TaskFeatureEncoder(empty).encode(TaskFeatures.builder().stageKind("any").build()));
 
-        assertSignal(encoded.signals().get(0), 1.0, 8.0, 0.0);
+        assertSignal(encoded.signals().get(0), 1.0, 2.0, 0.0);
         assertEquals(List.of(FeatureDimension.STAGE_KIND), encoded.otherBucketDimensions());
     }
 

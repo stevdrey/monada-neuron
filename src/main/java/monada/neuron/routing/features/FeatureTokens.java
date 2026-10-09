@@ -16,15 +16,16 @@ final class FeatureTokens {
     }
 
     /**
-     * Requires 1 to 128 code points, no control characters and no leading or trailing whitespace or Unicode
-     * space separator (for example NBSP, which {@link String#strip()} does not remove).
+     * Requires 1 to 128 code points, no control characters and no leading or trailing whitespace, Unicode
+     * space separator (for example NBSP, which {@link String#strip()} does not remove) or format character
+     * (for example U+200B). Interior format characters stay valid, so emoji ZWJ sequences work.
      *
      * @return the same token
      */
     static String require(String token, String name) {
         Objects.requireNonNull(token, name + " must not be null");
-        // 128 code points never need more than 512 UTF-16 units; reject before counting.
-        if (token.length() > MAX_CODE_POINTS * 4) {
+        // A code point is at most 2 UTF-16 units, so more than 256 units means more than 128 code points.
+        if (token.length() > MAX_CODE_POINTS * 2) {
             throw new IllegalArgumentException(name + " exceeds " + MAX_CODE_POINTS + " code points");
         }
         int codePoints = token.codePointCount(0, token.length());
@@ -35,14 +36,16 @@ final class FeatureTokens {
         if (token.codePoints().anyMatch(Character::isISOControl)) {
             throw new IllegalArgumentException(name + " must not contain control characters");
         }
-        if (isSpace(token.codePointAt(0)) || isSpace(token.codePointBefore(token.length()))) {
+        if (isPadding(token.codePointAt(0)) || isPadding(token.codePointBefore(token.length()))) {
             throw new IllegalArgumentException(name + " must not have leading or trailing whitespace");
         }
         return token;
     }
 
-    private static boolean isSpace(int codePoint) {
-        return Character.isWhitespace(codePoint) || Character.isSpaceChar(codePoint);
+    /** Invisible padding: whitespace, Unicode space separators and format characters such as U+200B or U+202E. */
+    private static boolean isPadding(int codePoint) {
+        return Character.isWhitespace(codePoint) || Character.isSpaceChar(codePoint)
+                || Character.getType(codePoint) == Character.FORMAT;
     }
 
     private static int compareCodePoints(String left, String right) {
