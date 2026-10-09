@@ -864,8 +864,9 @@ nearly indistinguishable).
 | Tag set | one Signal per tag in canonical order; none for a known-empty set; one unknown marker for an unknown set |
 
 Unknown semantics (a policy choice, documented rather than hidden): an unknown value has full amplitude and opposite phase,
-so under the resonance metric it matches only an unknown of the same dimension (`R = 1`) and never a known value
-(`P = 0`, so `R = 0`). It is never silent (a silent state scores 0 even against itself), never a measured zero and never
+so under the resonance metric, **when two Signals of the same dimension are compared**, it matches only an unknown (`R = 1`) and
+never a known value (`P = 0`, so `R = 0`). Across dimensions the metric can still be positive (unknown stage kind against unknown
+category scores `1/3`, since `F = 2.5/7.5`), so the guarantee requires pairing Signals by band first (Section 15.3). It is never silent (a silent state scores 0 even against itself), never a measured zero and never
 `FrequencyState.ZERO`. Unknown therefore does not act as a wildcard.
 
 Default ceilings are 65,535 (`L`=16) for change size and 1,048,575 (`L`=20) for context size. All Signals are

@@ -111,6 +111,15 @@ class TaskFeatureEncoderTest {
     }
 
     @Test
+    void unknownMarkersOfDifferentDimensionsStillResonatePartially() {
+        ScalarResonanceMetric metric = new ScalarResonanceMetric();
+        List<Signal> unknown = encode(TaskFeatures.builder().build()).signals();
+
+        // 2.5 / 7.5: the guarantee "unknown matches only unknown" holds per dimension, so compare by band first.
+        assertEquals(1.0 / 3, metric.score(unknown.get(0).frequencyState(), unknown.get(1).frequencyState()), EPS);
+    }
+
+    @Test
     void everyDimensionIsEquallyWeightedUnderTheResonanceMetric() {
         ScalarResonanceMetric metric = new ScalarResonanceMetric();
         // Extreme known values of each dimension: first vocabulary entry / zero versus OTHER / saturation.
@@ -260,12 +269,18 @@ class TaskFeatureEncoderTest {
         // Measured (not modeled) allocation of one full-capacity encode; an upper-bound check, not a benchmark.
         var threads = (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
         long thread = Thread.currentThread().threadId();
+        assertTrue(threads.isThreadAllocatedMemorySupported(), "thread allocation measurement not supported");
+        threads.setThreadAllocatedMemoryEnabled(true);
+        assertTrue(threads.isThreadAllocatedMemoryEnabled(), "thread allocation measurement not enabled");
         for (int i = 0; i < 20_000; i++) {
             encoder.encode(full);
         }
         long before = threads.getThreadAllocatedBytes(thread);
         encoder.encode(full);
-        long allocated = threads.getThreadAllocatedBytes(thread) - before;
+        long after = threads.getThreadAllocatedBytes(thread);
+        assertTrue(before >= 0 && after >= before, "allocation counter unavailable: " + before + " -> " + after);
+        long allocated = after - before;
+        assertTrue(allocated > 0, "encode must allocate its result; measured " + allocated);
         assertTrue(allocated <= ALLOCATION_BOUND_BYTES, "allocated " + allocated + " bytes");
     }
 
