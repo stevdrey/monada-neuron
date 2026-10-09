@@ -503,12 +503,12 @@ cycle, stage, memory, and action APIs remain public for experiments and focused 
 host-facing contract. A runtime configured with `perceptionCapability(capability, maxSignals)` takes its initial signals from the
 adapter, so its executions supply a host context and no signals.
 
-## Forge Routing Extension (proposed contract, not implemented)
+## Forge Routing Extension (contract proposed; first slice implemented)
 
 Monada Forge needs vendor-neutral, stage-level recommendations of which authorized worker/model route to use, learned
 from validated outcomes. [Forge Routing Contract v1](specs/forge-routing-contract-v1.md) and
-[ADR 0026](adr/0026-forge-routing-ownership.md) define that extension. **No routing type exists at this baseline**; the names
-below are proposals that issues #60 to #68 implement in dependency order, and the Store capabilities it depends on (Store
+[ADR 0026](adr/0026-forge-routing-ownership.md) define that extension. **Only `TaskFeatures` and its signal encoder (`monada.neuron.routing.features`, issue #60) exist**; the other names
+below are proposals that issues #61 to #68 implement in dependency order, and the Store capabilities it depends on (Store
 issues #94 to #102) are likewise pending.
 
 ```text

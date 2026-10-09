@@ -1,6 +1,6 @@
 # Forge Routing Contract v1
 
-Status: **proposed contract, not implemented.** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
+Status: **proposed contract; only `TaskFeatures` and its signal encoder (#60, Section 15) are implemented.** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
 Issue: [#59](https://github.com/stevdrey/monada-neuron/issues/59) (Forge Routing 1/10).
 
 This document is the normative v1 contract that issues #60–#68 implement. Later issues may refine exact Java
@@ -9,7 +9,7 @@ signatures, but must not change the semantics defined here without updating this
 Normative words: **must**, **must not**, **should** and **may** carry their usual specification meaning.
 
 Every type and package name below (`monada.neuron.routing`, `TaskFeatures`, `RouteCatalog`, `RoutingDecision`, ...) is a
-**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them exists. Types that do exist are named with
+**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them exists; since #60, `TaskFeatures` and the other types of `monada.neuron.routing.features` (Section 15) are implemented. Types that do exist are named with
 their current package and are described only as they exist today.
 
 ## Background
@@ -153,7 +153,7 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 
 | Type (proposed) | Introduced by | Role |
 | --- | --- | --- |
-| `TaskFeatures` | #60 | Caller-approved, bounded, typed task/stage characteristics with explicit unknown values, canonical order and schema version. |
+| `TaskFeatures` | #60 (implemented, Section 15) | Caller-approved, bounded, typed task/stage characteristics with explicit unknown values, canonical order and schema version. |
 | `RouteDescriptor`, `RouteCatalog` | #61 | `RouteDescriptor` is the versioned behavioral description of one route (worker/provider/model/effort, `billingMode`, `overflowClass`, `tier`, capabilities, stage compatibility, ceilings). `RouteCatalog` is an immutable snapshot of descriptors **plus a per-route availability value, which is outside the versioned descriptor**. |
 | `RoutingRequest` | #61 | One stage request, defined with eligibility because every hard constraint is a request value: envelope, `TaskFeatures`, hard requirements, permitted execution modes, `overflowPermitted`. |
 | `RoutingPolicy` | #62 | Versioned, explicit, rule-based policy; `decide(RoutingRequest, RouteCatalog, RoutingPreference) -> RoutingDecision`; the policy carries its `ResourceObjective`. |
@@ -795,9 +795,9 @@ Everything in this contract is additive and opt-in.
 - `NeuronRuntime` is sequential and not thread-safe; the preference snapshot must be passed by the host, not shared mutably.
 - The Store's contract is not yet implemented, so end-to-end behavior with real exports is unverified until #64 and #68.
 
-## 13. Verification (this issue)
+## 13. Verification (issue #59, historical)
 
-This issue is documentation-only: no runtime change and no new tests. From the repository root:
+Issue #59 was documentation-only: no runtime change and no new tests. Issue #60 adds code and tests; its verification is Section 15.5. From the repository root, at the #59 baseline:
 
 ```bash
 git diff --stat origin/main -- . ':!docs' ':!README.md'
@@ -810,7 +810,109 @@ file.
 
 ## 14. Documentation Updates
 
-- `docs/specs/forge-routing-contract-v1.md` (this file, new).
+- `docs/specs/forge-routing-contract-v1.md` (this file, new; Section 15 added by #60).
 - `docs/adr/0026-forge-routing-ownership.md` (new).
 - `docs/architecture.md`: "Forge Routing Extension (proposed)" section.
 - `README.md`: pointer under the host-embedding section.
+
+## 15. Implemented: `TaskFeatures` and the Signal Encoder (#60)
+
+Package `monada.neuron.routing.features`. This section describes **implemented behavior** and refines the proposal in
+Section 3; it does not change the semantics above. `Signal`, `FrequencyState`, the Store encoders and
+`HostExecutionContext` are untouched, and nothing in the package is wired into a cycle (opt-in, called by a host-side
+`PerceptionCapability` or by Level A code).
+
+### 15.1 Typed features
+
+`TaskFeatures(schemaVersion, stageKind, category, languages, domains, changeSize, contextSize, tests, security)`, schema
+`task-features/1`. Every field except `schemaVersion` is a `Feature<T>`: `Known(value)` or `Unknown`; unknown is never a
+measured zero, an empty set or a default. There is no task, project, execution, route or price field and no outcome, so
+none of them can enter similarity; correlation stays in the routing envelope (#61).
+
+| Rule | Behavior |
+| --- | --- |
+| Tokens (`stageKind`, `category`, tags, `schemaVersion`) | 1-128 code points, no control characters, no leading/trailing whitespace, Unicode space separator (including NBSP) or format character (U+200B, U+202E, ...); interior format characters such as emoji ZWJ stay valid; `IllegalArgumentException` otherwise. Compared by `String.equals`, never normalized. |
+| Tag sets (`languages`, `domains`) | At most 8 tags each; duplicates rejected; stored in **code point order** (not UTF-16 unit order) as an immutable copy. Known-empty set differs from unknown set. |
+| Numerics (`changeSize`, `contextSize`) | Non-negative `long` in host-defined units; negative rejected. Values above the policy ceiling are valid and saturate only in Signals. |
+| `tests`, `security` | `Requirement.REQUIRED` / `NOT_REQUIRED` or unknown. |
+| Capacity | 6 scalar features + 2 x 8 tags = 22 <= contract bound of 32. Overflow throws (a caller-built value). |
+| Ownership | The caller's input is copied; later mutation cannot change a snapshot. Equivalent input in any order gives equal records. |
+
+### 15.2 Encoding policy `task-encoding-default` v1
+
+An `EncodingPolicy` is explicit and versioned: vocabularies (ordered, at most 32 tokens each; **order is part of the
+policy**) for stage kind, category, language and domain, plus saturation ceilings. A ceiling must be of the form `2^k - 1`
+(rejected otherwise), so "value above the ceiling" and "bit length above the ceiling's" are the same condition and the
+saturation flag always equals the clamp. Any change to a vocabulary, ceiling or the arithmetic needs a new policy version
+(v1 was finalized before the first merge, so there is no earlier published v1). The default vocabularies are illustrative
+and host-replaceable. No hashing is used.
+
+The layout is chosen for `ScalarResonanceMetric` (ADR 0006: `R = A*F*P`, `F = min/max` of frequencies). For dimension index `i`
+(`STAGE_KIND`=0, `CATEGORY`=1, `LANGUAGES`=2, `DOMAINS`=3, `CHANGE_SIZE`=4, `CONTEXT_SIZE`=5, `TESTS`=6, `SECURITY`=7):
+`frequency = 3^i * (1 + ratio)` with `ratio` in `[0, 1]`. Bands are the **closed** intervals `[3^i, 2*3^i]` (a measured zero sits
+exactly at `3^i`) and are disjoint. Because the offset is multiplicative, every dimension has the same within-band range
+`F` in `[0.5, 1]`: no dimension is implicitly weighted more than another (an additive offset would make high-index dimensions
+nearly indistinguishable).
+
+| Value | Signal `FrequencyState(amplitude, frequency, phase)` |
+| --- | --- |
+| Categorical token, vocabulary index `k` of `n` | `(1.0, 3^i * (1 + (k+1)/(n+1)), 0.0)` |
+| Token outside the vocabulary (`OTHER`) | `(1.0, 2 * 3^i, 0.0)`; reported in `otherBucketDimensions` |
+| Number `v`, ceiling bit length `L` | `(1.0, 3^i * (1 + min(bitLength(v), L)/L), 0.0)`; integer arithmetic only; `v > ceiling` reported in `saturatedDimensions` |
+| `Requirement` | `NOT_REQUIRED` = `(1.0, 3^i * 4/3, 0.0)`, `REQUIRED` = `(1.0, 3^i * 5/3, 0.0)` |
+| **Unknown** | `(1.0, 2.5 * 3^i, PI)`: non-silent, in the gap above its band |
+| Tag set | one Signal per tag in canonical order; none for a known-empty set; one unknown marker for an unknown set |
+
+Unknown semantics (a policy choice, documented rather than hidden): an unknown value has full amplitude and opposite phase,
+so under the resonance metric, **when two Signals of the same dimension are compared**, it matches only an unknown (`R = 1`) and
+never a known value (`P = 0`, so `R = 0`). Across dimensions the metric can still be positive (unknown stage kind against unknown
+category scores `1/3`, since `F = 2.5/7.5`), so the guarantee requires pairing Signals by band first (Section 15.3). It is never silent (a silent state scores 0 even against itself), never a measured zero and never
+`FrequencyState.ZERO`. Unknown therefore does not act as a wildcard.
+
+Default ceilings are 65,535 (`L`=16) for change size and 1,048,575 (`L`=20) for context size. All Signals are
+`SignalKind.OBSERVATION`.
+
+Golden fixture (asserted in `TaskFeatureEncoderTest`): `implement`, `bugfix`, `{rust, java}`, `{backend}`, change size 100,
+context size 1,048,575, tests `REQUIRED`, security `NOT_REQUIRED` encodes to frequencies
+`1.4, 24/7, 10, 16, 216/7, 1863/16 (= 116.4375), 486, 1215, 2916`, all with amplitude 1 and phase 0 (`bitLength(100)`=7, so
+`81 * (1 + 7/16) = 116.4375`; `java` is index 0 of 8, so `9 * (1 + 1/9) = 10`).
+
+### 15.3 Result, collisions and schema mismatch
+
+`TaskFeatureEncoder.encode(TaskFeatures)` returns a sealed `EncodingResult`:
+
+- `Encoded(features, signals, policyId, policyVersion, saturatedDimensions, otherBucketDimensions)` retains the **typed
+  features next to the Signals**. The Signals are a lossy ordinal layout: distinct out-of-vocabulary tokens share the `OTHER`
+  position, values above a ceiling share the maximum, and a vocabulary of `n` tokens is spread over `n+1` positions. These are
+  documented collisions, not semantic similarity. **Exact eligibility must use the typed fields**, never Signal equality.
+- Every Signal's frequency identifies its dimension (bands above, unknown markers in the gaps). Tag sets have variable length,
+  so **consumers must match Signals by band, never by list index**.
+- `SchemaMismatch(expected, actual)` when `schemaVersion` is not `task-features/1`. It is a reported result, not an
+  exception, and the encoder never guesses.
+
+`Encoded` validates structural invariants in its public constructor (at most 22 `OBSERVATION` signals, valid policy token,
+positive version, strictly ordered dimension lists limited to numeric or categorical dimensions); consistency with `features`
+is guaranteed only for values the encoder produced.
+
+The encoder reads only its argument: no repository, task text, secret, `HostExecutionContext` reference, clock or randomness.
+
+### 15.4 Complexity and footprint
+
+With `F` features and `T <= 16` tags: construction `O(F + T log T)`; `encode` `O(F)` time with point lookups in
+vocabulary maps built once per encoder (never iterated, so hash order cannot affect output); extra space `O(F)`, at most
+22 Signals plus their `FrequencyState` objects. **Modeled:** about 64 B per Signal and `FrequencyState` pair plus about 4 B per
+list reference, roughly 1.5 KiB for a full encoding (22 x 64 B + 16 B + 88 B). **Measured once** (JDK 27,
+`ThreadMXBean.getThreadAllocatedBytes`, after 20,000 warm-up calls, one full-capacity `encode`): 1,896 bytes, which includes the
+two `EnumSet`s and the result record. The test asserts only an upper bound of 4 KiB; it is a regression guard, not a benchmark,
+and no latency is measured. No cache, parallelism, SIMD or GPU is used.
+
+### 15.5 Verification and evidence gaps
+
+```bash
+./gradlew test
+./gradlew consumerSmokeTest
+```
+
+Evidence gaps: no claim that this layout improves routing or that Signal resonance reflects task similarity; the default
+vocabularies, the band layout and the unknown semantics are unvalidated policy choices; latency is unmeasured and allocation is a single upper-bound check (#67); the
+encoder is not yet consumed by `RoutingRequest` (#61) or a `PerceptionCapability`.

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (contract only; nothing described here is implemented)
+Accepted (contract; only `TaskFeatures` and its signal encoder, issue #60, are implemented, the rest is pending issues #61 to #68)
 
 ## Context
 
