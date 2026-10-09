@@ -1,6 +1,6 @@
 # Forge Routing Contract v1
 
-Status: **proposed contract; only `TaskFeatures` and its signal encoder (#60, Section 15) are implemented.** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
+Status: **proposed contract; implemented so far: `TaskFeatures` and its signal encoder (#60, Section 15) and the route catalog and eligibility filter (#61, Section 16).** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
 Issue: [#59](https://github.com/stevdrey/monada-neuron/issues/59) (Forge Routing 1/10).
 
 This document is the normative v1 contract that issues #60–#68 implement. Later issues may refine exact Java
@@ -9,7 +9,7 @@ signatures, but must not change the semantics defined here without updating this
 Normative words: **must**, **must not**, **should** and **may** carry their usual specification meaning.
 
 Every type and package name below (`monada.neuron.routing`, `TaskFeatures`, `RouteCatalog`, `RoutingDecision`, ...) is a
-**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them exists; since #60, `TaskFeatures` and the other types of `monada.neuron.routing.features` (Section 15) are implemented. Types that do exist are named with
+**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them exists; since #60, `TaskFeatures` and the other types of `monada.neuron.routing.features` (Section 15), and since #61 the types of `monada.neuron.routing.catalog` (Section 16), are implemented. Types that do exist are named with
 their current package and are described only as they exist today.
 
 ## Background
@@ -154,10 +154,10 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 | Type (proposed) | Introduced by | Role |
 | --- | --- | --- |
 | `TaskFeatures` | #60 (implemented, Section 15) | Caller-approved, bounded, typed task/stage characteristics with explicit unknown values, canonical order and schema version. |
-| `RouteDescriptor`, `RouteCatalog` | #61 | `RouteDescriptor` is the versioned behavioral description of one route (worker/provider/model/effort, `billingMode`, `overflowClass`, `tier`, capabilities, stage compatibility, ceilings). `RouteCatalog` is an immutable snapshot of descriptors **plus a per-route availability value, which is outside the versioned descriptor**. |
-| `RoutingRequest` | #61 | One stage request, defined with eligibility because every hard constraint is a request value: envelope, `TaskFeatures`, hard requirements, permitted execution modes, `overflowPermitted`. |
+| `RouteDescriptor`, `RouteCatalog` | #61 (implemented, Section 16) | `RouteDescriptor` is the versioned behavioral description of one route (worker/provider/model/effort, `billingMode`, `overflowClass`, `tier`, capabilities, stage compatibility, ceilings). `RouteCatalog` is an immutable snapshot of descriptors **plus a per-route availability value, which is outside the versioned descriptor**. |
+| `RoutingRequest` | #61 (implemented, Section 16) | One stage request, defined with eligibility because every hard constraint is a request value: envelope, `TaskFeatures`, hard requirements, permitted execution modes, `overflowPermitted`. |
 | `RoutingPolicy` | #62 | Versioned, explicit, rule-based policy; `decide(RoutingRequest, RouteCatalog, RoutingPreference) -> RoutingDecision`; the policy carries its `ResourceObjective`. |
-| `ResourceEstimate` | #61 | Host-supplied, per-route annotation inside the `RouteCatalog` snapshot: `(RouteId, RouteVersion, dimension, unit, value, provenance)` with `value` Known, Unknown or NotMeasured (Section 5). At most one estimate per route and dimension (Section 3.1), and at most 4 dimensions per route. |
+| `ResourceEstimate` | #61 (implemented, Section 16) | Host-supplied, per-route annotation inside the `RouteCatalog` snapshot: `(RouteId, RouteVersion, dimension, unit, value, provenance)` with `value` Known, Unknown or NotMeasured (Section 5). At most one estimate per route and dimension (Section 3.1), and at most 4 dimensions per route. |
 | `RoutingDecision` | #62 | Sealed: `Selected`, `Abstain`, `NoEligibleRoute`. |
 | `RoutingOutcome` | #63 | Host-evaluated result of executing a decision, with evidence and provenance. |
 | `RoutingObservation` | #63 | Neutral, Store-independent record of one effective execution sample, defined with `RoutingOutcome` so feedback derivation needs only #63. #64 only *produces* it from Store exports. |
@@ -915,4 +915,53 @@ and no latency is measured. No cache, parallelism, SIMD or GPU is used.
 
 Evidence gaps: no claim that this layout improves routing or that Signal resonance reflects task similarity; the default
 vocabularies, the band layout and the unknown semantics are unvalidated policy choices; latency is unmeasured and allocation is a single upper-bound check (#67); the
-encoder is not yet consumed by `RoutingRequest` (#61) or a `PerceptionCapability`.
+encoder is not yet consumed by a `PerceptionCapability`; `RoutingRequest` (#61, Section 16) carries the typed `TaskFeatures` record beside its hard requirements, but nothing feeds the encoded Signals into a request or a cycle yet.
+
+## 16. Implemented: Route Catalog and Eligibility Filtering (#61)
+
+Package `monada.neuron.routing.catalog`. This section describes **implemented behavior** and refines Sections 2, 3.1 and
+3.2; it does not change their semantics. Everything is additive and opt-in; nothing is wired into a cycle and no existing
+type changed. There is no ranking, no `RoutingDecision` (#62), no discovery, quota polling, credentials, process launch or
+retained state.
+
+### 16.1 Types and rules
+
+| Type | Behavior |
+| --- | --- |
+| `RouteKey(routeId, routeVersion)` | Token plus version >= 1; natural order is the canonical route order (code point, then numeric). |
+| `RouteDescriptor` | Versioned values only: worker/provider/model/effort (`Feature`, unknown allowed), `billingMode`, `overflowClass`, `tier` >= 1, `stages`, `capabilities`, `tools`, `executionModes` (sets of at most 16 tokens, code point order, duplicates rejected, absent = empty), `locality` (one token or unknown), `contextCeiling` (`Known` >= 0 or unknown; a known 0 is not unknown). |
+| `CatalogEntry` | Descriptor plus snapshot-only `availability` (`AVAILABLE`, `UNAVAILABLE`, `UNKNOWN`) and `fallbackPriority` (consumed by ranking in #62, ignored by eligibility). |
+| `ResourceValue` / `ResourceEstimate` | `Known(value >= 0, REPORTED or ESTIMATED)`, `Unknown`, `NotMeasured`; carried only, no arithmetic. |
+| `RouteCatalog(catalogVersion, entries, estimates)` | At most 32 routes, 4 estimates per route (so at most 128 per catalog, checked before any copy or sort), one per (route, dimension), estimates only for catalog routes. Duplicate `RouteKey` is rejected whatever the other fields (`IllegalArgumentException`). Entries and estimates are stored in canonical order, so input permutations give equal records. Immutable, defensive copies. |
+| `RoutingRequest` | Envelope, provenance fingerprints, evaluation policy, `TaskFeatures`, `HardRequirements`, `overflowPermitted`, `cutoff`. Only `forge-routing/1` is accepted. The record has no default: hosts pass `false` unless they authorize overflow (the contract's default of `false` is a host obligation here). `TaskFeatures` travel beside the constraints and are never used for eligibility; a known `features.stageKind` must equal the request's `stageKind` (construction fails otherwise), an unknown one is allowed. |
+| `HardRequirements` | `requiredCapabilities`, `requiredTools` (empty = always satisfied), `allowedLocalities` and `permittedModes` (allow-lists: empty permits nothing), `requiredContextSize` (host units; **0 means no requirement**, a refinement of Section 3.1 so that a known zero requirement never needs a ceiling). |
+| `RouteEligibilityFilter.evaluate(request, catalog)` | Stateless. Returns an `EligibilityReport` that places every catalog route in exactly one of `eligible` (with the chosen mode, first common mode in code point order, and an `overflow` flag) or `excluded` (primary reason plus `additionalReasons`, at most 8, unique and strictly later than the primary in precedence order, otherwise rejected at construction). A directly built report is also bounded to 32 routes, rejects a repeated key or a key in both lists, and stores both lists in canonical order. `noneEligible()` is the `NoEligibleRoute` condition. |
+
+Reasons follow the precedence of Section 3.2 (`EligibilityReason` is declared in that order): `STAGE_INCOMPATIBLE`,
+`ROUTE_UNAVAILABLE`, `AVAILABILITY_UNKNOWN`, `MODE_NOT_PERMITTED`, `LOCALITY_NOT_PERMITTED`, `OVERFLOW_NOT_PERMITTED`,
+`MISSING_CAPABILITY` (capabilities and tools), `REQUIRED_LIMIT_EXCEEDED`, `REQUIRED_LIMIT_UNKNOWN`. Unknown mandatory data
+fails closed: unknown availability, absent stages, absent modes, unknown locality and an unknown ceiling when a context size is
+required all exclude the route. Unknown optional values (worker, provider, model, effort) never affect eligibility.
+
+The report is not a `RoutingDecision`: it reserves nothing, grants no authorization and does not rank. Forge must
+revalidate authorization, availability and quota immediately before executing any route.
+
+### 16.2 Complexity and footprint
+
+`R` <= 32 routes, `Q` <= 16 tokens per requirement set. Time `O(R*Q)` (all sets are sorted, so subset and intersection checks
+are linear merges; no hash iteration, so order cannot affect results); extra space `O(R)` for the report; no retained state,
+cache, parallelism, SIMD or GPU. **Measured** on the final implementation, including the validating and canonicalizing `EligibilityReport` constructor (JDK 27, `ThreadMXBean.getThreadAllocatedBytes`, after 20,000 warm-up calls, one evaluation at R=32, Q=16 with every route eligible, three separate runs): 7,696, 7,696 and 7,720 bytes. Earlier revisions measured 5,504 bytes before report validation and 11,736 bytes with a set-based validation; re-measure whenever report construction changes. The test publishes the figure through the JUnit report, asserts a positive, readable counter (it is skipped, not passed, when allocation tracking is unsupported) and an upper bound of 16 KiB, about twice the measurement; it is a regression guard, not a benchmark, and no latency is measured. The `O(R*Q)` bound follows from the algorithm (merge-based subset and intersection checks over sorted sets, one pass per route) and is not established by a work-counting test; the grid test only checks that every route is accounted for. `RouteTokens` intentionally duplicates the package-private
+token rules of `features.FeatureTokens`, because #61 may not edit that package; consolidating them is follow-up work.
+
+### 16.3 Verification and evidence gaps
+
+```bash
+./gradlew test
+./gradlew consumerSmokeTest
+```
+
+The tests include a plan/implement/review/QA capability-matrix fixture and the Section 9.1 and 9.2 outcomes.
+
+Evidence gaps: no latency measurement; eligibility is only as correct as the caller-supplied catalog (descriptors are
+observations, not proof); ranking, `RoutingDecision` and state admission arrive with #62; the `EligibilityReport` is not yet
+consumed by any policy.
