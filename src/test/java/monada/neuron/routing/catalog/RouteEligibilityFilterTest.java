@@ -1,7 +1,9 @@
 package monada.neuron.routing.catalog;
 
+import monada.neuron.routing.features.TaskFeatures;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestReporter;
 
 import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
@@ -294,6 +296,25 @@ class RouteEligibilityFilterTest {
     }
 
     @Test
+    void requestRejectsKnownFeatureStageThatDisagreesWithStageKind() {
+        RoutingRequest ok = request("plan", List.of());
+        TaskFeatures mismatched =
+                TaskFeatures.builder().stageKind("qa").build();
+        TaskFeatures unknownStage =
+                TaskFeatures.builder().build();
+        assertThrows(IllegalArgumentException.class, () -> withFeatures(ok, mismatched));
+        assertEquals("plan", withFeatures(ok, unknownStage).stageKind());
+        assertEquals("plan", withFeatures(ok, ok.features()).stageKind());
+    }
+
+    private static RoutingRequest withFeatures(RoutingRequest r, TaskFeatures features) {
+        return new RoutingRequest(r.contractVersion(), r.scopeId(), r.taskId(), r.executionId(), r.attemptId(),
+                r.stageId(), r.stageKind(), r.requestOrdinal(), r.sourceFingerprint(), r.contextFingerprint(),
+                r.constraintsFingerprint(), r.evaluationPolicyId(), r.evaluationPolicyVersion(), features,
+                r.requirements(), r.overflowPermitted(), r.cutoff());
+    }
+
+    @Test
     void requestRejectsUnknownContractVersionAndNegativeValues() {
         RoutingRequest ok = request("plan", List.of());
         assertThrows(IllegalArgumentException.class, () -> new RoutingRequest("forge-routing/2", ok.scopeId(),
@@ -333,8 +354,8 @@ class RouteEligibilityFilterTest {
     }
 
     @Test
-    void workGrowsLinearlyWithRoutesAndRequirementTokens() {
-        // Counts accepted constraint checks via the report size: every route is accounted exactly once at any R, Q.
+    void everyRouteIsAccountedForAtEveryCatalogAndRequirementSize() {
+        // Accounting check over the R x Q grid; it does not measure work, so it is no evidence of O(R*Q) by itself.
         for (int routes : new int[] {8, 16, 32}) {
             for (int tokens : new int[] {0, 4, 16}) {
                 List<String> need = IntStream.range(0, tokens).mapToObj(i -> "c" + i).toList();
@@ -349,7 +370,7 @@ class RouteEligibilityFilterTest {
     }
 
     @Test
-    void maximumSizeEvaluationAllocatesBoundedMemory() {
+    void maximumSizeEvaluationAllocatesBoundedMemory(TestReporter reporter) {
         List<String> need = IntStream.range(0, 16).mapToObj(i -> "c" + i).toList();
         List<CatalogEntry> entries = IntStream.range(0, 32).mapToObj(i ->
                 available(base("r" + i, 1).capabilities(need).build())).toList();
@@ -368,8 +389,8 @@ class RouteEligibilityFilterTest {
         assertTrue(before >= 0 && after >= before, "allocation counter unavailable: " + before + " -> " + after);
         long allocated = after - before;
         assertTrue(allocated > 0, "evaluate must allocate its report; measured " + allocated);
-        System.out.println("catalog eligibility allocation (R=32, Q=16): " + allocated + " bytes");
 
+        reporter.publishEntry("allocatedBytes", Long.toString(allocated));
         assertEquals(32, report.eligible().size());
         // Regression guard, not a benchmark: a modeled report of 32 routes is a few KiB.
         assertTrue(allocated < 16 * 1024, "allocated " + allocated);

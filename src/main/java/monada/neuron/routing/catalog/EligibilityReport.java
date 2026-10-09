@@ -1,8 +1,6 @@
 package monada.neuron.routing.catalog;
 
-import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -20,7 +18,11 @@ import java.util.Objects;
  */
 public record EligibilityReport(String catalogVersion, List<EligibleRoute> eligible, List<Exclusion> excluded) {
 
-    /** Defensive immutable copies. */
+    private static final Comparator<EligibleRoute> ELIGIBLE_ORDER = Comparator.comparing(EligibleRoute::key);
+
+    private static final Comparator<Exclusion> EXCLUDED_ORDER = Comparator.comparing(Exclusion::key);
+
+    /** Validates bounds, key uniqueness and canonicalizes order; the stored lists are immutable. */
     public EligibilityReport {
         RouteTokens.require(catalogVersion, "catalogVersion");
         Objects.requireNonNull(eligible, "eligible must not be null");
@@ -29,26 +31,30 @@ public record EligibilityReport(String catalogVersion, List<EligibleRoute> eligi
             throw new IllegalArgumentException("a report covers at most " + RouteCatalog.MAX_ROUTES
                     + " routes, got: " + ((long) eligible.size() + excluded.size()));
         }
-        HashSet<RouteKey> seen = HashSet.newHashSet(eligible.size() + excluded.size());
-        for (EligibleRoute route : eligible) {
-            requireFirstOccurrence(seen, route.key());
+        eligible = RouteTokens.canonicalOrder(eligible, ELIGIBLE_ORDER, duplicate -> {
+            throw repeated(duplicate.key());
+        });
+        excluded = RouteTokens.canonicalOrder(excluded, EXCLUDED_ORDER, duplicate -> {
+            throw repeated(duplicate.key());
+        });
+        int i = 0;
+        int j = 0;
+        while (i < eligible.size() && j < excluded.size()) {
+            int order = eligible.get(i).key().compareTo(excluded.get(j).key());
+            if (order == 0) {
+                throw repeated(eligible.get(i).key());
+            }
+            if (order < 0) {
+                i++;
+            } else {
+                j++;
+            }
         }
-        for (Exclusion exclusion : excluded) {
-            requireFirstOccurrence(seen, exclusion.key());
-        }
-        List<EligibleRoute> sortedEligible = new ArrayList<>(eligible);
-        sortedEligible.sort(Comparator.comparing(EligibleRoute::key));
-        List<Exclusion> sortedExcluded = new ArrayList<>(excluded);
-        sortedExcluded.sort(Comparator.comparing(Exclusion::key));
-        eligible = List.copyOf(sortedEligible);
-        excluded = List.copyOf(sortedExcluded);
     }
 
-    private static void requireFirstOccurrence(HashSet<RouteKey> seen, RouteKey key) {
-        if (!seen.add(key)) {
-            throw new IllegalArgumentException(
-                    "a route may appear once, in exactly one of eligible or excluded: " + key);
-        }
+    private static IllegalArgumentException repeated(RouteKey key) {
+        return new IllegalArgumentException(
+                "a route may appear once, in exactly one of eligible or excluded: " + key);
     }
 
     /** True when no route is eligible (the contract's {@code NoEligibleRoute} condition). */

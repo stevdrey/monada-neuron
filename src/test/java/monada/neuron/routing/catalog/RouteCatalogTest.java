@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Random;
 import java.util.stream.IntStream;
 
 import static monada.neuron.routing.catalog.CatalogFixtures.available;
@@ -27,7 +28,7 @@ class RouteCatalogTest {
                 available(base("sub-a", 10).build()), available(base("sub-a", 2).build())));
         RouteCatalog reference = RouteCatalog.of("v1", entries);
         for (int seed = 0; seed < 20; seed++) {
-            Collections.shuffle(entries, new java.util.Random(seed));
+            Collections.shuffle(entries, new Random(seed));
             RouteCatalog shuffled = RouteCatalog.of("v1", entries);
             assertEquals(reference, shuffled);
             assertEquals(reference.hashCode(), shuffled.hashCode());

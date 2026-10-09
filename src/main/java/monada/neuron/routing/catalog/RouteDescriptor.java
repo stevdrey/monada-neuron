@@ -145,27 +145,27 @@ public record RouteDescriptor(
             return this;
         }
 
-        /** Sets the compatible stage kinds; copied immediately. */
+        /** Sets the compatible stage kinds; validated and copied immediately. */
         public Builder stages(Collection<String> values) {
-            this.stages = RouteTokens.copyBounded(values, "stages");
+            this.stages = RouteTokens.canonicalSet(values, "stages");
             return this;
         }
 
-        /** Sets the capabilities; copied immediately. */
+        /** Sets the capabilities; validated and copied immediately. */
         public Builder capabilities(Collection<String> values) {
-            this.capabilities = RouteTokens.copyBounded(values, "capabilities");
+            this.capabilities = RouteTokens.canonicalSet(values, "capabilities");
             return this;
         }
 
-        /** Sets the tools; copied immediately. */
+        /** Sets the tools; validated and copied immediately. */
         public Builder tools(Collection<String> values) {
-            this.tools = RouteTokens.copyBounded(values, "tools");
+            this.tools = RouteTokens.canonicalSet(values, "tools");
             return this;
         }
 
-        /** Sets the execution modes; copied immediately. */
+        /** Sets the execution modes; validated and copied immediately. */
         public Builder executionModes(Collection<String> values) {
-            this.executionModes = RouteTokens.copyBounded(values, "executionModes");
+            this.executionModes = RouteTokens.canonicalSet(values, "executionModes");
             return this;
         }
 

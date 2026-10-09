@@ -1,11 +1,9 @@
 package monada.neuron.routing.catalog;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Comparator;
 
 /**
@@ -31,6 +29,11 @@ public record RouteCatalog(String catalogVersion, List<CatalogEntry> entries, Li
     /** Maximum estimates per catalog; checked before any copy or sort. */
     public static final int MAX_ESTIMATES = MAX_ROUTES * MAX_ESTIMATES_PER_ROUTE;
 
+    private static final Comparator<CatalogEntry> ENTRY_ORDER = Comparator.comparing(CatalogEntry::key);
+
+    private static final Comparator<ResourceEstimate> ESTIMATE_ORDER = Comparator.comparing(ResourceEstimate::key)
+            .thenComparing(ResourceEstimate::dimension, RouteTokens.CODE_POINT_ORDER);
+
     /** Validates bounds and uniqueness and canonicalizes order. */
     public RouteCatalog {
         RouteTokens.require(catalogVersion, "catalogVersion");
@@ -44,22 +47,13 @@ public record RouteCatalog(String catalogVersion, List<CatalogEntry> entries, Li
             throw new IllegalArgumentException(
                     "catalog allows at most " + MAX_ROUTES + " routes, got: " + entries.size());
         }
-        List<CatalogEntry> sorted = new ArrayList<>(entries);
-        for (CatalogEntry entry : sorted) {
-            Objects.requireNonNull(entry, "entry must not be null");
-        }
-        sorted.sort(Comparator.comparing(CatalogEntry::key));
-        for (int i = 1; i < sorted.size(); i++) {
-            if (sorted.get(i - 1).key().equals(sorted.get(i).key())) {
-                throw new IllegalArgumentException("duplicate route identity: " + sorted.get(i).key());
-            }
-        }
-        List<ResourceEstimate> sortedEstimates = new ArrayList<>(estimates);
-        for (ResourceEstimate estimate : sortedEstimates) {
-            Objects.requireNonNull(estimate, "estimate must not be null");
-        }
-        sortedEstimates.sort(Comparator.comparing(ResourceEstimate::key)
-                .thenComparing(ResourceEstimate::dimension, RouteTokens.CODE_POINT_ORDER));
+        List<CatalogEntry> sorted = RouteTokens.canonicalOrder(entries, ENTRY_ORDER, duplicate -> {
+            throw new IllegalArgumentException("duplicate route identity: " + duplicate.key());
+        });
+        List<ResourceEstimate> sortedEstimates = RouteTokens.canonicalOrder(estimates, ESTIMATE_ORDER, duplicate -> {
+            throw new IllegalArgumentException("duplicate estimate for " + duplicate.key()
+                    + " dimension: " + duplicate.dimension());
+        });
         HashSet<RouteKey> known = HashSet.newHashSet(sorted.size());
         sorted.forEach(entry -> known.add(entry.key()));
         int perRoute = 0;
@@ -68,23 +62,15 @@ public record RouteCatalog(String catalogVersion, List<CatalogEntry> entries, Li
             if (!known.contains(current.key())) {
                 throw new IllegalArgumentException("estimate for a route not in the catalog: " + current.key());
             }
-            ResourceEstimate previous = i == 0 ? null : sortedEstimates.get(i - 1);
-            if (previous != null && previous.key().equals(current.key())) {
-                if (previous.dimension().equals(current.dimension())) {
-                    throw new IllegalArgumentException("duplicate estimate for " + current.key()
-                            + " dimension: " + current.dimension());
-                }
-                perRoute++;
-            } else {
-                perRoute = 1;
-            }
+            boolean sameRoute = i > 0 && sortedEstimates.get(i - 1).key().equals(current.key());
+            perRoute = sameRoute ? perRoute + 1 : 1;
             if (perRoute > MAX_ESTIMATES_PER_ROUTE) {
                 throw new IllegalArgumentException("at most " + MAX_ESTIMATES_PER_ROUTE
                         + " estimates per route, exceeded by: " + current.key());
             }
         }
-        entries = List.copyOf(sorted);
-        estimates = List.copyOf(sortedEstimates);
+        entries = sorted;
+        estimates = sortedEstimates;
     }
 
     /** Creates a catalog without resource estimates. */
@@ -95,10 +81,5 @@ public record RouteCatalog(String catalogVersion, List<CatalogEntry> entries, Li
                     "catalog allows at most " + MAX_ROUTES + " routes, got: " + entries.size());
         }
         return new RouteCatalog(catalogVersion, List.copyOf(entries), List.of());
-    }
-
-    /** Looks up an entry by identity; linear over at most {@value #MAX_ROUTES} routes. */
-    public Optional<CatalogEntry> find(RouteKey key) {
-        return entries.stream().filter(entry -> entry.key().equals(key)).findFirst();
     }
 }

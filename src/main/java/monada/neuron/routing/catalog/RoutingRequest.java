@@ -1,5 +1,6 @@
 package monada.neuron.routing.catalog;
 
+import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.features.TaskFeatures;
 
 import java.util.Objects;
@@ -25,7 +26,7 @@ import java.util.Objects;
  * @param constraintsFingerprint host-constraints fingerprint
  * @param evaluationPolicyId evaluation policy id
  * @param evaluationPolicyVersion evaluation policy version token
- * @param features task features
+ * @param features task features; a known {@code features.stageKind()} must equal {@code stageKind}
  * @param requirements host hard requirements
  * @param overflowPermitted whether the host permits overflow routes
  * @param cutoff caller-supplied inclusive ledger cutoff, non-negative
@@ -71,6 +72,10 @@ public record RoutingRequest(
         RouteTokens.require(evaluationPolicyVersion, "evaluationPolicyVersion");
         Objects.requireNonNull(features, "features must not be null");
         Objects.requireNonNull(requirements, "requirements must not be null");
+        if (features.stageKind() instanceof Feature.Known<String> known && !known.value().equals(stageKind)) {
+            throw new IllegalArgumentException("features.stageKind (" + known.value()
+                    + ") must equal stageKind (" + stageKind + ") when known");
+        }
         if (requestOrdinal < 0) {
             throw new IllegalArgumentException("requestOrdinal must be non-negative, got: " + requestOrdinal);
         }
