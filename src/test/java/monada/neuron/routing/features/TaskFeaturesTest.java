@@ -81,6 +81,16 @@ class TaskFeaturesTest {
     }
 
     @Test
+    void rejectsUnicodeSpaceSeparatorsAtTheBoundariesOnly() {
+        for (String space : List.of("\u00A0", "\u202F", "\u2007", "\u3000", "\u2003")) {
+            assertThrows(IllegalArgumentException.class, () -> base().category(space + "x").build());
+            assertThrows(IllegalArgumentException.class, () -> base().category("x" + space).build());
+            assertThrows(IllegalArgumentException.class, () -> base().languages(List.of(space + "x")).build());
+            assertEquals(Feature.known("a" + space + "b"), base().category("a" + space + "b").build().category());
+        }
+    }
+
+    @Test
     void enforcesTagCapacityAndRejectsDuplicates() {
         List<String> eight = List.of("a", "b", "c", "d", "e", "f", "g", "h");
         List<String> nine = List.of("a", "b", "c", "d", "e", "f", "g", "h", "i");

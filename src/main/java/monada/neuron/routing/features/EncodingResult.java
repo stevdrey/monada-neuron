@@ -1,6 +1,7 @@
 package monada.neuron.routing.features;
 
 import monada.neuron.signal.Signal;
+import monada.neuron.signal.SignalKind;
 
 import java.util.List;
 import java.util.Objects;
@@ -32,13 +33,51 @@ public sealed interface EncodingResult permits EncodingResult.Encoded, EncodingR
             List<FeatureDimension> saturatedDimensions,
             List<FeatureDimension> otherBucketDimensions) implements EncodingResult {
 
-        /** Requires non-null parts and copies the lists. */
+        /**
+         * Checks the structural invariants the encoder guarantees and copies the lists: at most
+         * {@link TaskFeatureEncoder#MAX_SIGNALS} non-null {@code OBSERVATION} signals, a valid policy token, a
+         * positive version, and dimension lists that are strictly ordered without duplicates, with saturation
+         * only on numeric and other-bucket only on categorical dimensions. Consistency of the signals with
+         * {@code features} is guaranteed only for values produced by {@link TaskFeatureEncoder}.
+         */
         public Encoded {
             Objects.requireNonNull(features, "features must not be null");
             signals = List.copyOf(signals);
-            Objects.requireNonNull(policyId, "policyId must not be null");
-            saturatedDimensions = List.copyOf(saturatedDimensions);
-            otherBucketDimensions = List.copyOf(otherBucketDimensions);
+            if (signals.size() > TaskFeatureEncoder.MAX_SIGNALS) {
+                throw new IllegalArgumentException("signals exceed " + TaskFeatureEncoder.MAX_SIGNALS
+                        + ", got: " + signals.size());
+            }
+            for (Signal signal : signals) {
+                if (signal.kind() != SignalKind.OBSERVATION) {
+                    throw new IllegalArgumentException("signals must be OBSERVATION, got: " + signal.kind());
+                }
+            }
+            FeatureTokens.require(policyId, "policyId");
+            if (policyVersion < 1) {
+                throw new IllegalArgumentException("policyVersion must be positive, got: " + policyVersion);
+            }
+            saturatedDimensions = orderedSubset(saturatedDimensions, "saturatedDimensions",
+                    FeatureDimension.CHANGE_SIZE, FeatureDimension.CONTEXT_SIZE);
+            otherBucketDimensions = orderedSubset(otherBucketDimensions, "otherBucketDimensions",
+                    FeatureDimension.STAGE_KIND, FeatureDimension.CATEGORY, FeatureDimension.LANGUAGES,
+                    FeatureDimension.DOMAINS);
+        }
+
+        private static List<FeatureDimension> orderedSubset(List<FeatureDimension> dimensions, String name,
+                FeatureDimension... allowed) {
+            List<FeatureDimension> copy = List.copyOf(dimensions);
+            List<FeatureDimension> permitted = List.of(allowed);
+            FeatureDimension previous = null;
+            for (FeatureDimension dimension : copy) {
+                if (!permitted.contains(dimension)) {
+                    throw new IllegalArgumentException(name + " does not allow " + dimension);
+                }
+                if (previous != null && dimension.ordinal() <= previous.ordinal()) {
+                    throw new IllegalArgumentException(name + " must be strictly ordered without duplicates");
+                }
+                previous = dimension;
+            }
+            return copy;
         }
     }
 

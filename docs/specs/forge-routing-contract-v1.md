@@ -9,7 +9,7 @@ signatures, but must not change the semantics defined here without updating this
 Normative words: **must**, **must not**, **should** and **may** carry their usual specification meaning.
 
 Every type and package name below (`monada.neuron.routing`, `TaskFeatures`, `RouteCatalog`, `RoutingDecision`, ...) is a
-**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them exists. Types that do exist are named with
+**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them exists; since #60, `TaskFeatures` and the other types of `monada.neuron.routing.features` (Section 15) are implemented. Types that do exist are named with
 their current package and are described only as they exist today.
 
 ## Background
@@ -795,9 +795,9 @@ Everything in this contract is additive and opt-in.
 - `NeuronRuntime` is sequential and not thread-safe; the preference snapshot must be passed by the host, not shared mutably.
 - The Store's contract is not yet implemented, so end-to-end behavior with real exports is unverified until #64 and #68.
 
-## 13. Verification (this issue)
+## 13. Verification (issue #59, historical)
 
-This issue is documentation-only: no runtime change and no new tests. From the repository root:
+Issue #59 was documentation-only: no runtime change and no new tests. Issue #60 adds code and tests; its verification is Section 15.5. From the repository root, at the #59 baseline:
 
 ```bash
 git diff --stat origin/main -- . ':!docs' ':!README.md'
@@ -810,7 +810,7 @@ file.
 
 ## 14. Documentation Updates
 
-- `docs/specs/forge-routing-contract-v1.md` (this file, new).
+- `docs/specs/forge-routing-contract-v1.md` (this file, new; Section 15 added by #60).
 - `docs/adr/0026-forge-routing-ownership.md` (new).
 - `docs/architecture.md`: "Forge Routing Extension (proposed)" section.
 - `README.md`: pointer under the host-embedding section.
@@ -831,7 +831,7 @@ none of them can enter similarity; correlation stays in the routing envelope (#6
 
 | Rule | Behavior |
 | --- | --- |
-| Tokens (`stageKind`, `category`, tags, `schemaVersion`) | 1-128 code points, no control characters, no leading/trailing whitespace; `IllegalArgumentException` otherwise. Compared by `String.equals`, never normalized. |
+| Tokens (`stageKind`, `category`, tags, `schemaVersion`) | 1-128 code points, no control characters, no leading/trailing whitespace or Unicode space separator (including NBSP); `IllegalArgumentException` otherwise. Compared by `String.equals`, never normalized. |
 | Tag sets (`languages`, `domains`) | At most 8 tags each; duplicates rejected; stored in **code point order** (not UTF-16 unit order) as an immutable copy. Known-empty set differs from unknown set. |
 | Numerics (`changeSize`, `contextSize`) | Non-negative `long` in host-defined units; negative rejected. Values above the policy ceiling are valid and saturate only in Signals. |
 | `tests`, `security` | `Requirement.REQUIRED` / `NOT_REQUIRED` or unknown. |
@@ -874,6 +874,8 @@ context size 1,048,575, tests `REQUIRED`, security `NOT_REQUIRED` encodes to fre
   documented collisions, not semantic similarity. **Exact eligibility must use the typed fields**, never Signal equality.
 - `SchemaMismatch(expected, actual)` when `schemaVersion` is not `task-features/1`. It is a reported result, not an
   exception, and the encoder never guesses.
+
+`Encoded` validates structural invariants in its public constructor (at most 22 `OBSERVATION` signals, valid policy token, positive version, strictly ordered dimension lists limited to numeric or categorical dimensions); consistency with `features` is guaranteed only for values the encoder produced.
 
 The encoder reads only its argument: no repository, task text, secret, `HostExecutionContext` reference, clock or randomness.
 

@@ -16,7 +16,8 @@ final class FeatureTokens {
     }
 
     /**
-     * Requires 1 to 128 code points, no control characters and no leading or trailing whitespace.
+     * Requires 1 to 128 code points, no control characters and no leading or trailing whitespace or Unicode
+     * space separator (for example NBSP, which {@link String#strip()} does not remove).
      *
      * @return the same token
      */
@@ -34,10 +35,14 @@ final class FeatureTokens {
         if (token.codePoints().anyMatch(Character::isISOControl)) {
             throw new IllegalArgumentException(name + " must not contain control characters");
         }
-        if (!token.equals(token.strip())) {
+        if (isSpace(token.codePointAt(0)) || isSpace(token.codePointBefore(token.length()))) {
             throw new IllegalArgumentException(name + " must not have leading or trailing whitespace");
         }
         return token;
+    }
+
+    private static boolean isSpace(int codePoint) {
+        return Character.isWhitespace(codePoint) || Character.isSpaceChar(codePoint);
     }
 
     private static int compareCodePoints(String left, String right) {

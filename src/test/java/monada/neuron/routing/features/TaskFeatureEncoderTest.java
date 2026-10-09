@@ -211,4 +211,40 @@ class TaskFeatureEncoderTest {
         assertSignal(encoded.signals().get(0), 1.0, 8.0, 0.0);
         assertEquals(List.of(FeatureDimension.STAGE_KIND), encoded.otherBucketDimensions());
     }
+
+    @Test
+    void encodedConstructorEnforcesStructuralInvariants() {
+        TaskFeatures features = TaskFeatures.builder().changeSize(1).build();
+        Signal ok = new Signal(SignalKind.OBSERVATION, new FrequencyState(1.0, 1.0, 0.0));
+        List<Signal> many = java.util.Collections.nCopies(TaskFeatureEncoder.MAX_SIGNALS + 1, ok);
+        List<FeatureDimension> none = List.of();
+
+        // Round-trip of a produced value is accepted.
+        Encoded produced = encode(features);
+        assertEquals(produced, new Encoded(produced.features(), produced.signals(), produced.policyId(),
+                produced.policyVersion(), produced.saturatedDimensions(), produced.otherBucketDimensions()));
+
+        for (SignalKind kind : List.of(SignalKind.FEEDBACK, SignalKind.INTERMEDIATE)) {
+            Signal bad = new Signal(kind, new FrequencyState(1.0, 1.0, 0.0));
+            assertThrows(IllegalArgumentException.class, () -> new Encoded(features, List.of(bad), "p", 1, none, none));
+        }
+        assertThrows(IllegalArgumentException.class, () -> new Encoded(features, many, "p", 1, none, none));
+        assertEquals(TaskFeatureEncoder.MAX_SIGNALS, new Encoded(features,
+                many.subList(0, TaskFeatureEncoder.MAX_SIGNALS), "p", 1, none, none).signals().size());
+        assertThrows(IllegalArgumentException.class, () -> new Encoded(features, List.of(ok), "", 1, none, none));
+        assertThrows(IllegalArgumentException.class, () -> new Encoded(features, List.of(ok), "x".repeat(129), 1, none, none));
+        assertThrows(NullPointerException.class, () -> new Encoded(features, List.of(ok), null, 1, none, none));
+        assertThrows(IllegalArgumentException.class, () -> new Encoded(features, List.of(ok), "p", 0, none, none));
+        assertThrows(IllegalArgumentException.class, () -> new Encoded(features, List.of(ok), "p", -1, none, none));
+        assertThrows(IllegalArgumentException.class, () -> new Encoded(features, List.of(ok), "p", 1,
+                List.of(FeatureDimension.CHANGE_SIZE, FeatureDimension.CHANGE_SIZE), none));
+        assertThrows(IllegalArgumentException.class, () -> new Encoded(features, List.of(ok), "p", 1,
+                List.of(FeatureDimension.CONTEXT_SIZE, FeatureDimension.CHANGE_SIZE), none));
+        assertThrows(IllegalArgumentException.class, () -> new Encoded(features, List.of(ok), "p", 1,
+                List.of(FeatureDimension.TESTS), none));
+        assertThrows(IllegalArgumentException.class, () -> new Encoded(features, List.of(ok), "p", 1, none,
+                List.of(FeatureDimension.CHANGE_SIZE)));
+        assertThrows(IllegalArgumentException.class, () -> new Encoded(features, List.of(ok), "p", 1, none,
+                List.of(FeatureDimension.DOMAINS, FeatureDimension.CATEGORY)));
+    }
 }
