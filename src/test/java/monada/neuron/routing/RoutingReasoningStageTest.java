@@ -165,10 +165,7 @@ class RoutingReasoningStageTest {
         }
     }
 
-    @Test
-    void aPolicyThatSelectsARouteOutsideTheCatalogIsRejectedClearly() {
-        var request = request(List.of("java"), false);
-        var absent = new RouteKey("not-in-catalog", 1);
+    private static RoutingReasoningStage stubbed(RoutingRequest request, RouteKey route, String mode, boolean overflow) {
         var provenance = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
                 empty(request).binding(), new StateValidation.Compatible());
         RoutingPolicy stub = new RoutingPolicy() {
@@ -184,19 +181,48 @@ class RoutingReasoningStageTest {
 
             @Override
             public RoutingDecision decide(RoutingRequest r, RouteCatalog c, RoutingPreference p) {
-                return new RoutingDecision.Selected(provenance, absent, "sandboxed", Basis.COLD_START, false,
-                        List.of(new RankedCandidate(0, absent, Placement.ONLY_ELIGIBLE)), false,
+                return new RoutingDecision.Selected(provenance, route, mode, Basis.COLD_START, overflow,
+                        List.of(new RankedCandidate(0, route, Placement.ONLY_ELIGIBLE)), false,
                         List.of(RoutingRule.ROUTE_ORDER), List.of(), List.of(),
                         new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1"));
             }
         };
-        var stage = new RoutingReasoningStage(stub,
+        return new RoutingReasoningStage(stub,
                 context -> Optional.of(new RoutingInput(request, demo(), empty(request))), DOMAIN);
+    }
 
+    private static IllegalStateException rejected(RoutingReasoningStage stage) {
         var failure = assertThrows(IllegalStateException.class,
                 () -> stage.execute(monad(), List.of(), new CognitiveContext(MINIMUM, HOST)));
-        assertTrue(failure.getMessage().contains("not-in-catalog"));
         assertThrows(RuntimeException.class,
                 () -> new DeterministicCognitiveCycle(List.of(stage)).execute(monad(), List.of(), MINIMUM, HOST));
+        return failure;
+    }
+
+    @Test
+    void aPolicyThatSelectsARouteOutsideTheCatalogIsRejectedClearly() {
+        var request = request(List.of("java"), false);
+        var failure = rejected(stubbed(request, new RouteKey("not-in-catalog", 1), "sandboxed", false));
+        assertTrue(failure.getMessage().contains("not-in-catalog"));
+    }
+
+    @Test
+    void aPolicyThatSelectsAnIneligibleCatalogRouteIsRejected() {
+        var request = request(List.of("java"), false);
+        var failure = rejected(stubbed(request, RoutingFixtures.API_X, "sandboxed", true));
+        assertTrue(failure.getMessage().contains("not eligible"));
+        // The same selection is accepted once the host permits overflow.
+        var permitted = request(List.of("java"), true);
+        stubbed(permitted, RoutingFixtures.API_X, "sandboxed", true)
+                .execute(monad(), List.of(), new CognitiveContext(MINIMUM, HOST));
+    }
+
+    @Test
+    void aSelectionWithAnotherModeOrOverflowFlagThanTheFilterIsRejected() {
+        var request = request(List.of("java"), false);
+        assertTrue(rejected(stubbed(request, RoutingFixtures.SUB_A, "other-mode", false))
+                .getMessage().contains("disagrees"));
+        assertTrue(rejected(stubbed(request, RoutingFixtures.SUB_A, "sandboxed", true))
+                .getMessage().contains("disagrees"));
     }
 }

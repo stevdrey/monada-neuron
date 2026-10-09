@@ -5,6 +5,7 @@ import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteKey;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -25,7 +26,7 @@ public sealed interface RoutingDecision
     /** Common provenance. */
     Provenance provenance();
 
-    /** Exclusion reasons, one entry per excluded catalog route, in canonical route order. */
+    /** Exclusion reasons, one entry per excluded catalog route, stored in canonical route order. */
     List<EligibilityReport.Exclusion> exclusions();
 
     /**
@@ -181,12 +182,14 @@ public sealed interface RoutingDecision
             throw new IllegalArgumentException("at most " + RouteCatalog.MAX_ROUTES
                     + " exclusions, got: " + exclusions.size());
         }
-        var keys = new HashSet<RouteKey>();
-        for (EligibilityReport.Exclusion exclusion : exclusions) {
-            if (!keys.add(Objects.requireNonNull(exclusion, "exclusion must not be null").key())) {
-                throw new IllegalArgumentException("duplicate exclusion for " + exclusion.key());
+        var sorted = new ArrayList<>(exclusions);
+        sorted.forEach(exclusion -> Objects.requireNonNull(exclusion, "exclusion must not be null"));
+        sorted.sort(Comparator.comparing(EligibilityReport.Exclusion::key));
+        for (int i = 1; i < sorted.size(); i++) {
+            if (sorted.get(i - 1).key().equals(sorted.get(i).key())) {
+                throw new IllegalArgumentException("duplicate exclusion for " + sorted.get(i).key());
             }
         }
-        return List.copyOf(exclusions);
+        return List.copyOf(sorted);
     }
 }

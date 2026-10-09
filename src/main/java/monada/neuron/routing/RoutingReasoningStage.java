@@ -9,6 +9,8 @@ import monada.neuron.reasoning.HypothesisSet;
 import monada.neuron.reasoning.HypothesisLimits;
 import monada.neuron.reasoning.Proposition;
 import monada.neuron.routing.catalog.CatalogEntry;
+import monada.neuron.routing.catalog.EligibilityReport;
+import monada.neuron.routing.catalog.RouteEligibilityFilter;
 import monada.neuron.signal.Signal;
 
 import java.util.List;
@@ -19,12 +21,14 @@ import java.util.Objects;
  *
  * <p>It is a source (like {@code PerceptionCognitiveStage}): it must be the first stage, runs with empty initial
  * Signals and cannot be combined with a perception source in the same cycle. It holds no per-cycle state, starts no
- * cycle and never executes the route. A selected route becomes one hypothesis whose
+ * cycle and never executes the route. It re-verifies a selected route against the hard eligibility filter, so a
+ * custom policy cannot hand off a hypothesis for an ineligible route. A selected route becomes one hypothesis whose
  * {@link Proposition#code()} is the zero-based index of the route in the catalog's canonical order; that code is
  * meaningful only together with the decision's {@code catalogVersion}.
  */
 public final class RoutingReasoningStage implements CognitiveStage {
 
+    private final RouteEligibilityFilter filter = new RouteEligibilityFilter();
     private final RoutingPolicy policy;
     private final RoutingInputResolver resolver;
     private final int domain;
@@ -60,7 +64,7 @@ public final class RoutingReasoningStage implements CognitiveStage {
      *
      * @throws IllegalArgumentException if input Signals are supplied
      * @throws IllegalStateException if the cycle has no host context, the resolver cannot resolve it, or the policy
-     *         selects a route that is not in the supplied catalog
+     *         selects a route that the hard eligibility filter does not accept (or with another mode or overflow flag)
      */
     @Override
     public RoutingCognitiveStageResult execute(
@@ -77,19 +81,33 @@ public final class RoutingReasoningStage implements CognitiveStage {
         RoutingDecision decision = Objects.requireNonNull(
                 policy.decide(input.request(), input.catalog(), input.preference()), "decision must not be null");
         if (decision instanceof RoutingDecision.Selected selected) {
+            verifyEligible(selected, input);
             List<CatalogEntry> entries = input.catalog().entries();
             int index = 0;
-            while (index < entries.size() && !entries.get(index).key().equals(selected.route())) {
+            while (!entries.get(index).key().equals(selected.route())) {
                 index++;
-            }
-            if (index == entries.size()) {
-                throw new IllegalStateException(
-                        "policy selected a route that is not in the catalog: " + selected.route());
             }
             var hypothesis = new Hypothesis(0, new Proposition(domain, index), List.of());
             return new RoutingCognitiveStageResult(
                     decision, new HypothesisSet(List.of(hypothesis), HypothesisLimits.DEFAULT));
         }
         return new RoutingCognitiveStageResult(decision, HypothesisSet.EMPTY);
+    }
+
+    /** Re-verifies a selection against the hard eligibility filter, so an injected policy cannot bypass it. */
+    private void verifyEligible(RoutingDecision.Selected selected, RoutingInput input) {
+        EligibilityReport report = filter.evaluate(input.request(), input.catalog());
+        EligibilityReport.EligibleRoute eligible = report.eligible().stream()
+                .filter(route -> route.key().equals(selected.route()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException(
+                        "policy selected a route that is not eligible for the request: " + selected.route()));
+        if (!eligible.executionMode().equals(selected.executionMode())
+                || eligible.overflow() != selected.overflowUsed()) {
+            throw new IllegalStateException("policy decision disagrees with the eligibility filter for "
+                    + selected.route() + ": mode " + selected.executionMode() + ", overflow "
+                    + selected.overflowUsed() + " instead of " + eligible.executionMode() + ", "
+                    + eligible.overflow());
+        }
     }
 }

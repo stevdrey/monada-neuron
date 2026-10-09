@@ -109,6 +109,29 @@ class RoutingValueTypesTest {
     }
 
     @Test
+    void exclusionsAreStoredUniqueAndInCanonicalOrder() {
+        var first = new EligibilityReport.Exclusion(new RouteKey("a", 1), EligibilityReason.MISSING_CAPABILITY, List.of());
+        var second = new EligibilityReport.Exclusion(new RouteKey("r", 2), EligibilityReason.ROUTE_UNAVAILABLE, List.of());
+        var third = new EligibilityReport.Exclusion(new RouteKey("r", 10), EligibilityReason.STAGE_INCOMPATIBLE, List.of());
+        var notEvaluated = provenance(new StateValidation.NotEvaluated());
+        var incompatible = provenance(new StateValidation.Incompatible(List.of(StateMismatch.SCOPE_MISMATCH)));
+        var canonical = List.of(first, second, third);
+        var shuffled = List.of(third, first, second);
+
+        assertEquals(new RoutingDecision.NoEligibleRoute(notEvaluated, canonical),
+                new RoutingDecision.NoEligibleRoute(notEvaluated, shuffled));
+        assertEquals(canonical, new RoutingDecision.NoEligibleRoute(notEvaluated, shuffled).exclusions());
+        assertEquals(new RoutingDecision.Abstain(incompatible, AbstainReason.STATE_INCOMPATIBLE, List.of(SUB_A),
+                        List.of(), false, canonical),
+                new RoutingDecision.Abstain(incompatible, AbstainReason.STATE_INCOMPATIBLE, List.of(SUB_A),
+                        List.of(), false, shuffled));
+        var ranked = List.of(new RankedCandidate(0, SUB_A, Placement.ONLY_ELIGIBLE));
+        assertEquals(selected(PROVENANCE, ranked).exclusions(), List.of());
+        assertThrows(IllegalArgumentException.class,
+                () -> new RoutingDecision.NoEligibleRoute(notEvaluated, List.of(first, first)));
+    }
+
+    @Test
     void cohortPreferenceValidatesAndNormalizesNegativeZero() {
         assertThrows(IllegalArgumentException.class, () -> new CohortPreference("s", "b", SUB_A, Double.NaN, 0));
         assertThrows(IllegalArgumentException.class,
