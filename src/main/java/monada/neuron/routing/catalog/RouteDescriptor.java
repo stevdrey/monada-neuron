@@ -147,25 +147,25 @@ public record RouteDescriptor(
 
         /** Sets the compatible stage kinds; copied immediately. */
         public Builder stages(Collection<String> values) {
-            this.stages = List.copyOf(values);
+            this.stages = RouteTokens.copyBounded(values, "stages");
             return this;
         }
 
         /** Sets the capabilities; copied immediately. */
         public Builder capabilities(Collection<String> values) {
-            this.capabilities = List.copyOf(values);
+            this.capabilities = RouteTokens.copyBounded(values, "capabilities");
             return this;
         }
 
         /** Sets the tools; copied immediately. */
         public Builder tools(Collection<String> values) {
-            this.tools = List.copyOf(values);
+            this.tools = RouteTokens.copyBounded(values, "tools");
             return this;
         }
 
         /** Sets the execution modes; copied immediately. */
         public Builder executionModes(Collection<String> values) {
-            this.executionModes = List.copyOf(values);
+            this.executionModes = RouteTokens.copyBounded(values, "executionModes");
             return this;
         }
 

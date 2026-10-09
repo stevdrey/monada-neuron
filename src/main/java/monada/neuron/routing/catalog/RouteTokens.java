@@ -64,6 +64,15 @@ final class RouteTokens {
         return List.copyOf(sorted);
     }
 
+    /** Copies a caller collection after checking its size, so an oversized input is never materialized. */
+    static List<String> copyBounded(Collection<String> source, String name) {
+        Objects.requireNonNull(source, name + " must not be null");
+        if (source.size() > MAX_SET) {
+            throw new IllegalArgumentException(name + " allows at most " + MAX_SET + " tokens, got: " + source.size());
+        }
+        return List.copyOf(source);
+    }
+
     /** True when every element of the sorted {@code required} list occurs in the sorted {@code offered} list. */
     static boolean containsAll(List<String> offered, List<String> required) {
         int i = 0;

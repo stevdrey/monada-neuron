@@ -19,6 +19,12 @@ public record EligibilityReport(String catalogVersion, List<EligibleRoute> eligi
     /** Defensive immutable copies. */
     public EligibilityReport {
         Objects.requireNonNull(catalogVersion, "catalogVersion must not be null");
+        Objects.requireNonNull(eligible, "eligible must not be null");
+        Objects.requireNonNull(excluded, "excluded must not be null");
+        if ((long) eligible.size() + excluded.size() > RouteCatalog.MAX_ROUTES) {
+            throw new IllegalArgumentException("a report covers at most " + RouteCatalog.MAX_ROUTES
+                    + " routes, got: " + ((long) eligible.size() + excluded.size()));
+        }
         eligible = List.copyOf(eligible);
         excluded = List.copyOf(excluded);
     }
@@ -60,10 +66,11 @@ public record EligibilityReport(String catalogVersion, List<EligibleRoute> eligi
         public Exclusion {
             Objects.requireNonNull(key, "key must not be null");
             Objects.requireNonNull(primaryReason, "primaryReason must not be null");
-            additionalReasons = List.copyOf(additionalReasons);
+            Objects.requireNonNull(additionalReasons, "additionalReasons must not be null");
             if (additionalReasons.size() > MAX_ADDITIONAL) {
                 throw new IllegalArgumentException("at most " + MAX_ADDITIONAL + " additional reasons");
             }
+            additionalReasons = List.copyOf(additionalReasons);
         }
     }
 }

@@ -8,8 +8,8 @@ import java.util.Objects;
  * One stage routing request: typed envelope, provenance, task features and host-policy hard requirements.
  *
  * <p>All identifiers, fingerprints, the ordinal and the cutoff are caller-supplied opaque values; nothing here is
- * generated, parsed or read from a clock. {@code overflowPermitted} defaults to {@code false} in the builder and only
- * the host may set it; Neuron never infers authorization to spend. The typed {@link TaskFeatures} travel beside the
+ * generated, parsed or read from a clock. {@code overflowPermitted} has no default: the host must pass it explicitly,
+ * {@code false} unless it authorizes overflow, and Neuron never infers authorization to spend. The typed {@link TaskFeatures} travel beside the
  * constraints and are never used to decide eligibility.
  *
  * @param contractVersion must be {@value #CONTRACT_VERSION}

@@ -35,7 +35,7 @@ public record HardRequirements(
 
     /** Creates requirements with no required capability, tool or context size. */
     public static HardRequirements allowing(Collection<String> allowedLocalities, Collection<String> permittedModes) {
-        return new HardRequirements(List.of(), List.of(), List.copyOf(allowedLocalities),
-                List.copyOf(permittedModes), 0L);
+        return new HardRequirements(List.of(), List.of(), RouteTokens.copyBounded(allowedLocalities, "allowedLocalities"),
+                RouteTokens.copyBounded(permittedModes, "permittedModes"), 0L);
     }
 }

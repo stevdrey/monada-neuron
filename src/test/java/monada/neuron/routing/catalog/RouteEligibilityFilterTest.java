@@ -197,6 +197,36 @@ class RouteEligibilityFilterTest {
     }
 
     @Test
+    void directlyBuiltReportsAreBoundedBeforeCopying() {
+        RouteKey key = new RouteKey("r", 1);
+        EligibilityReport.EligibleRoute route = new EligibilityReport.EligibleRoute(key, "sandboxed", false);
+        EligibilityReport.Exclusion exclusion =
+                new EligibilityReport.Exclusion(key, EligibilityReason.ROUTE_UNAVAILABLE, List.of());
+        assertEquals(32, new EligibilityReport("v", Collections.nCopies(16, route), Collections.nCopies(16, exclusion))
+                .eligible().size() * 2);
+        assertThrows(IllegalArgumentException.class,
+                () -> new EligibilityReport("v", Collections.nCopies(16, route), Collections.nCopies(17, exclusion)));
+        assertThrows(IllegalArgumentException.class,
+                () -> new EligibilityReport("v", Collections.nCopies(1_000_000, route), List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new EligibilityReport.Exclusion(key,
+                EligibilityReason.ROUTE_UNAVAILABLE, Collections.nCopies(1_000_000, EligibilityReason.MISSING_CAPABILITY)));
+    }
+
+    @Test
+    void oversizedTokenCollectionsAreRejectedAtTheSetterNotAtBuild() {
+        List<String> huge = Collections.nCopies(1_000_000, "x");
+        RouteDescriptor.Builder b = base("r", 1);
+        assertThrows(IllegalArgumentException.class, () -> b.stages(huge));
+        assertThrows(IllegalArgumentException.class, () -> b.capabilities(huge));
+        assertThrows(IllegalArgumentException.class, () -> b.tools(huge));
+        assertThrows(IllegalArgumentException.class, () -> b.executionModes(huge));
+        assertThrows(IllegalArgumentException.class, () -> HardRequirements.allowing(huge, List.of("m")));
+        assertThrows(IllegalArgumentException.class, () -> HardRequirements.allowing(List.of("l"), huge));
+        List<String> sixteen = IntStream.range(0, 16).mapToObj(i -> "t" + i).toList();
+        assertEquals(16, HardRequirements.allowing(sixteen, sixteen).permittedModes().size());
+    }
+
+    @Test
     void requestRejectsUnknownContractVersionAndNegativeValues() {
         RoutingRequest ok = request("plan", List.of());
         assertThrows(IllegalArgumentException.class, () -> new RoutingRequest("forge-routing/2", ok.scopeId(),
