@@ -1,5 +1,6 @@
 package monada.neuron.routing.catalog;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -8,7 +9,7 @@ import java.util.Objects;
  *
  * <p>This is not a {@code RoutingDecision} and does not rank. It reserves nothing and grants no authorization;
  * Forge must revalidate authorization, availability and quota before executing any route. Both lists are in
- * canonical route order.
+ * canonical route order. Construction rejects a route key that appears more than once or in both lists.
  *
  * @param catalogVersion the snapshot that was evaluated
  * @param eligible routes that satisfy every hard constraint
@@ -25,8 +26,22 @@ public record EligibilityReport(String catalogVersion, List<EligibleRoute> eligi
             throw new IllegalArgumentException("a report covers at most " + RouteCatalog.MAX_ROUTES
                     + " routes, got: " + ((long) eligible.size() + excluded.size()));
         }
+        HashSet<RouteKey> seen = HashSet.newHashSet(eligible.size() + excluded.size());
+        for (EligibleRoute route : eligible) {
+            requireFirstOccurrence(seen, route.key());
+        }
+        for (Exclusion exclusion : excluded) {
+            requireFirstOccurrence(seen, exclusion.key());
+        }
         eligible = List.copyOf(eligible);
         excluded = List.copyOf(excluded);
+    }
+
+    private static void requireFirstOccurrence(HashSet<RouteKey> seen, RouteKey key) {
+        if (!seen.add(key)) {
+            throw new IllegalArgumentException(
+                    "a route may appear once, in exactly one of eligible or excluded: " + key);
+        }
     }
 
     /** True when no route is eligible (the contract's {@code NoEligibleRoute} condition). */

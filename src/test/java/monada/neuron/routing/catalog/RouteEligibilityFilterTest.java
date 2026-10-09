@@ -200,16 +200,37 @@ class RouteEligibilityFilterTest {
     void directlyBuiltReportsAreBoundedBeforeCopying() {
         RouteKey key = new RouteKey("r", 1);
         EligibilityReport.EligibleRoute route = new EligibilityReport.EligibleRoute(key, "sandboxed", false);
-        EligibilityReport.Exclusion exclusion =
-                new EligibilityReport.Exclusion(key, EligibilityReason.ROUTE_UNAVAILABLE, List.of());
-        assertEquals(32, new EligibilityReport("v", Collections.nCopies(16, route), Collections.nCopies(16, exclusion))
-                .eligible().size() * 2);
-        assertThrows(IllegalArgumentException.class,
-                () -> new EligibilityReport("v", Collections.nCopies(16, route), Collections.nCopies(17, exclusion)));
+        List<EligibilityReport.EligibleRoute> sixteen = IntStream.range(0, 16)
+                .mapToObj(i -> new EligibilityReport.EligibleRoute(new RouteKey("e" + i, 1), "sandboxed", false)).toList();
+        List<EligibilityReport.Exclusion> sixteenExcluded = IntStream.range(0, 16).mapToObj(i ->
+                new EligibilityReport.Exclusion(new RouteKey("x" + i, 1), EligibilityReason.ROUTE_UNAVAILABLE, List.of())).toList();
+        List<EligibilityReport.Exclusion> seventeenExcluded = IntStream.range(0, 17).mapToObj(i ->
+                new EligibilityReport.Exclusion(new RouteKey("x" + i, 1), EligibilityReason.ROUTE_UNAVAILABLE, List.of())).toList();
+        assertEquals(16, new EligibilityReport("v", sixteen, sixteenExcluded).eligible().size());
+        assertThrows(IllegalArgumentException.class, () -> new EligibilityReport("v", sixteen, seventeenExcluded));
         assertThrows(IllegalArgumentException.class,
                 () -> new EligibilityReport("v", Collections.nCopies(1_000_000, route), List.of()));
         assertThrows(IllegalArgumentException.class, () -> new EligibilityReport.Exclusion(key,
                 EligibilityReason.ROUTE_UNAVAILABLE, Collections.nCopies(1_000_000, EligibilityReason.MISSING_CAPABILITY)));
+    }
+
+    @Test
+    void reportsRejectRepeatedKeysAndKeysInBothPartitions() {
+        RouteKey a = new RouteKey("a", 1);
+        RouteKey b = new RouteKey("b", 1);
+        EligibilityReport.EligibleRoute eligibleA = new EligibilityReport.EligibleRoute(a, "sandboxed", false);
+        EligibilityReport.Exclusion excludedA =
+                new EligibilityReport.Exclusion(a, EligibilityReason.ROUTE_UNAVAILABLE, List.of());
+        EligibilityReport.Exclusion excludedB =
+                new EligibilityReport.Exclusion(b, EligibilityReason.ROUTE_UNAVAILABLE, List.of());
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new EligibilityReport("v", List.of(eligibleA, eligibleA), List.of()));
+        assertThrows(IllegalArgumentException.class,
+                () -> new EligibilityReport("v", List.of(), List.of(excludedA, excludedA)));
+        assertThrows(IllegalArgumentException.class,
+                () -> new EligibilityReport("v", List.of(eligibleA), List.of(excludedA)));
+        assertEquals(1, new EligibilityReport("v", List.of(eligibleA), List.of(excludedB)).eligible().size());
     }
 
     @Test
