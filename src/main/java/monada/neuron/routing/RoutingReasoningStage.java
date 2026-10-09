@@ -59,7 +59,8 @@ public final class RoutingReasoningStage implements CognitiveStage {
      * Resolves the inputs and decides.
      *
      * @throws IllegalArgumentException if input Signals are supplied
-     * @throws IllegalStateException if the cycle has no host context or the resolver cannot resolve it
+     * @throws IllegalStateException if the cycle has no host context, the resolver cannot resolve it, or the policy
+     *         selects a route that is not in the supplied catalog
      */
     @Override
     public RoutingCognitiveStageResult execute(
@@ -78,8 +79,12 @@ public final class RoutingReasoningStage implements CognitiveStage {
         if (decision instanceof RoutingDecision.Selected selected) {
             List<CatalogEntry> entries = input.catalog().entries();
             int index = 0;
-            while (!entries.get(index).key().equals(selected.route())) {
+            while (index < entries.size() && !entries.get(index).key().equals(selected.route())) {
                 index++;
+            }
+            if (index == entries.size()) {
+                throw new IllegalStateException(
+                        "policy selected a route that is not in the catalog: " + selected.route());
             }
             var hypothesis = new Hypothesis(0, new Proposition(domain, index), List.of());
             return new RoutingCognitiveStageResult(

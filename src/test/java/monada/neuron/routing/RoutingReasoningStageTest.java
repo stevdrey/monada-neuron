@@ -15,11 +15,16 @@ import monada.neuron.monad.CognitiveStageKind;
 import monada.neuron.monad.CognitiveStageResult;
 import monada.neuron.monad.DeterministicCognitiveCycle;
 import monada.neuron.monad.PrimaryMonad;
+import monada.neuron.reasoning.HypothesisSet;
 import monada.neuron.reasoning.Proposition;
+import monada.neuron.routing.catalog.RouteCatalog;
+import monada.neuron.routing.catalog.RouteKey;
+import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -131,7 +136,7 @@ class RoutingReasoningStageTest {
         var signal = new Signal(SignalKind.OBSERVATION, new FrequencyState(1.0, 10.0, 0.0));
         assertThrows(IllegalArgumentException.class, () -> routed.withAdmittedOutputSignals(List.of(signal)));
         assertThrows(IllegalArgumentException.class, () -> new RoutingCognitiveStageResult(
-                routed.decision(), monada.neuron.reasoning.HypothesisSet.EMPTY));
+                routed.decision(), HypothesisSet.EMPTY));
         assertTrue(stage(false, List.of("java")).isSource());
         assertThrows(IllegalArgumentException.class, () -> new RoutingReasoningStage(policy, c -> Optional.empty(), -1));
     }
@@ -155,8 +160,43 @@ class RoutingReasoningStageTest {
         assertEquals(CognitiveCycleTermination.COMPLETED, legacy.termination());
         assertTrue(legacy.stageResults().isEmpty());
         for (Class<?> type : RoutingDecision.class.getPermittedSubclasses()) {
-            assertFalse(java.util.Arrays.stream(type.getRecordComponents())
+            assertFalse(Arrays.stream(type.getRecordComponents())
                     .anyMatch(c -> c.getType().getSimpleName().equals("ActionStatus")));
         }
+    }
+
+    @Test
+    void aPolicyThatSelectsARouteOutsideTheCatalogIsRejectedClearly() {
+        var request = request(List.of("java"), false);
+        var absent = new RouteKey("not-in-catalog", 1);
+        var provenance = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
+                empty(request).binding(), new StateValidation.Compatible());
+        RoutingPolicy stub = new RoutingPolicy() {
+            @Override
+            public String policyId() {
+                return "stub";
+            }
+
+            @Override
+            public String policyVersion() {
+                return "1";
+            }
+
+            @Override
+            public RoutingDecision decide(RoutingRequest r, RouteCatalog c, RoutingPreference p) {
+                return new RoutingDecision.Selected(provenance, absent, "sandboxed", Basis.COLD_START, false,
+                        List.of(new RankedCandidate(0, absent, Placement.ONLY_ELIGIBLE)), false,
+                        List.of(RoutingRule.ROUTE_ORDER), List.of(), List.of(),
+                        new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1"));
+            }
+        };
+        var stage = new RoutingReasoningStage(stub,
+                context -> Optional.of(new RoutingInput(request, demo(), empty(request))), DOMAIN);
+
+        var failure = assertThrows(IllegalStateException.class,
+                () -> stage.execute(monad(), List.of(), new CognitiveContext(MINIMUM, HOST)));
+        assertTrue(failure.getMessage().contains("not-in-catalog"));
+        assertThrows(RuntimeException.class,
+                () -> new DeterministicCognitiveCycle(List.of(stage)).execute(monad(), List.of(), MINIMUM, HOST));
     }
 }

@@ -265,7 +265,7 @@ public final class LexicographicRoutingPolicy implements RoutingPolicy {
         return any;
     }
 
-    private static boolean comparable(
+    private boolean comparable(
             List<Work> work, int start, int end, HashMap<RouteKey, ResourceEstimate> estimates) {
         String unit = null;
         for (int i = start; i < end; i++) {
@@ -287,7 +287,7 @@ public final class LexicographicRoutingPolicy implements RoutingPolicy {
         return true;
     }
 
-    private static Placement placement(List<Work> order, int index, boolean learnedActive) {
+    private Placement placement(List<Work> order, int index, boolean learnedActive) {
         if (order.size() == 1) {
             return Placement.ONLY_ELIGIBLE;
         }

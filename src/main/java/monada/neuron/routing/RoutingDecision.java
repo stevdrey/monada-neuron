@@ -4,6 +4,7 @@ import monada.neuron.routing.catalog.EligibilityReport;
 import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteKey;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -80,7 +81,7 @@ public sealed interface RoutingDecision
      *
      * @param provenance common provenance
      * @param reason typed reason
-     * @param eligible every eligible route in canonical order
+     * @param eligible every eligible route, unique; stored in canonical order
      * @param candidates ranked eligible routes (empty for {@link AbstainReason#STATE_INCOMPATIBLE}, where ordering
      *         never runs), at most {@value #MAX_CANDIDATES}
      * @param candidatesTruncated whether more eligible routes exist than {@code candidates} lists
@@ -98,11 +99,20 @@ public sealed interface RoutingDecision
         public Abstain {
             Objects.requireNonNull(provenance, "provenance must not be null");
             Objects.requireNonNull(reason, "reason must not be null");
-            eligible = List.copyOf(Objects.requireNonNull(eligible, "eligible must not be null"));
+            Objects.requireNonNull(eligible, "eligible must not be null");
             if (eligible.isEmpty() || eligible.size() > RouteCatalog.MAX_ROUTES) {
                 throw new IllegalArgumentException("an abstention needs 1 to " + RouteCatalog.MAX_ROUTES
                         + " eligible routes, got: " + eligible.size());
             }
+            var sortedEligible = new ArrayList<>(eligible);
+            sortedEligible.forEach(key -> Objects.requireNonNull(key, "eligible route must not be null"));
+            sortedEligible.sort(null);
+            for (int i = 1; i < sortedEligible.size(); i++) {
+                if (sortedEligible.get(i - 1).equals(sortedEligible.get(i))) {
+                    throw new IllegalArgumentException("duplicate eligible route: " + sortedEligible.get(i));
+                }
+            }
+            eligible = List.copyOf(sortedEligible);
             candidates = ranked(candidates);
             exclusions = excluded(exclusions);
             switch (reason) {

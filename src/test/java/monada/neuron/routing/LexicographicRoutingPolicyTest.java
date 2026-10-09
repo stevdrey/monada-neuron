@@ -443,6 +443,7 @@ class LexicographicRoutingPolicyTest {
         for (int i = 0; i < 20_000; i++) {
             objective.decide(request, catalog, preference);
         }
+        // Fully qualified: the simple name collides with java.lang.management.ThreadMXBean.
         var threads = (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
         Assumptions.assumeTrue(threads.isThreadAllocatedMemorySupported(), "thread allocation tracking unsupported");
         threads.setThreadAllocatedMemoryEnabled(true);

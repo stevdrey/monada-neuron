@@ -7,7 +7,11 @@ import monada.neuron.routing.features.TaskFeatures;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
+import java.util.OptionalInt;
+import java.util.Random;
 
 import static monada.neuron.routing.RoutingFixtures.SUB_A;
 import static monada.neuron.routing.RoutingFixtures.SUB_B;
@@ -88,6 +92,23 @@ class RoutingValueTypesTest {
     }
 
     @Test
+    void abstainStoresEligibleRoutesUniqueAndInCanonicalOrder() {
+        var incompatible = provenance(new StateValidation.Incompatible(List.of(StateMismatch.SCOPE_MISMATCH)));
+        var routes = new ArrayList<>(List.of(new RouteKey("r", 10), new RouteKey("r", 2), new RouteKey("a", 1)));
+        var canonical = new RoutingDecision.Abstain(incompatible, AbstainReason.STATE_INCOMPATIBLE,
+                List.of(new RouteKey("a", 1), new RouteKey("r", 2), new RouteKey("r", 10)), List.of(), false, List.of());
+        Collections.shuffle(routes, new Random(1));
+
+        var shuffled = new RoutingDecision.Abstain(incompatible, AbstainReason.STATE_INCOMPATIBLE, routes, List.of(),
+                false, List.of());
+
+        assertEquals(canonical, shuffled);
+        assertEquals(new RouteKey("r", 2), shuffled.eligible().get(1));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(incompatible,
+                AbstainReason.STATE_INCOMPATIBLE, List.of(SUB_A, SUB_A), List.of(), false, List.of()));
+    }
+
+    @Test
     void cohortPreferenceValidatesAndNormalizesNegativeZero() {
         assertThrows(IllegalArgumentException.class, () -> new CohortPreference("s", "b", SUB_A, Double.NaN, 0));
         assertThrows(IllegalArgumentException.class,
@@ -135,9 +156,9 @@ class RoutingValueTypesTest {
     void policyConfigurationIsValidated() {
         var definition = RoutingStateDefinition.reference();
         assertThrows(IllegalArgumentException.class, () -> new LexicographicRoutingPolicy(definition, 0,
-                java.util.OptionalInt.empty(), java.util.Optional.empty()));
+                OptionalInt.empty(), Optional.empty()));
         assertThrows(IllegalArgumentException.class, () -> new LexicographicRoutingPolicy(definition, 1,
-                java.util.OptionalInt.of(0), java.util.Optional.empty()));
+                OptionalInt.of(0), Optional.empty()));
         assertThrows(IllegalArgumentException.class, () -> new ResourceObjective(" cost", ResourceObjective.Direction.MINIMIZE));
         assertThrows(IllegalArgumentException.class, () -> new RoutingStateDefinition("", ChangeSizeCohortMapping.DEFAULT));
     }
