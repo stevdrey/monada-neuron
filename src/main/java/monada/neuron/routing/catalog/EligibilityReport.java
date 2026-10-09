@@ -22,7 +22,7 @@ public record EligibilityReport(String catalogVersion, List<EligibleRoute> eligi
 
     /** Defensive immutable copies. */
     public EligibilityReport {
-        Objects.requireNonNull(catalogVersion, "catalogVersion must not be null");
+        RouteTokens.require(catalogVersion, "catalogVersion");
         Objects.requireNonNull(eligible, "eligible must not be null");
         Objects.requireNonNull(excluded, "excluded must not be null");
         if ((long) eligible.size() + excluded.size() > RouteCatalog.MAX_ROUTES) {
@@ -68,7 +68,7 @@ public record EligibilityReport(String catalogVersion, List<EligibleRoute> eligi
         /** Requires non-null parts. */
         public EligibleRoute {
             Objects.requireNonNull(key, "key must not be null");
-            Objects.requireNonNull(executionMode, "executionMode must not be null");
+            RouteTokens.require(executionMode, "executionMode");
         }
     }
 

@@ -270,6 +270,16 @@ class RouteEligibilityFilterTest {
     }
 
     @Test
+    void reportsValidateCatalogVersionAndExecutionModeTokens() {
+        for (String bad : new String[] {"", " v", "v ", "v\n", "x".repeat(129)}) {
+            assertThrows(IllegalArgumentException.class, () -> new EligibilityReport(bad, List.of(), List.of()));
+            assertThrows(IllegalArgumentException.class,
+                    () -> new EligibilityReport.EligibleRoute(new RouteKey("r", 1), bad, false));
+        }
+        assertEquals("v", new EligibilityReport("v", List.of(), List.of()).catalogVersion());
+    }
+
+    @Test
     void oversizedTokenCollectionsAreRejectedAtTheSetterNotAtBuild() {
         List<String> huge = Collections.nCopies(1_000_000, "x");
         RouteDescriptor.Builder b = base("r", 1);
