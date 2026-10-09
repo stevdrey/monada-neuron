@@ -1,0 +1,144 @@
+package monada.neuron.routing;
+
+import monada.neuron.routing.catalog.EligibilityReason;
+import monada.neuron.routing.catalog.EligibilityReport;
+import monada.neuron.routing.catalog.RouteKey;
+import monada.neuron.routing.features.TaskFeatures;
+import org.junit.jupiter.api.Test;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import static monada.neuron.routing.RoutingFixtures.SUB_A;
+import static monada.neuron.routing.RoutingFixtures.SUB_B;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+class RoutingValueTypesTest {
+
+    private static final Provenance PROVENANCE = provenance(new StateValidation.Compatible());
+
+    private static Provenance provenance(StateValidation validation) {
+        return new Provenance(new DecisionRef("s", "t", "e", "a", "st", 1), "cat", "route-lex", "1", 5,
+                new StateBinding("s", "task-features/1", "ev", "1", "m", 0, "route-lex", "1"), validation);
+    }
+
+    private static RoutingDecision.Selected selected(Provenance provenance, List<RankedCandidate> candidates) {
+        return new RoutingDecision.Selected(provenance, SUB_A, "sandboxed", Basis.COLD_START, false, candidates,
+                false, List.of(RoutingRule.ROUTE_ORDER), List.of(), List.of(),
+                new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1"));
+    }
+
+    @Test
+    void decisionRefAndBindingsRejectBadTokensAndNegatives() {
+        assertThrows(IllegalArgumentException.class, () -> new DecisionRef("", "t", "e", "a", "st", 1));
+        assertThrows(IllegalArgumentException.class, () -> new DecisionRef("s", " t", "e", "a", "st", 1));
+        assertThrows(IllegalArgumentException.class, () -> new DecisionRef("s", "t", "e", "a", "st", -1));
+        assertThrows(IllegalArgumentException.class,
+                () -> new StateBinding("s", "f", "e", "1", "m", -1, "p", "1"));
+        assertThrows(IllegalArgumentException.class, () -> new CohortBinding("", "b", "m", "f"));
+        assertThrows(IllegalArgumentException.class, () -> new Provenance(PROVENANCE.decisionRef(), "cat", "p", "1",
+                -1, PROVENANCE.state(), PROVENANCE.validation()));
+    }
+
+    @Test
+    void incompatibleValidationRequiresUniqueOrderedReasons() {
+        assertThrows(IllegalArgumentException.class, () -> new StateValidation.Incompatible(List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new StateValidation.Incompatible(
+                List.of(StateMismatch.MAPPING_VERSION_MISMATCH, StateMismatch.SCOPE_MISMATCH)));
+        assertThrows(IllegalArgumentException.class, () -> new StateValidation.Incompatible(
+                List.of(StateMismatch.SCOPE_MISMATCH, StateMismatch.SCOPE_MISMATCH)));
+    }
+
+    @Test
+    void selectedRequiresTheWinnerFirstBoundedRankedCandidatesAndACompatibleState() {
+        RankedCandidate a = new RankedCandidate(0, SUB_A, Placement.ONLY_ELIGIBLE);
+        selected(PROVENANCE, List.of(a));
+        assertThrows(IllegalArgumentException.class, () -> selected(PROVENANCE, List.of()));
+        assertThrows(IllegalArgumentException.class,
+                () -> selected(PROVENANCE, List.of(new RankedCandidate(0, SUB_B, Placement.ROUTE_ORDER))));
+        assertThrows(IllegalArgumentException.class,
+                () -> selected(PROVENANCE, List.of(a, new RankedCandidate(2, SUB_B, Placement.ROUTE_ORDER))));
+        assertThrows(IllegalArgumentException.class,
+                () -> selected(PROVENANCE, List.of(a, new RankedCandidate(1, SUB_A, Placement.ROUTE_ORDER))));
+        assertThrows(IllegalArgumentException.class,
+                () -> selected(provenance(new StateValidation.NotEvaluated()), List.of(a)));
+        List<RankedCandidate> nine = new ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            nine.add(new RankedCandidate(i, new RouteKey("r", i + 1), Placement.ROUTE_ORDER));
+        }
+        assertThrows(IllegalArgumentException.class, () -> selected(PROVENANCE, nine));
+    }
+
+    @Test
+    void abstainAndNoEligibleRouteEnforceTheirStateRules() {
+        var incompatible = provenance(new StateValidation.Incompatible(List.of(StateMismatch.SCOPE_MISMATCH)));
+        new RoutingDecision.Abstain(incompatible, AbstainReason.STATE_INCOMPATIBLE, List.of(SUB_A), List.of(), false,
+                List.of());
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(PROVENANCE,
+                AbstainReason.STATE_INCOMPATIBLE, List.of(SUB_A), List.of(), false, List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(PROVENANCE,
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A), List.of(), false, List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(incompatible,
+                AbstainReason.STATE_INCOMPATIBLE, List.of(), List.of(), false, List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.NoEligibleRoute(PROVENANCE, List.of()));
+        var exclusion = new EligibilityReport.Exclusion(SUB_A, EligibilityReason.MISSING_CAPABILITY, List.of());
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.NoEligibleRoute(
+                provenance(new StateValidation.NotEvaluated()), List.of(exclusion, exclusion)));
+    }
+
+    @Test
+    void cohortPreferenceValidatesAndNormalizesNegativeZero() {
+        assertThrows(IllegalArgumentException.class, () -> new CohortPreference("s", "b", SUB_A, Double.NaN, 0));
+        assertThrows(IllegalArgumentException.class,
+                () -> new CohortPreference("s", "b", SUB_A, Double.POSITIVE_INFINITY, 0));
+        assertThrows(IllegalArgumentException.class, () -> new CohortPreference("s", "b", SUB_A, 0.0, -1));
+        assertEquals(new CohortPreference("s", "b", SUB_A, 0.0, 0), new CohortPreference("s", "b", SUB_A, -0.0, 0));
+    }
+
+    @Test
+    void preferenceSnapshotIsBoundedUniqueCanonicalAndImmutable() {
+        List<CohortPreference> cohorts = new ArrayList<>();
+        for (int i = 0; i < RoutingPreference.MAX_COHORTS; i++) {
+            cohorts.add(new CohortPreference("implement", "b" + i, SUB_A, 0, 0));
+        }
+        RoutingPreference full = snapshot(cohorts);
+        assertEquals(256, full.cohorts().size());
+        cohorts.add(new CohortPreference("implement", "extra", SUB_A, 0, 0));
+        assertThrows(IllegalArgumentException.class, () -> snapshot(cohorts));
+        var duplicate = new CohortPreference("implement", "b", SUB_A, 0, 0);
+        assertThrows(IllegalArgumentException.class, () -> snapshot(List.of(duplicate, duplicate)));
+        assertThrows(UnsupportedOperationException.class, () -> full.cohorts().clear());
+        var first = new CohortPreference("implement", "a", SUB_B, 0, 0);
+        var second = new CohortPreference("implement", "b", SUB_A, 0, 0);
+        assertEquals(snapshot(List.of(first, second)), snapshot(List.of(second, first)));
+    }
+
+    private static RoutingPreference snapshot(List<CohortPreference> cohorts) {
+        return new RoutingPreference("s", "task-features/1", "ev", "1", "m", "route-lex", "1", 0, cohorts);
+    }
+
+    @Test
+    void changeSizeMappingBucketsDeterministicallyAndMapsUnknownExplicitly() {
+        var mapping = ChangeSizeCohortMapping.DEFAULT;
+        assertEquals("UNKNOWN", mapping.bucketOf(TaskFeatures.builder().build()));
+        assertEquals("S", mapping.bucketOf(TaskFeatures.builder().changeSize(0).build()));
+        assertEquals("S", mapping.bucketOf(TaskFeatures.builder().changeSize(50).build()));
+        assertEquals("M", mapping.bucketOf(TaskFeatures.builder().changeSize(51).build()));
+        assertEquals("M", mapping.bucketOf(TaskFeatures.builder().changeSize(500).build()));
+        assertEquals("L", mapping.bucketOf(TaskFeatures.builder().changeSize(501).build()));
+        assertThrows(IllegalArgumentException.class, () -> new ChangeSizeCohortMapping("v", 10, 9));
+        assertThrows(IllegalArgumentException.class, () -> new ChangeSizeCohortMapping("v", -1, 9));
+    }
+
+    @Test
+    void policyConfigurationIsValidated() {
+        var definition = RoutingStateDefinition.reference();
+        assertThrows(IllegalArgumentException.class, () -> new LexicographicRoutingPolicy(definition, 0,
+                java.util.OptionalInt.empty(), java.util.Optional.empty()));
+        assertThrows(IllegalArgumentException.class, () -> new LexicographicRoutingPolicy(definition, 1,
+                java.util.OptionalInt.of(0), java.util.Optional.empty()));
+        assertThrows(IllegalArgumentException.class, () -> new ResourceObjective(" cost", ResourceObjective.Direction.MINIMIZE));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingStateDefinition("", ChangeSizeCohortMapping.DEFAULT));
+    }
+}
