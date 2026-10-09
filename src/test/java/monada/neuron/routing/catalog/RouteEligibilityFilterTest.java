@@ -234,6 +234,42 @@ class RouteEligibilityFilterTest {
     }
 
     @Test
+    void reportsStorePartitionsInCanonicalOrder() {
+        List<EligibilityReport.EligibleRoute> sorted = IntStream.range(0, 6).mapToObj(i ->
+                new EligibilityReport.EligibleRoute(new RouteKey("e" + i, 1 + i % 2), "sandboxed", false)).toList();
+        List<EligibilityReport.Exclusion> sortedExcluded = IntStream.range(0, 6).mapToObj(i ->
+                new EligibilityReport.Exclusion(new RouteKey("x" + i, 1), EligibilityReason.ROUTE_UNAVAILABLE, List.of())).toList();
+        EligibilityReport reference = new EligibilityReport("v", sorted, sortedExcluded);
+        for (int seed = 0; seed < 10; seed++) {
+            List<EligibilityReport.EligibleRoute> e = new ArrayList<>(sorted);
+            List<EligibilityReport.Exclusion> x = new ArrayList<>(sortedExcluded);
+            Collections.shuffle(e, new Random(seed));
+            Collections.shuffle(x, new Random(seed));
+            EligibilityReport shuffled = new EligibilityReport("v", e, x);
+            assertEquals(reference, shuffled);
+            assertEquals(reference.hashCode(), shuffled.hashCode());
+        }
+        assertEquals(sorted, reference.eligible());
+    }
+
+    @Test
+    void exclusionEnforcesReasonPrecedence() {
+        RouteKey key = new RouteKey("r", 1);
+        EligibilityReason primary = EligibilityReason.LOCALITY_NOT_PERMITTED;
+        assertEquals(2, new EligibilityReport.Exclusion(key, primary, List.of(
+                EligibilityReason.OVERFLOW_NOT_PERMITTED, EligibilityReason.REQUIRED_LIMIT_UNKNOWN))
+                .additionalReasons().size());
+        assertThrows(IllegalArgumentException.class, () -> new EligibilityReport.Exclusion(key, primary,
+                List.of(EligibilityReason.MISSING_CAPABILITY, EligibilityReason.MISSING_CAPABILITY)));
+        assertThrows(IllegalArgumentException.class,
+                () -> new EligibilityReport.Exclusion(key, primary, List.of(primary)));
+        assertThrows(IllegalArgumentException.class, () -> new EligibilityReport.Exclusion(key, primary,
+                List.of(EligibilityReason.STAGE_INCOMPATIBLE)));
+        assertThrows(IllegalArgumentException.class, () -> new EligibilityReport.Exclusion(key, primary,
+                List.of(EligibilityReason.MISSING_CAPABILITY, EligibilityReason.OVERFLOW_NOT_PERMITTED)));
+    }
+
+    @Test
     void oversizedTokenCollectionsAreRejectedAtTheSetterNotAtBuild() {
         List<String> huge = Collections.nCopies(1_000_000, "x");
         RouteDescriptor.Builder b = base("r", 1);
