@@ -91,6 +91,21 @@ class RouteCatalogTest {
     }
 
     @Test
+    void oversizedEstimateCollectionIsRejectedBeforeAnyPerRouteValidation() {
+        List<CatalogEntry> max = IntStream.rangeClosed(1, 32).mapToObj(i -> available(base("r" + i, 1).build())).toList();
+        List<ResourceEstimate> full = max.stream().flatMap(e -> IntStream.range(0, 4)
+                .mapToObj(d -> estimate(e.descriptor(), "d" + d))).toList();
+        assertEquals(128, new RouteCatalog("v1", max, full).estimates().size());
+
+        // Duplicates of one dangling estimate: only a size check that precedes validation can reject this by size.
+        ResourceEstimate dangling = estimate(base("ghost", 1).build(), "x");
+        List<ResourceEstimate> oversized = Collections.nCopies(129, dangling);
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> new RouteCatalog("v1", max, oversized));
+        assertTrue(e.getMessage().contains("at most 128 estimates"), e.getMessage());
+    }
+
+    @Test
     void estimatePermutationsYieldEqualCatalogs() {
         RouteDescriptor route = CatalogFixtures.subA();
         List<CatalogEntry> entries = List.of(available(route));

@@ -28,11 +28,18 @@ public record RouteCatalog(String catalogVersion, List<CatalogEntry> entries, Li
     /** Maximum estimates (dimensions) per route. */
     public static final int MAX_ESTIMATES_PER_ROUTE = 4;
 
+    /** Maximum estimates per catalog; checked before any copy or sort. */
+    public static final int MAX_ESTIMATES = MAX_ROUTES * MAX_ESTIMATES_PER_ROUTE;
+
     /** Validates bounds and uniqueness and canonicalizes order. */
     public RouteCatalog {
         RouteTokens.require(catalogVersion, "catalogVersion");
         Objects.requireNonNull(entries, "entries must not be null");
         Objects.requireNonNull(estimates, "estimates must not be null");
+        if (estimates.size() > MAX_ESTIMATES) {
+            throw new IllegalArgumentException(
+                    "catalog allows at most " + MAX_ESTIMATES + " estimates, got: " + estimates.size());
+        }
         if (entries.size() > MAX_ROUTES) {
             throw new IllegalArgumentException(
                     "catalog allows at most " + MAX_ROUTES + " routes, got: " + entries.size());
