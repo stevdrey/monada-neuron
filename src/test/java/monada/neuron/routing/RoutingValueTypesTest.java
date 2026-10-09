@@ -20,11 +20,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class RoutingValueTypesTest {
 
+    private static final PolicyParameters PARAMETERS =
+            new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "m");
+
     private static final Provenance PROVENANCE = provenance(new StateValidation.Compatible());
 
     private static Provenance provenance(StateValidation validation) {
         return new Provenance(new DecisionRef("s", "t", "e", "a", "st", 1), "cat", "route-lex", "1", 5,
-                new StateBinding("s", "task-features/1", "ev", "1", "m", 0, "route-lex", "1"), validation);
+                new StateBinding("s", "task-features/1", "ev", "1", "m", 0, "route-lex", "1"), validation, PARAMETERS);
     }
 
     private static RoutingDecision.Selected selected(Provenance provenance, List<RankedCandidate> candidates) {
@@ -42,7 +45,7 @@ class RoutingValueTypesTest {
                 () -> new StateBinding("s", "f", "e", "1", "m", -1, "p", "1"));
         assertThrows(IllegalArgumentException.class, () -> new CohortBinding("", "b", "m", "f"));
         assertThrows(IllegalArgumentException.class, () -> new Provenance(PROVENANCE.decisionRef(), "cat", "p", "1",
-                -1, PROVENANCE.state(), PROVENANCE.validation()));
+                -1, PROVENANCE.state(), PROVENANCE.validation(), PARAMETERS));
     }
 
     @Test
@@ -129,6 +132,22 @@ class RoutingValueTypesTest {
         assertEquals(selected(PROVENANCE, ranked).exclusions(), List.of());
         assertThrows(IllegalArgumentException.class,
                 () -> new RoutingDecision.NoEligibleRoute(notEvaluated, List.of(first, first)));
+    }
+
+    @Test
+    void selectedAndAbstainRejectARouteThatIsBothEligibleAndExcluded() {
+        var conflicting = new EligibilityReport.Exclusion(SUB_A, EligibilityReason.MISSING_CAPABILITY, List.of());
+        var other = new EligibilityReport.Exclusion(SUB_B, EligibilityReason.MISSING_CAPABILITY, List.of());
+        var ranked = List.of(new RankedCandidate(0, SUB_A, Placement.ONLY_ELIGIBLE));
+        var incompatible = provenance(new StateValidation.Incompatible(List.of(StateMismatch.SCOPE_MISMATCH)));
+
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Selected(PROVENANCE, SUB_A,
+                "sandboxed", Basis.COLD_START, false, ranked, false, List.of(RoutingRule.ROUTE_ORDER), List.of(),
+                List.of(conflicting), new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1")));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(incompatible,
+                AbstainReason.STATE_INCOMPATIBLE, List.of(SUB_A), List.of(), false, List.of(conflicting)));
+        new RoutingDecision.Abstain(incompatible, AbstainReason.STATE_INCOMPATIBLE, List.of(SUB_A), List.of(), false,
+                List.of(other));
     }
 
     @Test

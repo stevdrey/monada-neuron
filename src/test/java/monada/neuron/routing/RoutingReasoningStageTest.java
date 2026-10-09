@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.UUID;
 
 import static monada.neuron.routing.RoutingFixtures.demo;
@@ -41,6 +42,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RoutingReasoningStageTest {
 
     private static final int DOMAIN = 7;
+    private static final PolicyParameters PARAMETERS =
+            new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "routing-state/1");
     private static final CognitiveBudget MINIMUM = new CognitiveBudget(1, 1, 0);
     private static final Optional<HostExecutionContext> HOST =
             Optional.of(HostExecutionContext.of(new HostReference("exec-1")));
@@ -167,7 +170,12 @@ class RoutingReasoningStageTest {
 
     private static RoutingReasoningStage stubbed(RoutingRequest request, RouteKey route, String mode, boolean overflow) {
         var provenance = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
-                empty(request).binding(), new StateValidation.Compatible());
+                empty(request).binding(), new StateValidation.Compatible(), PARAMETERS);
+        return stubbed(request, provenance, route, mode, overflow);
+    }
+
+    private static RoutingReasoningStage stubbed(
+            RoutingRequest request, Provenance provenance, RouteKey route, String mode, boolean overflow) {
         RoutingPolicy stub = new RoutingPolicy() {
             @Override
             public String policyId() {
@@ -224,5 +232,20 @@ class RoutingReasoningStageTest {
                 .getMessage().contains("disagrees"));
         assertTrue(rejected(stubbed(request, RoutingFixtures.SUB_A, "sandboxed", true))
                 .getMessage().contains("disagrees"));
+    }
+
+    @Test
+    void aDecisionForAnotherCatalogOrRequestIsRejected() {
+        var request = request(List.of("java"), false);
+        var state = empty(request).binding();
+        var foreignCatalog = new Provenance(DecisionRef.of(request), "cat-other", "stub", "1", request.cutoff(),
+                state, new StateValidation.Compatible(), PARAMETERS);
+        var foreignRequest = new Provenance(new DecisionRef("scope-demo", "other-task", "exec-1", "att-1", "s-impl", 101L),
+                "cat-demo-7", "stub", "1", request.cutoff(), state, new StateValidation.Compatible(), PARAMETERS);
+
+        assertTrue(rejected(stubbed(request, foreignCatalog, RoutingFixtures.SUB_A, "sandboxed", false))
+                .getMessage().contains("cat-other"));
+        assertTrue(rejected(stubbed(request, foreignRequest, RoutingFixtures.SUB_A, "sandboxed", false))
+                .getMessage().contains("another request"));
     }
 }

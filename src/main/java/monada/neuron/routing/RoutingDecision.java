@@ -70,6 +70,7 @@ public sealed interface RoutingDecision
             rulesApplied = List.copyOf(Objects.requireNonNull(rulesApplied, "rulesApplied must not be null"));
             rulesSkipped = List.copyOf(Objects.requireNonNull(rulesSkipped, "rulesSkipped must not be null"));
             exclusions = excluded(exclusions);
+            requireDisjoint(exclusions, candidates.stream().map(RankedCandidate::key).toList());
             Objects.requireNonNull(cohortBinding, "cohortBinding must not be null");
             if (!(provenance.validation() instanceof StateValidation.Compatible)) {
                 throw new IllegalArgumentException("a selected decision needs a compatible state");
@@ -116,6 +117,7 @@ public sealed interface RoutingDecision
             eligible = List.copyOf(sortedEligible);
             candidates = ranked(candidates);
             exclusions = excluded(exclusions);
+            requireDisjoint(exclusions, eligible);
             switch (reason) {
                 case STATE_INCOMPATIBLE -> {
                     if (!(provenance.validation() instanceof StateValidation.Incompatible)) {
@@ -191,5 +193,15 @@ public sealed interface RoutingDecision
             }
         }
         return List.copyOf(sorted);
+    }
+
+    private static void requireDisjoint(List<EligibilityReport.Exclusion> exclusions, List<RouteKey> eligible) {
+        var excluded = new HashSet<RouteKey>();
+        exclusions.forEach(exclusion -> excluded.add(exclusion.key()));
+        for (RouteKey key : eligible) {
+            if (excluded.contains(key)) {
+                throw new IllegalArgumentException("a route cannot be both eligible and excluded: " + key);
+            }
+        }
     }
 }

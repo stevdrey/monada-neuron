@@ -12,6 +12,7 @@ import java.util.Objects;
  * @param cutoff request cutoff
  * @param state identity of the preference snapshot
  * @param validation admission result of that snapshot
+ * @param parameters configuration of the policy that decided
  */
 public record Provenance(
         DecisionRef decisionRef,
@@ -20,7 +21,8 @@ public record Provenance(
         String policyVersion,
         long cutoff,
         StateBinding state,
-        StateValidation validation) {
+        StateValidation validation,
+        PolicyParameters parameters) {
 
     /** Validates parts. */
     public Provenance {
@@ -33,5 +35,6 @@ public record Provenance(
         }
         Objects.requireNonNull(state, "state must not be null");
         Objects.requireNonNull(validation, "validation must not be null");
+        Objects.requireNonNull(parameters, "parameters must not be null");
     }
 }

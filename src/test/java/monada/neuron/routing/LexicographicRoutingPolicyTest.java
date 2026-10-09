@@ -422,6 +422,23 @@ class LexicographicRoutingPolicyTest {
     }
 
     @Test
+    void provenanceRecordsThePolicyConfigurationThatDecided() {
+        RoutingRequest request = request(JAVA, false);
+        var objective = Optional.of(new ResourceObjective("cost", ResourceObjective.Direction.MINIMIZE));
+        var tuned = new LexicographicRoutingPolicy(RoutingStateDefinition.reference(), 5, OptionalInt.of(2), objective);
+
+        PolicyParameters reference = selected(request, demo(), empty(request)).provenance().parameters();
+        PolicyParameters configured = assertInstanceOf(Selected.class, tuned.decide(request, demo(), empty(request)))
+                .provenance().parameters();
+
+        assertEquals(new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "routing-state/1"), reference);
+        assertEquals(new PolicyParameters(5, OptionalInt.of(2), objective, "routing-state/1"), configured);
+        assertEquals(reference, policy.decide(request, demo(), empty(request)).provenance().parameters());
+        assertEquals(configured, tuned.decide(request, RouteCatalog.of("empty", List.of()), empty(request))
+                .provenance().parameters());
+    }
+
+    @Test
     void repeatedDecisionsAreEqual() {
         RoutingRequest request = request(JAVA, false);
         assertEquals(policy.decide(request, demo(), empty(request)), policy.decide(request, demo(), empty(request)));

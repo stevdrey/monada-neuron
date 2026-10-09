@@ -161,7 +161,9 @@ public final class LexicographicRoutingPolicy implements RoutingPolicy {
     private Provenance provenance(
             RoutingRequest request, RouteCatalog catalog, RoutingPreference preference, StateValidation validation) {
         return new Provenance(DecisionRef.of(request), catalog.catalogVersion(), POLICY_ID, POLICY_VERSION,
-                request.cutoff(), preference.binding(), validation);
+                request.cutoff(), preference.binding(), validation,
+                new PolicyParameters(minSupportingObservations, maxAutoSelectTier, objective,
+                        definition.mappingVersion()));
     }
 
     /** One eligible candidate with the values the ordering rules read. */

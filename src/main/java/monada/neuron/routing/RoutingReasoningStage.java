@@ -64,7 +64,9 @@ public final class RoutingReasoningStage implements CognitiveStage {
      *
      * @throws IllegalArgumentException if input Signals are supplied
      * @throws IllegalStateException if the cycle has no host context, the resolver cannot resolve it, or the policy
-     *         selects a route that the hard eligibility filter does not accept (or with another mode or overflow flag)
+     *         returns a decision for another catalog or
+     *         request, or selects a route the hard eligibility filter does not accept (or with another mode or overflow
+     *         flag)
      */
     @Override
     public RoutingCognitiveStageResult execute(
@@ -80,6 +82,7 @@ public final class RoutingReasoningStage implements CognitiveStage {
                 .orElseThrow(() -> new IllegalStateException("the host could not resolve routing inputs"));
         RoutingDecision decision = Objects.requireNonNull(
                 policy.decide(input.request(), input.catalog(), input.preference()), "decision must not be null");
+        verifyProvenance(decision, input);
         if (decision instanceof RoutingDecision.Selected selected) {
             verifyEligible(selected, input);
             List<CatalogEntry> entries = input.catalog().entries();
@@ -92,6 +95,18 @@ public final class RoutingReasoningStage implements CognitiveStage {
                     decision, new HypothesisSet(List.of(hypothesis), HypothesisLimits.DEFAULT));
         }
         return new RoutingCognitiveStageResult(decision, HypothesisSet.EMPTY);
+    }
+
+    /** The decision must describe exactly this request and catalog, or its catalog-relative codes would mislead. */
+    private void verifyProvenance(RoutingDecision decision, RoutingInput input) {
+        Provenance provenance = decision.provenance();
+        if (!provenance.catalogVersion().equals(input.catalog().catalogVersion())) {
+            throw new IllegalStateException("policy decision refers to catalog " + provenance.catalogVersion()
+                    + " but the resolved catalog is " + input.catalog().catalogVersion());
+        }
+        if (!provenance.decisionRef().equals(DecisionRef.of(input.request()))) {
+            throw new IllegalStateException("policy decision refers to another request: " + provenance.decisionRef());
+        }
     }
 
     /** Re-verifies a selection against the hard eligibility filter, so an injected policy cannot bypass it. */
