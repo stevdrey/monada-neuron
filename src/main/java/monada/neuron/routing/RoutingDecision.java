@@ -118,6 +118,11 @@ public sealed interface RoutingDecision
             candidates = ranked(candidates);
             exclusions = excluded(exclusions);
             requireDisjoint(exclusions, eligible);
+            for (RankedCandidate candidate : candidates) {
+                if (!eligible.contains(candidate.key())) {
+                    throw new IllegalArgumentException("ranked candidate is not eligible: " + candidate.key());
+                }
+            }
             switch (reason) {
                 case STATE_INCOMPATIBLE -> {
                     if (!(provenance.validation() instanceof StateValidation.Incompatible)) {

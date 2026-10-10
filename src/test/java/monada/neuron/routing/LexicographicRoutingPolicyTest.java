@@ -445,6 +445,26 @@ class LexicographicRoutingPolicyTest {
     }
 
     @Test
+    void dormantCohortsDoNotChangeTheDecision() {
+        RoutingRequest request = request(JAVA, false);
+        var live = List.of(cohort(SUB_A, 0.1, 3), cohort(SUB_B, 0.4, 3));
+        var cohorts = new ArrayList<>(live);
+        for (int i = 0; i < RoutingPreference.MAX_COHORTS - live.size(); i++) {
+            cohorts.add(new CohortPreference("implement", "UNKNOWN", new RouteKey("dormant-" + i, 1), 9.0, 99));
+        }
+        RoutingPreference crowded = new RoutingPreference("scope-demo", "task-features/1", "forge-gates", "1",
+                "routing-state/1", "route-lex", "1", 40, cohorts);
+        RoutingPreference lean = new RoutingPreference("scope-demo", "task-features/1", "forge-gates", "1",
+                "routing-state/1", "route-lex", "1", 40, live);
+
+        Selected decision = selected(request, demo(), crowded);
+
+        assertEquals(SUB_B, decision.route());
+        assertEquals(Basis.LEARNED_PREFERENCE, decision.basis());
+        assertEquals(selected(request, demo(), lean).candidates(), decision.candidates());
+    }
+
+    @Test
     void maximumSizeDecisionAllocatesBoundedMemory(TestReporter reporter) {
         RoutingRequest request = request(JAVA, true);
         List<CatalogEntry> entries = new ArrayList<>();
@@ -455,7 +475,15 @@ class LexicographicRoutingPolicyTest {
             estimates.add(cost(key, i, "usd-cents"));
         }
         RouteCatalog catalog = new RouteCatalog("cat-max", entries, estimates);
-        RoutingPreference preference = empty(request);
+        List<CohortPreference> cohorts = new ArrayList<>();
+        for (int i = 0; i < RoutingPreference.MAX_COHORTS; i++) {
+            // 32 live cohorts for the current routes and 224 dormant ones for routes absent from the catalog.
+            RouteKey key = i < RouteCatalog.MAX_ROUTES ? new RouteKey(String.format("route-%02d", i), 1)
+                    : new RouteKey("dormant-" + i, 1);
+            cohorts.add(new CohortPreference("implement", "UNKNOWN", key, i % 7, 3));
+        }
+        RoutingPreference preference = new RoutingPreference("scope-demo", "task-features/1", "forge-gates", "1",
+                "routing-state/1", "route-lex", "1", 40, cohorts);
         var objective = withObjective(ResourceObjective.Direction.MINIMIZE);
         for (int i = 0; i < 20_000; i++) {
             objective.decide(request, catalog, preference);

@@ -17,7 +17,9 @@ import monada.neuron.monad.DeterministicCognitiveCycle;
 import monada.neuron.monad.PrimaryMonad;
 import monada.neuron.reasoning.HypothesisSet;
 import monada.neuron.reasoning.Proposition;
+import monada.neuron.routing.catalog.EligibilityReport;
 import monada.neuron.routing.catalog.RouteCatalog;
+import monada.neuron.routing.catalog.RouteEligibilityFilter;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.signal.Signal;
@@ -176,6 +178,23 @@ class RoutingReasoningStageTest {
 
     private static RoutingReasoningStage stubbed(
             RoutingRequest request, Provenance provenance, RouteKey route, String mode, boolean overflow) {
+        return stubbed(request, provenance, route, mode, overflow, new RouteEligibilityFilter()
+                .evaluate(request, demo()).excluded());
+    }
+
+    private static RoutingReasoningStage stubbed(RoutingRequest request, Provenance provenance, RouteKey route,
+            String mode, boolean overflow, List<EligibilityReport.Exclusion> exclusions) {
+        return stubbing(request, (r, c, p) -> new RoutingDecision.Selected(provenance, route, mode,
+                Basis.COLD_START, overflow, List.of(new RankedCandidate(0, route, Placement.ONLY_ELIGIBLE)), false,
+                List.of(RoutingRule.ROUTE_ORDER), List.of(), exclusions,
+                new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1")));
+    }
+
+    private interface Decider {
+        RoutingDecision decide(RoutingRequest request, RouteCatalog catalog, RoutingPreference preference);
+    }
+
+    private static RoutingReasoningStage stubbing(RoutingRequest request, Decider decider) {
         RoutingPolicy stub = new RoutingPolicy() {
             @Override
             public String policyId() {
@@ -189,10 +208,7 @@ class RoutingReasoningStageTest {
 
             @Override
             public RoutingDecision decide(RoutingRequest r, RouteCatalog c, RoutingPreference p) {
-                return new RoutingDecision.Selected(provenance, route, mode, Basis.COLD_START, overflow,
-                        List.of(new RankedCandidate(0, route, Placement.ONLY_ELIGIBLE)), false,
-                        List.of(RoutingRule.ROUTE_ORDER), List.of(), List.of(),
-                        new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1"));
+                return decider.decide(r, c, p);
             }
         };
         return new RoutingReasoningStage(stub,
@@ -217,7 +233,9 @@ class RoutingReasoningStageTest {
     @Test
     void aPolicyThatSelectsAnIneligibleCatalogRouteIsRejected() {
         var request = request(List.of("java"), false);
-        var failure = rejected(stubbed(request, RoutingFixtures.API_X, "sandboxed", true));
+        // A structurally valid decision cannot list the route as excluded, so the exclusions omit it.
+        var failure = rejected(stubbed(request, stubProvenance(request), RoutingFixtures.API_X, "sandboxed", true,
+                List.of()));
         assertTrue(failure.getMessage().contains("not eligible"));
         // The same selection is accepted once the host permits overflow.
         var permitted = request(List.of("java"), true);
@@ -247,5 +265,58 @@ class RoutingReasoningStageTest {
                 .getMessage().contains("cat-other"));
         assertTrue(rejected(stubbed(request, foreignRequest, RoutingFixtures.SUB_A, "sandboxed", false))
                 .getMessage().contains("another request"));
+    }
+
+    private static Provenance stubProvenance(RoutingRequest request) {
+        return new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
+                empty(request).binding(), new StateValidation.Compatible(), PARAMETERS);
+    }
+
+    @Test
+    void aNoRouteDecisionIsRecheckedAgainstTheFilter() {
+        var request = request(List.of("java"), false);
+        var provenance = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
+                empty(request).binding(), new StateValidation.NotEvaluated(), PARAMETERS);
+        var stage = stubbing(request, (r, c, p) -> new RoutingDecision.NoEligibleRoute(provenance, List.of()));
+
+        assertTrue(rejected(stage).getMessage().contains("no eligible route"));
+    }
+
+    @Test
+    void tamperedExclusionsOrAbstentionListsAreRejected() {
+        var request = request(List.of("java"), false);
+
+        var tamperedSelected = stubbed(request, stubProvenance(request), RoutingFixtures.SUB_A, "sandboxed", false,
+                List.of());
+        assertTrue(rejected(tamperedSelected).getMessage().contains("exclusions disagree"));
+
+        var report = new RouteEligibilityFilter().evaluate(request, demo());
+        var incompatible = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
+                empty(request).binding(),
+                new StateValidation.Incompatible(List.of(StateMismatch.SCOPE_MISMATCH)), PARAMETERS);
+        var wrongEligible = stubbing(request, (r, c, p) -> new RoutingDecision.Abstain(incompatible,
+                AbstainReason.STATE_INCOMPATIBLE, List.of(RoutingFixtures.SUB_A), List.of(), false, report.excluded()));
+        assertTrue(rejected(wrongEligible).getMessage().contains("other eligible routes"));
+    }
+
+    @Test
+    void aDecisionWithForeignCutoffStateOrPolicyIdentityIsRejected() {
+        var request = request(List.of("java"), false);
+        var state = empty(request).binding();
+        var other = new StateBinding("scope-demo", "task-features/1", "forge-gates", "1", "routing-state/1", 9,
+                "stub", "1");
+        var cutoff = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff() + 1, state,
+                new StateValidation.Compatible(), PARAMETERS);
+        var foreignState = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(), other,
+                new StateValidation.Compatible(), PARAMETERS);
+        var policy = new Provenance(DecisionRef.of(request), "cat-demo-7", "other-policy", "1", request.cutoff(),
+                state, new StateValidation.Compatible(), PARAMETERS);
+
+        assertTrue(rejected(stubbed(request, cutoff, RoutingFixtures.SUB_A, "sandboxed", false))
+                .getMessage().contains("cutoff"));
+        assertTrue(rejected(stubbed(request, foreignState, RoutingFixtures.SUB_A, "sandboxed", false))
+                .getMessage().contains("preference snapshot"));
+        assertTrue(rejected(stubbed(request, policy, RoutingFixtures.SUB_A, "sandboxed", false))
+                .getMessage().contains("other-policy"));
     }
 }

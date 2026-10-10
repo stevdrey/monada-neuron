@@ -35,8 +35,8 @@ import java.util.OptionalInt;
  *
  * <p>Eligibility is final and evaluated first; preference only reorders eligible routes. Steps: eligibility, then
  * state admission ({@code Abstain(STATE_INCOMPATIBLE)}), then ordering, then the optional tier check
- * ({@code Abstain(POLICY_TRADEOFF_UNRESOLVED)}). Time {@code O(R*Q + R log R)} for {@code R <= 32} routes and
- * {@code Q <= 16} requirement tokens; extra space {@code O(R)}. Instances are immutable and stateless.
+ * ({@code Abstain(POLICY_TRADEOFF_UNRESOLVED)}). Time {@code O(R*Q + R log R + R log C)} for {@code R <= 32} routes,
+ * {@code Q <= 16} requirement tokens and {@code C <= 256} cohorts; extra space {@code O(R)}. Instances are immutable and stateless.
  */
 public final class LexicographicRoutingPolicy implements RoutingPolicy {
 
@@ -215,21 +215,15 @@ public final class LexicographicRoutingPolicy implements RoutingPolicy {
         return new Ranking(work, learnedActive, resourceApplied);
     }
 
-    /** Looks up each candidate's cohort; the rule is active only if every candidate has enough support. */
+    /** Looks up each candidate's cohort by binary search in the snapshot (never indexes dormant cohorts); the rule is active only if every candidate has enough support. */
     private boolean applyPreference(RoutingRequest request, RoutingPreference preference, List<Work> work) {
         if (preference.cohorts().isEmpty()) {
             return false;
         }
         String bucket = definition.cohortMapping().bucketOf(request.features());
-        var cohorts = new HashMap<RouteKey, CohortPreference>();
-        for (CohortPreference cohort : preference.cohorts()) {
-            if (cohort.stageKind().equals(request.stageKind()) && cohort.cohortBucket().equals(bucket)) {
-                cohorts.put(cohort.route(), cohort);
-            }
-        }
         boolean active = true;
         for (Work w : work) {
-            CohortPreference cohort = cohorts.get(w.key);
+            CohortPreference cohort = preference.find(request.stageKind(), bucket, w.key);
             if (cohort == null || cohort.supportingObservations() < minSupportingObservations) {
                 active = false;
             } else {

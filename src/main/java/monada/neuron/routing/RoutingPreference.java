@@ -1,5 +1,6 @@
 package monada.neuron.routing;
 
+import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 
 import java.util.ArrayList;
@@ -111,6 +112,37 @@ public record RoutingPreference(
             found.add(StateMismatch.PROCESSED_CUTOFF_NEWER);
         }
         return found;
+    }
+
+    /**
+     * Point lookup in the canonical cohort order: an allocation-free binary search, {@code O(log C)}, independent of how
+     * many dormant cohorts the snapshot retains.
+     *
+     * @return the cohort, or {@code null} when the snapshot has none for this key
+     */
+    CohortPreference find(String stageKind, String cohortBucket, RouteKey route) {
+        int low = 0;
+        int high = cohorts.size() - 1;
+        while (low <= high) {
+            int mid = (low + high) >>> 1;
+            CohortPreference candidate = cohorts.get(mid);
+            int order = RoutingTokens.CODE_POINT_ORDER.compare(candidate.stageKind(), stageKind);
+            if (order == 0) {
+                order = RoutingTokens.CODE_POINT_ORDER.compare(candidate.cohortBucket(), cohortBucket);
+            }
+            if (order == 0) {
+                order = candidate.route().compareTo(route);
+            }
+            if (order == 0) {
+                return candidate;
+            }
+            if (order < 0) {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return null;
     }
 
     /** The identity of this snapshot as recorded in decision provenance. */

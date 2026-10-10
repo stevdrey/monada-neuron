@@ -64,9 +64,8 @@ public final class RoutingReasoningStage implements CognitiveStage {
      *
      * @throws IllegalArgumentException if input Signals are supplied
      * @throws IllegalStateException if the cycle has no host context, the resolver cannot resolve it, or the policy
-     *         returns a decision for another catalog or
-     *         request, or selects a route the hard eligibility filter does not accept (or with another mode or overflow
-     *         flag)
+     *         returns a decision that disagrees with the request, catalog, preference, policy identity or the hard
+     *         eligibility filter
      */
     @Override
     public RoutingCognitiveStageResult execute(
@@ -82,9 +81,8 @@ public final class RoutingReasoningStage implements CognitiveStage {
                 .orElseThrow(() -> new IllegalStateException("the host could not resolve routing inputs"));
         RoutingDecision decision = Objects.requireNonNull(
                 policy.decide(input.request(), input.catalog(), input.preference()), "decision must not be null");
-        verifyProvenance(decision, input);
+        verify(decision, input);
         if (decision instanceof RoutingDecision.Selected selected) {
-            verifyEligible(selected, input);
             List<CatalogEntry> entries = input.catalog().entries();
             int index = 0;
             while (!entries.get(index).key().equals(selected.route())) {
@@ -97,8 +95,12 @@ public final class RoutingReasoningStage implements CognitiveStage {
         return new RoutingCognitiveStageResult(decision, HypothesisSet.EMPTY);
     }
 
-    /** The decision must describe exactly this request and catalog, or its catalog-relative codes would mislead. */
-    private void verifyProvenance(RoutingDecision decision, RoutingInput input) {
+    /**
+     * The decision must describe exactly this request, catalog, preference and policy, and agree with the hard
+     * eligibility filter, or its catalog-relative codes and audit data would mislead. The admission result
+     * ({@code validation}) is not recomputed: that needs the policy's state definition, which the port does not expose.
+     */
+    private void verify(RoutingDecision decision, RoutingInput input) {
         Provenance provenance = decision.provenance();
         if (!provenance.catalogVersion().equals(input.catalog().catalogVersion())) {
             throw new IllegalStateException("policy decision refers to catalog " + provenance.catalogVersion()
@@ -107,11 +109,40 @@ public final class RoutingReasoningStage implements CognitiveStage {
         if (!provenance.decisionRef().equals(DecisionRef.of(input.request()))) {
             throw new IllegalStateException("policy decision refers to another request: " + provenance.decisionRef());
         }
+        if (provenance.cutoff() != input.request().cutoff()) {
+            throw new IllegalStateException("policy decision records cutoff " + provenance.cutoff()
+                    + " but the request cutoff is " + input.request().cutoff());
+        }
+        if (!provenance.state().equals(input.preference().binding())) {
+            throw new IllegalStateException("policy decision records another preference snapshot: "
+                    + provenance.state());
+        }
+        if (!provenance.policyId().equals(policy.policyId())
+                || !provenance.policyVersion().equals(policy.policyVersion())) {
+            throw new IllegalStateException("policy decision records policy " + provenance.policyId() + "/"
+                    + provenance.policyVersion() + " instead of " + policy.policyId() + "/" + policy.policyVersion());
+        }
+        EligibilityReport report = filter.evaluate(input.request(), input.catalog());
+        switch (decision) {
+            case RoutingDecision.NoEligibleRoute ignored -> {
+                if (!report.noneEligible()) {
+                    throw new IllegalStateException("policy reported no eligible route but the eligibility filter "
+                            + "accepts " + report.eligible().size());
+                }
+            }
+            case RoutingDecision.Abstain abstain -> {
+                if (!abstain.eligible().equals(report.eligible().stream().map(route -> route.key()).toList())) {
+                    throw new IllegalStateException("policy abstention lists other eligible routes than the filter");
+                }
+            }
+            case RoutingDecision.Selected selected -> verifySelected(selected, report);
+        }
+        if (!decision.exclusions().equals(report.excluded())) {
+            throw new IllegalStateException("policy decision exclusions disagree with the eligibility filter");
+        }
     }
 
-    /** Re-verifies a selection against the hard eligibility filter, so an injected policy cannot bypass it. */
-    private void verifyEligible(RoutingDecision.Selected selected, RoutingInput input) {
-        EligibilityReport report = filter.evaluate(input.request(), input.catalog());
+    private void verifySelected(RoutingDecision.Selected selected, EligibilityReport report) {
         EligibilityReport.EligibleRoute eligible = report.eligible().stream()
                 .filter(route -> route.key().equals(selected.route()))
                 .findFirst()

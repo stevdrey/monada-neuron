@@ -151,6 +151,34 @@ class RoutingValueTypesTest {
     }
 
     @Test
+    void abstainCandidatesMustBeEligible() {
+        var compatible = PROVENANCE;
+        var candidate = List.of(new RankedCandidate(0, SUB_B, Placement.ONLY_ELIGIBLE));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(compatible,
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A), candidate, false, List.of()));
+        new RoutingDecision.Abstain(compatible, AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B),
+                candidate, false, List.of());
+    }
+
+    @Test
+    void findLooksUpCohortsByStageBucketAndRouteVersion() {
+        var a = new CohortPreference("implement", "M", SUB_A, 0.5, 4);
+        var b = new CohortPreference("implement", "S", SUB_A, 0.1, 3);
+        var c = new CohortPreference("review", "M", SUB_A, 0.2, 3);
+        var d = new CohortPreference("implement", "M", new RouteKey("sub-a", 2), 0.3, 3);
+        var snapshot = snapshot(List.of(c, d, a, b));
+
+        assertEquals(a, snapshot.find("implement", "M", SUB_A));
+        assertEquals(b, snapshot.find("implement", "S", SUB_A));
+        assertEquals(c, snapshot.find("review", "M", SUB_A));
+        assertEquals(d, snapshot.find("implement", "M", new RouteKey("sub-a", 2)));
+        assertEquals(null, snapshot.find("implement", "L", SUB_A));
+        assertEquals(null, snapshot.find("plan", "M", SUB_A));
+        assertEquals(null, snapshot.find("implement", "M", SUB_B));
+        assertEquals(null, snapshot(List.of()).find("implement", "M", SUB_A));
+    }
+
+    @Test
     void cohortPreferenceValidatesAndNormalizesNegativeZero() {
         assertThrows(IllegalArgumentException.class, () -> new CohortPreference("s", "b", SUB_A, Double.NaN, 0));
         assertThrows(IllegalArgumentException.class,
