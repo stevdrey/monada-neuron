@@ -134,8 +134,14 @@ public final class RoutingReasoningStage implements CognitiveStage {
                 if (!abstain.eligible().equals(report.eligible().stream().map(route -> route.key()).toList())) {
                     throw new IllegalStateException("policy abstention lists other eligible routes than the filter");
                 }
+                if (abstain.reason() == AbstainReason.POLICY_TRADEOFF_UNRESOLVED) {
+                    verifyExplanation(abstain.candidates(), abstain.candidatesTruncated(), report);
+                }
             }
-            case RoutingDecision.Selected selected -> verifySelected(selected, report);
+            case RoutingDecision.Selected selected -> {
+                verifySelected(selected, report);
+                verifyExplanation(selected.candidates(), selected.candidatesTruncated(), report);
+            }
         }
         if (!decision.exclusions().equals(report.excluded())) {
             throw new IllegalStateException("policy decision exclusions disagree with the eligibility filter");
@@ -154,6 +160,22 @@ public final class RoutingReasoningStage implements CognitiveStage {
                     + selected.route() + ": mode " + selected.executionMode() + ", overflow "
                     + selected.overflowUsed() + " instead of " + eligible.executionMode() + ", "
                     + eligible.overflow());
+        }
+    }
+
+    /** Every ranked candidate must be eligible, and the explanation must be the bounded prefix the filter implies. */
+    private void verifyExplanation(List<RankedCandidate> candidates, boolean truncated, EligibilityReport report) {
+        for (RankedCandidate candidate : candidates) {
+            if (report.eligible().stream().noneMatch(route -> route.key().equals(candidate.key()))) {
+                throw new IllegalStateException(
+                        "policy ranked a route that is not eligible for the request: " + candidate.key());
+            }
+        }
+        int eligible = report.eligible().size();
+        if (candidates.size() != Math.min(RoutingDecision.MAX_CANDIDATES, eligible)
+                || truncated != eligible > RoutingDecision.MAX_CANDIDATES) {
+            throw new IllegalStateException("policy ranking lists " + candidates.size() + " candidates (truncated: "
+                    + truncated + ") for " + eligible + " eligible routes");
         }
     }
 }

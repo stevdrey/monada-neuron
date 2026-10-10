@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Random;
+import java.util.stream.IntStream;
 
 import static monada.neuron.routing.RoutingFixtures.SUB_A;
 import static monada.neuron.routing.RoutingFixtures.SUB_B;
@@ -23,6 +24,11 @@ class RoutingValueTypesTest {
     private static final PolicyParameters PARAMETERS =
             new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "m");
 
+    private static final List<RoutingRule> APPLIED =
+            List.of(RoutingRule.TIER, RoutingRule.FALLBACK_PRIORITY, RoutingRule.ROUTE_ORDER);
+    private static final List<RoutingRule> SKIPPED =
+            List.of(RoutingRule.LEARNED_PREFERENCE, RoutingRule.RESOURCE_OBJECTIVE);
+
     private static final Provenance PROVENANCE = provenance(new StateValidation.Compatible());
 
     private static Provenance provenance(StateValidation validation) {
@@ -32,7 +38,7 @@ class RoutingValueTypesTest {
 
     private static RoutingDecision.Selected selected(Provenance provenance, List<RankedCandidate> candidates) {
         return new RoutingDecision.Selected(provenance, SUB_A, "sandboxed", Basis.COLD_START, false, candidates,
-                false, List.of(RoutingRule.ROUTE_ORDER), List.of(), List.of(),
+                false, APPLIED, SKIPPED, List.of(),
                 new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1"));
     }
 
@@ -142,7 +148,7 @@ class RoutingValueTypesTest {
         var incompatible = provenance(new StateValidation.Incompatible(List.of(StateMismatch.SCOPE_MISMATCH)));
 
         assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Selected(PROVENANCE, SUB_A,
-                "sandboxed", Basis.COLD_START, false, ranked, false, List.of(RoutingRule.ROUTE_ORDER), List.of(),
+                "sandboxed", Basis.COLD_START, false, ranked, false, APPLIED, SKIPPED,
                 List.of(conflicting), new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1")));
         assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(incompatible,
                 AbstainReason.STATE_INCOMPATIBLE, List.of(SUB_A), List.of(), false, List.of(conflicting)));
@@ -176,6 +182,70 @@ class RoutingValueTypesTest {
         assertEquals(null, snapshot.find("plan", "M", SUB_A));
         assertEquals(null, snapshot.find("implement", "M", SUB_B));
         assertEquals(null, snapshot(List.of()).find("implement", "M", SUB_A));
+    }
+
+    private static RoutingDecision.Selected withRules(List<RoutingRule> applied, List<RoutingRule> skipped) {
+        return new RoutingDecision.Selected(PROVENANCE, SUB_A, "sandboxed", Basis.COLD_START, false,
+                List.of(new RankedCandidate(0, SUB_A, Placement.ONLY_ELIGIBLE)), false, applied, skipped, List.of(),
+                new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1"));
+    }
+
+    @Test
+    void ruleExplanationsMustBeUniqueOrderedDisjointAndComplete() {
+        var all = List.of(RoutingRule.values());
+        withRules(APPLIED, SKIPPED);
+        withRules(all, List.of());
+        assertThrows(IllegalArgumentException.class, () -> withRules(
+                List.of(RoutingRule.TIER, RoutingRule.TIER, RoutingRule.FALLBACK_PRIORITY, RoutingRule.ROUTE_ORDER),
+                SKIPPED));
+        assertThrows(IllegalArgumentException.class, () -> withRules(
+                List.of(RoutingRule.FALLBACK_PRIORITY, RoutingRule.TIER, RoutingRule.ROUTE_ORDER), SKIPPED));
+        assertThrows(IllegalArgumentException.class, () -> withRules(all, SKIPPED));
+        assertThrows(IllegalArgumentException.class, () -> withRules(APPLIED, List.of(RoutingRule.LEARNED_PREFERENCE)));
+        assertThrows(IllegalArgumentException.class, () -> withRules(
+                List.of(RoutingRule.FALLBACK_PRIORITY, RoutingRule.LEARNED_PREFERENCE, RoutingRule.RESOURCE_OBJECTIVE,
+                        RoutingRule.ROUTE_ORDER), List.of(RoutingRule.TIER)));
+    }
+
+    @Test
+    void selectedCohortBindingMustAgreeWithTheStateProvenance() {
+        var ranked = List.of(new RankedCandidate(0, SUB_A, Placement.ONLY_ELIGIBLE));
+        for (CohortBinding wrong : List.of(
+                new CohortBinding("UNKNOWN", "b/1", "m", "task-features/0"),
+                new CohortBinding("UNKNOWN", "b/1", "other-mapping", "task-features/1"))) {
+            assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Selected(PROVENANCE, SUB_A,
+                    "sandboxed", Basis.COLD_START, false, ranked, false, APPLIED, SKIPPED, List.of(), wrong));
+        }
+        var otherParameters = new Provenance(PROVENANCE.decisionRef(), "cat", "route-lex", "1", 5, PROVENANCE.state(),
+                new StateValidation.Compatible(),
+                new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "different"));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Selected(otherParameters, SUB_A,
+                "sandboxed", Basis.COLD_START, false, ranked, false, APPLIED, SKIPPED, List.of(),
+                new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1")));
+    }
+
+    private static List<RouteKey> routes(int count) {
+        return IntStream.range(0, count).mapToObj(i -> new RouteKey("r-%02d".formatted(i), 1)).toList();
+    }
+
+    @Test
+    void decisionsBoundEligibleAndExcludedRoutesByOneCatalog() {
+        var incompatible = provenance(new StateValidation.Incompatible(List.of(StateMismatch.SCOPE_MISMATCH)));
+        List<EligibilityReport.Exclusion> excluded = routes(32).stream()
+                .map(key -> new EligibilityReport.Exclusion(new RouteKey("x-" + key.routeId(), 1),
+                        EligibilityReason.MISSING_CAPABILITY, List.of()))
+                .toList();
+
+        new RoutingDecision.Abstain(incompatible, AbstainReason.STATE_INCOMPATIBLE, routes(16), List.of(), false,
+                excluded.subList(0, 16));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(incompatible,
+                AbstainReason.STATE_INCOMPATIBLE, routes(17), List.of(), false, excluded.subList(0, 16)));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(incompatible,
+                AbstainReason.STATE_INCOMPATIBLE, routes(32), List.of(), false, excluded));
+        var ranked = List.of(new RankedCandidate(0, SUB_A, Placement.ONLY_ELIGIBLE));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Selected(PROVENANCE, SUB_A,
+                "sandboxed", Basis.COLD_START, false, ranked, false, APPLIED, SKIPPED, excluded,
+                new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1")));
     }
 
     @Test

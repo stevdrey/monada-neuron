@@ -26,6 +26,7 @@ import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -44,6 +45,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RoutingReasoningStageTest {
 
     private static final int DOMAIN = 7;
+    private static final List<RoutingRule> APPLIED =
+            List.of(RoutingRule.TIER, RoutingRule.FALLBACK_PRIORITY, RoutingRule.ROUTE_ORDER);
+    private static final List<RoutingRule> SKIPPED =
+            List.of(RoutingRule.LEARNED_PREFERENCE, RoutingRule.RESOURCE_OBJECTIVE);
     private static final PolicyParameters PARAMETERS =
             new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "routing-state/1");
     private static final CognitiveBudget MINIMUM = new CognitiveBudget(1, 1, 0);
@@ -184,10 +189,22 @@ class RoutingReasoningStageTest {
 
     private static RoutingReasoningStage stubbed(RoutingRequest request, Provenance provenance, RouteKey route,
             String mode, boolean overflow, List<EligibilityReport.Exclusion> exclusions) {
+        var ranked = new ArrayList<RankedCandidate>();
+        ranked.add(new RankedCandidate(0, route, Placement.ROUTE_ORDER));
+        for (var eligible : new RouteEligibilityFilter().evaluate(request, demo()).eligible()) {
+            if (!eligible.key().equals(route)) {
+                ranked.add(new RankedCandidate(ranked.size(), eligible.key(), Placement.ROUTE_ORDER));
+            }
+        }
+        return stubbedRanking(request, provenance, route, mode, overflow, exclusions, ranked, false);
+    }
+
+    private static RoutingReasoningStage stubbedRanking(RoutingRequest request, Provenance provenance, RouteKey route,
+            String mode, boolean overflow, List<EligibilityReport.Exclusion> exclusions,
+            List<RankedCandidate> ranked, boolean truncated) {
         return stubbing(request, (r, c, p) -> new RoutingDecision.Selected(provenance, route, mode,
-                Basis.COLD_START, overflow, List.of(new RankedCandidate(0, route, Placement.ONLY_ELIGIBLE)), false,
-                List.of(RoutingRule.ROUTE_ORDER), List.of(), exclusions,
-                new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1")));
+                Basis.COLD_START, overflow, ranked, truncated, APPLIED, SKIPPED, exclusions,
+                new CohortBinding("UNKNOWN", "b/1", "routing-state/1", "task-features/1")));
     }
 
     private interface Decider {
@@ -318,5 +335,27 @@ class RoutingReasoningStageTest {
                 .getMessage().contains("preference snapshot"));
         assertTrue(rejected(stubbed(request, policy, RoutingFixtures.SUB_A, "sandboxed", false))
                 .getMessage().contains("other-policy"));
+    }
+
+    @Test
+    void everyRankedCandidateAndTheTruncationFlagAreCheckedAgainstTheFilter() {
+        var request = request(List.of("java"), false);
+        var provenance = stubProvenance(request);
+        var excluded = new RouteEligibilityFilter().evaluate(request, demo()).excluded();
+        var ghost = new RouteKey("ghost", 1);
+        var withGhost = List.of(new RankedCandidate(0, RoutingFixtures.SUB_A, Placement.ROUTE_ORDER),
+                new RankedCandidate(1, ghost, Placement.ROUTE_ORDER));
+        var complete = List.of(new RankedCandidate(0, RoutingFixtures.SUB_A, Placement.ROUTE_ORDER),
+                new RankedCandidate(1, RoutingFixtures.SUB_B, Placement.ROUTE_ORDER));
+        var partial = List.of(new RankedCandidate(0, RoutingFixtures.SUB_A, Placement.ROUTE_ORDER));
+
+        assertTrue(rejected(stubbedRanking(request, provenance, RoutingFixtures.SUB_A, "sandboxed", false, excluded,
+                withGhost, false)).getMessage().contains("ghost"));
+        assertTrue(rejected(stubbedRanking(request, provenance, RoutingFixtures.SUB_A, "sandboxed", false, excluded,
+                complete, true)).getMessage().contains("truncated"));
+        assertTrue(rejected(stubbedRanking(request, provenance, RoutingFixtures.SUB_A, "sandboxed", false, excluded,
+                partial, false)).getMessage().contains("1 candidates"));
+        stubbedRanking(request, provenance, RoutingFixtures.SUB_A, "sandboxed", false, excluded, complete, false)
+                .execute(monad(), List.of(), new CognitiveContext(MINIMUM, HOST));
     }
 }

@@ -39,10 +39,13 @@ public sealed interface RoutingDecision
      * @param overflowUsed whether the route is an overflow route the host permitted
      * @param candidates ranked eligible routes, at most {@value #MAX_CANDIDATES}; the first is {@code route}
      * @param candidatesTruncated whether more eligible routes exist than {@code candidates} lists
-     * @param rulesApplied rules that took part in ordering, in rule order
-     * @param rulesSkipped optional rules that were skipped, in rule order
+     * @param rulesApplied rules that took part in ordering, unique and in {@link RoutingRule} order; must include
+     *         the mandatory tier, priority and route-order rules
+     * @param rulesSkipped optional rules that were skipped, unique and in rule order; together with the applied
+     *         rules they cover every rule exactly once
      * @param exclusions reasons for the excluded routes only
-     * @param cohortBinding cohort computed from the request's features
+     * @param cohortBinding cohort computed from the request's features; its schema and mapping versions must
+     *         agree with the state provenance and the policy parameters
      */
     record Selected(
             Provenance provenance,
@@ -69,11 +72,23 @@ public sealed interface RoutingDecision
             }
             rulesApplied = List.copyOf(Objects.requireNonNull(rulesApplied, "rulesApplied must not be null"));
             rulesSkipped = List.copyOf(Objects.requireNonNull(rulesSkipped, "rulesSkipped must not be null"));
+            requireRulePartition(rulesApplied, rulesSkipped);
             exclusions = excluded(exclusions);
             requireDisjoint(exclusions, candidates.stream().map(RankedCandidate::key).toList());
+            if (candidates.size() + exclusions.size() > RouteCatalog.MAX_ROUTES) {
+                throw new IllegalArgumentException("candidates and exclusions come from one catalog of at most "
+                        + RouteCatalog.MAX_ROUTES + " routes, got: " + (candidates.size() + exclusions.size()));
+            }
             Objects.requireNonNull(cohortBinding, "cohortBinding must not be null");
             if (!(provenance.validation() instanceof StateValidation.Compatible)) {
                 throw new IllegalArgumentException("a selected decision needs a compatible state");
+            }
+            StateBinding state = provenance.state();
+            if (!cohortBinding.featureSchemaVersion().equals(state.featureSchemaVersion())
+                    || !cohortBinding.mappingVersion().equals(state.mappingVersion())
+                    || !cohortBinding.mappingVersion().equals(provenance.parameters().stateMappingVersion())) {
+                throw new IllegalArgumentException("the cohort binding disagrees with the state provenance: "
+                        + cohortBinding);
             }
         }
     }
@@ -118,6 +133,10 @@ public sealed interface RoutingDecision
             candidates = ranked(candidates);
             exclusions = excluded(exclusions);
             requireDisjoint(exclusions, eligible);
+            if (eligible.size() + exclusions.size() > RouteCatalog.MAX_ROUTES) {
+                throw new IllegalArgumentException("eligible routes and exclusions come from one catalog of at most "
+                        + RouteCatalog.MAX_ROUTES + " routes, got: " + (eligible.size() + exclusions.size()));
+            }
             for (RankedCandidate candidate : candidates) {
                 if (!eligible.contains(candidate.key())) {
                     throw new IllegalArgumentException("ranked candidate is not eligible: " + candidate.key());
@@ -207,6 +226,31 @@ public sealed interface RoutingDecision
             if (excluded.contains(key)) {
                 throw new IllegalArgumentException("a route cannot be both eligible and excluded: " + key);
             }
+        }
+    }
+
+    private static void requireRulePartition(List<RoutingRule> applied, List<RoutingRule> skipped) {
+        requireAscending(applied, "rulesApplied");
+        requireAscending(skipped, "rulesSkipped");
+        for (RoutingRule rule : skipped) {
+            if (rule != RoutingRule.LEARNED_PREFERENCE && rule != RoutingRule.RESOURCE_OBJECTIVE) {
+                throw new IllegalArgumentException("only optional rules can be skipped, got: " + rule);
+            }
+        }
+        if (applied.size() + skipped.size() != RoutingRule.values().length
+                || applied.stream().anyMatch(skipped::contains)) {
+            throw new IllegalArgumentException("rulesApplied and rulesSkipped must partition every rule exactly once");
+        }
+    }
+
+    private static void requireAscending(List<RoutingRule> rules, String name) {
+        RoutingRule previous = null;
+        for (RoutingRule rule : rules) {
+            Objects.requireNonNull(rule, name + " must not contain null");
+            if (previous != null && rule.compareTo(previous) <= 0) {
+                throw new IllegalArgumentException(name + " must be unique and in rule order");
+            }
+            previous = rule;
         }
     }
 }
