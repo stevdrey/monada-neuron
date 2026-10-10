@@ -74,6 +74,7 @@ public sealed interface RoutingDecision
             rulesSkipped = List.copyOf(Objects.requireNonNull(rulesSkipped, "rulesSkipped must not be null"));
             requireRulePartition(rulesApplied, rulesSkipped);
             requirePlacements(candidates, candidatesTruncated);
+            requireObjectiveForPlacements(candidates, provenance);
             if (basis != candidates.getFirst().placement().basis()) {
                 throw new IllegalArgumentException("basis " + basis + " contradicts the winner's placement "
                         + candidates.getFirst().placement());
@@ -84,6 +85,9 @@ public sealed interface RoutingDecision
                     throw new IllegalArgumentException("candidate " + candidate.key() + " is placed by a rule that was "
                             + "not applied: " + candidate.placement());
                 }
+            }
+            if (rulesApplied.contains(RoutingRule.RESOURCE_OBJECTIVE)) {
+                requireObjective(provenance);
             }
             if (candidatesTruncated && candidates.size() != MAX_CANDIDATES) {
                 throw new IllegalArgumentException("a truncated ranking lists exactly " + MAX_CANDIDATES + " candidates");
@@ -180,6 +184,7 @@ public sealed interface RoutingDecision
                                 + eligible.size() + " eligible");
                     }
                     requirePlacements(candidates, candidatesTruncated);
+                    requireObjectiveForPlacements(candidates, provenance);
                 }
             }
         }
@@ -284,6 +289,22 @@ public sealed interface RoutingDecision
                 throw new IllegalArgumentException("placement " + candidate.placement() + " contradicts a ranking of "
                         + candidates.size() + " candidates (truncated: " + truncated + ")");
             }
+        }
+    }
+
+    /** A resource placement or applied resource rule is reproducible only with a configured objective. */
+    private static void requireObjectiveForPlacements(List<RankedCandidate> candidates, Provenance provenance) {
+        for (RankedCandidate candidate : candidates) {
+            if (candidate.placement() == Placement.RESOURCE_OBJECTIVE) {
+                requireObjective(provenance);
+            }
+        }
+    }
+
+    private static void requireObjective(Provenance provenance) {
+        if (provenance.parameters().objective().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "the resource objective rule needs a configured objective in the recorded policy parameters");
         }
     }
 }

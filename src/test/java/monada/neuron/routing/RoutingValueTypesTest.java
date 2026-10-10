@@ -21,7 +21,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class RoutingValueTypesTest {
 
-    private static final PolicyParameters PARAMETERS =
+    private static final PolicyParameters PARAMETERS = new PolicyParameters(3, OptionalInt.empty(),
+            Optional.of(new ResourceObjective("cost", ResourceObjective.Direction.MINIMIZE)), "m");
+    private static final PolicyParameters NO_OBJECTIVE =
             new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "m");
 
     private static final List<RoutingRule> APPLIED =
@@ -213,6 +215,31 @@ class RoutingValueTypesTest {
         // A placement by a skipped rule is contradictory.
         assertThrows(IllegalArgumentException.class,
                 () -> selection(learned, false, Basis.LEARNED_PREFERENCE, APPLIED, SKIPPED, List.of()));
+    }
+
+    @Test
+    void resourceRulesNeedAConfiguredObjectiveInTheRecordedParameters() {
+        var noObjective = new Provenance(PROVENANCE.decisionRef(), "cat", "route-lex", "1", 5, PROVENANCE.state(),
+                new StateValidation.Compatible(), NO_OBJECTIVE);
+        var resourcePlaced = List.of(new RankedCandidate(0, SUB_A, Placement.RESOURCE_OBJECTIVE),
+                new RankedCandidate(1, SUB_B, Placement.RESOURCE_OBJECTIVE));
+        var plain = List.of(new RankedCandidate(0, SUB_A, Placement.ROUTE_ORDER),
+                new RankedCandidate(1, SUB_B, Placement.ROUTE_ORDER));
+        var binding = new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1");
+        var all = List.of(RoutingRule.values());
+
+        new RoutingDecision.Selected(PROVENANCE, SUB_A, "sandboxed", Basis.RESOURCE_OBJECTIVE, false, resourcePlaced,
+                false, all, List.of(), List.of(), binding);
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Selected(noObjective, SUB_A,
+                "sandboxed", Basis.RESOURCE_OBJECTIVE, false, resourcePlaced, false, all, List.of(), List.of(), binding));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Selected(noObjective, SUB_A,
+                "sandboxed", Basis.COLD_START, false, plain, false, all, List.of(), List.of(), binding));
+        new RoutingDecision.Selected(noObjective, SUB_A, "sandboxed", Basis.COLD_START, false, plain, false, APPLIED,
+                SKIPPED, List.of(), binding);
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(noObjective,
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), resourcePlaced, false, List.of()));
+        new RoutingDecision.Abstain(PROVENANCE, AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B),
+                resourcePlaced, false, List.of());
     }
 
     @Test
