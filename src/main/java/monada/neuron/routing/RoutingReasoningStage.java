@@ -11,6 +11,7 @@ import monada.neuron.reasoning.Proposition;
 import monada.neuron.routing.catalog.CatalogEntry;
 import monada.neuron.routing.catalog.EligibilityReport;
 import monada.neuron.routing.catalog.RouteEligibilityFilter;
+import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.signal.Signal;
 
 import java.util.EnumSet;
@@ -138,11 +139,13 @@ public final class RoutingReasoningStage implements CognitiveStage {
                 }
                 if (abstain.reason() == AbstainReason.POLICY_TRADEOFF_UNRESOLVED) {
                     verifyExplanation(abstain.candidates(), abstain.candidatesTruncated(), report);
+                    verifyTierCap(abstain.candidates().getFirst().key(), true, provenance.parameters(), input);
                 }
             }
             case RoutingDecision.Selected selected -> {
                 verifySelected(selected, report);
                 verifyExplanation(selected.candidates(), selected.candidatesTruncated(), report);
+                verifyTierCap(selected.route(), false, provenance.parameters(), input);
             }
         }
         if (!decision.exclusions().equals(report.excluded())) {
@@ -198,6 +201,26 @@ public final class RoutingReasoningStage implements CognitiveStage {
                     + selected.route() + ": mode " + selected.executionMode() + ", overflow "
                     + selected.overflowUsed() + " instead of " + eligible.executionMode() + ", "
                     + eligible.overflow());
+        }
+    }
+
+    /**
+     * The tier-cap abstention is the only tradeoff trigger: it must fire exactly when the recorded cap is set and the
+     * best-ranked route's catalog tier exceeds it, so the decision is one its recorded configuration could produce.
+     */
+    private void verifyTierCap(RouteKey best, boolean abstained, PolicyParameters parameters, RoutingInput input) {
+        int tier = input.catalog().entries().stream()
+                .filter(entry -> entry.key().equals(best))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("policy ranked a route that is not in the catalog: " + best))
+                .descriptor().tier();
+        boolean exceeds = parameters.maxAutoSelectTier().isPresent() && tier > parameters.maxAutoSelectTier().getAsInt();
+        if (exceeds != abstained) {
+            throw new IllegalStateException(abstained
+                    ? "policy abstained on the tier cap but " + best + " (tier " + tier + ") does not exceed the "
+                            + "recorded cap " + parameters.maxAutoSelectTier()
+                    : "policy selected " + best + " (tier " + tier + ") above the recorded tier cap "
+                            + parameters.maxAutoSelectTier());
         }
     }
 

@@ -466,4 +466,34 @@ class RoutingReasoningStageTest {
 
         assertTrue(rejected(stage).getMessage().contains("MAPPING_VERSION_MISMATCH"));
     }
+
+    private static RoutingReasoningStage onlyApi(OptionalInt cap, boolean abstain) {
+        var request = request(List.of("long-context"), true);
+        var report = new RouteEligibilityFilter().evaluate(request, demo());
+        var parameters = new PolicyParameters(3, cap, Optional.empty(), "routing-state/1");
+        var provenance = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
+                empty(request).binding(), new StateValidation.Compatible(), parameters);
+        var ranked = List.of(new RankedCandidate(0, RoutingFixtures.API_X, Placement.ONLY_ELIGIBLE));
+        RoutingPolicy policy = stubbedPolicy(r -> abstain
+                ? new RoutingDecision.Abstain(provenance, AbstainReason.POLICY_TRADEOFF_UNRESOLVED,
+                        List.of(RoutingFixtures.API_X), ranked, false, report.excluded())
+                : new RoutingDecision.Selected(provenance, RoutingFixtures.API_X, "sandboxed", Basis.COLD_START, true,
+                        ranked, false, APPLIED, SKIPPED, report.excluded(),
+                        new CohortBinding("UNKNOWN", "b/1", "routing-state/1", "task-features/1")));
+        return new RoutingReasoningStage(policy,
+                context -> Optional.of(new RoutingInput(request, demo(), empty(request))), DOMAIN);
+    }
+
+    @Test
+    void theTierCapTriggerIsRecomputedFromTheRecordedConfiguration() {
+        // api-x is tier 2.
+        var context = new CognitiveContext(MINIMUM, HOST);
+        onlyApi(OptionalInt.of(1), true).execute(monad(), List.of(), context);
+        onlyApi(OptionalInt.of(2), false).execute(monad(), List.of(), context);
+        onlyApi(OptionalInt.empty(), false).execute(monad(), List.of(), context);
+
+        assertTrue(rejected(onlyApi(OptionalInt.empty(), true)).getMessage().contains("does not exceed"));
+        assertTrue(rejected(onlyApi(OptionalInt.of(2), true)).getMessage().contains("does not exceed"));
+        assertTrue(rejected(onlyApi(OptionalInt.of(1), false)).getMessage().contains("above the recorded tier cap"));
+    }
 }
