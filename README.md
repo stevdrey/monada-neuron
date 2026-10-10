@@ -286,8 +286,9 @@ Monada Forge needs vendor-neutral, stage-level worker/model recommendations that
 versioned contract is defined in [Forge Routing Contract v1](docs/specs/forge-routing-contract-v1.md) and recorded in
 [ADR 0026](docs/adr/0026-forge-routing-ownership.md). The contract is the normative design: `TaskFeatures` and its signal encoder
 (`monada.neuron.routing.features`, issue #60) and the immutable route catalog with fail-closed eligibility filtering
-(`monada.neuron.routing.catalog`, issue #61) are implemented, while the other routing types it names are proposals that
-issues #62 to #68 implement, all additive and opt-in, and the Monada Resonance Store capabilities it depends on are not yet
+(`monada.neuron.routing.catalog`, issue #61) and the explainable lexicographic `RoutingPolicy` with `RoutingDecision`
+(`Selected`, `Abstain`, `NoEligibleRoute`) and the optional `RoutingReasoningStage` (`monada.neuron.routing`, issue #62)
+are implemented, while the other routing types it names are proposals that issues #63 to #68 implement, all additive and opt-in, and the Monada Resonance Store capabilities it depends on are not yet
 available. A routing decision is advice. Forge keeps authorization, execution and evidence judgment, and Monada Resonance Store
 keeps persistent experience.
 

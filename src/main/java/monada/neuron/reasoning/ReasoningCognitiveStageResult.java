@@ -4,6 +4,7 @@ import monada.neuron.context.CognitiveContext;
 import monada.neuron.monad.CognitiveStageKind;
 import monada.neuron.monad.CognitiveStageResult;
 import monada.neuron.monad.CognitiveStageStatus;
+import monada.neuron.routing.RoutingCognitiveStageResult;
 import monada.neuron.signal.Signal;
 
 import java.util.List;
@@ -66,8 +67,11 @@ public record ReasoningCognitiveStageResult(
     public static HypothesisSet hypothesesOf(Optional<CognitiveStageResult> previousResult) {
         Objects.requireNonNull(previousResult, "previousResult must not be null");
         return previousResult
-                .filter(ReasoningCognitiveStageResult.class::isInstance)
-                .map(result -> ((ReasoningCognitiveStageResult) result).hypotheses())
+                .map(result -> switch (result) {
+                    case ReasoningCognitiveStageResult reasoning -> reasoning.hypotheses();
+                    case RoutingCognitiveStageResult routing -> routing.hypotheses();
+                    default -> HypothesisSet.EMPTY;
+                })
                 .orElse(HypothesisSet.EMPTY);
     }
 }

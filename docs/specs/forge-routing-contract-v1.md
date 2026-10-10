@@ -1,6 +1,6 @@
 # Forge Routing Contract v1
 
-Status: **proposed contract; implemented so far: `TaskFeatures` and its signal encoder (#60, Section 15) and the route catalog and eligibility filter (#61, Section 16).** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
+Status: **proposed contract; implemented so far: `TaskFeatures` and its signal encoder (#60, Section 15), the route catalog and eligibility filter (#61, Section 16), and the routing policy, decisions and composition seam (#62, Section 17).** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
 Issue: [#59](https://github.com/stevdrey/monada-neuron/issues/59) (Forge Routing 1/10).
 
 This document is the normative v1 contract that issues #60–#68 implement. Later issues may refine exact Java
@@ -9,7 +9,7 @@ signatures, but must not change the semantics defined here without updating this
 Normative words: **must**, **must not**, **should** and **may** carry their usual specification meaning.
 
 Every type and package name below (`monada.neuron.routing`, `TaskFeatures`, `RouteCatalog`, `RoutingDecision`, ...) is a
-**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them exists; since #60, `TaskFeatures` and the other types of `monada.neuron.routing.features` (Section 15), and since #61 the types of `monada.neuron.routing.catalog` (Section 16), are implemented. Types that do exist are named with
+**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them exists; since #60, `TaskFeatures` and the other types of `monada.neuron.routing.features` (Section 15), and since #61 the types of `monada.neuron.routing.catalog` (Section 16), and since #62 the policy, decision, preference and composition types of `monada.neuron.routing` (Section 17), are implemented. Types that do exist are named with
 their current package and are described only as they exist today.
 
 ## Background
@@ -109,7 +109,7 @@ Provenance fields, all opaque strings of at most 128 code points compared by equ
 | `constraintsFingerprint` | Fingerprint of the host constraints in force. |
 | `featureSchemaVersion` | Version of the `TaskFeatures` schema and encoder (#60). |
 | `catalogVersion` | **Immutable identity of one `RouteCatalog` snapshot** (#61). It must change whenever any snapshot content changes: the route set, any descriptor, availability, `fallbackPriority` or a `ResourceEstimate`. The same `catalogVersion` always means identical content, and reusing a version for different content is a host contract violation. Neuron stores no catalogs, so a host that needs exact replay retains each snapshot by version. `Proposition.code` is meaningful only together with this version. It identifies the snapshot behind a decision (audit and `Proposition.code` mapping); it is **not** an admission key for state or observations. |
-| `policyId` + `policyVersion` | The `RoutingPolicy` (ordering rules and parameters) that decided. |
+| `policyId` + `policyVersion` | The `RoutingPolicy` **ordering rules** that decided. The policy's configuration (`minSupportingObservations`, `maxAutoSelectTier`, the `ResourceObjective`, the state `mappingVersion`) is recorded separately as the decision's `parameters` (Section 3.2 and Section 17.1), because equal ordering rules can decide differently under different parameters. |
 | `evaluationPolicy` (id, version) | The Forge evidence policy; matches the Store's `evaluationPolicy`. |
 
 Ordinals and cutoff:
@@ -156,15 +156,15 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 | `TaskFeatures` | #60 (implemented, Section 15) | Caller-approved, bounded, typed task/stage characteristics with explicit unknown values, canonical order and schema version. |
 | `RouteDescriptor`, `RouteCatalog` | #61 (implemented, Section 16) | `RouteDescriptor` is the versioned behavioral description of one route (worker/provider/model/effort, `billingMode`, `overflowClass`, `tier`, capabilities, stage compatibility, ceilings). `RouteCatalog` is an immutable snapshot of descriptors **plus a per-route availability value, which is outside the versioned descriptor**. |
 | `RoutingRequest` | #61 (implemented, Section 16) | One stage request, defined with eligibility because every hard constraint is a request value: envelope, `TaskFeatures`, hard requirements, permitted execution modes, `overflowPermitted`. |
-| `RoutingPolicy` | #62 | Versioned, explicit, rule-based policy; `decide(RoutingRequest, RouteCatalog, RoutingPreference) -> RoutingDecision`; the policy carries its `ResourceObjective`. |
+| `RoutingPolicy` | #62 (implemented, Section 17) | Versioned, explicit, rule-based policy; `decide(RoutingRequest, RouteCatalog, RoutingPreference) -> RoutingDecision`; the policy carries its `ResourceObjective`. |
 | `ResourceEstimate` | #61 (implemented, Section 16) | Host-supplied, per-route annotation inside the `RouteCatalog` snapshot: `(RouteId, RouteVersion, dimension, unit, value, provenance)` with `value` Known, Unknown or NotMeasured (Section 5). At most one estimate per route and dimension (Section 3.1), and at most 4 dimensions per route. |
-| `RoutingDecision` | #62 | Sealed: `Selected`, `Abstain`, `NoEligibleRoute`. |
+| `RoutingDecision` | #62 (implemented, Section 17) | Sealed: `Selected`, `Abstain`, `NoEligibleRoute`. |
 | `RoutingOutcome` | #63 | Host-evaluated result of executing a decision, with evidence and provenance. |
 | `RoutingObservation` | #63 | Neutral, Store-independent record of one effective execution sample, defined with `RoutingOutcome` so feedback derivation needs only #63. #64 only *produces* it from Store exports. |
 | `RoutingFeedback` | #65 | Bounded artifact derived from an observation; separate from `OutcomeFeedback`. |
-| `RoutingPreference`, `CohortMapping`, `RoutingStateDefinition` | #62 | `CohortMapping` is the pure, versioned `TaskFeatures -> cohortBucket` function with its `bucketMappingVersion`. `RoutingStateDefinition` groups the `CohortMapping`, `initialNodeState`, `AdaptationConfig` and feedback scoring and eligibility rules under one composite `mappingVersion` that changes when any part changes. `RoutingPreference` is the **immutable value snapshot** of `scopeId`, `featureSchemaVersion`, `evaluationPolicy`, `mappingVersion`, cohort preference values, supporting counts and `processedCutoff`, taken from the caller's mutable state and passed to `decide`. #62 defines the value type, its valid empty cold-start form (`EMPTY` for a scope, feature schema, evaluation policy and mapping version) and its admission validation, so `decide` needs no later type; #66 only builds non-empty snapshots from the caller's state. |
+| `RoutingPreference`, `CohortMapping`, `RoutingStateDefinition` | #62 (implemented, Section 17) | `CohortMapping` is the pure, versioned `TaskFeatures -> cohortBucket` function with its `bucketMappingVersion`. `RoutingStateDefinition` groups the `CohortMapping`, `initialNodeState`, `AdaptationConfig` and feedback scoring and eligibility rules under one composite `mappingVersion` that changes when any part changes. `RoutingPreference` is the **immutable value snapshot** of `scopeId`, `featureSchemaVersion`, `evaluationPolicy`, `mappingVersion`, cohort preference values, supporting counts and `processedCutoff`, taken from the caller's mutable state and passed to `decide`. #62 defines the value type, its valid empty cold-start form (`EMPTY` for a scope, feature schema, evaluation policy and mapping version) and its admission validation, so `decide` needs no later type; #66 only builds non-empty snapshots from the caller's state. |
 | `RoutingStateStore` (caller-owned, mutable) | #66 | The caller's `Node` bindings, applied-revision ledger and `RoutingStateCheckpoint`; it produces the `RoutingPreference` snapshots. It is never passed to `decide`. |
-| `RoutingCognitiveStageResult` | #62 | Level B stage result that retains the full `RoutingDecision` together with the hypothesis hand-off (Section 3.5). |
+| `RoutingCognitiveStageResult` | #62 (implemented, Section 17) | Level B stage result that retains the full `RoutingDecision` together with the hypothesis hand-off (Section 3.5). |
 
 ### 3.1 Request, catalog and policy inputs
 
@@ -222,7 +222,7 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 | `Abstain` | At least one route is eligible but the policy declines to advise. | Common provenance, typed reason (`POLICY_TRADEOFF_UNRESOLVED` or `STATE_INCOMPATIBLE`; these are the only v1 reasons, defined in Section 3.3 and Section 3.2), the eligible candidates, exclusion reasons for the excluded routes. |
 | `NoEligibleRoute` | The hard constraints exclude every route. | Common provenance and one structured exclusion reason for **every catalog route**. |
 
-**Common provenance, on every variant.** `decisionRef`, `catalogVersion`, `policyId` + `policyVersion`, the `cutoff`, and the
+**Common provenance, on every variant.** `decisionRef`, `catalogVersion`, `policyId` + `policyVersion`, the policy `parameters` (`minSupportingObservations`, `maxAutoSelectTier`, the `ResourceObjective` and the state `mappingVersion`; #62 records them because `policyId` + `policyVersion` identify the ordering rules only), the `cutoff`, and the
 state binding: the `RoutingPreference`'s `scopeId`, `featureSchemaVersion`, `processedCutoff`, `mappingVersion`, `evaluationPolicy`, `policyId`/`policyVersion` (provenance), and the validation
 result: `COMPATIBLE`, `NOT_EVALUATED`, or `INCOMPATIBLE(reasons)`. A snapshot can fail several checks at once, so
 `INCOMPATIBLE` retains **every** mismatch as an ordered list in this fixed order (at most 5): `SCOPE_MISMATCH`,
@@ -810,7 +810,7 @@ file.
 
 ## 14. Documentation Updates
 
-- `docs/specs/forge-routing-contract-v1.md` (this file, new; Section 15 added by #60).
+- `docs/specs/forge-routing-contract-v1.md` (this file, new; Section 15 added by #60, Section 16 by #61, Section 17 by #62).
 - `docs/adr/0026-forge-routing-ownership.md` (new).
 - `docs/architecture.md`: "Forge Routing Extension (proposed)" section.
 - `README.md`: pointer under the host-embedding section.
@@ -965,3 +965,47 @@ The tests include a plan/implement/review/QA capability-matrix fixture and the S
 Evidence gaps: no latency measurement; eligibility is only as correct as the caller-supplied catalog (descriptors are
 observations, not proof); ranking, `RoutingDecision` and state admission arrive with #62; the `EligibilityReport` is not yet
 consumed by any policy.
+
+## 17. Implemented: Routing Policy, Decisions and Composition Seam (#62)
+
+Package `monada.neuron.routing`. This section describes **implemented behavior** and refines Sections 2, 3.2 to 3.5; it
+does not change their semantics. Everything is additive and opt-in. `Signal`, `CycleInput`, `NeuronRuntime`,
+`CognitiveStage`, `CognitiveStageKind`, `RuntimeBackendSelector` and `HypothesisEvaluationPolicy` are unchanged; the only
+edit outside the routing packages is an additive branch in `ReasoningCognitiveStageResult.hypothesesOf` that also reads the
+hypotheses of a `RoutingCognitiveStageResult` (a scope correction accepted for this issue, because the contract requires the
+following `EVALUATION` stage to receive them and `hypothesesOf` recognized only one result type).
+
+### 17.1 Types
+
+| Type | Behavior |
+| --- | --- |
+| `RoutingPolicy` / `LexicographicRoutingPolicy` | `decide(RoutingRequest, RouteCatalog, RoutingPreference) -> RoutingDecision`, pure, stateless. The reference policy is `route-lex` v`1`; parameters: `RoutingStateDefinition`, `minSupportingObservations` (default 3, at least 1), `maxAutoSelectTier` (empty = unbounded), optional `ResourceObjective(dimension, MINIMIZE/MAXIMIZE)`. |
+| `RoutingDecision` | Sealed `Selected` / `Abstain` / `NoEligibleRoute`, each with `Provenance(decisionRef, catalogVersion, policyId/Version, cutoff, StateBinding, StateValidation)` and its exclusion reasons (for excluded routes only, reusing `EligibilityReport.Exclusion`). `Selected` adds the route, the chosen `executionMode`, `Basis`, `overflowUsed`, at most 8 `RankedCandidate`s (`Placement` names the rule that separated each from its neighbour) with `candidatesTruncated`, `rulesApplied` / `rulesSkipped` and the `CohortBinding`. A decision is never an `ActionStatus`. |
+| `RoutingPreference`, `CohortPreference` | Immutable snapshot (at most 256 cohorts, unique per stage kind, bucket and route, canonical order, finite values, `-0.0` normalized). `RoutingPreference.empty(...)` is the valid cold start; `mismatches(request, definition)` returns the admission failures in the fixed order of Section 3.2 (`StateMismatch`). The snapshot's own producing policy id/version is provenance, not an admission key. |
+| `CohortMapping`, `ChangeSizeCohortMapping`, `RoutingStateDefinition` | Pure feature-to-bucket function with `bucketMappingVersion`; the reference mapping buckets change size (`S` up to 50, `M` up to 500, `L`, `UNKNOWN`) and its thresholds are an **unvalidated policy choice**. In #62 `RoutingStateDefinition(mappingVersion, cohortMapping)` carries only the mapping; the initial Node state, `AdaptationConfig` and feedback rules join the same composite `mappingVersion` in #65 and #66 (a refinement of Section 3, not a change of semantics). |
+| `RoutingInput`, `RoutingInputResolver`, `RoutingCognitiveStageResult`, `RoutingReasoningStage` | Level B (Section 3.5). `RoutingReasoningStage` is a `REASONING` **source** stage: first in the cycle, empty initial Signals, no perception source in the same cycle. It resolves `RoutingInput` from the cycle's `HostExecutionContext` through the host port and throws `IllegalStateException` when there is no host context or the resolver returns empty. It also re-verifies every decision against `RouteEligibilityFilter` and throws `IllegalStateException` on any disagreement, so a custom policy cannot hand off a hypothesis for an ineligible route: a `Selected` route must be eligible with the same execution mode and overflow flag; `NoEligibleRoute` is rejected while a route is eligible; an `Abstain` must list exactly the eligible routes; and the exclusions must equal the filter's. It also rejects a decision whose `catalogVersion`, `decisionRef`, `cutoff`, state binding or `policyId`/`policyVersion` do not match the resolved catalog, request, preference and policy, because `Proposition.code` is meaningful only with its own catalog snapshot (the admission `validation` result is not recomputed, because the port does not expose the policy's state definition). The checks cost one extra `O(R*Q)` filter pass per cycle. The stage also checks that every ranked candidate is eligible and that the explanation is the bounded prefix the filter implies (`min(8, eligible)` candidates, `candidatesTruncated` iff more than 8 are eligible). The decision types reject a route that is both eligible/ranked and excluded, an `Abstain` candidate that is not in its eligible list, more eligible or ranked plus excluded routes than one catalog holds (32), a `Selected` whose `cohortBinding` schema or mapping version disagrees with the state provenance and `PolicyParameters`, and contradictory rule explanations (`rulesApplied` and `rulesSkipped` must be unique, in `RoutingRule` order, disjoint and together cover all five rules, with tier, priority and route order always applied). The stage also verifies the admission keys that the request alone decides (scope, feature schema, evaluation policy, `processedCutoff` against the cutoff): a decision recorded as `Compatible` is rejected when the preference conflicts with the request or was built under another mapping version than the recorded policy parameters, and an `Incompatible` one must list exactly the mismatches that exist (scope, evaluation policy, watermark and mapping version in both directions; a feature-schema mismatch only needs a real cause on the request side, because it can also stem from the policy's own mapping). A `POLICY_TRADEOFF_UNRESOLVED` abstention must rank `min(8, eligible)` candidates and flag truncation exactly when more than 8 are eligible; a truncated `Selected` ranking lists exactly 8 candidates and counts one further, unlisted eligible route toward the 32-route bound. `Basis` and `Placement` must agree (`Placement.basis()`), every placing rule must be in `rulesApplied`, and `ONLY_ELIGIBLE` marks exactly a sole, untruncated candidate. The stage also recomputes the tier-cap trigger from the recorded parameters: `POLICY_TRADEOFF_UNRESOLVED` is accepted only when `maxAutoSelectTier` is set and the best-ranked route's catalog tier exceeds it, and a `Selected` route above a recorded cap is rejected. A `RESOURCE_OBJECTIVE` placement, or `RESOURCE_OBJECTIVE` among the applied rules, requires a configured objective in the recorded policy parameters, since the parameters could not otherwise reproduce the explanation. The cohort bucket token itself is not re-derived, because the `RoutingPolicy` port does not expose the `CohortMapping`. A `Selected` decision yields one hypothesis `Proposition(domain, zero-based index of the route in the catalog's canonical order)` without `SignalEvidence`; `Abstain` and `NoEligibleRoute` yield none. Output Signals are always empty. |
+
+### 17.2 Decision flow
+
+1. `RouteEligibilityFilter.evaluate`. No eligible route: `NoEligibleRoute`, state `NOT_EVALUATED`, even for an incompatible snapshot.
+2. State admission (Section 2). Any mismatch: `Abstain(STATE_INCOMPATIBLE)` with every mismatch, the eligible routes in canonical order and no ranking.
+3. Ordering by the lexicographic rules of Section 3.3: `tier` ascending, `fallbackPriority` ascending, learned preference descending, resource objective, canonical route order. Precise reading of the scope of the optional rules:
+   - **Learned preference** is applied only when the snapshot is compatible and *every* eligible candidate has a cohort (same stage kind, same bucket computed from the request, same `(RouteId, RouteVersion)`) with at least `minSupportingObservations`; otherwise it is skipped for all candidates, never partially applied. It reorders eligible routes only and never crosses a tier.
+   - **Resource objective** is applied to each group still tied after the first three rules, and only if every route of that group has a `Known` estimate of the objective's dimension with an identical `unit`. `Unknown`, `NotMeasured` and a missing estimate are never cheapest or fastest and never zero. `ResourceEstimate` has no currency or pricing-assumption field (#61), so comparability is `dimension` plus `unit`: the host must put currency and pricing assumptions into the unit token.
+4. `maxAutoSelectTier` set and the best route's `tier` above it: `Abstain(POLICY_TRADEOFF_UNRESOLVED)` with the ranked candidates. Insufficient evidence and unknown estimates only skip rules, they never abstain.
+5. Otherwise `Selected`. `Basis` is `HOST_PRIORITY` (tier or priority separated the leaders), `LEARNED_PREFERENCE`, `RESOURCE_OBJECTIVE`, or `COLD_START` (canonical order or a sole route).
+
+### 17.3 Limits, complexity and footprint
+
+`R` <= 32 routes, `Q` <= 16 requirement tokens, 8 ranked candidates, 256 cohorts. Time `O(R*Q + R log R + R log C)` with `C` <= 256 cohorts (eligibility filter, one sort of at most 32 working objects, one merge pass to pair eligible routes with their entries, grouped resource refinement, one binary search per candidate in the snapshot's canonical cohort order); extra space `O(R)`. Dormant cohorts are never indexed: the cohort lookup is an allocation-free binary search over the sorted snapshot (a refinement of Section 8, which named a map), so its cost does not scale with the number of retained cohorts. Estimate lookups are `HashMap` point queries over at most `4R` estimates, built per call and never iterated, so hash order cannot affect results. No cache, parallelism, SIMD or GPU, no clock, no randomness, no retained state. **Measured** (JDK 27, `ThreadMXBean.getThreadAllocatedBytes`, after 20,000 warm-up calls, one `decide` at R=32 with an objective and 32 estimates, three runs, with a 256-cohort snapshot of which 32 cohorts are live and 224 dormant): 18,512, 18,488 and 18,464 bytes (an empty snapshot measured 16,760, 16,584 and 16,440 bytes earlier). The test publishes the figure and asserts only an upper bound of 32 KiB; it is a regression guard, not a benchmark, and no latency is measured. The asymptotic bound follows from the algorithm and is not established by a work-counting test.
+
+### 17.4 Verification and evidence gaps
+
+```bash
+./gradlew test
+./gradlew consumerSmokeTest
+```
+
+The tests cover the Section 9 fixtures (cold start, no eligible route then explicit overflow, subscription-first, learned promotion that cannot cross a tier), ties and numeric version order, unknown and incomparable resource metrics, both abstention reasons, every admission mismatch, input permutations (catalog entries, estimates and cohorts) giving equal decisions, injected cheap invalid candidates, bounds and truncation, and the cycle composition with a minimum positive budget (`maxSteps >= 1`, `maxSignals >= 1`): full result preserved by normalization, typed hand-off to `EVALUATION`, `NO_SIGNALS` for a following stage without typed-only support, rejection of initial Signals.
+
+Evidence gaps: no claim that the ordering improves quality, acceptance or cost; the default cohort thresholds are unvalidated; learned preference values can only be produced by #63 to #66, so non-empty snapshots are test fixtures here; latency is unmeasured; `RoutingEnvelope` transport, outcomes and feedback are not implemented; the reasoning-stage adapter and `hypothesesOf` extension introduce a package dependency from `reasoning` to `routing` that a later refactor may invert with a small shared interface.

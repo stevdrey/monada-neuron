@@ -2,6 +2,7 @@ package consumer;
 
 import monada.neuron.monad.CognitiveCycleTermination;
 import monada.neuron.resonance.AdaptiveBatchResonanceEvaluator;
+import monada.neuron.routing.RoutingDecision;
 import monada.neuron.resonance.BatchResonanceEvaluator;
 import org.junit.jupiter.api.Test;
 
@@ -22,6 +23,13 @@ class ConsumerSmokeTest {
 
         assertEquals(CognitiveCycleTermination.COMPLETED, result.termination());
         assertEquals(1, result.outputSignals().size());
+    }
+
+    @Test
+    void routingDecisionIsAvailableThroughThePublishedArtifact() {
+        var decision = assertInstanceOf(RoutingDecision.Selected.class, ConsumerSmoke.routeOneStage());
+
+        assertEquals("route-a", decision.route().routeId());
     }
 
     @Test
