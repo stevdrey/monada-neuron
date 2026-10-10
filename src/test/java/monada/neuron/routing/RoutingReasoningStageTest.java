@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
+import java.util.function.Function;
 
 import static monada.neuron.routing.RoutingFixtures.demo;
 import static monada.neuron.routing.RoutingFixtures.empty;
@@ -347,15 +348,68 @@ class RoutingReasoningStageTest {
                 new RankedCandidate(1, ghost, Placement.ROUTE_ORDER));
         var complete = List.of(new RankedCandidate(0, RoutingFixtures.SUB_A, Placement.ROUTE_ORDER),
                 new RankedCandidate(1, RoutingFixtures.SUB_B, Placement.ROUTE_ORDER));
-        var partial = List.of(new RankedCandidate(0, RoutingFixtures.SUB_A, Placement.ROUTE_ORDER));
+        var partial = List.of(new RankedCandidate(0, RoutingFixtures.SUB_A, Placement.ONLY_ELIGIBLE));
 
         assertTrue(rejected(stubbedRanking(request, provenance, RoutingFixtures.SUB_A, "sandboxed", false, excluded,
                 withGhost, false)).getMessage().contains("ghost"));
         assertTrue(rejected(stubbedRanking(request, provenance, RoutingFixtures.SUB_A, "sandboxed", false, excluded,
-                complete, true)).getMessage().contains("truncated"));
-        assertTrue(rejected(stubbedRanking(request, provenance, RoutingFixtures.SUB_A, "sandboxed", false, excluded,
                 partial, false)).getMessage().contains("1 candidates"));
         stubbedRanking(request, provenance, RoutingFixtures.SUB_A, "sandboxed", false, excluded, complete, false)
                 .execute(monad(), List.of(), new CognitiveContext(MINIMUM, HOST));
+    }
+
+    @Test
+    void aSnapshotThatConflictsWithTheRequestIsRejectedEvenWhenProvenanceCopiesIt() {
+        var request = request(List.of("java"), false);
+        var good = empty(request);
+        var foreignScope = new RoutingPreference("other-scope", good.featureSchemaVersion(), good.evaluationPolicyId(),
+                good.evaluationPolicyVersion(), good.mappingVersion(), "p", "1", 0, List.of());
+        var future = new RoutingPreference(good.scopeId(), good.featureSchemaVersion(), good.evaluationPolicyId(),
+                good.evaluationPolicyVersion(), good.mappingVersion(), "p", "1", request.cutoff() + 1, List.of());
+        var otherEvaluation = new RoutingPreference(good.scopeId(), good.featureSchemaVersion(), "other-eval", "1",
+                good.mappingVersion(), "p", "1", 0, List.of());
+
+        for (RoutingPreference conflicting : List.of(foreignScope, future, otherEvaluation)) {
+            var provenance = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
+                    conflicting.binding(), new StateValidation.Compatible(), PARAMETERS);
+            RoutingPolicy policy = stubbedPolicy(r -> new RoutingDecision.Selected(provenance, RoutingFixtures.SUB_A,
+                    "sandboxed", Basis.COLD_START, false,
+                    List.of(new RankedCandidate(0, RoutingFixtures.SUB_A, Placement.ROUTE_ORDER),
+                            new RankedCandidate(1, RoutingFixtures.SUB_B, Placement.ROUTE_ORDER)), false, APPLIED,
+                    SKIPPED, new RouteEligibilityFilter().evaluate(request, demo()).excluded(),
+                    new CohortBinding("UNKNOWN", "b/1", "routing-state/1", "task-features/1")));
+            var stage = new RoutingReasoningStage(policy,
+                    context -> Optional.of(new RoutingInput(request, demo(), conflicting)), DOMAIN);
+            assertTrue(rejected(stage).getMessage().contains("conflicts with the request"));
+        }
+
+        var omitting = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
+                foreignScope.binding(),
+                new StateValidation.Incompatible(List.of(StateMismatch.MAPPING_VERSION_MISMATCH)), PARAMETERS);
+        var report = new RouteEligibilityFilter().evaluate(request, demo());
+        RoutingPolicy policy = stubbedPolicy(r -> new RoutingDecision.Abstain(omitting, AbstainReason.STATE_INCOMPATIBLE,
+                List.of(RoutingFixtures.SUB_A, RoutingFixtures.SUB_B), List.of(), false, report.excluded()));
+        var stage = new RoutingReasoningStage(policy,
+                context -> Optional.of(new RoutingInput(request, demo(), foreignScope)), DOMAIN);
+        assertTrue(rejected(stage).getMessage().contains("omits state mismatches"));
+    }
+
+    private static RoutingPolicy stubbedPolicy(Function<RoutingRequest, RoutingDecision> decider) {
+        return new RoutingPolicy() {
+            @Override
+            public String policyId() {
+                return "stub";
+            }
+
+            @Override
+            public String policyVersion() {
+                return "1";
+            }
+
+            @Override
+            public RoutingDecision decide(RoutingRequest r, RouteCatalog c, RoutingPreference p) {
+                return decider.apply(r);
+            }
+        };
     }
 }

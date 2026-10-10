@@ -73,11 +73,28 @@ public sealed interface RoutingDecision
             rulesApplied = List.copyOf(Objects.requireNonNull(rulesApplied, "rulesApplied must not be null"));
             rulesSkipped = List.copyOf(Objects.requireNonNull(rulesSkipped, "rulesSkipped must not be null"));
             requireRulePartition(rulesApplied, rulesSkipped);
+            requirePlacements(candidates, candidatesTruncated);
+            if (basis != candidates.getFirst().placement().basis()) {
+                throw new IllegalArgumentException("basis " + basis + " contradicts the winner's placement "
+                        + candidates.getFirst().placement());
+            }
+            for (RankedCandidate candidate : candidates) {
+                RoutingRule placing = candidate.placement().rule().orElse(null);
+                if (placing != null && !rulesApplied.contains(placing)) {
+                    throw new IllegalArgumentException("candidate " + candidate.key() + " is placed by a rule that was "
+                            + "not applied: " + candidate.placement());
+                }
+            }
+            if (candidatesTruncated && candidates.size() != MAX_CANDIDATES) {
+                throw new IllegalArgumentException("a truncated ranking lists exactly " + MAX_CANDIDATES + " candidates");
+            }
             exclusions = excluded(exclusions);
             requireDisjoint(exclusions, candidates.stream().map(RankedCandidate::key).toList());
-            if (candidates.size() + exclusions.size() > RouteCatalog.MAX_ROUTES) {
+            // Truncation proves at least one more eligible route that is not listed.
+            int known = candidates.size() + exclusions.size() + (candidatesTruncated ? 1 : 0);
+            if (known > RouteCatalog.MAX_ROUTES) {
                 throw new IllegalArgumentException("candidates and exclusions come from one catalog of at most "
-                        + RouteCatalog.MAX_ROUTES + " routes, got: " + (candidates.size() + exclusions.size()));
+                        + RouteCatalog.MAX_ROUTES + " routes, got at least: " + known);
             }
             Objects.requireNonNull(cohortBinding, "cohortBinding must not be null");
             if (!(provenance.validation() instanceof StateValidation.Compatible)) {
@@ -147,7 +164,7 @@ public sealed interface RoutingDecision
                     if (!(provenance.validation() instanceof StateValidation.Incompatible)) {
                         throw new IllegalArgumentException("STATE_INCOMPATIBLE needs an incompatible validation");
                     }
-                    if (!candidates.isEmpty()) {
+                    if (!candidates.isEmpty() || candidatesTruncated) {
                         throw new IllegalArgumentException("STATE_INCOMPATIBLE ranks no candidates");
                     }
                 }
@@ -155,9 +172,14 @@ public sealed interface RoutingDecision
                     if (!(provenance.validation() instanceof StateValidation.Compatible)) {
                         throw new IllegalArgumentException("POLICY_TRADEOFF_UNRESOLVED needs a compatible state");
                     }
-                    if (candidates.isEmpty()) {
-                        throw new IllegalArgumentException("POLICY_TRADEOFF_UNRESOLVED needs ranked candidates");
+                    if (candidates.size() != Math.min(MAX_CANDIDATES, eligible.size())
+                            || candidatesTruncated != eligible.size() > MAX_CANDIDATES) {
+                        throw new IllegalArgumentException("POLICY_TRADEOFF_UNRESOLVED ranks min(" + MAX_CANDIDATES
+                                + ", eligible) candidates and flags truncation exactly when more are eligible, got "
+                                + candidates.size() + " (truncated: " + candidatesTruncated + ") for "
+                                + eligible.size() + " eligible");
                     }
+                    requirePlacements(candidates, candidatesTruncated);
                 }
             }
         }
@@ -251,6 +273,17 @@ public sealed interface RoutingDecision
                 throw new IllegalArgumentException(name + " must be unique and in rule order");
             }
             previous = rule;
+        }
+    }
+
+    /** {@link Placement#ONLY_ELIGIBLE} must mark exactly a sole, untruncated candidate. */
+    private static void requirePlacements(List<RankedCandidate> candidates, boolean truncated) {
+        boolean sole = candidates.size() == 1 && !truncated;
+        for (RankedCandidate candidate : candidates) {
+            if ((candidate.placement() == Placement.ONLY_ELIGIBLE) != sole) {
+                throw new IllegalArgumentException("placement " + candidate.placement() + " contradicts a ranking of "
+                        + candidates.size() + " candidates (truncated: " + truncated + ")");
+            }
         }
     }
 }

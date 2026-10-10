@@ -91,21 +91,37 @@ public record RoutingPreference(
      * @return every failed rule, unique and in {@link StateMismatch} order; empty when compatible
      */
     public List<StateMismatch> mismatches(RoutingRequest request, RoutingStateDefinition definition) {
-        Objects.requireNonNull(request, "request must not be null");
         Objects.requireNonNull(definition, "definition must not be null");
+        return collect(request, definition);
+    }
+
+    /**
+     * Checks only the admission rules a request alone decides (scope, feature schema, evaluation policy and watermark),
+     * without the state definition. A stage that does not know the policy's definition uses it to reject a snapshot that
+     * conflicts with the request.
+     *
+     * @return the failed request-derivable rules, unique and in {@link StateMismatch} order
+     */
+    List<StateMismatch> mismatches(RoutingRequest request) {
+        return collect(request, null);
+    }
+
+    private List<StateMismatch> collect(RoutingRequest request, RoutingStateDefinition definition) {
+        Objects.requireNonNull(request, "request must not be null");
         var found = new ArrayList<StateMismatch>(StateMismatch.values().length);
         if (!scopeId.equals(request.scopeId())) {
             found.add(StateMismatch.SCOPE_MISMATCH);
         }
         String schema = request.features().schemaVersion();
-        if (!featureSchemaVersion.equals(schema) || !definition.cohortMapping().featureSchemaVersion().equals(schema)) {
+        if (!featureSchemaVersion.equals(schema)
+                || (definition != null && !definition.cohortMapping().featureSchemaVersion().equals(schema))) {
             found.add(StateMismatch.FEATURE_SCHEMA_MISMATCH);
         }
         if (!evaluationPolicyId.equals(request.evaluationPolicyId())
                 || !evaluationPolicyVersion.equals(request.evaluationPolicyVersion())) {
             found.add(StateMismatch.EVALUATION_POLICY_MISMATCH);
         }
-        if (!mappingVersion.equals(definition.mappingVersion())) {
+        if (definition != null && !mappingVersion.equals(definition.mappingVersion())) {
             found.add(StateMismatch.MAPPING_VERSION_MISMATCH);
         }
         if (processedCutoff > request.cutoff()) {

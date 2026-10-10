@@ -122,6 +122,7 @@ public final class RoutingReasoningStage implements CognitiveStage {
             throw new IllegalStateException("policy decision records policy " + provenance.policyId() + "/"
                     + provenance.policyVersion() + " instead of " + policy.policyId() + "/" + policy.policyVersion());
         }
+        verifyState(provenance.validation(), input);
         EligibilityReport report = filter.evaluate(input.request(), input.catalog());
         switch (decision) {
             case RoutingDecision.NoEligibleRoute ignored -> {
@@ -145,6 +146,26 @@ public final class RoutingReasoningStage implements CognitiveStage {
         }
         if (!decision.exclusions().equals(report.excluded())) {
             throw new IllegalStateException("policy decision exclusions disagree with the eligibility filter");
+        }
+    }
+
+    /** The admission keys the request alone decides must agree with the recorded validation result. */
+    private void verifyState(StateValidation validation, RoutingInput input) {
+        List<StateMismatch> found = input.preference().mismatches(input.request());
+        switch (validation) {
+            case StateValidation.Compatible compatible -> {
+                if (!found.isEmpty()) {
+                    throw new IllegalStateException("policy decision accepted a preference snapshot that conflicts "
+                            + "with the request: " + found);
+                }
+            }
+            case StateValidation.Incompatible incompatible -> {
+                if (!incompatible.reasons().containsAll(found)) {
+                    throw new IllegalStateException("policy decision omits state mismatches the request implies: "
+                            + found);
+                }
+            }
+            case StateValidation.NotEvaluated notEvaluated -> { }
         }
     }
 

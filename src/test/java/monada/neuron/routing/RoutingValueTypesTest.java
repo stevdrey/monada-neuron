@@ -157,13 +157,80 @@ class RoutingValueTypesTest {
     }
 
     @Test
-    void abstainCandidatesMustBeEligible() {
+    void abstainCandidatesMustBeEligibleAndCompleteForATradeoff() {
         var compatible = PROVENANCE;
-        var candidate = List.of(new RankedCandidate(0, SUB_B, Placement.ONLY_ELIGIBLE));
+        var both = List.of(new RankedCandidate(0, SUB_A, Placement.ROUTE_ORDER),
+                new RankedCandidate(1, SUB_B, Placement.ROUTE_ORDER));
+        var foreign = List.of(new RankedCandidate(0, new RouteKey("ghost", 1), Placement.ROUTE_ORDER),
+                new RankedCandidate(1, SUB_B, Placement.ROUTE_ORDER));
+        var partial = List.of(new RankedCandidate(0, SUB_B, Placement.ONLY_ELIGIBLE));
+
+        new RoutingDecision.Abstain(compatible, AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), both,
+                false, List.of());
         assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(compatible,
-                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A), candidate, false, List.of()));
-        new RoutingDecision.Abstain(compatible, AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B),
-                candidate, false, List.of());
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), foreign, false, List.of()));
+        // Two routes are eligible but only one is ranked and nothing is flagged as truncated.
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(compatible,
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), partial, false, List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(compatible,
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), both, true, List.of()));
+        var incompatible = provenance(new StateValidation.Incompatible(List.of(StateMismatch.SCOPE_MISMATCH)));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(incompatible,
+                AbstainReason.STATE_INCOMPATIBLE, List.of(SUB_A), List.of(), true, List.of()));
+    }
+
+    private static RoutingDecision.Selected selection(
+            List<RankedCandidate> candidates, boolean truncated, Basis basis, List<RoutingRule> applied,
+            List<RoutingRule> skipped, List<EligibilityReport.Exclusion> exclusions) {
+        return new RoutingDecision.Selected(PROVENANCE, candidates.getFirst().key(), "sandboxed", basis, false,
+                candidates, truncated, applied, skipped, exclusions,
+                new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1"));
+    }
+
+    @Test
+    void basisPlacementAndAppliedRulesMustAgree() {
+        var sole = List.of(new RankedCandidate(0, SUB_A, Placement.ONLY_ELIGIBLE));
+        var pair = List.of(new RankedCandidate(0, SUB_A, Placement.TIER),
+                new RankedCandidate(1, SUB_B, Placement.TIER));
+        var learned = List.of(new RankedCandidate(0, SUB_A, Placement.LEARNED_PREFERENCE),
+                new RankedCandidate(1, SUB_B, Placement.LEARNED_PREFERENCE));
+        var allApplied = List.of(RoutingRule.values());
+
+        selection(sole, false, Basis.COLD_START, APPLIED, SKIPPED, List.of());
+        selection(pair, false, Basis.HOST_PRIORITY, APPLIED, SKIPPED, List.of());
+        selection(learned, false, Basis.LEARNED_PREFERENCE, allApplied, List.of(), List.of());
+        // A sole winner among several, ONLY_ELIGIBLE among several, and a truncated "sole" are contradictory.
+        assertThrows(IllegalArgumentException.class, () -> selection(
+                List.of(new RankedCandidate(0, SUB_A, Placement.ROUTE_ORDER)), false, Basis.COLD_START, APPLIED, SKIPPED,
+                List.of()));
+        assertThrows(IllegalArgumentException.class, () -> selection(
+                List.of(new RankedCandidate(0, SUB_A, Placement.ONLY_ELIGIBLE),
+                        new RankedCandidate(1, SUB_B, Placement.ONLY_ELIGIBLE)), false, Basis.COLD_START, APPLIED,
+                SKIPPED, List.of()));
+        // The winner's basis must follow its placement.
+        assertThrows(IllegalArgumentException.class,
+                () -> selection(pair, false, Basis.COLD_START, APPLIED, SKIPPED, List.of()));
+        // A placement by a skipped rule is contradictory.
+        assertThrows(IllegalArgumentException.class,
+                () -> selection(learned, false, Basis.LEARNED_PREFERENCE, APPLIED, SKIPPED, List.of()));
+    }
+
+    @Test
+    void truncatedRankingsListEightCandidatesAndCountOneMoreRouteTowardTheCatalogBound() {
+        List<RankedCandidate> eight = IntStream.range(0, 8)
+                .mapToObj(i -> new RankedCandidate(i, new RouteKey("r-%02d".formatted(i), 1), Placement.ROUTE_ORDER))
+                .toList();
+        List<EligibilityReport.Exclusion> excluded = IntStream.range(0, 24)
+                .mapToObj(i -> new EligibilityReport.Exclusion(new RouteKey("x-%02d".formatted(i), 1),
+                        EligibilityReason.MISSING_CAPABILITY, List.of()))
+                .toList();
+
+        selection(eight, true, Basis.COLD_START, APPLIED, SKIPPED, excluded.subList(0, 23));
+        selection(eight, false, Basis.COLD_START, APPLIED, SKIPPED, excluded);
+        assertThrows(IllegalArgumentException.class,
+                () -> selection(eight, true, Basis.COLD_START, APPLIED, SKIPPED, excluded));
+        assertThrows(IllegalArgumentException.class, () -> selection(eight.subList(0, 2), true, Basis.COLD_START,
+                APPLIED, SKIPPED, List.of()));
     }
 
     @Test

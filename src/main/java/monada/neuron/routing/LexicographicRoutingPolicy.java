@@ -138,12 +138,7 @@ public final class LexicographicRoutingPolicy implements RoutingPolicy {
             return new RoutingDecision.Abstain(provenance, AbstainReason.POLICY_TRADEOFF_UNRESOLVED, eligible,
                     candidates, truncated, report.excluded());
         }
-        Basis basis = switch (candidates.getFirst().placement()) {
-            case TIER, FALLBACK_PRIORITY -> Basis.HOST_PRIORITY;
-            case LEARNED_PREFERENCE -> Basis.LEARNED_PREFERENCE;
-            case RESOURCE_OBJECTIVE -> Basis.RESOURCE_OBJECTIVE;
-            case ONLY_ELIGIBLE, ROUTE_ORDER -> Basis.COLD_START;
-        };
+        Basis basis = candidates.getFirst().placement().basis();
         var applied = new ArrayList<RoutingRule>(5);
         var skipped = new ArrayList<RoutingRule>(2);
         applied.add(RoutingRule.TIER);
