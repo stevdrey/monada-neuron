@@ -309,12 +309,17 @@ class RoutingReasoningStageTest {
         assertTrue(rejected(tamperedSelected).getMessage().contains("exclusions disagree"));
 
         var report = new RouteEligibilityFilter().evaluate(request, demo());
+        var good = empty(request);
+        var foreignScope = new RoutingPreference("other-scope", good.featureSchemaVersion(), good.evaluationPolicyId(),
+                good.evaluationPolicyVersion(), good.mappingVersion(), "p", "1", 0, List.of());
         var incompatible = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
-                empty(request).binding(),
-                new StateValidation.Incompatible(List.of(StateMismatch.SCOPE_MISMATCH)), PARAMETERS);
-        var wrongEligible = stubbing(request, (r, c, p) -> new RoutingDecision.Abstain(incompatible,
+                foreignScope.binding(), new StateValidation.Incompatible(List.of(StateMismatch.SCOPE_MISMATCH)),
+                PARAMETERS);
+        RoutingPolicy wrongEligible = stubbedPolicy(r -> new RoutingDecision.Abstain(incompatible,
                 AbstainReason.STATE_INCOMPATIBLE, List.of(RoutingFixtures.SUB_A), List.of(), false, report.excluded()));
-        assertTrue(rejected(wrongEligible).getMessage().contains("other eligible routes"));
+        var wrongEligibleStage = new RoutingReasoningStage(wrongEligible,
+                context -> Optional.of(new RoutingInput(request, demo(), foreignScope)), DOMAIN);
+        assertTrue(rejected(wrongEligibleStage).getMessage().contains("other eligible routes"));
     }
 
     @Test
@@ -411,5 +416,54 @@ class RoutingReasoningStageTest {
                 return decider.apply(r);
             }
         };
+    }
+
+    private static RoutingReasoningStage abstaining(
+            RoutingRequest request, RoutingPreference preference, List<StateMismatch> recorded, PolicyParameters parameters) {
+        var provenance = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
+                preference.binding(), new StateValidation.Incompatible(recorded), parameters);
+        var report = new RouteEligibilityFilter().evaluate(request, demo());
+        RoutingPolicy policy = stubbedPolicy(r -> new RoutingDecision.Abstain(provenance,
+                AbstainReason.STATE_INCOMPATIBLE, List.of(RoutingFixtures.SUB_A, RoutingFixtures.SUB_B), List.of(),
+                false, report.excluded()));
+        return new RoutingReasoningStage(policy,
+                context -> Optional.of(new RoutingInput(request, demo(), preference)), DOMAIN);
+    }
+
+    @Test
+    void anAbstentionMustReportExactlyTheMismatchesThatExist() {
+        var request = request(List.of("java"), false);
+        var good = empty(request);
+        var otherMapping = new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "other-mapping");
+
+        // Spurious reasons for a request-compatible, mapping-compatible preference.
+        assertTrue(rejected(abstaining(request, good, List.of(StateMismatch.SCOPE_MISMATCH), PARAMETERS))
+                .getMessage().contains("does not exist"));
+        assertTrue(rejected(abstaining(request, good, List.of(StateMismatch.MAPPING_VERSION_MISMATCH), PARAMETERS))
+                .getMessage().contains("does not exist"));
+        assertTrue(rejected(abstaining(request, good, List.of(StateMismatch.PROCESSED_CUTOFF_NEWER), PARAMETERS))
+                .getMessage().contains("does not exist"));
+        // A real mapping mismatch (snapshot built under another mapping than the recorded policy mapping) is required.
+        assertTrue(rejected(abstaining(request, good, List.of(StateMismatch.SCOPE_MISMATCH), otherMapping))
+                .getMessage().contains("omits"));
+        abstaining(request, good, List.of(StateMismatch.MAPPING_VERSION_MISMATCH), otherMapping)
+                .execute(monad(), List.of(), new CognitiveContext(MINIMUM, HOST));
+    }
+
+    @Test
+    void aCompatibleTradeoffMustMatchThePolicyMappingVersion() {
+        var request = request(List.of("long-context"), true);
+        var report = new RouteEligibilityFilter().evaluate(request, demo());
+        var provenance = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
+                empty(request).binding(), new StateValidation.Compatible(),
+                new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "other-mapping"));
+        RoutingPolicy policy = stubbedPolicy(r -> new RoutingDecision.Abstain(provenance,
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(RoutingFixtures.API_X),
+                List.of(new RankedCandidate(0, RoutingFixtures.API_X, Placement.ONLY_ELIGIBLE)), false,
+                report.excluded()));
+        var stage = new RoutingReasoningStage(policy,
+                context -> Optional.of(new RoutingInput(request, demo(), empty(request))), DOMAIN);
+
+        assertTrue(rejected(stage).getMessage().contains("MAPPING_VERSION_MISMATCH"));
     }
 }

@@ -13,6 +13,7 @@ import monada.neuron.routing.catalog.EligibilityReport;
 import monada.neuron.routing.catalog.RouteEligibilityFilter;
 import monada.neuron.signal.Signal;
 
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -122,7 +123,7 @@ public final class RoutingReasoningStage implements CognitiveStage {
             throw new IllegalStateException("policy decision records policy " + provenance.policyId() + "/"
                     + provenance.policyVersion() + " instead of " + policy.policyId() + "/" + policy.policyVersion());
         }
-        verifyState(provenance.validation(), input);
+        verifyState(provenance.validation(), provenance.parameters(), input);
         EligibilityReport report = filter.evaluate(input.request(), input.catalog());
         switch (decision) {
             case RoutingDecision.NoEligibleRoute ignored -> {
@@ -149,20 +150,36 @@ public final class RoutingReasoningStage implements CognitiveStage {
         }
     }
 
-    /** The admission keys the request alone decides must agree with the recorded validation result. */
-    private void verifyState(StateValidation validation, RoutingInput input) {
-        List<StateMismatch> found = input.preference().mismatches(input.request());
+    /**
+     * The recorded validation must agree with the admission keys that the request, the preference and the recorded
+     * policy parameters decide: scope, evaluation policy, watermark and mapping version in both directions, and the
+     * feature schema in one direction (a mismatch can also stem from the policy's own mapping, which the port does not
+     * expose).
+     */
+    private void verifyState(StateValidation validation, PolicyParameters parameters, RoutingInput input) {
+        RoutingPreference preference = input.preference();
+        var expected = EnumSet.noneOf(StateMismatch.class);
+        expected.addAll(preference.mismatches(input.request()));
+        if (!preference.mappingVersion().equals(parameters.stateMappingVersion())) {
+            expected.add(StateMismatch.MAPPING_VERSION_MISMATCH);
+        }
         switch (validation) {
             case StateValidation.Compatible compatible -> {
-                if (!found.isEmpty()) {
+                if (!expected.isEmpty()) {
                     throw new IllegalStateException("policy decision accepted a preference snapshot that conflicts "
-                            + "with the request: " + found);
+                            + "with the request or the policy mapping: " + expected);
                 }
             }
             case StateValidation.Incompatible incompatible -> {
-                if (!incompatible.reasons().containsAll(found)) {
+                if (!incompatible.reasons().containsAll(expected)) {
                     throw new IllegalStateException("policy decision omits state mismatches the request implies: "
-                            + found);
+                            + expected);
+                }
+                for (StateMismatch reason : incompatible.reasons()) {
+                    if (reason != StateMismatch.FEATURE_SCHEMA_MISMATCH && !expected.contains(reason)) {
+                        throw new IllegalStateException("policy decision reports a state mismatch that does not "
+                                + "exist: " + reason);
+                    }
                 }
             }
             case StateValidation.NotEvaluated notEvaluated -> { }
