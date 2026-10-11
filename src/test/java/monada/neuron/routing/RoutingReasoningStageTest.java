@@ -17,7 +17,10 @@ import monada.neuron.monad.DeterministicCognitiveCycle;
 import monada.neuron.monad.PrimaryMonad;
 import monada.neuron.reasoning.HypothesisSet;
 import monada.neuron.reasoning.Proposition;
+import monada.neuron.routing.catalog.BillingMode;
+import monada.neuron.routing.catalog.CatalogEntry;
 import monada.neuron.routing.catalog.EligibilityReport;
+import monada.neuron.routing.catalog.OverflowClass;
 import monada.neuron.routing.catalog.ResourceEstimate;
 import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.catalog.RouteCatalog;
@@ -464,7 +467,7 @@ class RoutingReasoningStageTest {
         var ranked = List.of(new RankedCandidate(0, RoutingFixtures.API_X, Placement.ONLY_ELIGIBLE));
         RoutingPolicy policy = stubbedPolicy(r -> abstain
                 ? new RoutingDecision.Abstain(provenance, AbstainReason.POLICY_TRADEOFF_UNRESOLVED,
-                        List.of(RoutingFixtures.API_X), ranked, false, report.excluded())
+                        List.of(RoutingFixtures.API_X), ranked, false, report.excluded(), Optional.of(new CohortBinding("UNKNOWN", "b/1", "routing-state/1", "task-features/1")))
                 : new RoutingDecision.Selected(provenance, RoutingFixtures.API_X, "sandboxed", Basis.COLD_START, true,
                         ranked, false, APPLIED, SKIPPED, report.excluded(),
                         new CohortBinding("UNKNOWN", "b/1", "routing-state/1", "task-features/1")));
@@ -662,7 +665,7 @@ class RoutingReasoningStageTest {
     }
 
     private static RouteCatalog twelveRoutes() {
-        var entries = new ArrayList<monada.neuron.routing.catalog.CatalogEntry>();
+        var entries = new ArrayList<CatalogEntry>();
         for (int i = 0; i < 12; i++) {
             // route-11 has the best fallback priority but the last canonical position.
             entries.add(RoutingFixtures.entry(RoutingFixtures.base("route-%02d".formatted(i), 1).build(),
@@ -702,11 +705,11 @@ class RoutingReasoningStageTest {
     @Test
     void aTradeoffAbstentionMustRankLikeTheContractOrdering() {
         var request = request(List.of("java"), true);
-        var overflow = monada.neuron.routing.catalog.OverflowClass.OVERFLOW;
+        var overflow = OverflowClass.OVERFLOW;
         var catalog = RouteCatalog.of("cat-api", List.of(
                 RoutingFixtures.entry(RoutingFixtures.apiX(), 1),
                 RoutingFixtures.entry(RoutingFixtures.base("api-y", 1)
-                        .billingMode(monada.neuron.routing.catalog.BillingMode.API_METERED).overflowClass(overflow)
+                        .billingMode(BillingMode.API_METERED).overflowClass(overflow)
                         .tier(2).build(), 1)));
         var parameters = new PolicyParameters(3, OptionalInt.of(1), Optional.empty(), "routing-state/1");
         var provenance = new Provenance(DecisionRef.of(request), "cat-api", "stub", "1", request.cutoff(),
@@ -720,13 +723,52 @@ class RoutingReasoningStageTest {
                     ? pair(RoutingFixtures.API_X, apiY, Placement.ROUTE_ORDER)
                     : pair(apiY, RoutingFixtures.API_X, Placement.ROUTE_ORDER);
             RoutingPolicy policy = stubbedPolicy(r -> new RoutingDecision.Abstain(provenance,
-                    AbstainReason.POLICY_TRADEOFF_UNRESOLVED, eligible, ranked, false, report.excluded()));
+                    AbstainReason.POLICY_TRADEOFF_UNRESOLVED, eligible, ranked, false, report.excluded(), Optional.of(new CohortBinding("UNKNOWN", "b/1", "routing-state/1", "task-features/1"))));
             var stage = new RoutingReasoningStage(policy,
                     context -> Optional.of(new RoutingInput(request, catalog, empty(request))), DOMAIN);
             if (correct) {
                 stage.execute(monad(), List.of(), new CognitiveContext(MINIMUM, HOST));
             } else {
                 assertTrue(rejected(stage).getMessage().contains("recomputed ranking"));
+            }
+        }
+    }
+
+    @Test
+    void aTradeoffRankingMustMatchTheCohortItRecords() {
+        var request = request(List.of("java"), true);
+        var apiY = new RouteKey("api-y", 1);
+        var catalog = RouteCatalog.of("cat-api", List.of(
+                RoutingFixtures.entry(RoutingFixtures.apiX(), 1),
+                RoutingFixtures.entry(RoutingFixtures.base("api-y", 1).billingMode(BillingMode.API_METERED)
+                        .overflowClass(OverflowClass.OVERFLOW).tier(2).build(), 1)));
+        var cold = empty(request);
+        // Learned preference favours api-y, but only in cohort bucket "M".
+        RoutingPreference prefersY = new RoutingPreference(cold.scopeId(), cold.featureSchemaVersion(),
+                cold.evaluationPolicyId(), cold.evaluationPolicyVersion(), cold.mappingVersion(), "p", "1", 0,
+                List.of(new CohortPreference("implement", "M", RoutingFixtures.API_X, 0.1, 3),
+                        new CohortPreference("implement", "M", apiY, 0.9, 3)));
+        var parameters = new PolicyParameters(3, OptionalInt.of(1), Optional.empty(), "routing-state/1");
+        var provenance = new Provenance(DecisionRef.of(request), "cat-api", "stub", "1", request.cutoff(),
+                prefersY.binding(), new StateValidation.Compatible(), parameters);
+        var report = new RouteEligibilityFilter().evaluate(request, catalog);
+        var eligible = List.of(RoutingFixtures.API_X, apiY);
+
+        record Case(String bucket, List<RankedCandidate> ranking, boolean accepted) { }
+        var learnedOrder = pair(apiY, RoutingFixtures.API_X, Placement.LEARNED_PREFERENCE);
+        var plainOrder = pair(RoutingFixtures.API_X, apiY, Placement.ROUTE_ORDER);
+        for (Case c : List.of(
+                new Case("M", learnedOrder, true), new Case("M", plainOrder, false),
+                new Case("UNKNOWN", plainOrder, true), new Case("UNKNOWN", learnedOrder, false))) {
+            RoutingPolicy policy = stubbedPolicy(r -> new RoutingDecision.Abstain(provenance,
+                    AbstainReason.POLICY_TRADEOFF_UNRESOLVED, eligible, c.ranking(), false, report.excluded(),
+                    Optional.of(new CohortBinding(c.bucket(), "b/1", "routing-state/1", "task-features/1"))));
+            var stage = new RoutingReasoningStage(policy,
+                    context -> Optional.of(new RoutingInput(request, catalog, prefersY)), DOMAIN);
+            if (c.accepted()) {
+                stage.execute(monad(), List.of(), new CognitiveContext(MINIMUM, HOST));
+            } else {
+                assertTrue(rejected(stage).getMessage().contains("recomputed ranking"), c.toString());
             }
         }
     }

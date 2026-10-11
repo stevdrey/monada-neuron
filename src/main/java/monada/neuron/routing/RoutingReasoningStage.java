@@ -14,7 +14,6 @@ import monada.neuron.routing.catalog.RouteEligibilityFilter;
 import monada.neuron.signal.Signal;
 
 import java.util.EnumSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -258,36 +257,24 @@ public final class RoutingReasoningStage implements CognitiveStage {
     }
 
     /**
-     * A tier-cap abstention is the only tradeoff trigger. No cohort binding is recorded for it, so the ranking is
-     * recomputed for every cohort bucket the preference holds for the stage kind, and for none; the abstention is
-     * accepted when some bucket reproduces its ranking and the winner then exceeds the recorded cap.
+     * A tier-cap abstention is the only tradeoff trigger. The ranking is recomputed with the cohort the abstention
+     * recorded and must be reproduced, and the recomputed winner must exceed the recorded cap.
      */
     private void verifyTradeoff(RoutingDecision.Abstain abstain, EligibilityReport report, RoutingInput input) {
         PolicyParameters parameters = abstain.provenance().parameters();
-        var ranking = new LexicographicRanking(parameters.minSupportingObservations(), parameters.objective());
-        var buckets = new LinkedHashSet<String>();
-        buckets.add(null);
-        for (CohortPreference cohort : input.preference().cohorts()) {
-            if (cohort.stageKind().equals(input.request().stageKind())) {
-                buckets.add(cohort.cohortBucket());
-            }
+        LexicographicRanking.Result expected = new LexicographicRanking(
+                parameters.minSupportingObservations(), parameters.objective())
+                .rank(input.request(), input.catalog(), report.eligible(), input.preference(),
+                        abstain.cohortBinding().orElseThrow().cohortBucket());
+        if (!expected.candidates().equals(abstain.candidates())
+                || expected.truncated() != abstain.candidatesTruncated()) {
+            throw new IllegalStateException("policy ranking disagrees with the recomputed ranking: expected "
+                    + expected.candidates() + ", got " + abstain.candidates());
         }
-        boolean sameRanking = false;
-        for (String bucket : buckets) {
-            LexicographicRanking.Result expected = ranking.rank(
-                    input.request(), input.catalog(), report.eligible(), input.preference(), bucket);
-            if (expected.candidates().equals(abstain.candidates())
-                    && expected.truncated() == abstain.candidatesTruncated()) {
-                sameRanking = true;
-                if (exceedsCap(expected, parameters)) {
-                    return;
-                }
-            }
+        if (!exceedsCap(expected, parameters)) {
+            throw new IllegalStateException("policy abstained on the tier cap but the winner does not exceed the "
+                    + "recorded cap " + parameters.maxAutoSelectTier());
         }
-        throw new IllegalStateException(sameRanking
-                ? "policy abstained on the tier cap but the winner does not exceed the recorded cap "
-                        + parameters.maxAutoSelectTier()
-                : "policy ranking disagrees with the recomputed ranking: got " + abstain.candidates());
     }
 
     private boolean exceedsCap(LexicographicRanking.Result ranking, PolicyParameters parameters) {

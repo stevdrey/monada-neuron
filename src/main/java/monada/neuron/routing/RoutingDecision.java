@@ -9,6 +9,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Immutable, bounded routing advice for one stage: exactly one of {@link Selected}, {@link Abstain} or
@@ -104,13 +105,7 @@ public sealed interface RoutingDecision
             if (!(provenance.validation() instanceof StateValidation.Compatible)) {
                 throw new IllegalArgumentException("a selected decision needs a compatible state");
             }
-            StateBinding state = provenance.state();
-            if (!cohortBinding.featureSchemaVersion().equals(state.featureSchemaVersion())
-                    || !cohortBinding.mappingVersion().equals(state.mappingVersion())
-                    || !cohortBinding.mappingVersion().equals(provenance.parameters().stateMappingVersion())) {
-                throw new IllegalArgumentException("the cohort binding disagrees with the state provenance: "
-                        + cohortBinding);
-            }
+            requireBindingAgrees(cohortBinding, provenance);
         }
     }
 
@@ -124,6 +119,9 @@ public sealed interface RoutingDecision
      *         never runs), at most {@value #MAX_CANDIDATES}
      * @param candidatesTruncated whether more eligible routes exist than {@code candidates} lists
      * @param exclusions reasons for the excluded routes only
+     * @param cohortBinding the cohort the policy computed before ordering: present exactly for
+     *         {@link AbstainReason#POLICY_TRADEOFF_UNRESOLVED}, where its schema and mapping versions must agree with
+     *         the state provenance and the policy parameters; empty for {@link AbstainReason#STATE_INCOMPATIBLE}
      */
     record Abstain(
             Provenance provenance,
@@ -131,12 +129,25 @@ public sealed interface RoutingDecision
             List<RouteKey> eligible,
             List<RankedCandidate> candidates,
             boolean candidatesTruncated,
-            List<EligibilityReport.Exclusion> exclusions) implements RoutingDecision {
+            List<EligibilityReport.Exclusion> exclusions,
+            Optional<CohortBinding> cohortBinding) implements RoutingDecision {
+
+        /** Creates a state-incompatible abstention, where no ordering ran and so no cohort was computed. */
+        public Abstain(
+                Provenance provenance,
+                AbstainReason reason,
+                List<RouteKey> eligible,
+                List<RankedCandidate> candidates,
+                boolean candidatesTruncated,
+                List<EligibilityReport.Exclusion> exclusions) {
+            this(provenance, reason, eligible, candidates, candidatesTruncated, exclusions, Optional.empty());
+        }
 
         /** Validates and copies. */
         public Abstain {
             Objects.requireNonNull(provenance, "provenance must not be null");
             Objects.requireNonNull(reason, "reason must not be null");
+            Objects.requireNonNull(cohortBinding, "cohortBinding must not be null");
             Objects.requireNonNull(eligible, "eligible must not be null");
             if (eligible.isEmpty() || eligible.size() > RouteCatalog.MAX_ROUTES) {
                 throw new IllegalArgumentException("an abstention needs 1 to " + RouteCatalog.MAX_ROUTES
@@ -168,8 +179,8 @@ public sealed interface RoutingDecision
                     if (!(provenance.validation() instanceof StateValidation.Incompatible)) {
                         throw new IllegalArgumentException("STATE_INCOMPATIBLE needs an incompatible validation");
                     }
-                    if (!candidates.isEmpty() || candidatesTruncated) {
-                        throw new IllegalArgumentException("STATE_INCOMPATIBLE ranks no candidates");
+                    if (!candidates.isEmpty() || candidatesTruncated || cohortBinding.isPresent()) {
+                        throw new IllegalArgumentException("STATE_INCOMPATIBLE ranks no candidates and computes no cohort");
                     }
                 }
                 case POLICY_TRADEOFF_UNRESOLVED -> {
@@ -185,6 +196,8 @@ public sealed interface RoutingDecision
                     }
                     requirePlacements(candidates, candidatesTruncated);
                     requireObjectiveForPlacements(candidates, provenance);
+                    requireBindingAgrees(cohortBinding.orElseThrow(() -> new IllegalArgumentException(
+                            "POLICY_TRADEOFF_UNRESOLVED records the cohort the ordering used")), provenance);
                 }
             }
         }
@@ -310,6 +323,17 @@ public sealed interface RoutingDecision
         if (provenance.parameters().objective().isEmpty()) {
             throw new IllegalArgumentException(
                     "the resource objective rule needs a configured objective in the recorded policy parameters");
+        }
+    }
+
+    /** The cohort binding's schema and mapping versions must agree with the state provenance and the parameters. */
+    private static void requireBindingAgrees(CohortBinding cohortBinding, Provenance provenance) {
+        StateBinding state = provenance.state();
+        if (!cohortBinding.featureSchemaVersion().equals(state.featureSchemaVersion())
+                || !cohortBinding.mappingVersion().equals(state.mappingVersion())
+                || !cohortBinding.mappingVersion().equals(provenance.parameters().stateMappingVersion())) {
+            throw new IllegalArgumentException("the cohort binding disagrees with the state provenance: "
+                    + cohortBinding);
         }
     }
 }

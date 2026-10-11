@@ -297,6 +297,8 @@ class LexicographicRoutingPolicyTest {
         assertEquals(List.of(API_X), decision.eligible());
         assertEquals(API_X, decision.candidates().getFirst().key());
         assertEquals(2, decision.exclusions().size());
+        assertEquals(new CohortBinding("UNKNOWN", "change-size/1", "routing-state/1", "task-features/1"),
+                decision.cohortBinding().orElseThrow());
         assertInstanceOf(Selected.class, new LexicographicRoutingPolicy(RoutingStateDefinition.reference(), 3,
                 OptionalInt.of(2), Optional.empty()).decide(request, demo(), empty(request)));
         assertInstanceOf(Selected.class, policy.decide(request, demo(), empty(request)));

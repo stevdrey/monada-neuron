@@ -124,14 +124,14 @@ public final class LexicographicRoutingPolicy implements RoutingPolicy {
         LexicographicRanking.Result ranked = ranking.rank(request, catalog, report.eligible(), preference, bucket);
         List<RankedCandidate> candidates = ranked.candidates();
         LexicographicRanking.Item best = ranked.order().getFirst();
+        var cohort = new CohortBinding(bucket, definition.cohortMapping().bucketMappingVersion(),
+                definition.mappingVersion(), request.features().schemaVersion());
         if (maxAutoSelectTier.isPresent() && best.tier() > maxAutoSelectTier.getAsInt()) {
             List<RouteKey> eligible = new ArrayList<>(report.eligible().size());
             report.eligible().forEach(route -> eligible.add(route.key()));
             return new RoutingDecision.Abstain(provenance, AbstainReason.POLICY_TRADEOFF_UNRESOLVED, eligible,
-                    candidates, ranked.truncated(), report.excluded());
+                    candidates, ranked.truncated(), report.excluded(), Optional.of(cohort));
         }
-        var cohort = new CohortBinding(bucket, definition.cohortMapping().bucketMappingVersion(),
-                definition.mappingVersion(), request.features().schemaVersion());
         return new RoutingDecision.Selected(provenance, best.route().key(), best.route().executionMode(),
                 candidates.getFirst().placement().basis(), best.route().overflow(), candidates, ranked.truncated(),
                 ranked.applied(), ranked.skipped(), report.excluded(), cohort);

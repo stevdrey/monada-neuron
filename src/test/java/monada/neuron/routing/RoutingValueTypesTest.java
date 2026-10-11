@@ -93,7 +93,7 @@ class RoutingValueTypesTest {
         assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(PROVENANCE,
                 AbstainReason.STATE_INCOMPATIBLE, List.of(SUB_A), List.of(), false, List.of()));
         assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(PROVENANCE,
-                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A), List.of(), false, List.of()));
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A), List.of(), false, List.of(), Optional.of(new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1"))));
         assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(incompatible,
                 AbstainReason.STATE_INCOMPATIBLE, List.of(), List.of(), false, List.of()));
         assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.NoEligibleRoute(PROVENANCE, List.of()));
@@ -159,6 +159,29 @@ class RoutingValueTypesTest {
     }
 
     @Test
+    void aTradeoffAbstentionRecordsItsCohortAndAStateAbstentionDoesNot() {
+        var ranked = List.of(new RankedCandidate(0, SUB_A, Placement.ONLY_ELIGIBLE));
+        var binding = new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1");
+        var incompatible = provenance(new StateValidation.Incompatible(List.of(StateMismatch.SCOPE_MISMATCH)));
+
+        new RoutingDecision.Abstain(PROVENANCE, AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A), ranked,
+                false, List.of(), Optional.of(binding));
+        // The tradeoff ran the ordering, so it must name the cohort it used.
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(PROVENANCE,
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A), ranked, false, List.of()));
+        // No ordering ran for a state-incompatible abstention, so no cohort exists.
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(incompatible,
+                AbstainReason.STATE_INCOMPATIBLE, List.of(SUB_A), List.of(), false, List.of(), Optional.of(binding)));
+        // Versions must agree with the state provenance.
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(PROVENANCE,
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A), ranked, false, List.of(),
+                Optional.of(new CohortBinding("UNKNOWN", "b/1", "other-mapping", "task-features/1"))));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(PROVENANCE,
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A), ranked, false, List.of(),
+                Optional.of(new CohortBinding("UNKNOWN", "b/1", "m", "task-features/0"))));
+    }
+
+    @Test
     void abstainCandidatesMustBeEligibleAndCompleteForATradeoff() {
         var compatible = PROVENANCE;
         var both = List.of(new RankedCandidate(0, SUB_A, Placement.ROUTE_ORDER),
@@ -168,14 +191,14 @@ class RoutingValueTypesTest {
         var partial = List.of(new RankedCandidate(0, SUB_B, Placement.ONLY_ELIGIBLE));
 
         new RoutingDecision.Abstain(compatible, AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), both,
-                false, List.of());
+                false, List.of(), Optional.of(new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1")));
         assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(compatible,
-                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), foreign, false, List.of()));
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), foreign, false, List.of(), Optional.of(new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1"))));
         // Two routes are eligible but only one is ranked and nothing is flagged as truncated.
         assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(compatible,
-                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), partial, false, List.of()));
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), partial, false, List.of(), Optional.of(new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1"))));
         assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(compatible,
-                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), both, true, List.of()));
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), both, true, List.of(), Optional.of(new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1"))));
         var incompatible = provenance(new StateValidation.Incompatible(List.of(StateMismatch.SCOPE_MISMATCH)));
         assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(incompatible,
                 AbstainReason.STATE_INCOMPATIBLE, List.of(SUB_A), List.of(), true, List.of()));
@@ -241,7 +264,7 @@ class RoutingValueTypesTest {
                 () -> selection(split, false, Basis.HOST_PRIORITY, APPLIED, SKIPPED, List.of()));
         selection(shared, false, Basis.HOST_PRIORITY, APPLIED, SKIPPED, List.of());
         assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(PROVENANCE,
-                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), split, false, List.of()));
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), split, false, List.of(), Optional.of(new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1"))));
     }
 
     @Test
@@ -264,9 +287,9 @@ class RoutingValueTypesTest {
         new RoutingDecision.Selected(noObjective, SUB_A, "sandboxed", Basis.COLD_START, false, plain, false, APPLIED,
                 SKIPPED, List.of(), binding);
         assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(noObjective,
-                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), resourcePlaced, false, List.of()));
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), resourcePlaced, false, List.of(), Optional.of(new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1"))));
         new RoutingDecision.Abstain(PROVENANCE, AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B),
-                resourcePlaced, false, List.of());
+                resourcePlaced, false, List.of(), Optional.of(new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1")));
     }
 
     @Test
