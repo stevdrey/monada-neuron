@@ -259,8 +259,11 @@ class RoutingReasoningStageTest {
         assertTrue(failure.getMessage().contains("not eligible"));
         // The same selection is accepted once the host permits overflow.
         var permitted = request(List.of("java"), true);
-        stubbed(permitted, RoutingFixtures.API_X, "sandboxed", true)
-                .execute(monad(), List.of(), new CognitiveContext(MINIMUM, HOST));
+        var ranked = List.of(new RankedCandidate(0, RoutingFixtures.SUB_A, Placement.ROUTE_ORDER),
+                new RankedCandidate(1, RoutingFixtures.SUB_B, Placement.ROUTE_ORDER),
+                new RankedCandidate(2, RoutingFixtures.API_X, Placement.TIER));
+        stubbedRanking(permitted, stubProvenance(permitted), RoutingFixtures.SUB_A, "sandboxed", false, List.of(),
+                ranked, false).execute(monad(), List.of(), new CognitiveContext(MINIMUM, HOST));
     }
 
     @Test
@@ -493,7 +496,9 @@ class RoutingReasoningStageTest {
         var ranked = List.of(new RankedCandidate(0, RoutingFixtures.SUB_A, Placement.RESOURCE_OBJECTIVE),
                 new RankedCandidate(1, RoutingFixtures.SUB_B, Placement.RESOURCE_OBJECTIVE));
         RoutingPolicy policy = stubbedPolicy(r -> new RoutingDecision.Selected(provenance, RoutingFixtures.SUB_A,
-                "sandboxed", Basis.RESOURCE_OBJECTIVE, false, ranked, false, List.of(RoutingRule.values()), List.of(),
+                "sandboxed", Basis.RESOURCE_OBJECTIVE, false, ranked, false,
+                List.of(RoutingRule.TIER, RoutingRule.FALLBACK_PRIORITY, RoutingRule.RESOURCE_OBJECTIVE,
+                        RoutingRule.ROUTE_ORDER), List.of(RoutingRule.LEARNED_PREFERENCE),
                 new RouteEligibilityFilter().evaluate(request, catalog).excluded(),
                 new CohortBinding("UNKNOWN", "b/1", "routing-state/1", "task-features/1")));
         return new RoutingReasoningStage(policy,
@@ -522,5 +527,99 @@ class RoutingReasoningStageTest {
                 RoutingFixtures.cost(b, 20, "usd-cents")))).getMessage().contains("not supported"));
         assertTrue(rejected(resourceRanked(minimize, List.of(RoutingFixtures.cost(a, 20, "usd-cents"),
                 RoutingFixtures.cost(b, 20, "usd-cents")))).getMessage().contains("not supported"));
+    }
+
+    private static final PolicyParameters COST_MINIMIZE = new PolicyParameters(3, OptionalInt.empty(),
+            Optional.of(new ResourceObjective("cost", ResourceObjective.Direction.MINIMIZE)), "routing-state/1");
+
+    private static final List<RoutingRule> WITH_LEARNED = List.of(RoutingRule.TIER, RoutingRule.FALLBACK_PRIORITY,
+            RoutingRule.LEARNED_PREFERENCE, RoutingRule.ROUTE_ORDER);
+
+    /** A stage whose stub policy returns the given ranking over a custom catalog and preference. */
+    private static RoutingReasoningStage ordered(RouteCatalog catalog, RoutingPreference preference,
+            List<RankedCandidate> ranked, Basis basis, List<RoutingRule> applied, List<RoutingRule> skipped) {
+        var request = request(List.of("java"), true);
+        var provenance = new Provenance(DecisionRef.of(request), catalog.catalogVersion(), "stub", "1",
+                request.cutoff(), preference.binding(), new StateValidation.Compatible(), COST_MINIMIZE);
+        var report = new RouteEligibilityFilter().evaluate(request, catalog);
+        // The explanation must list every eligible route, so the remaining ones follow the given pair.
+        var full = new ArrayList<>(ranked);
+        for (var eligible : report.eligible()) {
+            if (full.stream().noneMatch(candidate -> candidate.key().equals(eligible.key()))) {
+                full.add(new RankedCandidate(full.size(), eligible.key(), Placement.TIER));
+            }
+        }
+        RoutingPolicy policy = stubbedPolicy(r -> new RoutingDecision.Selected(provenance, ranked.getFirst().key(),
+                "sandboxed", basis, ranked.getFirst().key().equals(RoutingFixtures.API_X), full, false, applied,
+                skipped, report.excluded(),
+                new CohortBinding("UNKNOWN", "b/1", "routing-state/1", "task-features/1")));
+        return new RoutingReasoningStage(policy,
+                context -> Optional.of(new RoutingInput(request, catalog, preference)), DOMAIN);
+    }
+
+    private static RouteCatalog catalogWith(int subAPriority, int subBPriority, List<ResourceEstimate> estimates) {
+        return new RouteCatalog("cat-ordered", List.of(
+                RoutingFixtures.entry(RoutingFixtures.base("sub-a", 1).build(), subAPriority),
+                RoutingFixtures.entry(RoutingFixtures.base("sub-b", 1).build(), subBPriority),
+                RoutingFixtures.entry(RoutingFixtures.apiX(), 1)), estimates);
+    }
+
+    private static List<RankedCandidate> pair(RouteKey first, RouteKey second, Placement placement) {
+        return List.of(new RankedCandidate(0, first, placement), new RankedCandidate(1, second, placement));
+    }
+
+    @Test
+    void rankingsMustRespectTierPriorityAndLearnedOrderBeforeTheResourceRule() {
+        var a = RoutingFixtures.SUB_A;
+        var b = RoutingFixtures.SUB_B;
+        var api = RoutingFixtures.API_X;
+        var cheapApi = List.of(RoutingFixtures.cost(api, 1, "usd-cents"), RoutingFixtures.cost(a, 9, "usd-cents"),
+                RoutingFixtures.cost(b, 9, "usd-cents"));
+        var request = request(List.of("java"), true);
+        var cold = empty(request);
+        var resourceRules = List.of(RoutingRule.TIER, RoutingRule.FALLBACK_PRIORITY, RoutingRule.RESOURCE_OBJECTIVE,
+                RoutingRule.ROUTE_ORDER);
+        var learnedSkipped = List.of(RoutingRule.LEARNED_PREFERENCE);
+        var context = new CognitiveContext(MINIMUM, HOST);
+
+        // A cheaper tier-2 route can never lead a tier-1 route through the resource rule.
+        assertTrue(rejected(ordered(catalogWith(1, 1, cheapApi), cold, pair(api, a, Placement.RESOURCE_OBJECTIVE),
+                Basis.RESOURCE_OBJECTIVE, resourceRules, learnedSkipped)).getMessage().contains("tiers must not descend"));
+        // Resource placement across different fallback priorities.
+        assertTrue(rejected(ordered(catalogWith(1, 2, List.of(RoutingFixtures.cost(a, 1, "usd-cents"),
+                RoutingFixtures.cost(b, 9, "usd-cents"))), cold, pair(a, b, Placement.RESOURCE_OBJECTIVE),
+                Basis.RESOURCE_OBJECTIVE, resourceRules, learnedSkipped)).getMessage().contains("fallback priorities"));
+        // A priority placement is allowed exactly when priorities differ and ascend.
+        ordered(catalogWith(1, 2, List.of()), cold, pair(a, b, Placement.FALLBACK_PRIORITY), Basis.HOST_PRIORITY,
+                APPLIED, SKIPPED).execute(monad(), List.of(), context);
+        assertTrue(rejected(ordered(catalogWith(2, 1, List.of()), cold, pair(a, b, Placement.FALLBACK_PRIORITY),
+                Basis.HOST_PRIORITY, APPLIED, SKIPPED)).getMessage().contains("fallback priority order"));
+        // TIER placement needs differing tiers.
+        assertTrue(rejected(ordered(catalogWith(1, 1, List.of()), cold, pair(a, b, Placement.TIER),
+                Basis.HOST_PRIORITY, APPLIED, SKIPPED)).getMessage().contains("contradicts the tiers"));
+        // Route order must ascend.
+        assertTrue(rejected(ordered(catalogWith(1, 1, List.of()), cold, pair(b, a, Placement.ROUTE_ORDER),
+                Basis.COLD_START, APPLIED, SKIPPED)).getMessage().contains("against the route order"));
+
+        // Learned preference: descending values, placement exactly when the values differ.
+        RoutingPreference prefersA = new RoutingPreference(cold.scopeId(), cold.featureSchemaVersion(),
+                cold.evaluationPolicyId(), cold.evaluationPolicyVersion(), cold.mappingVersion(), "p", "1", 0,
+                List.of(RoutingFixtures.cohort(a, 0.5, 3), RoutingFixtures.cohort(b, 0.1, 3),
+                        RoutingFixtures.cohort(api, 0.0, 3)));
+        var resourceAfterLearned = List.of(RoutingRule.TIER, RoutingRule.FALLBACK_PRIORITY,
+                RoutingRule.LEARNED_PREFERENCE, RoutingRule.RESOURCE_OBJECTIVE, RoutingRule.ROUTE_ORDER);
+        var estimates = List.of(RoutingFixtures.cost(a, 1, "usd-cents"), RoutingFixtures.cost(b, 9, "usd-cents"));
+        ordered(catalogWith(1, 1, estimates), prefersA, pair(a, b, Placement.LEARNED_PREFERENCE),
+                Basis.LEARNED_PREFERENCE, WITH_LEARNED, List.of(RoutingRule.RESOURCE_OBJECTIVE))
+                .execute(monad(), List.of(), context);
+        assertTrue(rejected(ordered(catalogWith(1, 1, estimates), prefersA,
+                pair(a, b, Placement.RESOURCE_OBJECTIVE), Basis.RESOURCE_OBJECTIVE, resourceAfterLearned, List.of()))
+                .getMessage().contains("contradicts the learned preference values"));
+        assertTrue(rejected(ordered(catalogWith(1, 1, estimates), prefersA, pair(b, a, Placement.LEARNED_PREFERENCE),
+                Basis.LEARNED_PREFERENCE, WITH_LEARNED, List.of(RoutingRule.RESOURCE_OBJECTIVE)))
+                .getMessage().contains("against the learned preference order"));
+        assertTrue(rejected(ordered(catalogWith(1, 1, estimates), prefersA, pair(a, b, Placement.ROUTE_ORDER),
+                Basis.COLD_START, WITH_LEARNED, List.of(RoutingRule.RESOURCE_OBJECTIVE)))
+                .getMessage().contains("contradicts the learned preference values"));
     }
 }

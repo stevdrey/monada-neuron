@@ -101,8 +101,12 @@ public final class RoutingReasoningStage implements CognitiveStage {
 
     /**
      * The decision must describe exactly this request, catalog, preference and policy, and agree with the hard
-     * eligibility filter, or its catalog-relative codes and audit data would mislead. The admission result
-     * ({@code validation}) is not recomputed: that needs the policy's state definition, which the port does not expose.
+     * eligibility filter, tier cap and ranking order, or its catalog-relative codes and audit data would mislead.
+     *
+     * <p>The recorded admission result ({@code validation}) is recomputed only partially, because the port does not
+     * expose the policy's state definition: scope, evaluation policy, watermark and mapping version are checked in both
+     * directions, the feature schema only in one (a mismatch can also stem from the policy's own mapping). The cohort
+     * bucket is not re-derived either.
      */
     private void verify(RoutingDecision decision, RoutingInput input) {
         Provenance provenance = decision.provenance();
@@ -141,14 +145,16 @@ public final class RoutingReasoningStage implements CognitiveStage {
                 }
                 if (abstain.reason() == AbstainReason.POLICY_TRADEOFF_UNRESOLVED) {
                     verifyExplanation(abstain.candidates(), abstain.candidatesTruncated(), report);
-                    verifyResourcePlacements(abstain.candidates(), provenance.parameters(), input);
+                    verifyOrdering(abstain.candidates(), provenance.parameters(), input, null, false);
                     verifyTierCap(abstain.candidates().getFirst().key(), true, provenance.parameters(), input);
                 }
             }
             case RoutingDecision.Selected selected -> {
                 verifySelected(selected, report);
                 verifyExplanation(selected.candidates(), selected.candidatesTruncated(), report);
-                verifyResourcePlacements(selected.candidates(), provenance.parameters(), input);
+                verifyOrdering(selected.candidates(), provenance.parameters(), input,
+                        selected.cohortBinding().cohortBucket(),
+                        selected.rulesApplied().contains(RoutingRule.LEARNED_PREFERENCE));
                 verifyTierCap(selected.route(), false, provenance.parameters(), input);
             }
         }
@@ -229,29 +235,103 @@ public final class RoutingReasoningStage implements CognitiveStage {
     }
 
     /**
-     * A candidate placed by the resource objective must really be separated from its predecessor by it: the recorded
-     * objective's dimension needs known estimates with one unit for both routes, ordered in the configured direction.
+     * Each ranked pair must be ordered, and placed, as the lexicographic rules allow: tier first, then fallback
+     * priority, then (when applied) learned preference, then the resource objective, then route order. Every check is
+     * one-directional, so legitimate output (including groups cut off by truncation) is never rejected. A tradeoff
+     * abstention carries neither a cohort binding nor its rules, so {@code bucket} is {@code null} and the learned
+     * preference part is skipped for it.
      */
-    private void verifyResourcePlacements(
-            List<RankedCandidate> candidates, PolicyParameters parameters, RoutingInput input) {
+    private void verifyOrdering(List<RankedCandidate> candidates, PolicyParameters parameters, RoutingInput input,
+            String bucket, boolean learnedApplied) {
         for (int i = 1; i < candidates.size(); i++) {
-            if (candidates.get(i).placement() != Placement.RESOURCE_OBJECTIVE) {
+            RouteKey previous = candidates.get(i - 1).key();
+            RouteKey current = candidates.get(i).key();
+            Placement placement = candidates.get(i).placement();
+            CatalogEntry before = entry(input, previous);
+            CatalogEntry after = entry(input, current);
+            int beforeTier = before.descriptor().tier();
+            int afterTier = after.descriptor().tier();
+            if (beforeTier > afterTier) {
+                throw new IllegalStateException("policy ranks " + previous + " (tier " + beforeTier + ") before "
+                        + current + " (tier " + afterTier + "): tiers must not descend");
+            }
+            if ((beforeTier != afterTier) != (placement == Placement.TIER)) {
+                throw new IllegalStateException("placement " + placement + " of " + current
+                        + " contradicts the tiers " + beforeTier + " and " + afterTier);
+            }
+            if (beforeTier != afterTier) {
                 continue;
             }
-            ResourceObjective objective = parameters.objective().orElseThrow(() -> new IllegalStateException(
-                    "policy placed a candidate by the resource objective without a recorded objective"));
-            ResourceEstimate previous = estimate(input, candidates.get(i - 1).key(), objective);
-            ResourceEstimate current = estimate(input, candidates.get(i).key(), objective);
-            long before = known(previous, candidates.get(i - 1).key(), objective);
-            long after = known(current, candidates.get(i).key(), objective);
-            boolean ordered = objective.direction() == ResourceObjective.Direction.MINIMIZE
-                    ? before < after : before > after;
-            if (!previous.unit().equals(current.unit()) || !ordered) {
-                throw new IllegalStateException("resource placement of " + candidates.get(i).key()
-                        + " is not supported by the catalog estimates (" + before + " " + previous.unit() + " then "
-                        + after + " " + current.unit() + ", " + objective.direction() + ")");
+            if (before.fallbackPriority() > after.fallbackPriority()) {
+                throw new IllegalStateException("policy ranks " + previous + " before " + current
+                        + " against the fallback priority order");
+            }
+            boolean priorityDiffers = before.fallbackPriority() != after.fallbackPriority();
+            if (priorityDiffers != (placement == Placement.FALLBACK_PRIORITY)) {
+                throw new IllegalStateException("placement " + placement + " of " + current
+                        + " contradicts the fallback priorities");
+            }
+            if (priorityDiffers) {
+                continue;
+            }
+            if (bucket != null && learnedApplied) {
+                double beforeValue = learned(input, bucket, previous);
+                double afterValue = learned(input, bucket, current);
+                if (beforeValue < afterValue) {
+                    throw new IllegalStateException("policy ranks " + previous + " before " + current
+                            + " against the learned preference order");
+                }
+                if ((beforeValue != afterValue) != (placement == Placement.LEARNED_PREFERENCE)) {
+                    throw new IllegalStateException("placement " + placement + " of " + current
+                            + " contradicts the learned preference values");
+                }
+                if (beforeValue != afterValue) {
+                    continue;
+                }
+            }
+            switch (placement) {
+                case RESOURCE_OBJECTIVE -> verifyResourcePair(previous, current, parameters, input);
+                case ROUTE_ORDER -> {
+                    if (previous.compareTo(current) >= 0) {
+                        throw new IllegalStateException("policy ranks " + previous + " before " + current
+                                + " against the route order");
+                    }
+                }
+                default -> { }
             }
         }
+    }
+
+    /** The objective must be recorded, and the two routes' estimates known, in one unit and ordered by it. */
+    private void verifyResourcePair(RouteKey previous, RouteKey current, PolicyParameters parameters, RoutingInput input) {
+        ResourceObjective objective = parameters.objective().orElseThrow(() -> new IllegalStateException(
+                "policy placed a candidate by the resource objective without a recorded objective"));
+        ResourceEstimate beforeEstimate = estimate(input, previous, objective);
+        ResourceEstimate afterEstimate = estimate(input, current, objective);
+        long before = known(beforeEstimate, previous, objective);
+        long after = known(afterEstimate, current, objective);
+        boolean ordered = objective.direction() == ResourceObjective.Direction.MINIMIZE
+                ? before < after : before > after;
+        if (!beforeEstimate.unit().equals(afterEstimate.unit()) || !ordered) {
+            throw new IllegalStateException("resource placement of " + current
+                    + " is not supported by the catalog estimates (" + before + " " + beforeEstimate.unit()
+                    + " then " + after + " " + afterEstimate.unit() + ", " + objective.direction() + ")");
+        }
+    }
+
+    private static CatalogEntry entry(RoutingInput input, RouteKey key) {
+        return input.catalog().entries().stream()
+                .filter(entry -> entry.key().equals(key))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("policy ranked a route that is not in the catalog: " + key));
+    }
+
+    private static double learned(RoutingInput input, String bucket, RouteKey key) {
+        CohortPreference cohort = input.preference().find(input.request().stageKind(), bucket, key);
+        if (cohort == null) {
+            throw new IllegalStateException("policy applied the learned preference without a cohort for " + key);
+        }
+        return cohort.preferenceValue();
     }
 
     private static ResourceEstimate estimate(RoutingInput input, RouteKey key, ResourceObjective objective) {
