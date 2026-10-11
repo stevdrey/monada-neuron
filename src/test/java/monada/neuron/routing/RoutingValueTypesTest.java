@@ -218,6 +218,33 @@ class RoutingValueTypesTest {
     }
 
     @Test
+    void compatibleProvenanceNeedsTheSameMappingVersionInStateAndParameters() {
+        var otherMapping = new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "other-mapping");
+        assertThrows(IllegalArgumentException.class, () -> new Provenance(PROVENANCE.decisionRef(), "cat",
+                "route-lex", "1", 5, PROVENANCE.state(), new StateValidation.Compatible(), otherMapping));
+        // Without a compatible state there is nothing to reconcile.
+        new Provenance(PROVENANCE.decisionRef(), "cat", "route-lex", "1", 5, PROVENANCE.state(),
+                new StateValidation.Incompatible(List.of(StateMismatch.MAPPING_VERSION_MISMATCH)), otherMapping);
+        new Provenance(PROVENANCE.decisionRef(), "cat", "route-lex", "1", 5, PROVENANCE.state(),
+                new StateValidation.NotEvaluated(), otherMapping);
+    }
+
+    @Test
+    void theLeadingPairMustShareOnePlacement() {
+        var split = List.of(new RankedCandidate(0, SUB_A, Placement.TIER),
+                new RankedCandidate(1, SUB_B, Placement.ROUTE_ORDER));
+        var shared = List.of(new RankedCandidate(0, SUB_A, Placement.TIER),
+                new RankedCandidate(1, SUB_B, Placement.TIER), new RankedCandidate(2, new RouteKey("sub-c", 1),
+                        Placement.ROUTE_ORDER));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> selection(split, false, Basis.HOST_PRIORITY, APPLIED, SKIPPED, List.of()));
+        selection(shared, false, Basis.HOST_PRIORITY, APPLIED, SKIPPED, List.of());
+        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Abstain(PROVENANCE,
+                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(SUB_A, SUB_B), split, false, List.of()));
+    }
+
+    @Test
     void resourceRulesNeedAConfiguredObjectiveInTheRecordedParameters() {
         var noObjective = new Provenance(PROVENANCE.decisionRef(), "cat", "route-lex", "1", 5, PROVENANCE.state(),
                 new StateValidation.Compatible(), NO_OBJECTIVE);
@@ -310,12 +337,6 @@ class RoutingValueTypesTest {
             assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Selected(PROVENANCE, SUB_A,
                     "sandboxed", Basis.COLD_START, false, ranked, false, APPLIED, SKIPPED, List.of(), wrong));
         }
-        var otherParameters = new Provenance(PROVENANCE.decisionRef(), "cat", "route-lex", "1", 5, PROVENANCE.state(),
-                new StateValidation.Compatible(),
-                new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "different"));
-        assertThrows(IllegalArgumentException.class, () -> new RoutingDecision.Selected(otherParameters, SUB_A,
-                "sandboxed", Basis.COLD_START, false, ranked, false, APPLIED, SKIPPED, List.of(),
-                new CohortBinding("UNKNOWN", "b/1", "m", "task-features/1")));
     }
 
     private static List<RouteKey> routes(int count) {

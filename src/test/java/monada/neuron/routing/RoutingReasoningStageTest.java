@@ -18,6 +18,8 @@ import monada.neuron.monad.PrimaryMonad;
 import monada.neuron.reasoning.HypothesisSet;
 import monada.neuron.reasoning.Proposition;
 import monada.neuron.routing.catalog.EligibilityReport;
+import monada.neuron.routing.catalog.ResourceEstimate;
+import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteEligibilityFilter;
 import monada.neuron.routing.catalog.RouteKey;
@@ -450,23 +452,6 @@ class RoutingReasoningStageTest {
                 .execute(monad(), List.of(), new CognitiveContext(MINIMUM, HOST));
     }
 
-    @Test
-    void aCompatibleTradeoffMustMatchThePolicyMappingVersion() {
-        var request = request(List.of("long-context"), true);
-        var report = new RouteEligibilityFilter().evaluate(request, demo());
-        var provenance = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
-                empty(request).binding(), new StateValidation.Compatible(),
-                new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "other-mapping"));
-        RoutingPolicy policy = stubbedPolicy(r -> new RoutingDecision.Abstain(provenance,
-                AbstainReason.POLICY_TRADEOFF_UNRESOLVED, List.of(RoutingFixtures.API_X),
-                List.of(new RankedCandidate(0, RoutingFixtures.API_X, Placement.ONLY_ELIGIBLE)), false,
-                report.excluded()));
-        var stage = new RoutingReasoningStage(policy,
-                context -> Optional.of(new RoutingInput(request, demo(), empty(request))), DOMAIN);
-
-        assertTrue(rejected(stage).getMessage().contains("MAPPING_VERSION_MISMATCH"));
-    }
-
     private static RoutingReasoningStage onlyApi(OptionalInt cap, boolean abstain) {
         var request = request(List.of("long-context"), true);
         var report = new RouteEligibilityFilter().evaluate(request, demo());
@@ -495,5 +480,47 @@ class RoutingReasoningStageTest {
         assertTrue(rejected(onlyApi(OptionalInt.empty(), true)).getMessage().contains("does not exceed"));
         assertTrue(rejected(onlyApi(OptionalInt.of(2), true)).getMessage().contains("does not exceed"));
         assertTrue(rejected(onlyApi(OptionalInt.of(1), false)).getMessage().contains("above the recorded tier cap"));
+    }
+
+    private static RoutingReasoningStage resourceRanked(
+            ResourceObjective.Direction direction, List<ResourceEstimate> estimates) {
+        var request = request(List.of("java"), false);
+        var catalog = RoutingFixtures.demoWith(estimates);
+        var parameters = new PolicyParameters(3, OptionalInt.empty(),
+                Optional.of(new ResourceObjective("cost", direction)), "routing-state/1");
+        var provenance = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
+                empty(request).binding(), new StateValidation.Compatible(), parameters);
+        var ranked = List.of(new RankedCandidate(0, RoutingFixtures.SUB_A, Placement.RESOURCE_OBJECTIVE),
+                new RankedCandidate(1, RoutingFixtures.SUB_B, Placement.RESOURCE_OBJECTIVE));
+        RoutingPolicy policy = stubbedPolicy(r -> new RoutingDecision.Selected(provenance, RoutingFixtures.SUB_A,
+                "sandboxed", Basis.RESOURCE_OBJECTIVE, false, ranked, false, List.of(RoutingRule.values()), List.of(),
+                new RouteEligibilityFilter().evaluate(request, catalog).excluded(),
+                new CohortBinding("UNKNOWN", "b/1", "routing-state/1", "task-features/1")));
+        return new RoutingReasoningStage(policy,
+                context -> Optional.of(new RoutingInput(request, catalog, empty(request))), DOMAIN);
+    }
+
+    @Test
+    void aResourcePlacementMustBeSupportedByTheCatalogEstimates() {
+        var a = RoutingFixtures.SUB_A;
+        var b = RoutingFixtures.SUB_B;
+        var context = new CognitiveContext(MINIMUM, HOST);
+        var minimize = ResourceObjective.Direction.MINIMIZE;
+
+        resourceRanked(minimize, List.of(RoutingFixtures.cost(a, 20, "usd-cents"), RoutingFixtures.cost(b, 50, "usd-cents")))
+                .execute(monad(), List.of(), context);
+        resourceRanked(ResourceObjective.Direction.MAXIMIZE,
+                List.of(RoutingFixtures.cost(a, 50, "usd-cents"), RoutingFixtures.cost(b, 20, "usd-cents")))
+                .execute(monad(), List.of(), context);
+
+        assertTrue(rejected(resourceRanked(minimize, List.of())).getMessage().contains("missing"));
+        assertTrue(rejected(resourceRanked(minimize, List.of(RoutingFixtures.cost(a, 20, "usd-cents"),
+                RoutingFixtures.cost(b, new ResourceValue.Unknown())))).getMessage().contains("unknown"));
+        assertTrue(rejected(resourceRanked(minimize, List.of(RoutingFixtures.cost(a, 20, "usd-cents"),
+                RoutingFixtures.cost(b, 50, "eur-cents")))).getMessage().contains("not supported"));
+        assertTrue(rejected(resourceRanked(minimize, List.of(RoutingFixtures.cost(a, 50, "usd-cents"),
+                RoutingFixtures.cost(b, 20, "usd-cents")))).getMessage().contains("not supported"));
+        assertTrue(rejected(resourceRanked(minimize, List.of(RoutingFixtures.cost(a, 20, "usd-cents"),
+                RoutingFixtures.cost(b, 20, "usd-cents")))).getMessage().contains("not supported"));
     }
 }

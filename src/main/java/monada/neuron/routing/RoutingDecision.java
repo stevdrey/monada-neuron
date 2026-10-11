@@ -284,6 +284,11 @@ public sealed interface RoutingDecision
     /** {@link Placement#ONLY_ELIGIBLE} must mark exactly a sole, untruncated candidate. */
     private static void requirePlacements(List<RankedCandidate> candidates, boolean truncated) {
         boolean sole = candidates.size() == 1 && !truncated;
+        // Rank 0 is placed relative to rank 1 and rank 1 relative to rank 0, so both name the same rule.
+        if (candidates.size() >= 2 && candidates.get(0).placement() != candidates.get(1).placement()) {
+            throw new IllegalArgumentException("the leading pair must share one placement, got "
+                    + candidates.get(0).placement() + " and " + candidates.get(1).placement());
+        }
         for (RankedCandidate candidate : candidates) {
             if ((candidate.placement() == Placement.ONLY_ELIGIBLE) != sole) {
                 throw new IllegalArgumentException("placement " + candidate.placement() + " contradicts a ranking of "

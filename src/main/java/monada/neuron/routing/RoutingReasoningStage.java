@@ -10,6 +10,8 @@ import monada.neuron.reasoning.HypothesisLimits;
 import monada.neuron.reasoning.Proposition;
 import monada.neuron.routing.catalog.CatalogEntry;
 import monada.neuron.routing.catalog.EligibilityReport;
+import monada.neuron.routing.catalog.ResourceEstimate;
+import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.catalog.RouteEligibilityFilter;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.signal.Signal;
@@ -139,12 +141,14 @@ public final class RoutingReasoningStage implements CognitiveStage {
                 }
                 if (abstain.reason() == AbstainReason.POLICY_TRADEOFF_UNRESOLVED) {
                     verifyExplanation(abstain.candidates(), abstain.candidatesTruncated(), report);
+                    verifyResourcePlacements(abstain.candidates(), provenance.parameters(), input);
                     verifyTierCap(abstain.candidates().getFirst().key(), true, provenance.parameters(), input);
                 }
             }
             case RoutingDecision.Selected selected -> {
                 verifySelected(selected, report);
                 verifyExplanation(selected.candidates(), selected.candidatesTruncated(), report);
+                verifyResourcePlacements(selected.candidates(), provenance.parameters(), input);
                 verifyTierCap(selected.route(), false, provenance.parameters(), input);
             }
         }
@@ -222,6 +226,48 @@ public final class RoutingReasoningStage implements CognitiveStage {
                     : "policy selected " + best + " (tier " + tier + ") above the recorded tier cap "
                             + parameters.maxAutoSelectTier());
         }
+    }
+
+    /**
+     * A candidate placed by the resource objective must really be separated from its predecessor by it: the recorded
+     * objective's dimension needs known estimates with one unit for both routes, ordered in the configured direction.
+     */
+    private void verifyResourcePlacements(
+            List<RankedCandidate> candidates, PolicyParameters parameters, RoutingInput input) {
+        for (int i = 1; i < candidates.size(); i++) {
+            if (candidates.get(i).placement() != Placement.RESOURCE_OBJECTIVE) {
+                continue;
+            }
+            ResourceObjective objective = parameters.objective().orElseThrow(() -> new IllegalStateException(
+                    "policy placed a candidate by the resource objective without a recorded objective"));
+            ResourceEstimate previous = estimate(input, candidates.get(i - 1).key(), objective);
+            ResourceEstimate current = estimate(input, candidates.get(i).key(), objective);
+            long before = known(previous, candidates.get(i - 1).key(), objective);
+            long after = known(current, candidates.get(i).key(), objective);
+            boolean ordered = objective.direction() == ResourceObjective.Direction.MINIMIZE
+                    ? before < after : before > after;
+            if (!previous.unit().equals(current.unit()) || !ordered) {
+                throw new IllegalStateException("resource placement of " + candidates.get(i).key()
+                        + " is not supported by the catalog estimates (" + before + " " + previous.unit() + " then "
+                        + after + " " + current.unit() + ", " + objective.direction() + ")");
+            }
+        }
+    }
+
+    private static ResourceEstimate estimate(RoutingInput input, RouteKey key, ResourceObjective objective) {
+        return input.catalog().estimates().stream()
+                .filter(estimate -> estimate.key().equals(key) && estimate.dimension().equals(objective.dimension()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("resource placement relies on a missing "
+                        + objective.dimension() + " estimate for " + key));
+    }
+
+    private static long known(ResourceEstimate estimate, RouteKey key, ResourceObjective objective) {
+        if (estimate.value() instanceof ResourceValue.Known known) {
+            return known.value();
+        }
+        throw new IllegalStateException("resource placement relies on an unknown " + objective.dimension()
+                + " estimate for " + key);
     }
 
     /** Every ranked candidate must be eligible, and the explanation must be the bounded prefix the filter implies. */
