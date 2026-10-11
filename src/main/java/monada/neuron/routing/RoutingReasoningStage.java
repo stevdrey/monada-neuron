@@ -10,13 +10,11 @@ import monada.neuron.reasoning.HypothesisLimits;
 import monada.neuron.reasoning.Proposition;
 import monada.neuron.routing.catalog.CatalogEntry;
 import monada.neuron.routing.catalog.EligibilityReport;
-import monada.neuron.routing.catalog.ResourceEstimate;
-import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.catalog.RouteEligibilityFilter;
-import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.signal.Signal;
 
 import java.util.EnumSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -29,6 +27,10 @@ import java.util.Objects;
  * custom policy cannot hand off a hypothesis for an ineligible route. A selected route becomes one hypothesis whose
  * {@link Proposition#code()} is the zero-based index of the route in the catalog's canonical order; that code is
  * meaningful only together with the decision's {@code catalogVersion}.
+ *
+ * <p>The stage enforces the fixed ordering of Forge Routing Contract v1, section 3.3, for every policy it hosts: it
+ * recomputes the ranking from the decision's recorded parameters and rejects a decision that differs. A policy with
+ * other ordering rules would be a new policy version and needs its own stage.
  */
 public final class RoutingReasoningStage implements CognitiveStage {
 
@@ -101,7 +103,7 @@ public final class RoutingReasoningStage implements CognitiveStage {
 
     /**
      * The decision must describe exactly this request, catalog, preference and policy, and agree with the hard
-     * eligibility filter, tier cap and ranking order, or its catalog-relative codes and audit data would mislead.
+     * eligibility filter and the contract ordering (recomputed from its recorded parameters), or its catalog-relative codes and audit data would mislead.
      *
      * <p>The recorded admission result ({@code validation}) is recomputed only partially, because the port does not
      * expose the policy's state definition: scope, evaluation policy, watermark and mapping version are checked in both
@@ -145,17 +147,13 @@ public final class RoutingReasoningStage implements CognitiveStage {
                 }
                 if (abstain.reason() == AbstainReason.POLICY_TRADEOFF_UNRESOLVED) {
                     verifyExplanation(abstain.candidates(), abstain.candidatesTruncated(), report);
-                    verifyOrdering(abstain.candidates(), provenance.parameters(), input, null, false);
-                    verifyTierCap(abstain.candidates().getFirst().key(), true, provenance.parameters(), input);
+                    verifyTradeoff(abstain, report, input);
                 }
             }
             case RoutingDecision.Selected selected -> {
                 verifySelected(selected, report);
                 verifyExplanation(selected.candidates(), selected.candidatesTruncated(), report);
-                verifyOrdering(selected.candidates(), provenance.parameters(), input,
-                        selected.cohortBinding().cohortBucket(),
-                        selected.rulesApplied().contains(RoutingRule.LEARNED_PREFERENCE));
-                verifyTierCap(selected.route(), false, provenance.parameters(), input);
+                verifySelectedRanking(selected, report, input);
             }
         }
         if (!decision.exclusions().equals(report.excluded())) {
@@ -214,142 +212,6 @@ public final class RoutingReasoningStage implements CognitiveStage {
         }
     }
 
-    /**
-     * The tier-cap abstention is the only tradeoff trigger: it must fire exactly when the recorded cap is set and the
-     * best-ranked route's catalog tier exceeds it, so the decision is one its recorded configuration could produce.
-     */
-    private void verifyTierCap(RouteKey best, boolean abstained, PolicyParameters parameters, RoutingInput input) {
-        int tier = input.catalog().entries().stream()
-                .filter(entry -> entry.key().equals(best))
-                .findFirst()
-                .orElseThrow(() -> new IllegalStateException("policy ranked a route that is not in the catalog: " + best))
-                .descriptor().tier();
-        boolean exceeds = parameters.maxAutoSelectTier().isPresent() && tier > parameters.maxAutoSelectTier().getAsInt();
-        if (exceeds != abstained) {
-            throw new IllegalStateException(abstained
-                    ? "policy abstained on the tier cap but " + best + " (tier " + tier + ") does not exceed the "
-                            + "recorded cap " + parameters.maxAutoSelectTier()
-                    : "policy selected " + best + " (tier " + tier + ") above the recorded tier cap "
-                            + parameters.maxAutoSelectTier());
-        }
-    }
-
-    /**
-     * Each ranked pair must be ordered, and placed, as the lexicographic rules allow: tier first, then fallback
-     * priority, then (when applied) learned preference, then the resource objective, then route order. Every check is
-     * one-directional, so legitimate output (including groups cut off by truncation) is never rejected. A tradeoff
-     * abstention carries neither a cohort binding nor its rules, so {@code bucket} is {@code null} and the learned
-     * preference part is skipped for it.
-     */
-    private void verifyOrdering(List<RankedCandidate> candidates, PolicyParameters parameters, RoutingInput input,
-            String bucket, boolean learnedApplied) {
-        for (int i = 1; i < candidates.size(); i++) {
-            RouteKey previous = candidates.get(i - 1).key();
-            RouteKey current = candidates.get(i).key();
-            Placement placement = candidates.get(i).placement();
-            CatalogEntry before = entry(input, previous);
-            CatalogEntry after = entry(input, current);
-            int beforeTier = before.descriptor().tier();
-            int afterTier = after.descriptor().tier();
-            if (beforeTier > afterTier) {
-                throw new IllegalStateException("policy ranks " + previous + " (tier " + beforeTier + ") before "
-                        + current + " (tier " + afterTier + "): tiers must not descend");
-            }
-            if ((beforeTier != afterTier) != (placement == Placement.TIER)) {
-                throw new IllegalStateException("placement " + placement + " of " + current
-                        + " contradicts the tiers " + beforeTier + " and " + afterTier);
-            }
-            if (beforeTier != afterTier) {
-                continue;
-            }
-            if (before.fallbackPriority() > after.fallbackPriority()) {
-                throw new IllegalStateException("policy ranks " + previous + " before " + current
-                        + " against the fallback priority order");
-            }
-            boolean priorityDiffers = before.fallbackPriority() != after.fallbackPriority();
-            if (priorityDiffers != (placement == Placement.FALLBACK_PRIORITY)) {
-                throw new IllegalStateException("placement " + placement + " of " + current
-                        + " contradicts the fallback priorities");
-            }
-            if (priorityDiffers) {
-                continue;
-            }
-            if (bucket != null && learnedApplied) {
-                double beforeValue = learned(input, bucket, previous);
-                double afterValue = learned(input, bucket, current);
-                if (beforeValue < afterValue) {
-                    throw new IllegalStateException("policy ranks " + previous + " before " + current
-                            + " against the learned preference order");
-                }
-                if ((beforeValue != afterValue) != (placement == Placement.LEARNED_PREFERENCE)) {
-                    throw new IllegalStateException("placement " + placement + " of " + current
-                            + " contradicts the learned preference values");
-                }
-                if (beforeValue != afterValue) {
-                    continue;
-                }
-            }
-            switch (placement) {
-                case RESOURCE_OBJECTIVE -> verifyResourcePair(previous, current, parameters, input);
-                case ROUTE_ORDER -> {
-                    if (previous.compareTo(current) >= 0) {
-                        throw new IllegalStateException("policy ranks " + previous + " before " + current
-                                + " against the route order");
-                    }
-                }
-                default -> { }
-            }
-        }
-    }
-
-    /** The objective must be recorded, and the two routes' estimates known, in one unit and ordered by it. */
-    private void verifyResourcePair(RouteKey previous, RouteKey current, PolicyParameters parameters, RoutingInput input) {
-        ResourceObjective objective = parameters.objective().orElseThrow(() -> new IllegalStateException(
-                "policy placed a candidate by the resource objective without a recorded objective"));
-        ResourceEstimate beforeEstimate = estimate(input, previous, objective);
-        ResourceEstimate afterEstimate = estimate(input, current, objective);
-        long before = known(beforeEstimate, previous, objective);
-        long after = known(afterEstimate, current, objective);
-        boolean ordered = objective.direction() == ResourceObjective.Direction.MINIMIZE
-                ? before < after : before > after;
-        if (!beforeEstimate.unit().equals(afterEstimate.unit()) || !ordered) {
-            throw new IllegalStateException("resource placement of " + current
-                    + " is not supported by the catalog estimates (" + before + " " + beforeEstimate.unit()
-                    + " then " + after + " " + afterEstimate.unit() + ", " + objective.direction() + ")");
-        }
-    }
-
-    private static CatalogEntry entry(RoutingInput input, RouteKey key) {
-        return input.catalog().entries().stream()
-                .filter(entry -> entry.key().equals(key))
-                .findFirst()
-                .orElseThrow(() -> new IllegalStateException("policy ranked a route that is not in the catalog: " + key));
-    }
-
-    private static double learned(RoutingInput input, String bucket, RouteKey key) {
-        CohortPreference cohort = input.preference().find(input.request().stageKind(), bucket, key);
-        if (cohort == null) {
-            throw new IllegalStateException("policy applied the learned preference without a cohort for " + key);
-        }
-        return cohort.preferenceValue();
-    }
-
-    private static ResourceEstimate estimate(RoutingInput input, RouteKey key, ResourceObjective objective) {
-        return input.catalog().estimates().stream()
-                .filter(estimate -> estimate.key().equals(key) && estimate.dimension().equals(objective.dimension()))
-                .findFirst()
-                .orElseThrow(() -> new IllegalStateException("resource placement relies on a missing "
-                        + objective.dimension() + " estimate for " + key));
-    }
-
-    private static long known(ResourceEstimate estimate, RouteKey key, ResourceObjective objective) {
-        if (estimate.value() instanceof ResourceValue.Known known) {
-            return known.value();
-        }
-        throw new IllegalStateException("resource placement relies on an unknown " + objective.dimension()
-                + " estimate for " + key);
-    }
-
     /** Every ranked candidate must be eligible, and the explanation must be the bounded prefix the filter implies. */
     private void verifyExplanation(List<RankedCandidate> candidates, boolean truncated, EligibilityReport report) {
         for (RankedCandidate candidate : candidates) {
@@ -364,5 +226,72 @@ public final class RoutingReasoningStage implements CognitiveStage {
             throw new IllegalStateException("policy ranking lists " + candidates.size() + " candidates (truncated: "
                     + truncated + ") for " + eligible + " eligible routes");
         }
+    }
+
+    /**
+     * A {@code Selected} decision must equal the contract ordering recomputed from its recorded parameters and cohort
+     * bucket (the bucket itself cannot be re-derived), and its winner must not exceed the recorded tier cap.
+     */
+    private void verifySelectedRanking(RoutingDecision.Selected selected, EligibilityReport report, RoutingInput input) {
+        PolicyParameters parameters = selected.provenance().parameters();
+        LexicographicRanking.Result expected = new LexicographicRanking(
+                parameters.minSupportingObservations(), parameters.objective())
+                .rank(input.request(), input.catalog(), report.eligible(), input.preference(),
+                        selected.cohortBinding().cohortBucket());
+        boolean sameRanking = expected.order().getFirst().route().key().equals(selected.route())
+                && expected.candidates().equals(selected.candidates())
+                && expected.truncated() == selected.candidatesTruncated()
+                && expected.applied().equals(selected.rulesApplied())
+                && expected.skipped().equals(selected.rulesSkipped())
+                && expected.candidates().getFirst().placement().basis() == selected.basis();
+        if (!sameRanking) {
+            throw new IllegalStateException("policy ranking disagrees with the recomputed ranking: expected "
+                    + expected.candidates() + " (applied " + expected.applied() + ", skipped " + expected.skipped()
+                    + "), got " + selected.candidates() + " (applied " + selected.rulesApplied() + ", skipped "
+                    + selected.rulesSkipped() + ", basis " + selected.basis() + ")");
+        }
+        if (exceedsCap(expected, parameters)) {
+            throw new IllegalStateException("policy selected " + selected.route() + " (tier "
+                    + expected.order().getFirst().tier() + ") above the recorded tier cap "
+                    + parameters.maxAutoSelectTier());
+        }
+    }
+
+    /**
+     * A tier-cap abstention is the only tradeoff trigger. No cohort binding is recorded for it, so the ranking is
+     * recomputed for every cohort bucket the preference holds for the stage kind, and for none; the abstention is
+     * accepted when some bucket reproduces its ranking and the winner then exceeds the recorded cap.
+     */
+    private void verifyTradeoff(RoutingDecision.Abstain abstain, EligibilityReport report, RoutingInput input) {
+        PolicyParameters parameters = abstain.provenance().parameters();
+        var ranking = new LexicographicRanking(parameters.minSupportingObservations(), parameters.objective());
+        var buckets = new LinkedHashSet<String>();
+        buckets.add(null);
+        for (CohortPreference cohort : input.preference().cohorts()) {
+            if (cohort.stageKind().equals(input.request().stageKind())) {
+                buckets.add(cohort.cohortBucket());
+            }
+        }
+        boolean sameRanking = false;
+        for (String bucket : buckets) {
+            LexicographicRanking.Result expected = ranking.rank(
+                    input.request(), input.catalog(), report.eligible(), input.preference(), bucket);
+            if (expected.candidates().equals(abstain.candidates())
+                    && expected.truncated() == abstain.candidatesTruncated()) {
+                sameRanking = true;
+                if (exceedsCap(expected, parameters)) {
+                    return;
+                }
+            }
+        }
+        throw new IllegalStateException(sameRanking
+                ? "policy abstained on the tier cap but the winner does not exceed the recorded cap "
+                        + parameters.maxAutoSelectTier()
+                : "policy ranking disagrees with the recomputed ranking: got " + abstain.candidates());
+    }
+
+    private boolean exceedsCap(LexicographicRanking.Result ranking, PolicyParameters parameters) {
+        return parameters.maxAutoSelectTier().isPresent()
+                && ranking.order().getFirst().tier() > parameters.maxAutoSelectTier().getAsInt();
     }
 }
