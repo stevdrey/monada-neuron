@@ -64,5 +64,8 @@ public record LearningAssessment(
         if (verdict == EligibilityVerdict.NEGATIVE_CANDIDATE && provenFailures.isEmpty()) {
             throw new IllegalArgumentException("a negative candidate needs a proven mandatory failure");
         }
+        if (verdict == EligibilityVerdict.NEGATIVE_CANDIDATE && reasons.stream().anyMatch(IneligibilityReason::blocking)) {
+            throw new IllegalArgumentException("a negative candidate must not carry a blocking reason: " + reasons);
+        }
     }
 }

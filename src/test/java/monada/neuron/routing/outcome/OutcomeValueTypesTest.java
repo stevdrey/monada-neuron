@@ -3,6 +3,8 @@ package monada.neuron.routing.outcome;
 import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.features.Feature;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -165,6 +167,20 @@ class OutcomeValueTypesTest {
         var twoUsd = List.of(new Money(BigDecimal.ONE, "USD"), new Money(BigDecimal.TEN, "USD"));
         assertThrows(IllegalArgumentException.class, () -> new ResourceSummary(UsageDeclaration.MEASURED,
                 Feature.unknown(), List.of(), twoUsd, List.of()));
+    }
+
+    @ParameterizedTest
+    @EnumSource(IneligibilityReason.class)
+    void negativeCandidateNeverCarriesABlockingReason(IneligibilityReason reason) {
+        Runnable build = () -> new LearningAssessment(DerivedAcceptance.NOT_ACCEPTED,
+                EligibilityVerdict.NEGATIVE_CANDIDATE, List.of(reason),
+                reason == IneligibilityReason.PROVENANCE_MISMATCH ? List.of(ProvenanceField.DECISION_REF) : List.of(),
+                List.of(), List.of(QualityDimension.TESTS), 0);
+        if (reason.blocking()) {
+            assertThrows(IllegalArgumentException.class, build::run);
+        } else {
+            build.run();
+        }
     }
 
     @Test

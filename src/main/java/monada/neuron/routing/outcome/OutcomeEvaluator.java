@@ -167,12 +167,7 @@ public final class OutcomeEvaluator {
         }
 
         boolean stageLocal = outcome.attribution().basis() == StageAttribution.Basis.STAGE_LOCAL;
-        boolean blocked = reasons.contains(IneligibilityReason.PROVENANCE_MISMATCH)
-                || reasons.contains(IneligibilityReason.ENVIRONMENTAL_FAILURE)
-                || reasons.contains(IneligibilityReason.CANCELLED)
-                || reasons.contains(IneligibilityReason.PENDING)
-                || reasons.contains(IneligibilityReason.STALE_ARTIFACT_REVISION)
-                || reasons.contains(IneligibilityReason.CONTRADICTORY_EVIDENCE);
+        boolean blocked = reasons.stream().anyMatch(IneligibilityReason::blocking);
 
         if ((derived == DerivedAcceptance.VALIDATED_ACCEPTED || !failures.isEmpty()) && !stageLocal) {
             reasons.add(IneligibilityReason.NO_STAGE_ATTRIBUTION);

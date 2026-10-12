@@ -1194,7 +1194,7 @@ reason; otherwise `NOT_ELIGIBLE`. It is not a feedback disposition: #65 maps ver
 or `NEUTRAL` and owns the scores. Blocking reasons: `PROVENANCE_MISMATCH`, `ENVIRONMENTAL_FAILURE`, `CANCELLED`, `PENDING`,
 `STALE_ARTIFACT_REVISION`, `CONTRADICTORY_EVIDENCE`. Informational reasons that may accompany any verdict:
 `STALE_EVALUATION_POLICY`, `MISSING_EVIDENCE`, `UNKNOWN_EVIDENCE`, `IMPORTED_CLAIM`, `NO_STAGE_ATTRIBUTION`,
-`NO_ATTRIBUTABLE_FAILURE`. Reasons are unique and reported in declaration order.
+`NO_ATTRIBUTABLE_FAILURE`. Reasons are unique and reported in declaration order. A candidate verdict never accompanies a blocking reason (`IneligibilityReason.blocking()`); `LearningAssessment` enforces this for a negative candidate and, being reason-free, for a positive one.
 
 | Condition | Reason |
 | --- | --- |

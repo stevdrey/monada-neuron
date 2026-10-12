@@ -25,5 +25,17 @@ public enum IneligibilityReason {
     /** The result is not attributable to the executed route's stage (chain-level acceptance or no evidence). */
     NO_STAGE_ATTRIBUTION,
     /** Not accepted, but no proven mandatory failure exists: a refusal or unjudged failure is not a failure of the route. */
-    NO_ATTRIBUTABLE_FAILURE
+    NO_ATTRIBUTABLE_FAILURE;
+
+    /**
+     * True for reasons that make an observation unusable for learning in either direction. The other reasons are
+     * informational and may accompany a candidate verdict.
+     */
+    public boolean blocking() {
+        return switch (this) {
+            case PROVENANCE_MISMATCH, ENVIRONMENTAL_FAILURE, CANCELLED, PENDING, STALE_ARTIFACT_REVISION,
+                    CONTRADICTORY_EVIDENCE -> true;
+            default -> false;
+        };
+    }
 }
