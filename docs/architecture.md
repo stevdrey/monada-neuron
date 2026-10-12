@@ -507,7 +507,7 @@ adapter, so its executions supply a host context and no signals.
 
 Monada Forge needs vendor-neutral, stage-level recommendations of which authorized worker/model route to use, learned
 from validated outcomes. [Forge Routing Contract v1](specs/forge-routing-contract-v1.md) and
-[ADR 0026](adr/0026-forge-routing-ownership.md) define that extension. **Only `TaskFeatures` and its signal encoder (`monada.neuron.routing.features`, issue #60), the route catalog and eligibility filter (`monada.neuron.routing.catalog`, issue #61) and the routing policy, decision types, preference snapshot value and optional reasoning-stage adapter (`monada.neuron.routing`, issue #62) exist**; the other names
+[ADR 0026](adr/0026-forge-routing-ownership.md) define that extension. **Only `TaskFeatures` and its signal encoder (`monada.neuron.routing.features`, issue #60), the route catalog and eligibility filter (`monada.neuron.routing.catalog`, issue #61) and the routing policy, decision types, preference snapshot value and optional reasoning-stage adapter (`monada.neuron.routing`, issue #62), with its decision verification split into a mandatory validator and a policy-specific verifier (issue #76) and extended by the host-configured `RoutingDecisionVerifier` and `TrustedRoutingProfile` (issue #78), exist**; the other names
 below are proposals that issues #63 to #68 implement in dependency order, and the Store capabilities it depends on (Store
 issues #94 to #102) are likewise pending.
 
