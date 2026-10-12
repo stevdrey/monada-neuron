@@ -22,9 +22,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class RoutingValueTypesTest {
 
     private static final PolicyParameters PARAMETERS = new PolicyParameters(3, OptionalInt.empty(),
-            Optional.of(new ResourceObjective("cost", ResourceObjective.Direction.MINIMIZE)), "m");
+            Optional.of(new ResourceObjective("cost", ResourceObjective.Direction.MINIMIZE)), "m", "task-features/1");
     private static final PolicyParameters NO_OBJECTIVE =
-            new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "m");
+            new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "m", "task-features/1");
 
     private static final List<RoutingRule> APPLIED =
             List.of(RoutingRule.TIER, RoutingRule.FALLBACK_PRIORITY, RoutingRule.ROUTE_ORDER);
@@ -242,7 +242,7 @@ class RoutingValueTypesTest {
 
     @Test
     void compatibleProvenanceNeedsTheSameMappingVersionInStateAndParameters() {
-        var otherMapping = new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "other-mapping");
+        var otherMapping = new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "other-mapping", "task-features/1");
         assertThrows(IllegalArgumentException.class, () -> new Provenance(PROVENANCE.decisionRef(), "cat",
                 "route-lex", "1", 5, PROVENANCE.state(), new StateValidation.Compatible(), otherMapping));
         // Without a compatible state there is nothing to reconcile.
@@ -250,6 +250,15 @@ class RoutingValueTypesTest {
                 new StateValidation.Incompatible(List.of(StateMismatch.MAPPING_VERSION_MISMATCH)), otherMapping);
         new Provenance(PROVENANCE.decisionRef(), "cat", "route-lex", "1", 5, PROVENANCE.state(),
                 new StateValidation.NotEvaluated(), otherMapping);
+    }
+
+    @Test
+    void compatibleProvenanceNeedsTheSameFeatureSchemaInStateAndParameters() {
+        var otherSchema = new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "m", "task-features/0");
+        assertThrows(IllegalArgumentException.class, () -> new Provenance(PROVENANCE.decisionRef(), "cat",
+                "route-lex", "1", 5, PROVENANCE.state(), new StateValidation.Compatible(), otherSchema));
+        new Provenance(PROVENANCE.decisionRef(), "cat", "route-lex", "1", 5, PROVENANCE.state(),
+                new StateValidation.Incompatible(List.of(StateMismatch.FEATURE_SCHEMA_MISMATCH)), otherSchema);
     }
 
     @Test

@@ -12,11 +12,9 @@ import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.TaskFeatures;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestReporter;
 
-import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -42,6 +40,9 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LexicographicRoutingPolicyTest {
+
+    /** Allocation guard for one maximum-size decision: about 25% above the measured figure. */
+    private static final long LIMIT_BYTES = 24 * 1024;
 
     private final LexicographicRoutingPolicy policy = LexicographicRoutingPolicy.reference();
 
@@ -433,8 +434,8 @@ class LexicographicRoutingPolicyTest {
         PolicyParameters configured = assertInstanceOf(Selected.class, tuned.decide(request, demo(), empty(request)))
                 .provenance().parameters();
 
-        assertEquals(new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "routing-state/1"), reference);
-        assertEquals(new PolicyParameters(5, OptionalInt.of(2), objective, "routing-state/1"), configured);
+        assertEquals(new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "routing-state/1", "task-features/1"), reference);
+        assertEquals(new PolicyParameters(5, OptionalInt.of(2), objective, "routing-state/1", "task-features/1"), configured);
         assertEquals(reference, policy.decide(request, demo(), empty(request)).provenance().parameters());
         assertEquals(configured, tuned.decide(request, RouteCatalog.of("empty", List.of()), empty(request))
                 .provenance().parameters());
@@ -469,40 +470,15 @@ class LexicographicRoutingPolicyTest {
     @Test
     void maximumSizeDecisionAllocatesBoundedMemory(TestReporter reporter) {
         RoutingRequest request = request(JAVA, true);
-        List<CatalogEntry> entries = new ArrayList<>();
-        List<ResourceEstimate> estimates = new ArrayList<>();
-        for (int i = 0; i < RouteCatalog.MAX_ROUTES; i++) {
-            RouteKey key = new RouteKey(String.format("route-%02d", i), 1);
-            entries.add(entry(base(key.routeId(), 1).build(), 1));
-            estimates.add(cost(key, i, "usd-cents"));
-        }
-        RouteCatalog catalog = new RouteCatalog("cat-max", entries, estimates);
-        List<CohortPreference> cohorts = new ArrayList<>();
-        for (int i = 0; i < RoutingPreference.MAX_COHORTS; i++) {
-            // 32 live cohorts for the current routes and 224 dormant ones for routes absent from the catalog.
-            RouteKey key = i < RouteCatalog.MAX_ROUTES ? new RouteKey(String.format("route-%02d", i), 1)
-                    : new RouteKey("dormant-" + i, 1);
-            cohorts.add(new CohortPreference("implement", "UNKNOWN", key, i % 7, 3));
-        }
-        RoutingPreference preference = new RoutingPreference("scope-demo", "task-features/1", "forge-gates", "1",
-                "routing-state/1", "route-lex", "1", 40, cohorts);
+        RouteCatalog catalog = RoutingFixtures.maximumCatalog();
+        RoutingPreference preference = RoutingFixtures.maximumPreference();
         var objective = withObjective(ResourceObjective.Direction.MINIMIZE);
-        for (int i = 0; i < 20_000; i++) {
-            objective.decide(request, catalog, preference);
-        }
-        // Fully qualified: the simple name collides with java.lang.management.ThreadMXBean.
-        var threads = (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
-        Assumptions.assumeTrue(threads.isThreadAllocatedMemorySupported(), "thread allocation tracking unsupported");
-        threads.setThreadAllocatedMemoryEnabled(true);
-        long id = Thread.currentThread().threadId();
-        long before = threads.getThreadAllocatedBytes(id);
-        RoutingDecision decision = objective.decide(request, catalog, preference);
-        long after = threads.getThreadAllocatedBytes(id);
-        assertTrue(before >= 0 && after >= before, "allocation counter unavailable");
-        assertInstanceOf(Selected.class, decision);
-        long allocated = after - before;
+
+        long allocated = AllocationProbe.measure(20_000, () -> objective.decide(request, catalog, preference));
+
+        assertInstanceOf(Selected.class, objective.decide(request, catalog, preference));
         reporter.publishEntry("allocatedBytes", Long.toString(allocated));
         // Regression guard only, not a benchmark; the measured figure is documented in the contract.
-        assertTrue(allocated < 32 * 1024, "allocated " + allocated);
+        assertTrue(allocated < LIMIT_BYTES, "allocated " + allocated);
     }
 }

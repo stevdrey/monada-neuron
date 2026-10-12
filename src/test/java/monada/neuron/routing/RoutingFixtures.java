@@ -13,6 +13,7 @@ import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.TaskFeatures;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /** Fixtures: the fictional catalog of Forge Routing Contract v1 section 9 (all identifiers are invented). */
@@ -90,5 +91,29 @@ final class RoutingFixtures {
     /** A cohort of the default request (stage {@code implement}, change size unknown, bucket {@code UNKNOWN}). */
     static CohortPreference cohort(RouteKey key, double value, int support) {
         return new CohortPreference("implement", CohortMapping.UNKNOWN_BUCKET, key, value, support);
+    }
+
+    /** The largest catalog: 32 routes, each with a known cost estimate. */
+    static RouteCatalog maximumCatalog() {
+        List<CatalogEntry> entries = new ArrayList<>();
+        List<ResourceEstimate> estimates = new ArrayList<>();
+        for (int i = 0; i < RouteCatalog.MAX_ROUTES; i++) {
+            RouteKey key = new RouteKey(String.format("route-%02d", i), 1);
+            entries.add(entry(base(key.routeId(), 1).build(), 1));
+            estimates.add(cost(key, i, "usd-cents"));
+        }
+        return new RouteCatalog("cat-max", entries, estimates);
+    }
+
+    /** The largest snapshot: 256 cohorts, 32 live ones for {@link #maximumCatalog()} and 224 dormant ones. */
+    static RoutingPreference maximumPreference() {
+        List<CohortPreference> cohorts = new ArrayList<>();
+        for (int i = 0; i < RoutingPreference.MAX_COHORTS; i++) {
+            RouteKey key = i < RouteCatalog.MAX_ROUTES ? new RouteKey(String.format("route-%02d", i), 1)
+                    : new RouteKey("dormant-" + i, 1);
+            cohorts.add(new CohortPreference("implement", "UNKNOWN", key, i % 7, 3));
+        }
+        return new RoutingPreference("scope-demo", "task-features/1", "forge-gates", "1", "routing-state/1",
+                "route-lex", "1", 40, cohorts);
     }
 }

@@ -13,12 +13,14 @@ import java.util.OptionalInt;
  * @param maxAutoSelectTier highest tier advised without host confirmation; empty means unbounded
  * @param objective optional resource objective
  * @param stateMappingVersion {@code mappingVersion} of the state definition the policy admits snapshots against
+ * @param stateFeatureSchemaVersion feature schema the policy's cohort mapping was built for
  */
 public record PolicyParameters(
         int minSupportingObservations,
         OptionalInt maxAutoSelectTier,
         Optional<ResourceObjective> objective,
-        String stateMappingVersion) {
+        String stateMappingVersion,
+        String stateFeatureSchemaVersion) {
 
     /** Validates parts. */
     public PolicyParameters {
@@ -33,5 +35,6 @@ public record PolicyParameters(
         }
         Objects.requireNonNull(objective, "objective must not be null");
         RoutingTokens.require(stateMappingVersion, "stateMappingVersion");
+        RoutingTokens.require(stateFeatureSchemaVersion, "stateFeatureSchemaVersion");
     }
 }

@@ -4,7 +4,6 @@ import monada.neuron.context.CognitiveContext;
 import monada.neuron.monad.CognitiveStageKind;
 import monada.neuron.monad.CognitiveStageResult;
 import monada.neuron.monad.CognitiveStageStatus;
-import monada.neuron.routing.RoutingCognitiveStageResult;
 import monada.neuron.signal.Signal;
 
 import java.util.List;
@@ -22,7 +21,7 @@ import java.util.Optional;
 public record ReasoningCognitiveStageResult(
         CognitiveStageStatus status,
         List<Signal> outputSignals,
-        HypothesisSet hypotheses) implements CognitiveStageResult {
+        HypothesisSet hypotheses) implements CognitiveStageResult, HypothesisHandOff {
 
     /** Validates and snapshots components. */
     public ReasoningCognitiveStageResult {
@@ -67,11 +66,7 @@ public record ReasoningCognitiveStageResult(
     public static HypothesisSet hypothesesOf(Optional<CognitiveStageResult> previousResult) {
         Objects.requireNonNull(previousResult, "previousResult must not be null");
         return previousResult
-                .map(result -> switch (result) {
-                    case ReasoningCognitiveStageResult reasoning -> reasoning.hypotheses();
-                    case RoutingCognitiveStageResult routing -> routing.hypotheses();
-                    default -> HypothesisSet.EMPTY;
-                })
+                .map(result -> result instanceof HypothesisHandOff handOff ? handOff.hypotheses() : HypothesisSet.EMPTY)
                 .orElse(HypothesisSet.EMPTY);
     }
 }

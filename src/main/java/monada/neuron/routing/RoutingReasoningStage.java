@@ -104,10 +104,9 @@ public final class RoutingReasoningStage implements CognitiveStage {
      * The decision must describe exactly this request, catalog, preference and policy, and agree with the hard
      * eligibility filter and the contract ordering (recomputed from its recorded parameters), or its catalog-relative codes and audit data would mislead.
      *
-     * <p>The recorded admission result ({@code validation}) is recomputed only partially, because the port does not
-     * expose the policy's state definition: scope, evaluation policy, watermark and mapping version are checked in both
-     * directions, the feature schema only in one (a mismatch can also stem from the policy's own mapping). The cohort
-     * bucket is not re-derived either.
+     * <p>The recorded admission result ({@code validation}) is recomputed from the request, the preference and the
+     * recorded parameters. The cohort bucket is not re-derived, because the port does not expose the policy's
+     * {@code CohortMapping}.
      */
     private void verify(RoutingDecision decision, RoutingInput input) {
         Provenance provenance = decision.provenance();
@@ -145,13 +144,11 @@ public final class RoutingReasoningStage implements CognitiveStage {
                     throw new IllegalStateException("policy abstention lists other eligible routes than the filter");
                 }
                 if (abstain.reason() == AbstainReason.POLICY_TRADEOFF_UNRESOLVED) {
-                    verifyExplanation(abstain.candidates(), abstain.candidatesTruncated(), report);
                     verifyTradeoff(abstain, report, input);
                 }
             }
             case RoutingDecision.Selected selected -> {
                 verifySelected(selected, report);
-                verifyExplanation(selected.candidates(), selected.candidatesTruncated(), report);
                 verifySelectedRanking(selected, report, input);
             }
         }
@@ -161,15 +158,16 @@ public final class RoutingReasoningStage implements CognitiveStage {
     }
 
     /**
-     * The recorded validation must agree with the admission keys that the request, the preference and the recorded
-     * policy parameters decide: scope, evaluation policy, watermark and mapping version in both directions, and the
-     * feature schema in one direction (a mismatch can also stem from the policy's own mapping, which the port does not
-     * expose).
+     * The recorded validation must agree, in both directions, with the admission keys that the request, the preference
+     * and the recorded policy parameters (state mapping version and feature schema) decide.
      */
     private void verifyState(StateValidation validation, PolicyParameters parameters, RoutingInput input) {
         RoutingPreference preference = input.preference();
         var expected = EnumSet.noneOf(StateMismatch.class);
         expected.addAll(preference.mismatches(input.request()));
+        if (!parameters.stateFeatureSchemaVersion().equals(input.request().features().schemaVersion())) {
+            expected.add(StateMismatch.FEATURE_SCHEMA_MISMATCH);
+        }
         if (!preference.mappingVersion().equals(parameters.stateMappingVersion())) {
             expected.add(StateMismatch.MAPPING_VERSION_MISMATCH);
         }
@@ -186,7 +184,7 @@ public final class RoutingReasoningStage implements CognitiveStage {
                             + expected);
                 }
                 for (StateMismatch reason : incompatible.reasons()) {
-                    if (reason != StateMismatch.FEATURE_SCHEMA_MISMATCH && !expected.contains(reason)) {
+                    if (!expected.contains(reason)) {
                         throw new IllegalStateException("policy decision reports a state mismatch that does not "
                                 + "exist: " + reason);
                     }
@@ -208,22 +206,6 @@ public final class RoutingReasoningStage implements CognitiveStage {
                     + selected.route() + ": mode " + selected.executionMode() + ", overflow "
                     + selected.overflowUsed() + " instead of " + eligible.executionMode() + ", "
                     + eligible.overflow());
-        }
-    }
-
-    /** Every ranked candidate must be eligible, and the explanation must be the bounded prefix the filter implies. */
-    private void verifyExplanation(List<RankedCandidate> candidates, boolean truncated, EligibilityReport report) {
-        for (RankedCandidate candidate : candidates) {
-            if (report.eligible().stream().noneMatch(route -> route.key().equals(candidate.key()))) {
-                throw new IllegalStateException(
-                        "policy ranked a route that is not eligible for the request: " + candidate.key());
-            }
-        }
-        int eligible = report.eligible().size();
-        if (candidates.size() != Math.min(RoutingDecision.MAX_CANDIDATES, eligible)
-                || truncated != eligible > RoutingDecision.MAX_CANDIDATES) {
-            throw new IllegalStateException("policy ranking lists " + candidates.size() + " candidates (truncated: "
-                    + truncated + ") for " + eligible + " eligible routes");
         }
     }
 

@@ -45,29 +45,21 @@ final class LexicographicRanking {
      *
      * @param route the eligible route (execution mode and overflow flag come from the filter)
      * @param tier the route's catalog tier
-     * @param placement the rule that separates it from its neighbour
      */
-    record Item(EligibleRoute route, int tier, Placement placement) {
+    record Item(EligibleRoute route, int tier) {
     }
 
     /**
      * The complete ranking.
      *
      * @param order every eligible route, best first
+     * @param candidates the bounded explanation: the first {@value RoutingDecision#MAX_CANDIDATES} routes with the
+     *         rule that separates each from its neighbour, computed once
      * @param learnedActive whether the learned preference rule applied
      * @param resourceApplied whether the resource objective refined at least one tied group
      */
-    record Result(List<Item> order, boolean learnedActive, boolean resourceApplied) {
-
-        /** The bounded explanation: the first {@value RoutingDecision#MAX_CANDIDATES} routes. */
-        List<RankedCandidate> candidates() {
-            int shown = Math.min(order.size(), RoutingDecision.MAX_CANDIDATES);
-            List<RankedCandidate> candidates = new ArrayList<>(shown);
-            for (int i = 0; i < shown; i++) {
-                candidates.add(new RankedCandidate(i, order.get(i).route().key(), order.get(i).placement()));
-            }
-            return candidates;
-        }
+    record Result(List<Item> order, List<RankedCandidate> candidates, boolean learnedActive,
+            boolean resourceApplied) {
 
         /** Whether more routes are eligible than {@link #candidates()} lists. */
         boolean truncated() {
@@ -150,10 +142,16 @@ final class LexicographicRanking {
         work.sort(byRules.thenComparing(w -> w.route.key()));
         boolean resourceApplied = objective.isPresent() && refine(catalog, work, grouping);
         List<Item> order = new ArrayList<>(work.size());
-        for (int i = 0; i < work.size(); i++) {
-            order.add(new Item(work.get(i).route, work.get(i).tier, placement(work, i, learnedActive)));
+        for (Work w : work) {
+            order.add(new Item(w.route, w.tier));
         }
-        return new Result(List.copyOf(order), learnedActive, resourceApplied);
+        // Placements are needed only for the bounded explanation, not for every eligible route.
+        int shown = Math.min(work.size(), RoutingDecision.MAX_CANDIDATES);
+        List<RankedCandidate> candidates = new ArrayList<>(shown);
+        for (int i = 0; i < shown; i++) {
+            candidates.add(new RankedCandidate(i, work.get(i).route.key(), placement(work, i, learnedActive)));
+        }
+        return new Result(List.copyOf(order), List.copyOf(candidates), learnedActive, resourceApplied);
     }
 
     /** Looks up each candidate's cohort by binary search in the snapshot; active only if every one has enough support. */

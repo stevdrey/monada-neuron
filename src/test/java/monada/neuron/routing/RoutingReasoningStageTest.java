@@ -30,6 +30,7 @@ import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestReporter;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -56,7 +57,7 @@ class RoutingReasoningStageTest {
     private static final List<RoutingRule> SKIPPED =
             List.of(RoutingRule.LEARNED_PREFERENCE, RoutingRule.RESOURCE_OBJECTIVE);
     private static final PolicyParameters PARAMETERS =
-            new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "routing-state/1");
+            new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "routing-state/1", "task-features/1");
     private static final CognitiveBudget MINIMUM = new CognitiveBudget(1, 1, 0);
     private static final Optional<HostExecutionContext> HOST =
             Optional.of(HostExecutionContext.of(new HostReference("exec-1")));
@@ -352,7 +353,7 @@ class RoutingReasoningStageTest {
     }
 
     @Test
-    void everyRankedCandidateAndTheTruncationFlagAreCheckedAgainstTheFilter() {
+    void everyRankedCandidateAndTheTruncationFlagAreCheckedAgainstTheRecomputedRanking() {
         var request = request(List.of("java"), false);
         var provenance = stubProvenance(request);
         var excluded = new RouteEligibilityFilter().evaluate(request, demo()).excluded();
@@ -364,9 +365,9 @@ class RoutingReasoningStageTest {
         var partial = List.of(new RankedCandidate(0, RoutingFixtures.SUB_A, Placement.ONLY_ELIGIBLE));
 
         assertTrue(rejected(stubbedRanking(request, provenance, RoutingFixtures.SUB_A, "sandboxed", false, excluded,
-                withGhost, false)).getMessage().contains("ghost"));
+                withGhost, false)).getMessage().contains("recomputed ranking"));
         assertTrue(rejected(stubbedRanking(request, provenance, RoutingFixtures.SUB_A, "sandboxed", false, excluded,
-                partial, false)).getMessage().contains("1 candidates"));
+                partial, false)).getMessage().contains("recomputed ranking"));
         stubbedRanking(request, provenance, RoutingFixtures.SUB_A, "sandboxed", false, excluded, complete, false)
                 .execute(monad(), List.of(), new CognitiveContext(MINIMUM, HOST));
     }
@@ -442,7 +443,7 @@ class RoutingReasoningStageTest {
     void anAbstentionMustReportExactlyTheMismatchesThatExist() {
         var request = request(List.of("java"), false);
         var good = empty(request);
-        var otherMapping = new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "other-mapping");
+        var otherMapping = new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "other-mapping", "task-features/1");
 
         // Spurious reasons for a request-compatible, mapping-compatible preference.
         assertTrue(rejected(abstaining(request, good, List.of(StateMismatch.SCOPE_MISMATCH), PARAMETERS))
@@ -461,7 +462,7 @@ class RoutingReasoningStageTest {
     private static RoutingReasoningStage onlyApi(OptionalInt cap, boolean abstain) {
         var request = request(List.of("long-context"), true);
         var report = new RouteEligibilityFilter().evaluate(request, demo());
-        var parameters = new PolicyParameters(3, cap, Optional.empty(), "routing-state/1");
+        var parameters = new PolicyParameters(3, cap, Optional.empty(), "routing-state/1", "task-features/1");
         var provenance = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
                 empty(request).binding(), new StateValidation.Compatible(), parameters);
         var ranked = List.of(new RankedCandidate(0, RoutingFixtures.API_X, Placement.ONLY_ELIGIBLE));
@@ -493,7 +494,7 @@ class RoutingReasoningStageTest {
         var request = request(List.of("java"), false);
         var catalog = RoutingFixtures.demoWith(estimates);
         var parameters = new PolicyParameters(3, OptionalInt.empty(),
-                Optional.of(new ResourceObjective("cost", direction)), "routing-state/1");
+                Optional.of(new ResourceObjective("cost", direction)), "routing-state/1", "task-features/1");
         var provenance = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
                 empty(request).binding(), new StateValidation.Compatible(), parameters);
         var ranked = List.of(new RankedCandidate(0, RoutingFixtures.SUB_A, Placement.RESOURCE_OBJECTIVE),
@@ -533,7 +534,7 @@ class RoutingReasoningStageTest {
     }
 
     private static final PolicyParameters COST_MINIMIZE = new PolicyParameters(3, OptionalInt.empty(),
-            Optional.of(new ResourceObjective("cost", ResourceObjective.Direction.MINIMIZE)), "routing-state/1");
+            Optional.of(new ResourceObjective("cost", ResourceObjective.Direction.MINIMIZE)), "routing-state/1", "task-features/1");
 
     private static final List<RoutingRule> WITH_LEARNED = List.of(RoutingRule.TIER, RoutingRule.FALLBACK_PRIORITY,
             RoutingRule.LEARNED_PREFERENCE, RoutingRule.ROUTE_ORDER);
@@ -711,7 +712,7 @@ class RoutingReasoningStageTest {
                 RoutingFixtures.entry(RoutingFixtures.base("api-y", 1)
                         .billingMode(BillingMode.API_METERED).overflowClass(overflow)
                         .tier(2).build(), 1)));
-        var parameters = new PolicyParameters(3, OptionalInt.of(1), Optional.empty(), "routing-state/1");
+        var parameters = new PolicyParameters(3, OptionalInt.of(1), Optional.empty(), "routing-state/1", "task-features/1");
         var provenance = new Provenance(DecisionRef.of(request), "cat-api", "stub", "1", request.cutoff(),
                 empty(request).binding(), new StateValidation.Compatible(), parameters);
         var report = new RouteEligibilityFilter().evaluate(request, catalog);
@@ -748,7 +749,7 @@ class RoutingReasoningStageTest {
                 cold.evaluationPolicyId(), cold.evaluationPolicyVersion(), cold.mappingVersion(), "p", "1", 0,
                 List.of(new CohortPreference("implement", "M", RoutingFixtures.API_X, 0.1, 3),
                         new CohortPreference("implement", "M", apiY, 0.9, 3)));
-        var parameters = new PolicyParameters(3, OptionalInt.of(1), Optional.empty(), "routing-state/1");
+        var parameters = new PolicyParameters(3, OptionalInt.of(1), Optional.empty(), "routing-state/1", "task-features/1");
         var provenance = new Provenance(DecisionRef.of(request), "cat-api", "stub", "1", request.cutoff(),
                 prefersY.binding(), new StateValidation.Compatible(), parameters);
         var report = new RouteEligibilityFilter().evaluate(request, catalog);
@@ -771,5 +772,43 @@ class RoutingReasoningStageTest {
                 assertTrue(rejected(stage).getMessage().contains("recomputed ranking"), c.toString());
             }
         }
+    }
+
+    /** Allocation guard for one maximum-size stage execution (decision plus verification); measured 31 to 35 KiB over three runs. */
+    private static final long STAGE_LIMIT_BYTES = 44 * 1024;
+
+    @Test
+    void maximumSizeStageExecutionAllocatesBoundedMemory(TestReporter reporter) {
+        var request = request(List.of("java"), true);
+        var catalog = RoutingFixtures.maximumCatalog();
+        var preference = RoutingFixtures.maximumPreference();
+        var reference = new LexicographicRoutingPolicy(RoutingStateDefinition.reference(), 3, OptionalInt.empty(),
+                Optional.of(new ResourceObjective("cost", ResourceObjective.Direction.MINIMIZE)));
+        var stage = new RoutingReasoningStage(reference,
+                context -> Optional.of(new RoutingInput(request, catalog, preference)), DOMAIN);
+        var context = new CognitiveContext(MINIMUM, HOST);
+        var monad = monad();
+
+        long allocated = AllocationProbe.measure(20_000, () -> stage.execute(monad, List.of(), context));
+
+        reporter.publishEntry("allocatedBytes", Long.toString(allocated));
+        assertTrue(allocated < STAGE_LIMIT_BYTES, "allocated " + allocated);
+    }
+
+    @Test
+    void theFeatureSchemaMismatchIsCheckedInBothDirections() {
+        var request = request(List.of("java"), false);
+        var good = empty(request);
+        var otherSchema = new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "routing-state/1",
+                "task-features/0");
+
+        // No schema mismatch exists, so reporting one is a false abstention.
+        assertTrue(rejected(abstaining(request, good, List.of(StateMismatch.FEATURE_SCHEMA_MISMATCH), PARAMETERS))
+                .getMessage().contains("does not exist"));
+        // The policy's own mapping was built for another schema, so the mismatch is real and must be reported.
+        abstaining(request, good, List.of(StateMismatch.FEATURE_SCHEMA_MISMATCH), otherSchema)
+                .execute(monad(), List.of(), new CognitiveContext(MINIMUM, HOST));
+        assertTrue(rejected(abstaining(request, good, List.of(StateMismatch.SCOPE_MISMATCH), otherSchema))
+                .getMessage().contains("omits"));
     }
 }

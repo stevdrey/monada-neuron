@@ -37,9 +37,11 @@ public record Provenance(
         Objects.requireNonNull(validation, "validation must not be null");
         Objects.requireNonNull(parameters, "parameters must not be null");
         if (validation instanceof StateValidation.Compatible
-                && !state.mappingVersion().equals(parameters.stateMappingVersion())) {
+                && (!state.mappingVersion().equals(parameters.stateMappingVersion())
+                        || !state.featureSchemaVersion().equals(parameters.stateFeatureSchemaVersion()))) {
             throw new IllegalArgumentException("a compatible state was built under mapping " + state.mappingVersion()
-                    + " but the policy parameters record " + parameters.stateMappingVersion());
+                    + " and schema " + state.featureSchemaVersion() + " but the policy parameters record "
+                    + parameters.stateMappingVersion() + " and " + parameters.stateFeatureSchemaVersion());
         }
     }
 }

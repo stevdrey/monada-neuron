@@ -4,6 +4,7 @@ import monada.neuron.context.CognitiveContext;
 import monada.neuron.monad.CognitiveStageKind;
 import monada.neuron.monad.CognitiveStageResult;
 import monada.neuron.monad.CognitiveStageStatus;
+import monada.neuron.reasoning.HypothesisHandOff;
 import monada.neuron.reasoning.HypothesisSet;
 import monada.neuron.signal.Signal;
 
@@ -21,7 +22,7 @@ import java.util.Objects;
  * @param hypotheses hypotheses handed to the following stage
  */
 public record RoutingCognitiveStageResult(RoutingDecision decision, HypothesisSet hypotheses)
-        implements CognitiveStageResult {
+        implements CognitiveStageResult, HypothesisHandOff {
 
     /** Requires one hypothesis exactly for a selected decision. */
     public RoutingCognitiveStageResult {

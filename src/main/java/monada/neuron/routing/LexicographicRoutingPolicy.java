@@ -47,10 +47,9 @@ public final class LexicographicRoutingPolicy implements RoutingPolicy {
     private static final RouteEligibilityFilter FILTER = new RouteEligibilityFilter();
 
     private final RoutingStateDefinition definition;
-    private final int minSupportingObservations;
     private final OptionalInt maxAutoSelectTier;
     private final LexicographicRanking ranking;
-    private final Optional<ResourceObjective> objective;
+    private final PolicyParameters parameters;
 
     /**
      * Creates a policy.
@@ -66,17 +65,10 @@ public final class LexicographicRoutingPolicy implements RoutingPolicy {
             OptionalInt maxAutoSelectTier,
             Optional<ResourceObjective> objective) {
         this.definition = Objects.requireNonNull(definition, "definition must not be null");
-        if (minSupportingObservations < 1) {
-            throw new IllegalArgumentException(
-                    "minSupportingObservations must be at least 1, got: " + minSupportingObservations);
-        }
-        this.minSupportingObservations = minSupportingObservations;
         this.maxAutoSelectTier = Objects.requireNonNull(maxAutoSelectTier, "maxAutoSelectTier must not be null");
-        if (maxAutoSelectTier.isPresent() && maxAutoSelectTier.getAsInt() < 1) {
-            throw new IllegalArgumentException(
-                    "maxAutoSelectTier must be at least 1, got: " + maxAutoSelectTier.getAsInt());
-        }
-        this.objective = Objects.requireNonNull(objective, "objective must not be null");
+        // The record validates the configuration once; every decision records this same instance.
+        this.parameters = new PolicyParameters(minSupportingObservations, maxAutoSelectTier, objective,
+                definition.mappingVersion(), definition.cohortMapping().featureSchemaVersion());
         this.ranking = new LexicographicRanking(minSupportingObservations, objective);
     }
 
@@ -141,7 +133,6 @@ public final class LexicographicRoutingPolicy implements RoutingPolicy {
             RoutingRequest request, RouteCatalog catalog, RoutingPreference preference, StateValidation validation) {
         return new Provenance(DecisionRef.of(request), catalog.catalogVersion(), POLICY_ID, POLICY_VERSION,
                 request.cutoff(), preference.binding(), validation,
-                new PolicyParameters(minSupportingObservations, maxAutoSelectTier, objective,
-                        definition.mappingVersion()));
+                parameters);
     }
 }
