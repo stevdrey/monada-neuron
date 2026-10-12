@@ -55,8 +55,9 @@ experimental routing extension in a new `monada.neuron.routing` package. Type na
   exclusions) and the `route-lex/1`-specific `LexicographicDecisionVerifier` (admission keys the recorded policy parameters
   decide, exact ordering, bounded explanation, truncation, tier cap). The checks and their outcomes are those of #62;
   contract Section 17.5 lists every check with its owner and the trust limitations that remain (shared ranking definition,
-  decision-recorded parameters and cohort bucket, partial feature-schema check). The stage applies the `route-lex/1`
-  verifier to every policy it hosts and offers no way to skip either collaborator.
+  decision-recorded parameters and cohort bucket, partial feature-schema check). Since #76 the legacy constructor applies the
+  `route-lex/1` verifier to every policy it hosts; since #78 a host-configured `TrustedRoutingProfile` selects the verifier
+  and checks against independent configuration instead (ADR 0027). Neither path offers a way to skip the mandatory validator.
 - **Reference policy.** A fixed lexicographic list (host tier, host fallback priority, learned preference when compatible and
   sufficiently supported, known comparable resource estimate, canonical route id) instead of an unexplained blended scalar.
   Unknown resources are never zero, cheapest or fastest. Quality gates precede resource optimization.
