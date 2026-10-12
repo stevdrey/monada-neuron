@@ -1119,9 +1119,13 @@ shows agreement with that implementation, **not independent mathematical correct
 ### 18.5 Contract compatibility
 
 The v1 decision types encode the Section 3.3 ordering (`RoutingRule`, `Placement`, `Basis`, `AbstainReason`). A custom policy
-fits only if its decisions are faithfully expressible in them; the demonstration fixture varies the policy identity only. A policy
-whose ordering these types cannot represent fails closed at construction (`unsupported routing decision contract ...`) and needs a
-versioned successor of the decision types, which is follow-up work and deliberately not part of v1.
+fits only if its decisions are faithfully expressible in them; the demonstration fixture varies the policy identity only. The
+profile cannot inspect a policy's ordering: it checks only the declared contract version string and the verifier's reported
+identity, version and contract. The trusted host is therefore responsible for declaring a successor contract (which this library
+rejects at construction with `unsupported routing decision contract ...` until it implements it) for any policy whose ordering
+the v1 types cannot represent. Binding such a policy to `routing-decision/1` is not detected at construction: a mismatch
+surfaces only if the policy cannot build a v1 decision or the host-selected verifier rejects it, and a permissive verifier may
+accept it. A versioned successor of the decision types is follow-up work and deliberately not part of v1.
 
 ### 18.6 Alternatives considered
 

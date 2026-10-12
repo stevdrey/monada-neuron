@@ -41,8 +41,10 @@ Add an explicit, host-chosen verifier boundary (Forge Routing Contract v1, Secti
   ineligible routes, wrong mode/overflow and foreign catalog/request provenance.
 - The reference ranking is verified against the same `LexicographicRanking` implementation: agreement, not independent
   correctness.
-- v1 decision types encode the reference ordering; other ordering families need a versioned successor of those types and fail
-  closed here.
+- v1 decision types encode the reference ordering. The profile cannot inspect a policy's ordering, so the trusted host must
+  declare a successor contract for other ordering families; this library rejects any contract other than `routing-decision/1`
+  at construction. Binding a non-v1 policy to `routing-decision/1` is caught only if its decisions cannot be built or the
+  host-selected verifier rejects them.
 - Measured cost on the maximum-size fixture is a few hundred bytes per execution (contract Section 18.7); verification still
   repeats ranking.
 

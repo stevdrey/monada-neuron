@@ -8,7 +8,9 @@ import java.util.Objects;
  *
  * <p>The host builds it from its own configuration, never from a decision or from data a policy returns. Construction
  * fails closed and deterministically: a missing verifier, a verifier for another policy or contract, or a contract
- * this library does not implement is rejected before any decision exists. A profile is immutable; reuse one across
+ * this library does not implement is rejected before any decision exists. The profile checks only these declared values;
+ * it cannot inspect a policy's ordering, so the host must declare a successor contract for policies the v1 decision
+ * types cannot represent. A profile is immutable; reuse one across
  * stage invocations.
  *
  * @param policyId id of the policy the stage hosts
