@@ -832,8 +832,10 @@ class RoutingReasoningStageTest {
     }
 
     /**
-     * Allocation guard for one maximum-size stage execution (decision plus verification); measured 34.5 to 37.2 KiB
-     * before and 31.3 to 34.4 KiB after the verification was split into two collaborators (#76), three runs each.
+     * Allocation regression guard for one maximum-size stage execution: {@code decide} plus the mandatory validation and
+     * the {@code route-lex/1} verification, that is one extra eligibility pass and one extra ranking. The bound leaves
+     * headroom over the observed run-to-run range; the measured figures, labeled by revision, are kept in Forge Routing
+     * Contract v1, section 17.3, not here.
      */
     private static final long STAGE_LIMIT_BYTES = 44 * 1024;
 
