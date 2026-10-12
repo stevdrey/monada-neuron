@@ -1,5 +1,6 @@
 package monada.neuron.routing.outcome;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 
@@ -9,7 +10,7 @@ import java.util.Objects;
  *
  * @param derivedAcceptance acceptance derived as the Store defines it
  * @param verdict whether the observation supports a positive or a negative example
- * @param reasons ineligibility reasons in declaration order, unique; may accompany a candidate verdict (for example a
+ * @param reasons ineligibility reasons, canonicalized to declaration order, unique; may accompany a candidate verdict (for example a
  *         missing non-failing dimension next to a proven failure)
  * @param mismatches provenance fields that disagree, in declaration order; non-empty iff {@code PROVENANCE_MISMATCH}
  * @param effectiveEvidence effective state per mandatory dimension, in dimension order; a dimension without an
@@ -41,17 +42,14 @@ public record LearningAssessment(
     public LearningAssessment {
         Objects.requireNonNull(derivedAcceptance, "derivedAcceptance must not be null");
         Objects.requireNonNull(verdict, "verdict must not be null");
-        reasons = List.copyOf(reasons);
-        mismatches = List.copyOf(mismatches);
-        effectiveEvidence = List.copyOf(effectiveEvidence);
+        reasons = Ordering.canonical(reasons, Comparator.naturalOrder(), IneligibilityReason.values().length, "reasons");
+        mismatches = Ordering.canonical(mismatches, Comparator.naturalOrder(), ProvenanceField.values().length,
+                "mismatches");
+        effectiveEvidence = Ordering.canonical(effectiveEvidence, Comparator.comparing(EffectiveEvidence::dimension),
+                QualityDimension.values().length, "effectiveEvidence");
         provenFailures = List.copyOf(provenFailures);
         if (excludedObservations < 0) {
             throw new IllegalArgumentException("excludedObservations must be non-negative");
-        }
-        for (int i = 1; i < reasons.size(); i++) {
-            if (reasons.get(i - 1).compareTo(reasons.get(i)) >= 0) {
-                throw new IllegalArgumentException("reasons must be unique and in declaration order");
-            }
         }
         if (reasons.contains(IneligibilityReason.PROVENANCE_MISMATCH) != !mismatches.isEmpty()) {
             throw new IllegalArgumentException("mismatches must be listed exactly when PROVENANCE_MISMATCH is");

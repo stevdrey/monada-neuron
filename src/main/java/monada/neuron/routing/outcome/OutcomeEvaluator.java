@@ -208,6 +208,9 @@ public final class OutcomeEvaluator {
                 || !provenance.decisionRef().equals(DecisionRef.of(request))) {
             found.add(ProvenanceField.DECISION_REF);
         }
+        if (provenance.cutoff() != request.cutoff()) {
+            found.add(ProvenanceField.CUTOFF);
+        }
         if (!outcome.executedRoute().equals(decision.route())) {
             found.add(ProvenanceField.EXECUTED_ROUTE);
         }

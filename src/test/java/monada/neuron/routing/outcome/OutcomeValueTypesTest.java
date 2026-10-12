@@ -198,6 +198,36 @@ class OutcomeValueTypesTest {
     }
 
     @Test
+    void assessmentListsAreCanonicalAndDuplicateFree() {
+        var tests = new LearningAssessment.EffectiveEvidence(QualityDimension.TESTS, QualityState.PASS, 5);
+        var security = new LearningAssessment.EffectiveEvidence(QualityDimension.SECURITY, QualityState.PASS, 6);
+        var ordered = new LearningAssessment(DerivedAcceptance.NOT_ACCEPTED, EligibilityVerdict.NOT_ELIGIBLE,
+                List.of(IneligibilityReason.PROVENANCE_MISMATCH, IneligibilityReason.PENDING),
+                List.of(ProvenanceField.DECISION_REF, ProvenanceField.CUTOFF), List.of(tests, security), List.of(), 0);
+        var shuffled = new LearningAssessment(DerivedAcceptance.NOT_ACCEPTED, EligibilityVerdict.NOT_ELIGIBLE,
+                List.of(IneligibilityReason.PENDING, IneligibilityReason.PROVENANCE_MISMATCH),
+                List.of(ProvenanceField.CUTOFF, ProvenanceField.DECISION_REF), List.of(security, tests), List.of(), 0);
+        assertEquals(ordered, shuffled);
+        assertThrows(IllegalArgumentException.class, () -> new LearningAssessment(DerivedAcceptance.NOT_ACCEPTED,
+                EligibilityVerdict.NOT_ELIGIBLE, List.of(IneligibilityReason.PENDING, IneligibilityReason.PENDING),
+                List.of(), List.of(), List.of(), 0));
+        assertThrows(IllegalArgumentException.class, () -> new LearningAssessment(DerivedAcceptance.NOT_ACCEPTED,
+                EligibilityVerdict.NOT_ELIGIBLE, List.of(), List.of(), List.of(tests, tests), List.of(), 0));
+    }
+
+    @Test
+    void laterRevisionsMustSitAtLaterLedgerSequences() {
+        var backward = new OutcomeFixtures.Spec()
+                .with(obs("e1", 1, QualityDimension.TESTS, QualityState.PASS, "att-1", 5))
+                .with(obs("e1", 0, QualityDimension.TESTS, QualityState.FAIL, "att-1", 9));
+        assertThrows(IllegalArgumentException.class, backward::outcome);
+        var forward = new OutcomeFixtures.Spec()
+                .with(obs("e1", 0, QualityDimension.TESTS, QualityState.FAIL, "att-1", 5))
+                .with(obs("e1", 1, QualityDimension.TESTS, QualityState.PASS, "att-1", 9));
+        assertEquals(2, forward.outcome().observations().size());
+    }
+
+    @Test
     void provenFailuresMustAgreeWithTheEffectiveEvidence() {
         var pass = new LearningAssessment.EffectiveEvidence(QualityDimension.TESTS, QualityState.PASS, 5);
         assertThrows(IllegalArgumentException.class, () -> new LearningAssessment(DerivedAcceptance.NOT_ACCEPTED,
@@ -215,8 +245,5 @@ class OutcomeValueTypesTest {
                 EligibilityVerdict.NEGATIVE_CANDIDATE, List.of(), List.of(), List.of(), List.of(), 0));
         assertThrows(IllegalArgumentException.class, () -> new LearningAssessment(DerivedAcceptance.NOT_ACCEPTED,
                 EligibilityVerdict.NOT_ELIGIBLE, List.of(IneligibilityReason.PROVENANCE_MISMATCH), List.of(), List.of(), List.of(), 0));
-        assertThrows(IllegalArgumentException.class, () -> new LearningAssessment(DerivedAcceptance.NOT_ACCEPTED,
-                EligibilityVerdict.NOT_ELIGIBLE, List.of(IneligibilityReason.PENDING, IneligibilityReason.CANCELLED),
-                List.of(), List.of(), List.of(), 0));
     }
 }

@@ -6,6 +6,7 @@ import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -119,7 +120,7 @@ public record RoutingOutcome(
         Objects.requireNonNull(attribution, "attribution must not be null");
     }
 
-    /** One exact event revision has one ledger position and one judgment per dimension. */
+    /** One exact event revision has one ledger position and one judgment per dimension, and a higher revision of an event sits at a strictly higher ledger sequence. */
     private static void requireConsistentPositions(List<QualityObservation> observations) {
         record Revision(String eventRef, long revision) {
         }
@@ -137,6 +138,19 @@ public record RoutingOutcome(
             if (!judgments.add(new Judgment(revision, o.dimension()))) {
                 throw new IllegalArgumentException("event revision " + o.eventRef() + "@" + o.revision()
                         + " judges " + o.dimension() + " more than once");
+            }
+        }
+        List<QualityObservation> byRevision = new ArrayList<>(observations);
+        byRevision.sort(Comparator.comparing(QualityObservation::eventRef, OutcomeTokens::compare)
+                .thenComparingLong(QualityObservation::revision));
+        for (int i = 1; i < byRevision.size(); i++) {
+            QualityObservation earlier = byRevision.get(i - 1);
+            QualityObservation later = byRevision.get(i);
+            if (earlier.eventRef().equals(later.eventRef()) && earlier.revision() != later.revision()
+                    && later.ledgerSequence() <= earlier.ledgerSequence()) {
+                throw new IllegalArgumentException("event " + later.eventRef() + " revision " + later.revision()
+                        + " at sequence " + later.ledgerSequence() + " must come after revision " + earlier.revision()
+                        + " at sequence " + earlier.ledgerSequence());
             }
         }
     }
