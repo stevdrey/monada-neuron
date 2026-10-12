@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import static monada.neuron.routing.RoutingFixtures.demo;
@@ -180,6 +181,37 @@ class RoutingReasoningStageTest {
             assertFalse(Arrays.stream(type.getRecordComponents())
                     .anyMatch(c -> c.getType().getSimpleName().equals("ActionStatus")));
         }
+    }
+
+    @Test
+    void theStageDecidesExactlyOncePerExecution() {
+        var request = request(List.of("java"), false);
+        var reference = LexicographicRoutingPolicy.reference();
+        var calls = new AtomicInteger();
+        RoutingPolicy counting = new RoutingPolicy() {
+            @Override
+            public String policyId() {
+                return reference.policyId();
+            }
+
+            @Override
+            public String policyVersion() {
+                return reference.policyVersion();
+            }
+
+            @Override
+            public RoutingDecision decide(RoutingRequest r, RouteCatalog c, RoutingPreference p) {
+                calls.incrementAndGet();
+                return reference.decide(r, c, p);
+            }
+        };
+        var stage = new RoutingReasoningStage(counting,
+                context -> Optional.of(new RoutingInput(request, demo(), empty(request))), DOMAIN);
+
+        var result = stage.execute(monad(), List.of(), new CognitiveContext(MINIMUM, HOST));
+
+        assertInstanceOf(RoutingDecision.Selected.class, result.decision());
+        assertEquals(1, calls.get());
     }
 
     private static RoutingReasoningStage stubbed(RoutingRequest request, RouteKey route, String mode, boolean overflow) {
@@ -774,7 +806,10 @@ class RoutingReasoningStageTest {
         }
     }
 
-    /** Allocation guard for one maximum-size stage execution (decision plus verification); measured 31 to 35 KiB over three runs. */
+    /**
+     * Allocation guard for one maximum-size stage execution (decision plus verification); measured 34.5 to 37.2 KiB
+     * before and 31.3 to 34.4 KiB after the verification was split into two collaborators (#76), three runs each.
+     */
     private static final long STAGE_LIMIT_BYTES = 44 * 1024;
 
     @Test

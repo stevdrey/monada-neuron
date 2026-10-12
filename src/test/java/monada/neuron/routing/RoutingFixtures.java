@@ -15,6 +15,8 @@ import monada.neuron.routing.features.TaskFeatures;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.OptionalInt;
 
 /** Fixtures: the fictional catalog of Forge Routing Contract v1 section 9 (all identifiers are invented). */
 final class RoutingFixtures {
@@ -22,6 +24,13 @@ final class RoutingFixtures {
     static final RouteKey SUB_A = new RouteKey("sub-a", 1);
     static final RouteKey SUB_B = new RouteKey("sub-b", 1);
     static final RouteKey API_X = new RouteKey("api-x", 1);
+
+    /** The reference policy's parameters. */
+    static final PolicyParameters PARAMETERS =
+            new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "routing-state/1", "task-features/1");
+
+    /** A cohort binding for the default request (bucket {@code UNKNOWN}) under the reference mapping and schema. */
+    static final CohortBinding COLD_COHORT = new CohortBinding("UNKNOWN", "b/1", "routing-state/1", "task-features/1");
 
     private RoutingFixtures() {
     }
@@ -74,6 +83,14 @@ final class RoutingFixtures {
         return new RoutingRequest(RoutingRequest.CONTRACT_VERSION, "scope-demo", "task-17", "exec-1", "att-1",
                 "s-impl", "implement", 101L, "src-1", "ctx-1", "con-1", "forge-gates", "1", features, requirements,
                 overflowPermitted, cutoff);
+    }
+
+    /** Provenance of a {@code route-lex/1} decision over {@link #demo()} for the given request and preference. */
+    static Provenance provenance(RoutingRequest request, RoutingPreference preference, StateValidation validation,
+            PolicyParameters parameters) {
+        return new Provenance(DecisionRef.of(request), "cat-demo-7", LexicographicRoutingPolicy.POLICY_ID,
+                LexicographicRoutingPolicy.POLICY_VERSION, request.cutoff(), preference.binding(), validation,
+                parameters);
     }
 
     static RoutingPreference empty(RoutingRequest request) {

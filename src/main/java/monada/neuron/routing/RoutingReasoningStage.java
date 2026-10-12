@@ -13,7 +13,6 @@ import monada.neuron.routing.catalog.EligibilityReport;
 import monada.neuron.routing.catalog.RouteEligibilityFilter;
 import monada.neuron.signal.Signal;
 
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -22,18 +21,23 @@ import java.util.Objects;
  *
  * <p>It is a source (like {@code PerceptionCognitiveStage}): it must be the first stage, runs with empty initial
  * Signals and cannot be combined with a perception source in the same cycle. It holds no per-cycle state, starts no
- * cycle and never executes the route. It re-verifies a selected route against the hard eligibility filter, so a
- * custom policy cannot hand off a hypothesis for an ineligible route. A selected route becomes one hypothesis whose
- * {@link Proposition#code()} is the zero-based index of the route in the catalog's canonical order; that code is
- * meaningful only together with the decision's {@code catalogVersion}.
+ * cycle and never executes the route. A selected route becomes one hypothesis whose {@link Proposition#code()} is the
+ * zero-based index of the route in the catalog's canonical order; that code is meaningful only together with the
+ * decision's {@code catalogVersion}.
  *
- * <p>The stage enforces the fixed ordering of Forge Routing Contract v1, section 3.3, for every policy it hosts: it
- * recomputes the ranking from the decision's recorded parameters and rejects a decision that differs. A policy with
- * other ordering rules would be a new policy version and needs its own stage.
+ * <p>The stage only composes: it decides once, evaluates the hard eligibility filter once and hands that report to two
+ * collaborators (Forge Routing Contract v1, section 17.5). {@link RoutingDecisionValidator} always checks provenance,
+ * request-derived state admission and eligibility, so a custom policy cannot hand off a hypothesis for an ineligible
+ * route. {@link LexicographicDecisionVerifier} then enforces the fixed ordering of section 3.3 for every policy the
+ * stage hosts: it recomputes the ranking from the decision's recorded parameters and rejects a decision that differs.
+ * A policy with other ordering rules would be a new policy version and needs its own verifier; neither check can be
+ * skipped.
  */
 public final class RoutingReasoningStage implements CognitiveStage {
 
     private final RouteEligibilityFilter filter = new RouteEligibilityFilter();
+    private final RoutingDecisionValidator validator = new RoutingDecisionValidator();
+    private final LexicographicDecisionVerifier ordering = new LexicographicDecisionVerifier();
     private final RoutingPolicy policy;
     private final RoutingInputResolver resolver;
     private final int domain;
@@ -86,7 +90,9 @@ public final class RoutingReasoningStage implements CognitiveStage {
                 .orElseThrow(() -> new IllegalStateException("the host could not resolve routing inputs"));
         RoutingDecision decision = Objects.requireNonNull(
                 policy.decide(input.request(), input.catalog(), input.preference()), "decision must not be null");
-        verify(decision, input);
+        EligibilityReport report = filter.evaluate(input.request(), input.catalog());
+        validator.validate(decision, input, policy, report);
+        ordering.verify(decision, input, report);
         if (decision instanceof RoutingDecision.Selected selected) {
             List<CatalogEntry> entries = input.catalog().entries();
             int index = 0;
@@ -98,169 +104,5 @@ public final class RoutingReasoningStage implements CognitiveStage {
                     decision, new HypothesisSet(List.of(hypothesis), HypothesisLimits.DEFAULT));
         }
         return new RoutingCognitiveStageResult(decision, HypothesisSet.EMPTY);
-    }
-
-    /**
-     * The decision must describe exactly this request, catalog, preference and policy, and agree with the hard
-     * eligibility filter and the contract ordering (recomputed from its recorded parameters), or its catalog-relative codes and audit data would mislead.
-     *
-     * <p>The recorded admission result ({@code validation}) is recomputed from the request, the preference and the
-     * recorded parameters. The cohort bucket is not re-derived, because the port does not expose the policy's
-     * {@code CohortMapping}.
-     */
-    private void verify(RoutingDecision decision, RoutingInput input) {
-        Provenance provenance = decision.provenance();
-        if (!provenance.catalogVersion().equals(input.catalog().catalogVersion())) {
-            throw new IllegalStateException("policy decision refers to catalog " + provenance.catalogVersion()
-                    + " but the resolved catalog is " + input.catalog().catalogVersion());
-        }
-        if (!provenance.decisionRef().equals(DecisionRef.of(input.request()))) {
-            throw new IllegalStateException("policy decision refers to another request: " + provenance.decisionRef());
-        }
-        if (provenance.cutoff() != input.request().cutoff()) {
-            throw new IllegalStateException("policy decision records cutoff " + provenance.cutoff()
-                    + " but the request cutoff is " + input.request().cutoff());
-        }
-        if (!provenance.state().equals(input.preference().binding())) {
-            throw new IllegalStateException("policy decision records another preference snapshot: "
-                    + provenance.state());
-        }
-        if (!provenance.policyId().equals(policy.policyId())
-                || !provenance.policyVersion().equals(policy.policyVersion())) {
-            throw new IllegalStateException("policy decision records policy " + provenance.policyId() + "/"
-                    + provenance.policyVersion() + " instead of " + policy.policyId() + "/" + policy.policyVersion());
-        }
-        verifyState(provenance.validation(), provenance.parameters(), input);
-        EligibilityReport report = filter.evaluate(input.request(), input.catalog());
-        switch (decision) {
-            case RoutingDecision.NoEligibleRoute ignored -> {
-                if (!report.noneEligible()) {
-                    throw new IllegalStateException("policy reported no eligible route but the eligibility filter "
-                            + "accepts " + report.eligible().size());
-                }
-            }
-            case RoutingDecision.Abstain abstain -> {
-                if (!abstain.eligible().equals(report.eligible().stream().map(route -> route.key()).toList())) {
-                    throw new IllegalStateException("policy abstention lists other eligible routes than the filter");
-                }
-                if (abstain.reason() == AbstainReason.POLICY_TRADEOFF_UNRESOLVED) {
-                    verifyTradeoff(abstain, report, input);
-                }
-            }
-            case RoutingDecision.Selected selected -> {
-                verifySelected(selected, report);
-                verifySelectedRanking(selected, report, input);
-            }
-        }
-        if (!decision.exclusions().equals(report.excluded())) {
-            throw new IllegalStateException("policy decision exclusions disagree with the eligibility filter");
-        }
-    }
-
-    /**
-     * The recorded validation must agree, in both directions, with the admission keys that the request, the preference
-     * and the recorded policy parameters (state mapping version and feature schema) decide.
-     */
-    private void verifyState(StateValidation validation, PolicyParameters parameters, RoutingInput input) {
-        RoutingPreference preference = input.preference();
-        var expected = EnumSet.noneOf(StateMismatch.class);
-        expected.addAll(preference.mismatches(input.request()));
-        if (!parameters.stateFeatureSchemaVersion().equals(input.request().features().schemaVersion())) {
-            expected.add(StateMismatch.FEATURE_SCHEMA_MISMATCH);
-        }
-        if (!preference.mappingVersion().equals(parameters.stateMappingVersion())) {
-            expected.add(StateMismatch.MAPPING_VERSION_MISMATCH);
-        }
-        switch (validation) {
-            case StateValidation.Compatible compatible -> {
-                if (!expected.isEmpty()) {
-                    throw new IllegalStateException("policy decision accepted a preference snapshot that conflicts "
-                            + "with the request or the policy mapping: " + expected);
-                }
-            }
-            case StateValidation.Incompatible incompatible -> {
-                if (!incompatible.reasons().containsAll(expected)) {
-                    throw new IllegalStateException("policy decision omits state mismatches the request implies: "
-                            + expected);
-                }
-                for (StateMismatch reason : incompatible.reasons()) {
-                    if (!expected.contains(reason)) {
-                        throw new IllegalStateException("policy decision reports a state mismatch that does not "
-                                + "exist: " + reason);
-                    }
-                }
-            }
-            case StateValidation.NotEvaluated notEvaluated -> { }
-        }
-    }
-
-    private void verifySelected(RoutingDecision.Selected selected, EligibilityReport report) {
-        EligibilityReport.EligibleRoute eligible = report.eligible().stream()
-                .filter(route -> route.key().equals(selected.route()))
-                .findFirst()
-                .orElseThrow(() -> new IllegalStateException(
-                        "policy selected a route that is not eligible for the request: " + selected.route()));
-        if (!eligible.executionMode().equals(selected.executionMode())
-                || eligible.overflow() != selected.overflowUsed()) {
-            throw new IllegalStateException("policy decision disagrees with the eligibility filter for "
-                    + selected.route() + ": mode " + selected.executionMode() + ", overflow "
-                    + selected.overflowUsed() + " instead of " + eligible.executionMode() + ", "
-                    + eligible.overflow());
-        }
-    }
-
-    /**
-     * A {@code Selected} decision must equal the contract ordering recomputed from its recorded parameters and cohort
-     * bucket (the bucket itself cannot be re-derived), and its winner must not exceed the recorded tier cap.
-     */
-    private void verifySelectedRanking(RoutingDecision.Selected selected, EligibilityReport report, RoutingInput input) {
-        PolicyParameters parameters = selected.provenance().parameters();
-        LexicographicRanking.Result expected = new LexicographicRanking(
-                parameters.minSupportingObservations(), parameters.objective())
-                .rank(input.request(), input.catalog(), report.eligible(), input.preference(),
-                        selected.cohortBinding().cohortBucket());
-        boolean sameRanking = expected.order().getFirst().route().key().equals(selected.route())
-                && expected.candidates().equals(selected.candidates())
-                && expected.truncated() == selected.candidatesTruncated()
-                && expected.applied().equals(selected.rulesApplied())
-                && expected.skipped().equals(selected.rulesSkipped())
-                && expected.candidates().getFirst().placement().basis() == selected.basis();
-        if (!sameRanking) {
-            throw new IllegalStateException("policy ranking disagrees with the recomputed ranking: expected "
-                    + expected.candidates() + " (applied " + expected.applied() + ", skipped " + expected.skipped()
-                    + "), got " + selected.candidates() + " (applied " + selected.rulesApplied() + ", skipped "
-                    + selected.rulesSkipped() + ", basis " + selected.basis() + ")");
-        }
-        if (exceedsCap(expected, parameters)) {
-            throw new IllegalStateException("policy selected " + selected.route() + " (tier "
-                    + expected.order().getFirst().tier() + ") above the recorded tier cap "
-                    + parameters.maxAutoSelectTier());
-        }
-    }
-
-    /**
-     * A tier-cap abstention is the only tradeoff trigger. The ranking is recomputed with the cohort the abstention
-     * recorded and must be reproduced, and the recomputed winner must exceed the recorded cap.
-     */
-    private void verifyTradeoff(RoutingDecision.Abstain abstain, EligibilityReport report, RoutingInput input) {
-        PolicyParameters parameters = abstain.provenance().parameters();
-        LexicographicRanking.Result expected = new LexicographicRanking(
-                parameters.minSupportingObservations(), parameters.objective())
-                .rank(input.request(), input.catalog(), report.eligible(), input.preference(),
-                        abstain.cohortBinding().orElseThrow().cohortBucket());
-        if (!expected.candidates().equals(abstain.candidates())
-                || expected.truncated() != abstain.candidatesTruncated()) {
-            throw new IllegalStateException("policy ranking disagrees with the recomputed ranking: expected "
-                    + expected.candidates() + ", got " + abstain.candidates());
-        }
-        if (!exceedsCap(expected, parameters)) {
-            throw new IllegalStateException("policy abstained on the tier cap but the winner does not exceed the "
-                    + "recorded cap " + parameters.maxAutoSelectTier());
-        }
-    }
-
-    private boolean exceedsCap(LexicographicRanking.Result ranking, PolicyParameters parameters) {
-        return parameters.maxAutoSelectTier().isPresent()
-                && ranking.order().getFirst().tier() > parameters.maxAutoSelectTier().getAsInt();
     }
 }

@@ -528,7 +528,7 @@ choice (this extension) and hardware backend selection (`RuntimeBackendSelector`
 The extension is additive and opt-in. It keeps `Signal` identity-free: route identity travels only in typed routing records, and the opaque
 `HostExecutionContext` serves solely as a key the host adapter uses to resolve routing inputs, never as a carrier of route identity. It keeps the canonical stage order, and adds no stage kind or `CycleInput` field. The composition
 seam is a pure `decide` function called by the host on an immutable preference snapshot, with an optional thin `REASONING`-position adapter
-whose inputs come from a host resolver and whose typed result retains the full decision. A decision reserves nothing and is never an `ActionStatus`; a worker invocation result is not validated task
+whose inputs come from a host resolver and whose typed result retains the full decision. That adapter never trusts the hosted policy: it always runs a mandatory provenance, request-admission and eligibility validator and then the `route-lex/1` ordering verifier (issue #76, contract Section 17.5); a pluggable policy-specific verifier is a separate, later step. A decision reserves nothing and is never an `ActionStatus`; a worker invocation result is not validated task
 acceptance. Learning reuses the existing Node-bound `AdaptationPolicy` path through a separate `RoutingFeedback` artifact
 (`OutcomeFeedback` is unchanged), with caller-owned bounded state and an explicit reset-and-replay (optionally from a checkpoint) when corrected evidence
 supersedes any applied reward or penalty. Unknown resource values are never zero, and hypothetical API cost, actual billing and
