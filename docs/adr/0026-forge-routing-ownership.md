@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (contract; implemented so far: `TaskFeatures` and its signal encoder, issue #60, the route catalog and eligibility filter, issue #61, and the routing policy, decision types and composition seam, issue #62; the rest is pending issues #63 to #68)
+Accepted (contract; implemented so far: `TaskFeatures` and its signal encoder, issue #60, the route catalog and eligibility filter, issue #61, and the routing policy, decision types and composition seam, issue #62, with its decision verification split into focused validators by issue #76; the rest is pending issues #63 to #68)
 
 ## Context
 
@@ -49,6 +49,14 @@ experimental routing extension in a new `monada.neuron.routing` package. Type na
   `RoutingReasoningStage` (Level B) occupies the existing `REASONING` position and obtains its per-execution inputs from a
   host-implemented resolver keyed by `HostExecutionContext`, as `PerceptionCapability` does. Because `ReasoningCognitiveStageResult` is a final record that cannot carry the decision, Level B returns a new `RoutingCognitiveStageResult` that retains the full `RoutingDecision` and the hypothesis hand-off, and must override the cycle's output-signal admission normalization so neither is dropped. No new stage kind, no change to
   `CycleInput`, `NeuronRuntime` or the canonical order, and no orchestrator.
+- **Level B verification ownership (issue #76).** The stage never trusts a hosted policy's decision and only composes two
+  package-private, stateless collaborators over one eligibility report: a mandatory, policy-independent
+  `RoutingDecisionValidator` (provenance binding, the state admission keys the request alone decides, hard eligibility and
+  exclusions) and the `route-lex/1`-specific `LexicographicDecisionVerifier` (admission keys the recorded policy parameters
+  decide, exact ordering, bounded explanation, truncation, tier cap). The checks and their outcomes are those of #62;
+  contract Section 17.5 lists every check with its owner and the trust limitations that remain (shared ranking definition,
+  decision-recorded parameters and cohort bucket, partial feature-schema check). The stage applies the `route-lex/1`
+  verifier to every policy it hosts and offers no way to skip either collaborator.
 - **Reference policy.** A fixed lexicographic list (host tier, host fallback priority, learned preference when compatible and
   sufficiently supported, known comparable resource estimate, canonical route id) instead of an unexplained blended scalar.
   Unknown resources are never zero, cheapest or fastest. Quality gates precede resource optimization.
@@ -122,5 +130,9 @@ Rejected as a non-goal: persistence belongs to the Store (ADR 0001, ADR 0018).
 
 - #60 to #68 implement the contract in dependency order (the shared value types `RoutingPreference`, `CohortMapping` and `RoutingObservation` are introduced early, by #62 and #63, so no issue depends on a later one); each must re-inspect `main`, the merged prerequisites, and the exact
   Store public API before use, and may refine signatures but not semantics without updating the contract and this ADR.
+- Option C, a separately scoped successor of #76 and a prerequisite of #63 to #68, makes the policy-specific verifier
+  extensible: a trusted, host-supplied verifier selection, an independent trusted policy and state definition to check
+  parameters and cohort buckets against, the mandatory validator always first with no bypass, and explicit
+  contract-version compatibility (contract Section 17.5).
 - Decide in a later ADR, if a concrete need appears, whether a resource-aware or exploration policy is added, and how routing
   chains into a PERCEPTION Aeon (ADR 0024 deferred this).

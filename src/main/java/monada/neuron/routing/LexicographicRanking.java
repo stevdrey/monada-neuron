@@ -20,11 +20,11 @@ import java.util.Optional;
  * fallback priority, learned preference, resource objective, canonical route order.
  *
  * <p>It is the single definition of the ordering: {@link LexicographicRoutingPolicy} decides with it and
- * {@link RoutingReasoningStage} recomputes it from a decision's recorded parameters to verify the decision. Learned
- * preference is applied only when every eligible route has a cohort with at least {@code minSupportingObservations};
- * the resource objective is applied to each group still tied after the first three rules and only if every route of
- * that group has a {@code Known} estimate of the objective's dimension with one unit. Instances are immutable and
- * stateless.
+ * {@link LexicographicDecisionVerifier} recomputes it from a decision's recorded parameters to verify the decision.
+ * Learned preference is applied only when every eligible route has a cohort with at least
+ * {@code minSupportingObservations}; the resource objective is applied to each group still tied after the first three
+ * rules and only if every route of that group has a {@code Known} estimate of the objective's dimension with one unit.
+ * Instances are immutable and stateless.
  */
 final class LexicographicRanking {
 

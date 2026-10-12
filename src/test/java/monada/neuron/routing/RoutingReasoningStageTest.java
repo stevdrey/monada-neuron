@@ -38,8 +38,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
+import static monada.neuron.routing.RoutingFixtures.APPLIED;
+import static monada.neuron.routing.RoutingFixtures.PARAMETERS;
+import static monada.neuron.routing.RoutingFixtures.SKIPPED;
 import static monada.neuron.routing.RoutingFixtures.demo;
 import static monada.neuron.routing.RoutingFixtures.empty;
 import static monada.neuron.routing.RoutingFixtures.request;
@@ -52,12 +56,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RoutingReasoningStageTest {
 
     private static final int DOMAIN = 7;
-    private static final List<RoutingRule> APPLIED =
-            List.of(RoutingRule.TIER, RoutingRule.FALLBACK_PRIORITY, RoutingRule.ROUTE_ORDER);
-    private static final List<RoutingRule> SKIPPED =
-            List.of(RoutingRule.LEARNED_PREFERENCE, RoutingRule.RESOURCE_OBJECTIVE);
-    private static final PolicyParameters PARAMETERS =
-            new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "routing-state/1", "task-features/1");
     private static final CognitiveBudget MINIMUM = new CognitiveBudget(1, 1, 0);
     private static final Optional<HostExecutionContext> HOST =
             Optional.of(HostExecutionContext.of(new HostReference("exec-1")));
@@ -180,6 +178,37 @@ class RoutingReasoningStageTest {
             assertFalse(Arrays.stream(type.getRecordComponents())
                     .anyMatch(c -> c.getType().getSimpleName().equals("ActionStatus")));
         }
+    }
+
+    @Test
+    void theStageDecidesExactlyOncePerExecution() {
+        var request = request(List.of("java"), false);
+        var reference = LexicographicRoutingPolicy.reference();
+        var calls = new AtomicInteger();
+        RoutingPolicy counting = new RoutingPolicy() {
+            @Override
+            public String policyId() {
+                return reference.policyId();
+            }
+
+            @Override
+            public String policyVersion() {
+                return reference.policyVersion();
+            }
+
+            @Override
+            public RoutingDecision decide(RoutingRequest r, RouteCatalog c, RoutingPreference p) {
+                calls.incrementAndGet();
+                return reference.decide(r, c, p);
+            }
+        };
+        var stage = new RoutingReasoningStage(counting,
+                context -> Optional.of(new RoutingInput(request, demo(), empty(request))), DOMAIN);
+
+        var result = stage.execute(monad(), List.of(), new CognitiveContext(MINIMUM, HOST));
+
+        assertInstanceOf(RoutingDecision.Selected.class, result.decision());
+        assertEquals(1, calls.get());
     }
 
     private static RoutingReasoningStage stubbed(RoutingRequest request, RouteKey route, String mode, boolean overflow) {
@@ -329,6 +358,34 @@ class RoutingReasoningStageTest {
         var wrongEligibleStage = new RoutingReasoningStage(wrongEligible,
                 context -> Optional.of(new RoutingInput(request, demo(), foreignScope)), DOMAIN);
         assertTrue(rejected(wrongEligibleStage).getMessage().contains("other eligible routes"));
+    }
+
+    /**
+     * Since #76 the mandatory checks (provenance, request-derived admission, eligibility, exclusions) run before the
+     * route-lex/1 checks (parameter-derived admission, spurious reasons, ranking), so a decision with one fault of each
+     * kind reports the mandatory one (contract section 17.5). #62 reported the ranking and the spurious reason first.
+     */
+    @Test
+    void multiFaultDecisionsReportTheFirstFailingCheckInTheDocumentedOrder() {
+        var request = request(List.of("java"), false);
+        var good = empty(request);
+
+        // Tampered exclusions and a reversed ranking.
+        var reversed = List.of(new RankedCandidate(0, RoutingFixtures.SUB_B, Placement.ROUTE_ORDER),
+                new RankedCandidate(1, RoutingFixtures.SUB_A, Placement.ROUTE_ORDER));
+        assertTrue(rejected(stubbedRanking(request, stubProvenance(request), RoutingFixtures.SUB_B, "sandboxed", false,
+                List.of(), reversed, false)).getMessage().contains("exclusions disagree"));
+
+        // A spurious mapping mismatch and an eligible list that omits sub-b.
+        var spurious = new Provenance(DecisionRef.of(request), "cat-demo-7", "stub", "1", request.cutoff(),
+                good.binding(), new StateValidation.Incompatible(List.of(StateMismatch.MAPPING_VERSION_MISMATCH)),
+                PARAMETERS);
+        var report = new RouteEligibilityFilter().evaluate(request, demo());
+        RoutingPolicy policy = stubbedPolicy(r -> new RoutingDecision.Abstain(spurious,
+                AbstainReason.STATE_INCOMPATIBLE, List.of(RoutingFixtures.SUB_A), List.of(), false, report.excluded()));
+        var stage = new RoutingReasoningStage(policy,
+                context -> Optional.of(new RoutingInput(request, demo(), good)), DOMAIN);
+        assertTrue(rejected(stage).getMessage().contains("other eligible routes"));
     }
 
     @Test
@@ -774,7 +831,12 @@ class RoutingReasoningStageTest {
         }
     }
 
-    /** Allocation guard for one maximum-size stage execution (decision plus verification); measured 31 to 35 KiB over three runs. */
+    /**
+     * Allocation regression guard for one maximum-size stage execution: {@code decide} plus the mandatory validation and
+     * the {@code route-lex/1} verification, that is one extra eligibility pass and one extra ranking. The bound leaves
+     * headroom over the observed run-to-run range; the measured figures, labeled by revision, are kept in Forge Routing
+     * Contract v1, section 17.3, not here.
+     */
     private static final long STAGE_LIMIT_BYTES = 44 * 1024;
 
     @Test

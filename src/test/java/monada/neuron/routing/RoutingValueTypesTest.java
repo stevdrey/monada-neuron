@@ -14,6 +14,8 @@ import java.util.OptionalInt;
 import java.util.Random;
 import java.util.stream.IntStream;
 
+import static monada.neuron.routing.RoutingFixtures.APPLIED;
+import static monada.neuron.routing.RoutingFixtures.SKIPPED;
 import static monada.neuron.routing.RoutingFixtures.SUB_A;
 import static monada.neuron.routing.RoutingFixtures.SUB_B;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -25,11 +27,6 @@ class RoutingValueTypesTest {
             Optional.of(new ResourceObjective("cost", ResourceObjective.Direction.MINIMIZE)), "m", "task-features/1");
     private static final PolicyParameters NO_OBJECTIVE =
             new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "m", "task-features/1");
-
-    private static final List<RoutingRule> APPLIED =
-            List.of(RoutingRule.TIER, RoutingRule.FALLBACK_PRIORITY, RoutingRule.ROUTE_ORDER);
-    private static final List<RoutingRule> SKIPPED =
-            List.of(RoutingRule.LEARNED_PREFERENCE, RoutingRule.RESOURCE_OBJECTIVE);
 
     private static final Provenance PROVENANCE = provenance(new StateValidation.Compatible());
 
