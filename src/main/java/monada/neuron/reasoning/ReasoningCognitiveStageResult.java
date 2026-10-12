@@ -21,7 +21,7 @@ import java.util.Optional;
 public record ReasoningCognitiveStageResult(
         CognitiveStageStatus status,
         List<Signal> outputSignals,
-        HypothesisSet hypotheses) implements CognitiveStageResult {
+        HypothesisSet hypotheses) implements CognitiveStageResult, HypothesisHandOff {
 
     /** Validates and snapshots components. */
     public ReasoningCognitiveStageResult {
@@ -66,8 +66,7 @@ public record ReasoningCognitiveStageResult(
     public static HypothesisSet hypothesesOf(Optional<CognitiveStageResult> previousResult) {
         Objects.requireNonNull(previousResult, "previousResult must not be null");
         return previousResult
-                .filter(ReasoningCognitiveStageResult.class::isInstance)
-                .map(result -> ((ReasoningCognitiveStageResult) result).hypotheses())
+                .map(result -> result instanceof HypothesisHandOff handOff ? handOff.hypotheses() : HypothesisSet.EMPTY)
                 .orElse(HypothesisSet.EMPTY);
     }
 }
