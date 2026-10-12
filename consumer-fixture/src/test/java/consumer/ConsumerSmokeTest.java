@@ -33,6 +33,13 @@ class ConsumerSmokeTest {
     }
 
     @Test
+    void trustedRoutingProfileIsAvailableThroughThePublishedArtifact() {
+        var decision = assertInstanceOf(RoutingDecision.Selected.class, ConsumerSmoke.routeOneStageVerified());
+
+        assertEquals("route-a", decision.route().routeId());
+    }
+
+    @Test
     void portablePathWorksWithoutTheVectorModule() {
         assertTrue(ModuleLayer.boot().findModule("jdk.incubator.vector").isEmpty(),
                 "the fixture must run without jdk.incubator.vector");

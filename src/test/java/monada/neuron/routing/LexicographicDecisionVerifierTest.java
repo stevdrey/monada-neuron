@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** The {@code route-lex/1} verification: parameter-derived admission, exact ranking, truncation and the tier cap. */
 class LexicographicDecisionVerifierTest {
 
-    private final LexicographicDecisionVerifier verifier = new LexicographicDecisionVerifier();
+    private final LexicographicDecisionVerifier verifier = LexicographicDecisionVerifier.selfReported();
     private final RouteEligibilityFilter filter = new RouteEligibilityFilter();
 
     private void verify(RoutingDecision decision, RoutingInput input) {

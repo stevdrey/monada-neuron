@@ -525,6 +525,8 @@ adaptation. Forge owns authorization, execution, context collection, evidence ju
 cutoffs used for replay. The Store owns persistence, recall and exports. Workflow-stage choice (Forge), worker/model route
 choice (this extension) and hardware backend selection (`RuntimeBackendSelector`) are three separate decisions.
 
+Decision verification is split between a mandatory stage-owned validator and a host-selected `RoutingDecisionVerifier` bound by a `TrustedRoutingProfile` ([ADR 0027](adr/0027-trusted-routing-decision-verification.md)); the legacy constructor keeps self-reported `route-lex/1` verification.
+
 The extension is additive and opt-in. It keeps `Signal` identity-free: route identity travels only in typed routing records, and the opaque
 `HostExecutionContext` serves solely as a key the host adapter uses to resolve routing inputs, never as a carrier of route identity. It keeps the canonical stage order, and adds no stage kind or `CycleInput` field. The composition
 seam is a pure `decide` function called by the host on an immutable preference snapshot, with an optional thin `REASONING`-position adapter

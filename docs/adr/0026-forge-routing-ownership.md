@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (contract; implemented so far: `TaskFeatures` and its signal encoder, issue #60, the route catalog and eligibility filter, issue #61, and the routing policy, decision types and composition seam, issue #62, with its decision verification split into focused validators by issue #76; the rest is pending issues #63 to #68)
+Accepted (contract; implemented so far: `TaskFeatures` and its signal encoder, issue #60, the route catalog and eligibility filter, issue #61, and the routing policy, decision types and composition seam, issue #62, with its decision verification split into focused validators by issue #76 and host-trusted extensible verification added by issue #78; the rest is pending issues #63 to #68)
 
 ## Context
 
@@ -130,9 +130,7 @@ Rejected as a non-goal: persistence belongs to the Store (ADR 0001, ADR 0018).
 
 - #60 to #68 implement the contract in dependency order (the shared value types `RoutingPreference`, `CohortMapping` and `RoutingObservation` are introduced early, by #62 and #63, so no issue depends on a later one); each must re-inspect `main`, the merged prerequisites, and the exact
   Store public API before use, and may refine signatures but not semantics without updating the contract and this ADR.
-- Option C, a separately scoped successor of #76 and a prerequisite of #63 to #68, makes the policy-specific verifier
-  extensible: a trusted, host-supplied verifier selection, an independent trusted policy and state definition to check
-  parameters and cohort buckets against, the mandatory validator always first with no bypass, and explicit
-  contract-version compatibility (contract Section 17.5).
+- Option C (implemented by #78, [ADR 0027](0027-trusted-routing-decision-verification.md)) made the policy-specific verifier
+  extensible through a host-supplied `TrustedRoutingProfile`; #63 to #68 may now proceed on that boundary.
 - Decide in a later ADR, if a concrete need appears, whether a resource-aware or exploration policy is added, and how routing
   chains into a PERCEPTION Aeon (ADR 0024 deferred this).

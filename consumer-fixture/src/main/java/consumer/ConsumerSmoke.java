@@ -1,12 +1,18 @@
 package consumer;
 
 import monada.neuron.context.CognitiveBudget;
+import monada.neuron.context.CognitiveContext;
+import monada.neuron.context.HostExecutionContext;
+import monada.neuron.context.HostReference;
 import monada.neuron.host.NeuronRuntime;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.monad.CognitiveCycleResult;
 import monada.neuron.monad.PrimaryMonad;
 import monada.neuron.routing.LexicographicRoutingPolicy;
 import monada.neuron.routing.RoutingDecision;
+import monada.neuron.routing.RoutingInput;
+import monada.neuron.routing.RoutingReasoningStage;
+import monada.neuron.routing.TrustedRoutingProfile;
 import monada.neuron.routing.RoutingPreference;
 import monada.neuron.routing.catalog.Availability;
 import monada.neuron.routing.catalog.CatalogEntry;
@@ -19,6 +25,7 @@ import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /** Minimal host that embeds Neuron through the public host API only. */
@@ -34,6 +41,27 @@ public final class ConsumerSmoke {
                 .build();
         var input = new Signal(SignalKind.INTERMEDIATE, new FrequencyState(1.0, 10.0, 0.0));
         return runtime.execute(List.of(input));
+    }
+
+    /** Level B routing with a host-configured trusted profile, verified against the host's own configuration. */
+    public static RoutingDecision routeOneStageVerified() {
+        var route = RouteDescriptor.builder("route-a", 1)
+                .stages(List.of("implement"))
+                .executionModes(List.of("sandboxed"))
+                .locality("hosted")
+                .build();
+        var catalog = RouteCatalog.of("catalog-1", List.of(new CatalogEntry(route, Availability.AVAILABLE, 1)));
+        var request = new RoutingRequest(RoutingRequest.CONTRACT_VERSION, "scope", "task", "exec", "attempt",
+                "stage", "implement", 1L, "src", "ctx", "con", "eval", "1",
+                TaskFeatures.builder().stageKind("implement").build(),
+                new HardRequirements(List.of(), List.of(), List.of("hosted"), List.of("sandboxed"), 0L), false, 0L);
+        var policy = LexicographicRoutingPolicy.reference();
+        var preference = RoutingPreference.empty(request, policy.definition(), policy.policyId(), policy.policyVersion());
+        var stage = new RoutingReasoningStage(policy, TrustedRoutingProfile.lexicographic(policy),
+                context -> Optional.of(new RoutingInput(request, catalog, preference)), 0);
+        var context = new CognitiveContext(new CognitiveBudget(1, 1, 0),
+                Optional.of(HostExecutionContext.of(new HostReference("exec"))));
+        return stage.execute(new PrimaryMonad(new UUID(0L, 1L)), List.of(), context).decision();
     }
 
     /** Level A routing: a pure, opt-in decision over invented routes (no provider, credential or Store type). */
