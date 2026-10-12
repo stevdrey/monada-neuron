@@ -1,7 +1,9 @@
 package monada.neuron.routing.outcome;
 
 import monada.neuron.routing.catalog.RouteKey;
+import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
+import monada.neuron.routing.features.TaskFeatures;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -329,6 +331,20 @@ class OutcomeEvaluatorTest {
                 ProvenanceField.SOURCE_FINGERPRINT), a.mismatches());
         assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
         assertEquals(List.of(IneligibilityReason.PROVENANCE_MISMATCH), a.reasons());
+    }
+
+    @Test
+    void requestWithAnotherFeatureSchemaThanTheDecisionBindingMismatches() {
+        var base = OutcomeFixtures.REQUEST;
+        var swapped = new RoutingRequest(base.contractVersion(), base.scopeId(), base.taskId(), base.executionId(),
+                base.attemptId(), base.stageId(), base.stageKind(), base.requestOrdinal(), base.sourceFingerprint(),
+                base.contextFingerprint(), base.constraintsFingerprint(), base.evaluationPolicyId(),
+                base.evaluationPolicyVersion(),
+                TaskFeatures.builder().stageKind("implement").schemaVersion("task-features/2").build(),
+                base.requirements(), base.overflowPermitted(), base.cutoff());
+        var a = new OutcomeEvaluator().assess(spec().passing().observation(), OutcomeFixtures.DECISION, swapped, GATES);
+        assertEquals(List.of(ProvenanceField.FEATURE_SCHEMA_VERSION), a.mismatches());
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
     }
 
     @Test

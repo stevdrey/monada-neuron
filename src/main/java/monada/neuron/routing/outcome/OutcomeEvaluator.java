@@ -214,6 +214,9 @@ public final class OutcomeEvaluator {
         if (!outcome.cohortBinding().equals(decision.cohortBinding())) {
             found.add(ProvenanceField.COHORT_BINDING);
         }
+        if (!request.features().schemaVersion().equals(decision.cohortBinding().featureSchemaVersion())) {
+            found.add(ProvenanceField.FEATURE_SCHEMA_VERSION);
+        }
         if (!outcome.catalogVersion().equals(provenance.catalogVersion())) {
             found.add(ProvenanceField.CATALOG_VERSION);
         }

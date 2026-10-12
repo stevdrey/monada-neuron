@@ -56,6 +56,16 @@ public record LearningAssessment(
         if (reasons.contains(IneligibilityReason.PROVENANCE_MISMATCH) != !mismatches.isEmpty()) {
             throw new IllegalArgumentException("mismatches must be listed exactly when PROVENANCE_MISMATCH is");
         }
+        List<QualityDimension> failed = effectiveEvidence.stream()
+                .filter(e -> e.state() == QualityState.FAIL).map(EffectiveEvidence::dimension).toList();
+        if (!failed.equals(provenFailures)) {
+            throw new IllegalArgumentException(
+                    "provenFailures " + provenFailures + " must equal the effective FAIL dimensions " + failed);
+        }
+        if (verdict == EligibilityVerdict.NEGATIVE_CANDIDATE && derivedAcceptance != DerivedAcceptance.NOT_ACCEPTED
+                && derivedAcceptance != DerivedAcceptance.ACCEPTED_UNVALIDATED) {
+            throw new IllegalArgumentException("a negative candidate cannot be " + derivedAcceptance);
+        }
         if (verdict == EligibilityVerdict.POSITIVE_CANDIDATE
                 && (derivedAcceptance != DerivedAcceptance.VALIDATED_ACCEPTED || !provenFailures.isEmpty()
                         || !reasons.isEmpty())) {

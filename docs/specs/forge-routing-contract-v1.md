@@ -9,7 +9,7 @@ signatures, but must not change the semantics defined here without updating this
 Normative words: **must**, **must not**, **should** and **may** carry their usual specification meaning.
 
 Every type and package name below (`monada.neuron.routing`, `TaskFeatures`, `RouteCatalog`, `RoutingDecision`, ...) is a
-**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them exists; since #60, `TaskFeatures` and the other types of `monada.neuron.routing.features` (Section 15), and since #61 the types of `monada.neuron.routing.catalog` (Section 16), and since #62 the policy, decision, preference and composition types of `monada.neuron.routing` (Section 17), are implemented. Types that do exist are named with
+**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them existed; since #60, `TaskFeatures` and the other types of `monada.neuron.routing.features` (Section 15), and since #61 the types of `monada.neuron.routing.catalog` (Section 16), and since #62 the policy, decision, preference and composition types of `monada.neuron.routing` (Section 17), and since #63 the outcome evidence and learning-eligibility types of `monada.neuron.routing.outcome` (Section 19), are implemented. Types that do exist are named with
 their current package and are described only as they exist today.
 
 ## Background
@@ -33,7 +33,7 @@ Inspected `main` at `d1dd569` (Java 27). Already implemented and **reused unchan
 - `RuntimeBackendSelector`, which selects *internal computational backends* (SCALAR/VECTOR_API, object/CSR graph, ...). It
   never selects external workers or models.
 
-Not present: any typed route, worker catalog, routing decision, or routing outcome. `ActionRequest` carries Signals and an
+At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 19 describe what has been added since. Still absent: `RoutingFeedback`, the caller-owned preference state store and Store export translation (#64 to #68). `ActionRequest` carries Signals and an
 opaque host context, not a route. `Signal` carries no identity (ADR 0005).
 
 ## Goal
@@ -1198,7 +1198,7 @@ or `NEUTRAL` and owns the scores. Blocking reasons: `PROVENANCE_MISMATCH`, `ENVI
 
 | Condition | Reason |
 | --- | --- |
-| Decision ref, executed route (a different route than advised earns no credit), cohort binding, catalog version, routing policy, fingerprints or evaluation policy differ from the decision/request; a judged revision names an event revision newer than, or absent from, the listed evidence | `PROVENANCE_MISMATCH` with every differing `ProvenanceField` |
+| Decision ref, executed route (a different route than advised earns no credit), cohort binding, feature schema (the request's `features.schemaVersion` against the decision's cohort binding), catalog version, routing policy, fingerprints or evaluation policy differ from the decision/request; a judged revision names an event revision newer than, or absent from, the listed evidence | `PROVENANCE_MISMATCH` with every differing `ProvenanceField` |
 | `UNAVAILABLE` or `TIMED_OUT` invocation (even with failing evidence) | `ENVIRONMENTAL_FAILURE` |
 | Outcome or invocation cancelled; pending outcome | `CANCELLED`; `PENDING` |
 | The host's `EvidencePolicy` differs from the outcome's, or a mandatory dimension has only observations under another policy | `STALE_EVALUATION_POLICY` (plus `MISSING_EVIDENCE`) |

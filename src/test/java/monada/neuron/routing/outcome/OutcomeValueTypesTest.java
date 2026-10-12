@@ -175,12 +175,36 @@ class OutcomeValueTypesTest {
         Runnable build = () -> new LearningAssessment(DerivedAcceptance.NOT_ACCEPTED,
                 EligibilityVerdict.NEGATIVE_CANDIDATE, List.of(reason),
                 reason == IneligibilityReason.PROVENANCE_MISMATCH ? List.of(ProvenanceField.DECISION_REF) : List.of(),
-                List.of(), List.of(QualityDimension.TESTS), 0);
+                List.of(new LearningAssessment.EffectiveEvidence(QualityDimension.TESTS, QualityState.FAIL, 5)),
+                List.of(QualityDimension.TESTS), 0);
         if (reason.blocking()) {
             assertThrows(IllegalArgumentException.class, build::run);
         } else {
             build.run();
         }
+    }
+
+    @ParameterizedTest
+    @EnumSource(DerivedAcceptance.class)
+    void negativeCandidateNeedsARejectableDerivedState(DerivedAcceptance derived) {
+        Runnable build = () -> new LearningAssessment(derived, EligibilityVerdict.NEGATIVE_CANDIDATE, List.of(),
+                List.of(), List.of(new LearningAssessment.EffectiveEvidence(QualityDimension.TESTS, QualityState.FAIL, 5)),
+                List.of(QualityDimension.TESTS), 0);
+        if (derived == DerivedAcceptance.NOT_ACCEPTED || derived == DerivedAcceptance.ACCEPTED_UNVALIDATED) {
+            build.run();
+        } else {
+            assertThrows(IllegalArgumentException.class, build::run);
+        }
+    }
+
+    @Test
+    void provenFailuresMustAgreeWithTheEffectiveEvidence() {
+        var pass = new LearningAssessment.EffectiveEvidence(QualityDimension.TESTS, QualityState.PASS, 5);
+        assertThrows(IllegalArgumentException.class, () -> new LearningAssessment(DerivedAcceptance.NOT_ACCEPTED,
+                EligibilityVerdict.NEGATIVE_CANDIDATE, List.of(), List.of(), List.of(pass), List.of(QualityDimension.TESTS), 0));
+        assertThrows(IllegalArgumentException.class, () -> new LearningAssessment(DerivedAcceptance.NOT_ACCEPTED,
+                EligibilityVerdict.NOT_ELIGIBLE, List.of(), List.of(),
+                List.of(new LearningAssessment.EffectiveEvidence(QualityDimension.TESTS, QualityState.FAIL, 5)), List.of(), 0));
     }
 
     @Test
