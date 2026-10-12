@@ -50,8 +50,8 @@ experimental routing extension in a new `monada.neuron.routing` package. Type na
   host-implemented resolver keyed by `HostExecutionContext`, as `PerceptionCapability` does. Because `ReasoningCognitiveStageResult` is a final record that cannot carry the decision, Level B returns a new `RoutingCognitiveStageResult` that retains the full `RoutingDecision` and the hypothesis hand-off, and must override the cycle's output-signal admission normalization so neither is dropped. No new stage kind, no change to
   `CycleInput`, `NeuronRuntime` or the canonical order, and no orchestrator.
 - **Level B verification ownership (issue #76).** The stage never trusts a hosted policy's decision and only composes two
-  package-private, stateless collaborators over one eligibility report: a mandatory, policy-independent
-  `RoutingDecisionValidator` (provenance binding, the state admission keys the request alone decides, hard eligibility and
+  stateless collaborators over one eligibility report (the validator is package-private; the verifier became public in #78):
+  a mandatory, policy-independent `RoutingDecisionValidator` (provenance binding, the state admission keys the request alone decides, hard eligibility and
   exclusions) and the `route-lex/1`-specific `LexicographicDecisionVerifier` (admission keys the recorded policy parameters
   decide, exact ordering, bounded explanation, truncation, tier cap). The checks and their outcomes are those of #62;
   contract Section 17.5 lists every check with its owner and the trust limitations that remain (shared ranking definition,

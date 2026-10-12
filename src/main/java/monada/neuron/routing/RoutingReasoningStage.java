@@ -15,6 +15,7 @@ import monada.neuron.signal.Signal;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Optional {@code REASONING} source stage that runs a {@link RoutingPolicy} for the cycle's host context.
@@ -46,6 +47,8 @@ public final class RoutingReasoningStage implements CognitiveStage {
     private final RouteEligibilityFilter filter = new RouteEligibilityFilter();
     private final RoutingDecisionValidator validator = new RoutingDecisionValidator();
     private final RoutingDecisionVerifier verifier;
+    /** The host's identity from the trusted profile; empty on the legacy path, which reads the policy's live identity. */
+    private final Optional<TrustedRoutingProfile> profile;
     private final RoutingPolicy policy;
     private final RoutingInputResolver resolver;
     private final int domain;
@@ -61,7 +64,7 @@ public final class RoutingReasoningStage implements CognitiveStage {
      * @param domain non-negative {@link Proposition} domain the host configures for routing
      */
     public RoutingReasoningStage(RoutingPolicy policy, RoutingInputResolver resolver, int domain) {
-        this(policy, LexicographicDecisionVerifier.selfReported(), resolver, domain);
+        this(policy, LexicographicDecisionVerifier.selfReported(), Optional.empty(), resolver, domain);
     }
 
     /**
@@ -77,7 +80,8 @@ public final class RoutingReasoningStage implements CognitiveStage {
      */
     public RoutingReasoningStage(
             RoutingPolicy policy, TrustedRoutingProfile profile, RoutingInputResolver resolver, int domain) {
-        this(policy, Objects.requireNonNull(profile, "profile must not be null").verifier(), resolver, domain);
+        this(policy, Objects.requireNonNull(profile, "profile must not be null").verifier(), Optional.of(profile),
+                resolver, domain);
         if (!profile.policyId().equals(policy.policyId()) || !profile.policyVersion().equals(policy.policyVersion())) {
             throw new IllegalArgumentException("the profile hosts policy " + profile.policyId() + "/"
                     + profile.policyVersion() + " but the stage was given " + policy.policyId() + "/"
@@ -85,8 +89,9 @@ public final class RoutingReasoningStage implements CognitiveStage {
         }
     }
 
-    private RoutingReasoningStage(
-            RoutingPolicy policy, RoutingDecisionVerifier verifier, RoutingInputResolver resolver, int domain) {
+    private RoutingReasoningStage(RoutingPolicy policy, RoutingDecisionVerifier verifier,
+            Optional<TrustedRoutingProfile> profile, RoutingInputResolver resolver, int domain) {
+        this.profile = profile;
         this.policy = Objects.requireNonNull(policy, "policy must not be null");
         this.verifier = Objects.requireNonNull(verifier, "verifier must not be null");
         this.resolver = Objects.requireNonNull(resolver, "resolver must not be null");
@@ -129,7 +134,13 @@ public final class RoutingReasoningStage implements CognitiveStage {
         RoutingDecision decision = Objects.requireNonNull(
                 policy.decide(input.request(), input.catalog(), input.preference()), "decision must not be null");
         EligibilityReport report = filter.evaluate(input.request(), input.catalog());
-        validator.validate(decision, input, policy, report);
+        // On the trusted path every decision is checked against the profile's identity, not the policy object's, which
+        // could report another identity after construction.
+        if (profile.isPresent()) {
+            validator.validate(decision, input, profile.get().policyId(), profile.get().policyVersion(), report);
+        } else {
+            validator.validate(decision, input, policy, report);
+        }
         verifier.verify(decision, input, report);
         if (decision instanceof RoutingDecision.Selected selected) {
             List<CatalogEntry> entries = input.catalog().entries();

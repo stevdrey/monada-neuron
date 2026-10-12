@@ -256,6 +256,34 @@ class TrustedRoutingStageTest {
     }
 
     @Test
+    void thePolicyCannotChangeItsIdentityAfterTheProfileWasChecked() {
+        var request = request(List.of("java"), false);
+        var renamed = new boolean[1];
+        RoutingPolicy shifting = new RoutingPolicy() {
+            @Override
+            public String policyId() {
+                return renamed[0] ? "other-family" : reference.policyId();
+            }
+
+            @Override
+            public String policyVersion() {
+                return reference.policyVersion();
+            }
+
+            @Override
+            public RoutingDecision decide(RoutingRequest r, RouteCatalog c, RoutingPreference p) {
+                return restamp(reference.decide(r, c, p), "other-family");
+            }
+        };
+        var stage = new RoutingReasoningStage(shifting, TrustedRoutingProfile.lexicographic(reference),
+                resolving(request), DOMAIN);
+        renamed[0] = true;
+
+        // The decision is stamped with the identity the policy now reports; only the profile's identity counts.
+        assertRejected(stage, "other-family/1 instead of route-lex/1");
+    }
+
+    @Test
     void anIncompatibleFamilyOrContractIsRejectedBeforeAnyDecisionExists() {
         var verifier = new AuditVerifier(reference);
 

@@ -1028,7 +1028,7 @@ Evidence gaps: no claim that the ordering improves quality, acceptance or cost; 
 ### 17.5 Verification responsibilities (#76)
 
 `RoutingReasoningStage.execute` resolves the host inputs, calls `RoutingPolicy.decide` once, evaluates
-`RouteEligibilityFilter` once, hands that single `EligibilityReport` to two package-private, stateless collaborators in this
+`RouteEligibilityFilter` once, hands that single `EligibilityReport` to two stateless collaborators (the validator is package-private; the verifier became public in #78, Section 18) in this
 order, and maps a `Selected` route to its hypothesis. The checks, their classes and accept/reject outcomes are those of #62;
 only their owner moved. Where a decision violates several checks, the first failing check now follows the order below
 (request-derived checks before eligibility, eligibility before parameter-derived admission and ordering), so its message
