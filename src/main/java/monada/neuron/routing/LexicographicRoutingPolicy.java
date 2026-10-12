@@ -93,6 +93,11 @@ public final class LexicographicRoutingPolicy implements RoutingPolicy {
         return definition;
     }
 
+    /** The effective configuration this policy records in every decision. */
+    public PolicyParameters parameters() {
+        return parameters;
+    }
+
     @Override
     public RoutingDecision decide(RoutingRequest request, RouteCatalog catalog, RoutingPreference preference) {
         Objects.requireNonNull(request, "request must not be null");

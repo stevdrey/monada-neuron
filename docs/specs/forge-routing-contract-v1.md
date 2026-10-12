@@ -355,8 +355,10 @@ calls the same pure policy. It gets its per-execution inputs through a host-impl
 `HostExecutionContext`, the same pattern as `PerceptionCapability`:
 
 Level B never trusts the hosted policy's decision. It always runs a mandatory, policy-independent validation
-(provenance, request-derived state admission, hard eligibility) and then the reference ordering verification of Section 3.3
-for every policy it hosts; neither can be skipped. Section 17.5 assigns every check to its owner.
+(provenance, request-derived state admission, hard eligibility); it cannot be replaced or skipped. It then runs a
+policy-specific verifier: with the legacy constructor the `route-lex/1` verification of Section 3.3 against the
+parameters and cohort bucket the decision itself records; with a host-configured `TrustedRoutingProfile` (Section 18) the
+host-selected verifier against independently trusted configuration. Section 17.5 assigns every check to its owner.
 
 `RoutingReasoningStage` is a **source stage** (`CognitiveStage.isSource()` is true), exactly like `PerceptionCognitiveStage`
 (ADR 0024), because it is driven by the host context and not by input Signals. Without that, the deterministic cycle ends
@@ -985,7 +987,7 @@ edit outside the routing packages is in the `reasoning` package: a small interfa
 | `RoutingDecision` | Sealed `Selected` / `Abstain` / `NoEligibleRoute`, each with `Provenance(decisionRef, catalogVersion, policyId/Version, cutoff, StateBinding, StateValidation)` and its exclusion reasons (for excluded routes only, reusing `EligibilityReport.Exclusion`). `Selected` adds the route, the chosen `executionMode`, `Basis`, `overflowUsed`, at most 8 `RankedCandidate`s (`Placement` names the rule that separated each from its neighbour) with `candidatesTruncated`, `rulesApplied` / `rulesSkipped` and the `CohortBinding`. A decision is never an `ActionStatus`. |
 | `RoutingPreference`, `CohortPreference` | Immutable snapshot (at most 256 cohorts, unique per stage kind, bucket and route, canonical order, finite values, `-0.0` normalized). `RoutingPreference.empty(...)` is the valid cold start; `mismatches(request, definition)` returns the admission failures in the fixed order of Section 3.2 (`StateMismatch`). The snapshot's own producing policy id/version is provenance, not an admission key. |
 | `CohortMapping`, `ChangeSizeCohortMapping`, `RoutingStateDefinition` | Pure feature-to-bucket function with `bucketMappingVersion`; the reference mapping buckets change size (`S` up to 50, `M` up to 500, `L`, `UNKNOWN`) and its thresholds are an **unvalidated policy choice**. In #62 `RoutingStateDefinition(mappingVersion, cohortMapping)` carries only the mapping; the initial Node state, `AdaptationConfig` and feedback rules join the same composite `mappingVersion` in #65 and #66 (a refinement of Section 3, not a change of semantics). |
-| `RoutingInput`, `RoutingInputResolver`, `RoutingCognitiveStageResult`, `RoutingReasoningStage` | Level B (Section 3.5). `RoutingReasoningStage` is a `REASONING` **source** stage: first in the cycle, empty initial Signals, no perception source in the same cycle. It resolves `RoutingInput` from the cycle's `HostExecutionContext` through the host port and throws `IllegalStateException` when there is no host context or the resolver returns empty. It also re-verifies every decision against `RouteEligibilityFilter` and throws `IllegalStateException` on any disagreement, so a custom policy cannot hand off a hypothesis for an ineligible route: a `Selected` route must be eligible with the same execution mode and overflow flag; `NoEligibleRoute` is rejected while a route is eligible; an `Abstain` must list exactly the eligible routes; and the exclusions must equal the filter's. It also rejects a decision whose `catalogVersion`, `decisionRef`, `cutoff`, state binding or `policyId`/`policyVersion` do not match the resolved catalog, request, preference and policy, because `Proposition.code` is meaningful only with its own catalog snapshot (the recorded admission `validation` is recomputed from the request, the preference and the recorded parameters, in both directions for every reason (scope, feature schema, evaluation policy, watermark, mapping version), using the `stateMappingVersion` and `stateFeatureSchemaVersion` of the policy's state definition that `PolicyParameters` records; only the cohort bucket is not re-derived, because the port does not expose the policy's `CohortMapping`). The checks cost one extra `O(R*Q)` filter pass per cycle. The stage also checks that every ranked candidate is eligible and that the explanation is the bounded prefix the filter implies (`min(8, eligible)` candidates, `candidatesTruncated` iff more than 8 are eligible). The decision types reject a route that is both eligible/ranked and excluded, an `Abstain` candidate that is not in its eligible list, more eligible or ranked plus excluded routes than one catalog holds (32), a `Selected` whose `cohortBinding` schema or mapping version disagrees with the state provenance and `PolicyParameters`, and contradictory rule explanations (`rulesApplied` and `rulesSkipped` must be unique, in `RoutingRule` order, disjoint and together cover all five rules, with tier, priority and route order always applied). The stage also verifies the admission keys that the request alone decides (scope, feature schema, evaluation policy, `processedCutoff` against the cutoff): a decision recorded as `Compatible` is rejected when the preference conflicts with the request or was built under another mapping version than the recorded policy parameters, and an `Incompatible` one must list exactly the mismatches that exist (scope, evaluation policy, watermark and mapping version in both directions; a feature-schema mismatch only needs a real cause on the request side, because it can also stem from the policy's own mapping). A `POLICY_TRADEOFF_UNRESOLVED` abstention must rank `min(8, eligible)` candidates and flag truncation exactly when more than 8 are eligible; a truncated `Selected` ranking lists exactly 8 candidates and counts one further, unlisted eligible route toward the 32-route bound. `Basis` and `Placement` must agree (`Placement.basis()`), every placing rule must be in `rulesApplied`, and `ONLY_ELIGIBLE` marks exactly a sole, untruncated candidate. `Provenance` rejects a `Compatible` state whose mapping version differs from the recorded policy parameters. The two leading ranked candidates must share one `Placement` (each is placed relative to the other). The stage enforces the fixed ordering of Section 3.3 for every policy it hosts by recomputing it: `LexicographicRanking` (package-private) is the single definition, used by `LexicographicRoutingPolicy` to decide and by the stage to verify. For a `Selected` decision the stage re-ranks the eligible routes from the decision's recorded `PolicyParameters` and its recorded cohort bucket and requires the same winner, the same first `min(8, n)` candidates and placements, the same truncation flag, the same applied and skipped rules (learned preference applied exactly when every eligible route has a cohort with at least `minSupportingObservations`; resource objective applied exactly when a tied group of known, same-unit estimates was refined) and the same `Basis`, and it rejects a winner above the recorded tier cap. A tier-cap abstention records the cohort binding the ordering used (like `Selected`, and agreeing with the state provenance and the recorded parameters); the stage re-ranks once with that bucket, requires the same candidates, placements and truncation flag, and requires the recomputed winner to exceed the recorded cap. A `STATE_INCOMPATIBLE` abstention ran no ordering and records no cohort. A policy with other ordering rules would be a new policy version and needs its own verifier, which is out of scope for v1 (Option C, Section 17.5). The cost is one extra ranking per cycle, `O(R log R + R log C)`. Since #76 the stage only composes these checks: `RoutingDecisionValidator` owns the mandatory ones and `LexicographicDecisionVerifier` the `route-lex/1` ones (Section 17.5). The stage also recomputes the tier-cap trigger from the recorded parameters: `POLICY_TRADEOFF_UNRESOLVED` is accepted only when `maxAutoSelectTier` is set and the best-ranked route's catalog tier exceeds it, and a `Selected` route above a recorded cap is rejected. A `RESOURCE_OBJECTIVE` placement, or `RESOURCE_OBJECTIVE` among the applied rules, requires a configured objective in the recorded policy parameters, since the parameters could not otherwise reproduce the explanation. The cohort bucket token itself is not re-derived, because the `RoutingPolicy` port does not expose the `CohortMapping`. A `Selected` decision yields one hypothesis `Proposition(domain, zero-based index of the route in the catalog's canonical order)` without `SignalEvidence`; `Abstain` and `NoEligibleRoute` yield none. Output Signals are always empty. |
+| `RoutingInput`, `RoutingInputResolver`, `RoutingCognitiveStageResult`, `RoutingReasoningStage` | Level B (Section 3.5). `RoutingReasoningStage` is a `REASONING` **source** stage: first in the cycle, empty initial Signals, no perception source in the same cycle. It resolves `RoutingInput` from the cycle's `HostExecutionContext` through the host port and throws `IllegalStateException` when there is no host context or the resolver returns empty. It also re-verifies every decision against `RouteEligibilityFilter` and throws `IllegalStateException` on any disagreement, so a custom policy cannot hand off a hypothesis for an ineligible route: a `Selected` route must be eligible with the same execution mode and overflow flag; `NoEligibleRoute` is rejected while a route is eligible; an `Abstain` must list exactly the eligible routes; and the exclusions must equal the filter's. It also rejects a decision whose `catalogVersion`, `decisionRef`, `cutoff`, state binding or `policyId`/`policyVersion` do not match the resolved catalog, request, preference and hosted policy identity (the profile's `policyId`/`policyVersion` on the trusted path, so a policy that later reports another identity cannot change it; the policy's own on the legacy path), because `Proposition.code` is meaningful only with its own catalog snapshot (on the **legacy path** the recorded admission `validation` is recomputed from the request, the preference and the recorded parameters, in both directions for every reason (scope, feature schema, evaluation policy, watermark, mapping version), using the `stateMappingVersion` and `stateFeatureSchemaVersion` of the policy's state definition that `PolicyParameters` records; on that path only the cohort bucket is not re-derived, because the port does not expose the policy's `CohortMapping`; on the **trusted-profile path** the host-selected verifier instead compares the recorded parameters with the host's, derives the expected mismatches from the host's `RoutingStateDefinition` and derives the cohort bucket with its `CohortMapping`, Section 18.3). The checks cost one extra `O(R*Q)` filter pass per cycle. The stage also checks that every ranked candidate is eligible and that the explanation is the bounded prefix the filter implies (`min(8, eligible)` candidates, `candidatesTruncated` iff more than 8 are eligible). The decision types reject a route that is both eligible/ranked and excluded, an `Abstain` candidate that is not in its eligible list, more eligible or ranked plus excluded routes than one catalog holds (32), a `Selected` whose `cohortBinding` schema or mapping version disagrees with the state provenance and `PolicyParameters`, and contradictory rule explanations (`rulesApplied` and `rulesSkipped` must be unique, in `RoutingRule` order, disjoint and together cover all five rules, with tier, priority and route order always applied). The mandatory validator, on both paths, verifies the admission keys that the request alone decides (scope, feature schema, evaluation policy, `processedCutoff` against the cutoff); the mapping-version and recorded-parameter comparisons that follow are the legacy path's, and the trusted path replaces them with the host-configuration comparison above: a decision recorded as `Compatible` is rejected when the preference conflicts with the request or was built under another mapping version than the recorded policy parameters, and an `Incompatible` one must list exactly the mismatches that exist (scope, evaluation policy, watermark and mapping version in both directions; a feature-schema mismatch only needs a real cause on the request side, because it can also stem from the policy's own mapping). A `POLICY_TRADEOFF_UNRESOLVED` abstention must rank `min(8, eligible)` candidates and flag truncation exactly when more than 8 are eligible; a truncated `Selected` ranking lists exactly 8 candidates and counts one further, unlisted eligible route toward the 32-route bound. `Basis` and `Placement` must agree (`Placement.basis()`), every placing rule must be in `rulesApplied`, and `ONLY_ELIGIBLE` marks exactly a sole, untruncated candidate. `Provenance` rejects a `Compatible` state whose mapping version differs from the recorded policy parameters. The two leading ranked candidates must share one `Placement` (each is placed relative to the other). The ordering, recorded-parameter and cohort-bucket checks described from here on are those of the **legacy three-argument constructor**, which applies the `route-lex/1` verifier to every policy it hosts and reads the parameters and cohort bucket from the decision itself. With a host-configured `TrustedRoutingProfile` (Section 18) the mandatory validation is unchanged, but the host-selected verifier replaces this verification, and the reference verifier then compares the recorded identity and parameters with the host's and derives the cohort bucket with the trusted `CohortMapping`. The legacy constructor enforces the fixed ordering of Section 3.3 by recomputing it: `LexicographicRanking` (package-private) is the single definition, used by `LexicographicRoutingPolicy` to decide and by the stage to verify. For a `Selected` decision the stage re-ranks the eligible routes from the decision's recorded `PolicyParameters` and its recorded cohort bucket and requires the same winner, the same first `min(8, n)` candidates and placements, the same truncation flag, the same applied and skipped rules (learned preference applied exactly when every eligible route has a cohort with at least `minSupportingObservations`; resource objective applied exactly when a tied group of known, same-unit estimates was refined) and the same `Basis`, and it rejects a winner above the recorded tier cap. A tier-cap abstention records the cohort binding the ordering used (like `Selected`, and agreeing with the state provenance and the recorded parameters); the stage re-ranks once with that bucket, requires the same candidates, placements and truncation flag, and requires the recomputed winner to exceed the recorded cap. A `STATE_INCOMPATIBLE` abstention ran no ordering and records no cohort. A policy with other ordering rules would be a new policy version and needs its own host-selected verifier (Option C, Section 18). The cost is one extra ranking per cycle, `O(R log R + R log C)`. Since #76 the stage only composes these checks: `RoutingDecisionValidator` owns the mandatory ones and `LexicographicDecisionVerifier` the `route-lex/1` ones (Section 17.5). The stage also recomputes the tier-cap trigger from the recorded parameters: `POLICY_TRADEOFF_UNRESOLVED` is accepted only when `maxAutoSelectTier` is set and the best-ranked route's catalog tier exceeds it, and a `Selected` route above a recorded cap is rejected. A `RESOURCE_OBJECTIVE` placement, or `RESOURCE_OBJECTIVE` among the applied rules, requires a configured objective in the recorded policy parameters, since the parameters could not otherwise reproduce the explanation. On the legacy path the cohort bucket token itself is not re-derived, because the `RoutingPolicy` port does not expose the `CohortMapping`; the trusted profile path derives it (Section 18.3). A `Selected` decision yields one hypothesis `Proposition(domain, zero-based index of the route in the catalog's canonical order)` without `SignalEvidence`; `Abstain` and `NoEligibleRoute` yield none. Output Signals are always empty. |
 
 ### 17.2 Decision flow
 
@@ -1026,7 +1028,7 @@ Evidence gaps: no claim that the ordering improves quality, acceptance or cost; 
 ### 17.5 Verification responsibilities (#76)
 
 `RoutingReasoningStage.execute` resolves the host inputs, calls `RoutingPolicy.decide` once, evaluates
-`RouteEligibilityFilter` once, hands that single `EligibilityReport` to two package-private, stateless collaborators in this
+`RouteEligibilityFilter` once, hands that single `EligibilityReport` to two stateless collaborators (the validator is package-private; the verifier became public in #78, Section 18) in this
 order, and maps a `Selected` route to its hypothesis. The checks, their classes and accept/reject outcomes are those of #62;
 only their owner moved. Where a decision violates several checks, the first failing check now follows the order below
 (request-derived checks before eligibility, eligibility before parameter-derived admission and ordering), so its message
@@ -1051,14 +1053,108 @@ parameter-derived admission check is implied by the `Provenance` invariant plus 
 spurious-reason check stays in the verifier because it needs both mismatch sets; the request-derived set is computed once
 by the validator and, only for an `Incompatible` decision, once more by the verifier (a constant-size check of five keys).
 
-Trust limitations that remain: the verifier recomputes the ordering with `LexicographicRanking`, the same definition the
+Trust limitations that remain on the legacy constructor (the trusted profile of Section 18 lifts the second and third): the verifier recomputes the ordering with `LexicographicRanking`, the same definition the
 reference policy decides with, so agreement is checked, not independent correctness; it reads the `PolicyParameters` and the
 cohort bucket the decision records, so a policy can choose the parameters it is checked against; the feature-schema check
 covers only the schema those parameters record, because the port does not expose the policy's `CohortMapping`.
 
-**Option C, a separate successor.** Hosting a policy with other ordering rules needs, in its own issue: a trusted,
-host-supplied selection of the policy-specific verifier (never chosen by the decision or the policy itself); an independent,
-trusted policy and state definition to check the parameters and cohort bucket against instead of the decision's own record;
-the mandatory `RoutingDecisionValidator` always running first, with no bypass; and explicit contract-version compatibility
-between a policy, its verifier and this contract. Until then the stage applies the `route-lex/1` verifier to every policy it
-hosts and offers no flag to skip it.
+**Option C** (implemented by #78, Section 18) adds the host-selected verifier, the independent trusted configuration and the
+explicit contract compatibility that this section listed as missing. The legacy three-argument constructor keeps the
+behavior described here and is not independent verification.
+
+## 18. Implemented: Trusted, Extensible Decision Verification (#78, Option C)
+
+### 18.1 Trust model
+
+| Source | Trust |
+| --- | --- |
+| Host-resolved `RoutingRequest`, `RouteCatalog`, `RoutingPreference` | authoritative inputs |
+| Host-selected policy identity, decision contract version, effective `PolicyParameters`, `RoutingStateDefinition` (with its `CohortMapping`) and verifier, bound by a `TrustedRoutingProfile` | authoritative configuration |
+| The policy's `RoutingDecision`, `Provenance`, recorded `PolicyParameters`, `CohortBinding` and explanation | **claims to verify** |
+
+A verifier selected by the host is part of the trusted host boundary. It protects against a faulty or untrusted *policy* to the
+extent the verifier is correct; it does not protect against a host that installs a permissive verifier. A verifier chosen by a
+policy or by data in a decision would be self-attestation and is not offered: there is no registry, `ServiceLoader`, scanning,
+bypass flag or no-op default.
+
+### 18.2 Types and composition
+
+| Type | Role |
+| --- | --- |
+| `RoutingDecisionVerifier` (public interface) | `policyId()`, `policyVersion()`, `decisionContractVersion()` and `verify(decision, input, report)`; stateless, runs only after the mandatory validation |
+| `TrustedRoutingProfile` (public record) | binds policy id/version, `RoutingDecision.CONTRACT_VERSION` and one verifier; the constructor rejects a null verifier, a verifier for another identity or contract, and any contract other than `routing-decision/1`. `lexicographic(PolicyParameters, RoutingStateDefinition)` takes configuration supplied separately from the policy; `lexicographic(LexicographicRoutingPolicy)` is a convenience that reads it from the policy instance, so its trust equals that instance's own configuration |
+| `LexicographicDecisionVerifier` | the trusted `route-lex/1` ordering verifier: `trusted(PolicyParameters, RoutingStateDefinition)` for the reference identity, `trusted(policyId, policyVersion, parameters, definition)` for a policy with its own identity whose decisions follow the same ordering |
+| `SelfReportedLexicographicVerifier` (package-private) | the legacy path's verifier; shares the ordering checks (`LexicographicOrdering`) and takes parameters and bucket from the decision |
+| `RoutingReasoningStage(policy, profile, resolver, domain)` | additive constructor; rejects a policy whose id/version differs from the profile |
+| `RoutingReasoningStage(policy, resolver, domain)` | unchanged API; uses `SelfReportedLexicographicVerifier` |
+
+`RoutingDecisionValidator` stays package-private and owned by the stage; no constructor accepts a replacement. Per execution the
+stage calls `decide` once, evaluates the filter once, runs the validator once and the verifier once, then hands off exactly as in
+Section 3.4.
+
+### 18.3 Trusted `route-lex/1` verification
+
+1. Identity: the decision's `policyId`/`policyVersion` equal `route-lex`/`1`.
+2. Parameters: the recorded `PolicyParameters` equal the host's, field by field.
+3. Admission: the recorded validation equals `preference.mismatches(request, trustedDefinition)` in normative order (including
+   `FEATURE_SCHEMA_MISMATCH` and `MAPPING_VERSION_MISMATCH`): none omitted, none spurious. `NotEvaluated` is accepted only for
+   `NoEligibleRoute`.
+4. Cohort: for `Selected` and `POLICY_TRADEOFF_UNRESOLVED`, the bucket is derived with the trusted `CohortMapping.bucketOf(features)`
+   and the recorded `CohortBinding` must equal (bucket, `bucketMappingVersion`, definition `mappingVersion`, request schema). No cohort
+   is derived for `STATE_INCOMPATIBLE` or `NoEligibleRoute`. A trusted mapping that yields a token `CohortBinding` rejects is reported as an `IllegalStateException`, like every other verifier rejection.
+5. Ordering: the ranking is recomputed with the trusted parameters and the derived bucket and compared with candidates, truncation,
+   `Basis`, applied/skipped rules, and the tier cap, as in Section 17.5.
+
+The ranking is still computed by `LexicographicRanking`, the implementation the reference policy decides with. A match therefore
+shows agreement with that implementation, **not independent mathematical correctness**.
+
+### 18.4 Guarantees by path
+
+| | Legacy constructor | Trusted profile |
+| --- | --- | --- |
+| Provenance, request-derived admission, hard eligibility | enforced | enforced |
+| Parameters, mapping version, feature schema | taken from the decision | compared with host configuration |
+| Cohort bucket and `bucketMappingVersion` | taken from the decision | derived and compared |
+| Policy-specific verifier | `route-lex/1` for every policy | host-selected, contract-checked |
+
+### 18.5 Contract compatibility
+
+The v1 decision types encode the Section 3.3 ordering (`RoutingRule`, `Placement`, `Basis`, `AbstainReason`). A custom policy
+fits only if its decisions are faithfully expressible in them; the demonstration fixture varies the policy identity only. The
+profile cannot inspect a policy's ordering: it checks only the declared contract version string and the verifier's reported
+identity, version and contract. The trusted host is therefore responsible for declaring a successor contract (which this library
+rejects at construction with `unsupported routing decision contract ...` until it implements it) for any policy whose ordering
+the v1 types cannot represent. Binding such a policy to `routing-decision/1` is not detected at construction: a mismatch
+surfaces only if the policy cannot build a v1 decision or the host-selected verifier rejects it, and a permissive verifier may
+accept it. A versioned successor of the decision types is follow-up work and deliberately not part of v1.
+
+### 18.6 Alternatives considered
+
+- **A: widen `RoutingPolicy`** with `parameters()`/`stateDefinition()`. Makes every policy implement trust data and lets a policy
+  describe its own configuration; rejected.
+- **B: let the policy return or name its verifier.** Self-attestation; rejected.
+- **C (chosen): host profile.** Smallest explicit composition; additive, with the legacy constructor untouched.
+
+### 18.7 Verification and measured resource effect
+
+Tests: `TrustedRoutingProfileTest`, `TrustedLexicographicVerifierTest` (all variants; fabricated parameters, mapping/schema versions,
+cohort bucket and bucket mapping version, wrong identity, omitted/spurious mismatches), `TrustedRoutingStageTest` (parity with the
+legacy path, custom policy plus host verifier through a cycle with evaluation, rejected family/contract, permissive verifier
+counterexamples, decide-once). Allocation, per execution of the maximum-size fixture (32 routes, 32 estimates, 256 cohorts, objective
+active), `ThreadMXBean` thread allocated bytes after 20,000 warm-up executions, JDK Zulu 27.28+101 (`27+35`), Linux x86_64,
+default test JVM flags plus `--add-modules jdk.incubator.vector`, 5 separate Gradle test runs. The 44 KiB guard is unchanged and is
+not a latency benchmark; no speedup is claimed.
+
+| Decision | Legacy path (bytes) | Trusted profile (bytes) |
+| --- | --- | --- |
+| `Selected` | 35,120 to 37,880 | 35,944 to 38,704 (about +824) |
+| `Abstain(STATE_INCOMPATIBLE)` | 25,032 to 27,768 | 25,112 to 27,848 (about +80) |
+| `NoEligibleRoute` | 13,840 to 14,016 | 13,872 to 14,048 (about +32) |
+
+The trusted path adds one `bucketOf` call and one mismatch list per execution; the validator's request-derived list is computed separately and not shared, a deliberate trade of about 800 B for keeping the validator independent of the verifier. Verification still repeats ranking by design; moving
+it behind a port does not remove that cost.
+
+### 18.8 Follow-up
+
+A versioned successor of the decision types (new `RoutingRule`/`Placement`/`Basis` semantics) for non-reference ordering families;
+#63 to #68 build on this boundary and stay separate.

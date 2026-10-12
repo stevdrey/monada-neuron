@@ -24,6 +24,14 @@ public sealed interface RoutingDecision
     /** Maximum ranked candidates retained in a decision. */
     int MAX_CANDIDATES = 8;
 
+    /**
+     * Version of the decision contract these records implement: the typed {@link RoutingRule}, {@link Placement},
+     * {@link Basis} and {@link AbstainReason} semantics of the reference ordering (Forge Routing Contract v1, section
+     * 3.3). A {@link RoutingDecisionVerifier} declares the contract it checks; a policy whose ordering these types
+     * cannot represent faithfully needs a successor version, not a reinterpretation of this one.
+     */
+    String CONTRACT_VERSION = "routing-decision/1";
+
     /** Common provenance. */
     Provenance provenance();
 

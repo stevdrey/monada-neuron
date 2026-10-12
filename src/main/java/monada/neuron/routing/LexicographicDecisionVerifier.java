@@ -2,145 +2,177 @@ package monada.neuron.routing;
 
 import monada.neuron.routing.catalog.EligibilityReport;
 
-import java.util.EnumSet;
+import java.util.List;
+import java.util.Objects;
 
 /**
- * The {@code route-lex/1} part of decision verification (Forge Routing Contract v1, sections 3.3 and 17.5): state
- * admission against the decision's recorded {@link PolicyParameters}, the exact lexicographic ranking and its bounded
- * explanation, truncation and the tier cap.
+ * The trusted {@code route-lex/1} ordering verifier (Forge Routing Contract v1, sections 3.3, 17.5 and 18): it checks a
+ * decision against host-supplied {@link PolicyParameters} and {@link RoutingStateDefinition} instead of against what the
+ * decision records about itself.
  *
- * <p>It runs after {@link RoutingDecisionValidator} and relies on it for provenance, request-derived admission and hard
- * eligibility. It recomputes the ranking with {@link LexicographicRanking}, the same definition the reference policy
- * decides with, so a match proves agreement with that definition and not its independent correctness. The ranking
- * inputs (parameters and cohort bucket) are those the decision records; the bucket is not re-derived, because the
- * {@link RoutingPolicy} port does not expose the policy's {@link CohortMapping}, and the feature-schema check covers
- * only the schema the parameters record. Instances are immutable and stateless.
+ * <p>The decision's recorded identity and parameters must equal the host's, its admission result must equal the mismatches
+ * the trusted definition implies, and the cohort bucket is derived with the trusted {@link CohortMapping} and compared with
+ * the recorded {@link CohortBinding} before the ranking is recomputed from trusted values only.
+ *
+ * <p>It runs after the stage's mandatory validation and relies on it for provenance binding, request-derived admission and
+ * hard eligibility. It recomputes the ranking with {@link LexicographicRanking}, the same definition the reference policy
+ * decides with, so a match proves agreement with that definition and not its independent correctness. Instances are
+ * immutable and stateless. The verifier targets the ordering of {@link RoutingDecision#CONTRACT_VERSION}; a policy under
+ * another identity may reuse it only if its decisions follow that same ordering.
  */
-final class LexicographicDecisionVerifier {
+public final class LexicographicDecisionVerifier implements RoutingDecisionVerifier {
+
+    private final String policyId;
+    private final String policyVersion;
+    private final PolicyParameters parameters;
+    private final RoutingStateDefinition definition;
+    private final LexicographicOrdering ordering = new LexicographicOrdering("trusted");
+
+    private LexicographicDecisionVerifier(
+            String policyId, String policyVersion, PolicyParameters parameters, RoutingStateDefinition definition) {
+        this.policyId = policyId;
+        this.policyVersion = policyVersion;
+        this.parameters = parameters;
+        this.definition = definition;
+    }
 
     /**
-     * Verifies a decision that already passed {@link RoutingDecisionValidator}.
+     * Verifier for the reference policy identity {@code route-lex}/{@code 1} that checks decisions against host-supplied
+     * configuration.
+     *
+     * @param parameters the effective parameters the host configured the policy with
+     * @param definition the state definition (cohort mapping and mapping version) the host configured
+     * @throws IllegalArgumentException if the parameters disagree with the definition
+     */
+    public static LexicographicDecisionVerifier trusted(PolicyParameters parameters, RoutingStateDefinition definition) {
+        return trusted(LexicographicRoutingPolicy.POLICY_ID, LexicographicRoutingPolicy.POLICY_VERSION, parameters,
+                definition);
+    }
+
+    /**
+     * Verifier for a policy with its own identity whose decisions follow the {@code route-lex/1} ordering.
+     *
+     * @param policyId id the policy records in its decisions
+     * @param policyVersion version the policy records in its decisions
+     * @param parameters the effective parameters the host configured the policy with
+     * @param definition the state definition (cohort mapping and mapping version) the host configured
+     * @throws IllegalArgumentException if the parameters disagree with the definition
+     */
+    public static LexicographicDecisionVerifier trusted(
+            String policyId, String policyVersion, PolicyParameters parameters, RoutingStateDefinition definition) {
+        RoutingTokens.require(policyId, "policyId");
+        RoutingTokens.require(policyVersion, "policyVersion");
+        Objects.requireNonNull(parameters, "parameters must not be null");
+        Objects.requireNonNull(definition, "definition must not be null");
+        if (!parameters.stateMappingVersion().equals(definition.mappingVersion())
+                || !parameters.stateFeatureSchemaVersion().equals(definition.cohortMapping().featureSchemaVersion())) {
+            throw new IllegalArgumentException("trusted parameters record mapping " + parameters.stateMappingVersion()
+                    + " and schema " + parameters.stateFeatureSchemaVersion() + " but the state definition is "
+                    + definition.mappingVersion() + " over schema " + definition.cohortMapping().featureSchemaVersion());
+        }
+        return new LexicographicDecisionVerifier(policyId, policyVersion, parameters, definition);
+    }
+
+    @Override
+    public String policyId() {
+        return policyId;
+    }
+
+    @Override
+    public String policyVersion() {
+        return policyVersion;
+    }
+
+    @Override
+    public String decisionContractVersion() {
+        return RoutingDecision.CONTRACT_VERSION;
+    }
+
+    /**
+     * Verifies a decision that already passed the stage's mandatory validation.
      *
      * @param decision the policy's decision
      * @param input the resolved inputs the policy decided on
-     * @param report the eligibility filter's report for {@code input}, the same one the validator used
+     * @param report the eligibility filter's report for {@code input}, the same one the validation used
      * @throws IllegalArgumentException if {@code report} was computed for another catalog than {@code input}'s
-     * @throws IllegalStateException if the decision disagrees with the contract ordering recomputed from its recorded
-     *         parameters
+     * @throws IllegalStateException if the decision disagrees with the host's configuration or with the contract
+     *         ordering recomputed from it
      */
-    void verify(RoutingDecision decision, RoutingInput input, EligibilityReport report) {
-        // Checked here too, because the ranking reads report.eligible() and this verifier must stay usable on its own.
-        if (!report.catalogVersion().equals(input.catalog().catalogVersion())) {
-            throw new IllegalArgumentException("eligibility report was computed for catalog " + report.catalogVersion()
-                    + ", not " + input.catalog().catalogVersion());
+    @Override
+    public void verify(RoutingDecision decision, RoutingInput input, EligibilityReport report) {
+        ordering.requireReportFor(report, input);
+        verifyProvenance(decision.provenance());
+        verifyState(decision, input);
+        ordering.verify(decision, report, input, parameters, recorded -> bucket(recorded, input));
+    }
+
+    /** The decision's identity and recorded configuration must be exactly what the host configured. */
+    private void verifyProvenance(Provenance provenance) {
+        if (!policyId.equals(provenance.policyId()) || !policyVersion.equals(provenance.policyVersion())) {
+            throw new IllegalStateException("policy decision records policy " + provenance.policyId() + "/"
+                    + provenance.policyVersion() + " but this verifier checks " + policyId + "/" + policyVersion);
         }
-        verifyState(decision.provenance().validation(), decision.provenance().parameters(), input);
+        if (!parameters.equals(provenance.parameters())) {
+            throw new IllegalStateException("policy decision records parameters " + provenance.parameters()
+                    + " that differ from the trusted configuration " + parameters);
+        }
+    }
+
+    /**
+     * The admission result must equal the mismatches the request, the preference and the trusted state definition imply,
+     * in their normative order: none omitted, none spurious. The state is consulted exactly when a route is eligible.
+     */
+    private void verifyState(RoutingDecision decision, RoutingInput input) {
+        StateValidation validation = decision.provenance().validation();
         switch (decision) {
-            case RoutingDecision.Selected selected -> verifySelectedRanking(selected, report, input);
-            case RoutingDecision.Abstain abstain when abstain.reason() == AbstainReason.POLICY_TRADEOFF_UNRESOLVED ->
-                    verifyTradeoff(abstain, report, input);
-            case RoutingDecision.Abstain ignored -> { }
             case RoutingDecision.NoEligibleRoute ignored -> { }
-        }
-    }
-
-    /**
-     * The admission keys the recorded parameters decide (the policy mapping's feature schema and mapping version) must
-     * be reported exactly, and an incompatible decision must report no reason that neither the request nor the
-     * parameters imply.
-     */
-    private void verifyState(StateValidation validation, PolicyParameters parameters, RoutingInput input) {
-        if (validation instanceof StateValidation.NotEvaluated) {
-            return;
-        }
-        RoutingPreference preference = input.preference();
-        var implied = EnumSet.noneOf(StateMismatch.class);
-        if (!parameters.stateFeatureSchemaVersion().equals(input.request().features().schemaVersion())) {
-            implied.add(StateMismatch.FEATURE_SCHEMA_MISMATCH);
-        }
-        if (!preference.mappingVersion().equals(parameters.stateMappingVersion())) {
-            implied.add(StateMismatch.MAPPING_VERSION_MISMATCH);
-        }
-        switch (validation) {
-            case StateValidation.Compatible compatible -> {
-                // Implied when RoutingDecisionValidator ran first (Provenance ties a compatible state to the
-                // parameters and the validator ties the state to the preference and the request); kept so that this
-                // verifier fails closed on its own.
-                if (!implied.isEmpty()) {
-                    throw new IllegalStateException("policy decision accepted a preference snapshot that conflicts "
-                            + "with the policy mapping: " + implied);
+            case RoutingDecision.Abstain abstain when abstain.reason() == AbstainReason.STATE_INCOMPATIBLE -> {
+                List<StateMismatch> expected = input.preference().mismatches(input.request(), definition);
+                if (!(validation instanceof StateValidation.Incompatible incompatible)) {
+                    throw new IllegalStateException("a state-incompatible abstention must record the mismatches "
+                            + expected + ", got " + validation);
+                }
+                if (!incompatible.reasons().equals(expected)) {
+                    throw new IllegalStateException("policy decision reports state mismatches "
+                            + incompatible.reasons() + " but the trusted state definition implies " + expected);
                 }
             }
-            case StateValidation.Incompatible incompatible -> {
-                if (!incompatible.reasons().containsAll(implied)) {
-                    throw new IllegalStateException("policy decision omits state mismatches the recorded policy "
-                            + "parameters imply: " + implied);
-                }
-                var existing = EnumSet.copyOf(implied);
-                existing.addAll(preference.mismatches(input.request()));
-                for (StateMismatch reason : incompatible.reasons()) {
-                    if (!existing.contains(reason)) {
-                        throw new IllegalStateException("policy decision reports a state mismatch that does not "
-                                + "exist: " + reason);
-                    }
-                }
-            }
-            case StateValidation.NotEvaluated notEvaluated -> { }
+            case RoutingDecision.Selected ignored -> requireAdmitted(validation, input);
+            case RoutingDecision.Abstain ignored -> requireAdmitted(validation, input);
+        }
+    }
+
+    private void requireAdmitted(StateValidation validation, RoutingInput input) {
+        List<StateMismatch> expected = input.preference().mismatches(input.request(), definition);
+        if (!expected.isEmpty()) {
+            throw new IllegalStateException("policy decision ranked routes although the trusted state definition "
+                    + "implies the mismatches " + expected);
+        }
+        // Defensive: the decision records already reject a ranked decision without a compatible state.
+        if (!(validation instanceof StateValidation.Compatible)) {
+            throw new IllegalStateException("a ranked decision must record a compatible state, got " + validation);
         }
     }
 
     /**
-     * A {@code Selected} decision must equal the contract ordering recomputed from its recorded parameters and cohort
-     * bucket (the bucket itself cannot be re-derived), and its winner must not exceed the recorded tier cap.
+     * The bucket the ranking runs with: derived with the host's {@link CohortMapping}, and the recorded binding must
+     * equal it, including both mapping versions and the request's feature schema.
      */
-    private void verifySelectedRanking(RoutingDecision.Selected selected, EligibilityReport report, RoutingInput input) {
-        PolicyParameters parameters = selected.provenance().parameters();
-        LexicographicRanking.Result expected = new LexicographicRanking(
-                parameters.minSupportingObservations(), parameters.objective())
-                .rank(input.request(), input.catalog(), report.eligible(), input.preference(),
-                        selected.cohortBinding().cohortBucket());
-        boolean sameRanking = expected.order().getFirst().route().key().equals(selected.route())
-                && expected.candidates().equals(selected.candidates())
-                && expected.truncated() == selected.candidatesTruncated()
-                && expected.applied().equals(selected.rulesApplied())
-                && expected.skipped().equals(selected.rulesSkipped())
-                && expected.candidates().getFirst().placement().basis() == selected.basis();
-        if (!sameRanking) {
-            throw new IllegalStateException("policy ranking disagrees with the recomputed ranking: expected "
-                    + expected.candidates() + " (applied " + expected.applied() + ", skipped " + expected.skipped()
-                    + "), got " + selected.candidates() + " (applied " + selected.rulesApplied() + ", skipped "
-                    + selected.rulesSkipped() + ", basis " + selected.basis() + ")");
+    private String bucket(CohortBinding recorded, RoutingInput input) {
+        String bucket;
+        CohortBinding expected;
+        try {
+            bucket = definition.cohortMapping().bucketOf(input.request().features());
+            expected = new CohortBinding(bucket, definition.cohortMapping().bucketMappingVersion(),
+                    definition.mappingVersion(), input.request().features().schemaVersion());
+        } catch (IllegalArgumentException invalid) {
+            throw new IllegalStateException("the trusted cohort mapping " + definition.cohortMapping()
+                    .bucketMappingVersion() + " produced an invalid cohort binding: " + invalid.getMessage(), invalid);
         }
-        if (exceedsCap(expected, parameters)) {
-            throw new IllegalStateException("policy selected " + selected.route() + " (tier "
-                    + expected.order().getFirst().tier() + ") above the recorded tier cap "
-                    + parameters.maxAutoSelectTier());
+        if (!expected.equals(recorded)) {
+            throw new IllegalStateException("policy decision records cohort binding " + recorded
+                    + " but the trusted mapping derives " + expected);
         }
-    }
-
-    /**
-     * A tier-cap abstention is the only tradeoff trigger. The ranking is recomputed with the cohort the abstention
-     * recorded and must be reproduced, and the recomputed winner must exceed the recorded cap.
-     */
-    private void verifyTradeoff(RoutingDecision.Abstain abstain, EligibilityReport report, RoutingInput input) {
-        PolicyParameters parameters = abstain.provenance().parameters();
-        LexicographicRanking.Result expected = new LexicographicRanking(
-                parameters.minSupportingObservations(), parameters.objective())
-                .rank(input.request(), input.catalog(), report.eligible(), input.preference(),
-                        abstain.cohortBinding().orElseThrow().cohortBucket());
-        if (!expected.candidates().equals(abstain.candidates())
-                || expected.truncated() != abstain.candidatesTruncated()) {
-            throw new IllegalStateException("policy ranking disagrees with the recomputed ranking: expected "
-                    + expected.candidates() + ", got " + abstain.candidates());
-        }
-        if (!exceedsCap(expected, parameters)) {
-            throw new IllegalStateException("policy abstained on the tier cap but the winner does not exceed the "
-                    + "recorded cap " + parameters.maxAutoSelectTier());
-        }
-    }
-
-    private boolean exceedsCap(LexicographicRanking.Result ranking, PolicyParameters parameters) {
-        return parameters.maxAutoSelectTier().isPresent()
-                && ranking.order().getFirst().tier() > parameters.maxAutoSelectTier().getAsInt();
+        return bucket;
     }
 }

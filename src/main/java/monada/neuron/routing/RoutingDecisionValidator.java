@@ -11,7 +11,8 @@ import java.util.List;
  * <p>It checks that the decision describes exactly the resolved request, catalog, preference snapshot and hosted policy
  * identity, that its state admission agrees with the mismatches the request alone decides, and that it agrees with the
  * hard eligibility filter. It does not check ordering, explanation, truncation, the tier cap or the admission keys that
- * depend on the decision's recorded {@link PolicyParameters}; {@link LexicographicDecisionVerifier} does. Instances are
+ * depend on the policy's parameters and state definition; the {@link RoutingDecisionVerifier} the stage composes does
+ * (the host-selected one, or the legacy {@code route-lex/1} verifier built on the decision's own record). Instances are
  * immutable and stateless.
  */
 final class RoutingDecisionValidator {
@@ -28,6 +29,19 @@ final class RoutingDecisionValidator {
      * @throws IllegalStateException if the decision disagrees with the inputs, the policy identity or the report
      */
     void validate(RoutingDecision decision, RoutingInput input, RoutingPolicy policy, EligibilityReport report) {
+        validate(decision, input, policy.policyId(), policy.policyVersion(), report);
+    }
+
+    /**
+     * Validates a decision against an explicit hosted policy identity, so a trusted host's identity does not depend on
+     * the policy object answering consistently.
+     *
+     * @param policyId the identity the decision must record
+     * @param policyVersion the version the decision must record
+     * @see #validate(RoutingDecision, RoutingInput, RoutingPolicy, EligibilityReport)
+     */
+    void validate(RoutingDecision decision, RoutingInput input, String policyId, String policyVersion,
+            EligibilityReport report) {
         requireReportFor(report, input);
         Provenance provenance = decision.provenance();
         if (!provenance.catalogVersion().equals(input.catalog().catalogVersion())) {
@@ -45,10 +59,9 @@ final class RoutingDecisionValidator {
             throw new IllegalStateException("policy decision records another preference snapshot: "
                     + provenance.state());
         }
-        if (!provenance.policyId().equals(policy.policyId())
-                || !provenance.policyVersion().equals(policy.policyVersion())) {
+        if (!provenance.policyId().equals(policyId) || !provenance.policyVersion().equals(policyVersion)) {
             throw new IllegalStateException("policy decision records policy " + provenance.policyId() + "/"
-                    + provenance.policyVersion() + " instead of " + policy.policyId() + "/" + policy.policyVersion());
+                    + provenance.policyVersion() + " instead of " + policyId + "/" + policyVersion);
         }
         validateRequestState(provenance.validation(), input);
         switch (decision) {
