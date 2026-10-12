@@ -96,7 +96,7 @@ class RoutingDecisionValidatorTest {
         var input = input(request, empty(request));
         var excluded = report(input).excluded();
 
-        var verifier = LexicographicDecisionVerifier.selfReported();
+        var verifier = new SelfReportedLexicographicVerifier();
 
         // A reversed ranking passes the mandatory validation and is rejected only by the route-lex/1 verifier.
         var reversed = selected(provenance(request, empty(request), new StateValidation.Compatible(), PARAMETERS),

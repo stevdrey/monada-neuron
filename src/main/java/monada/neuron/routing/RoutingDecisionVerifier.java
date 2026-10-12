@@ -6,7 +6,7 @@ import monada.neuron.routing.catalog.EligibilityReport;
  * Policy-specific verification of a {@link RoutingDecision} (Forge Routing Contract v1, section 18).
  *
  * <p>A verifier is chosen by the trusted host composition, through a {@link TrustedRoutingProfile}; it is never chosen
- * from a decision or a policy. It runs only after {@link RoutingDecisionValidator} accepted the decision, so provenance
+ * from a decision or a policy. It runs only after the stage's mandatory validation accepted the decision, so provenance
  * binding, request-derived admission and hard eligibility are already established and cannot be relaxed by a verifier.
  * It checks what is specific to one policy: the ordering, the explanation, truncation, the tier cap and the policy's own
  * configuration and state definition.

@@ -64,7 +64,7 @@ public final class RoutingReasoningStage implements CognitiveStage {
      * @param domain non-negative {@link Proposition} domain the host configures for routing
      */
     public RoutingReasoningStage(RoutingPolicy policy, RoutingInputResolver resolver, int domain) {
-        this(policy, LexicographicDecisionVerifier.selfReported(), Optional.empty(), resolver, domain);
+        this(policy, new SelfReportedLexicographicVerifier(), Optional.empty(), resolver, domain);
     }
 
     /**

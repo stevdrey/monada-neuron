@@ -11,7 +11,8 @@ import java.util.List;
  * <p>It checks that the decision describes exactly the resolved request, catalog, preference snapshot and hosted policy
  * identity, that its state admission agrees with the mismatches the request alone decides, and that it agrees with the
  * hard eligibility filter. It does not check ordering, explanation, truncation, the tier cap or the admission keys that
- * depend on the decision's recorded {@link PolicyParameters}; {@link LexicographicDecisionVerifier} does. Instances are
+ * depend on the policy's parameters and state definition; the {@link RoutingDecisionVerifier} the stage composes does
+ * (the host-selected one, or the legacy {@code route-lex/1} verifier built on the decision's own record). Instances are
  * immutable and stateless.
  */
 final class RoutingDecisionValidator {

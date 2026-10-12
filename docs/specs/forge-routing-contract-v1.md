@@ -1082,10 +1082,11 @@ bypass flag or no-op default.
 | Type | Role |
 | --- | --- |
 | `RoutingDecisionVerifier` (public interface) | `policyId()`, `policyVersion()`, `decisionContractVersion()` and `verify(decision, input, report)`; stateless, runs only after the mandatory validation |
-| `TrustedRoutingProfile` (public record) | binds policy id/version, `RoutingDecision.CONTRACT_VERSION` and one verifier; the constructor rejects a null verifier, a verifier for another identity or contract, and any contract other than `routing-decision/1` |
-| `LexicographicDecisionVerifier` | the `route-lex/1` verifier; `trusted(PolicyParameters, RoutingStateDefinition)` for the explicit path, package-private `selfReported()` for the legacy path |
+| `TrustedRoutingProfile` (public record) | binds policy id/version, `RoutingDecision.CONTRACT_VERSION` and one verifier; the constructor rejects a null verifier, a verifier for another identity or contract, and any contract other than `routing-decision/1`. `lexicographic(PolicyParameters, RoutingStateDefinition)` takes configuration supplied separately from the policy; `lexicographic(LexicographicRoutingPolicy)` is a convenience that reads it from the policy instance, so its trust equals that instance's own configuration |
+| `LexicographicDecisionVerifier` | the trusted `route-lex/1` ordering verifier: `trusted(PolicyParameters, RoutingStateDefinition)` for the reference identity, `trusted(policyId, policyVersion, parameters, definition)` for a policy with its own identity whose decisions follow the same ordering |
+| `SelfReportedLexicographicVerifier` (package-private) | the legacy path's verifier; shares the ordering checks (`LexicographicOrdering`) and takes parameters and bucket from the decision |
 | `RoutingReasoningStage(policy, profile, resolver, domain)` | additive constructor; rejects a policy whose id/version differs from the profile |
-| `RoutingReasoningStage(policy, resolver, domain)` | unchanged API; uses `selfReported()` |
+| `RoutingReasoningStage(policy, resolver, domain)` | unchanged API; uses `SelfReportedLexicographicVerifier` |
 
 `RoutingDecisionValidator` stays package-private and owned by the stage; no constructor accepts a replacement. Per execution the
 stage calls `decide` once, evaluates the filter once, runs the validator once and the verifier once, then hands off exactly as in
@@ -1100,7 +1101,7 @@ Section 3.4.
    `NoEligibleRoute`.
 4. Cohort: for `Selected` and `POLICY_TRADEOFF_UNRESOLVED`, the bucket is derived with the trusted `CohortMapping.bucketOf(features)`
    and the recorded `CohortBinding` must equal (bucket, `bucketMappingVersion`, definition `mappingVersion`, request schema). No cohort
-   is derived for `STATE_INCOMPATIBLE` or `NoEligibleRoute`.
+   is derived for `STATE_INCOMPATIBLE` or `NoEligibleRoute`. A trusted mapping that yields a token `CohortBinding` rejects is reported as an `IllegalStateException`, like every other verifier rejection.
 5. Ordering: the ranking is recomputed with the trusted parameters and the derived bucket and compared with candidates, truncation,
    `Basis`, applied/skipped rules, and the tier cap, as in Section 17.5.
 
@@ -1150,7 +1151,7 @@ not a latency benchmark; no speedup is claimed.
 | `Abstain(STATE_INCOMPATIBLE)` | 25,032 to 27,768 | 25,112 to 27,848 (about +80) |
 | `NoEligibleRoute` | 13,840 to 14,016 | 13,872 to 14,048 (about +32) |
 
-The trusted path adds one `bucketOf` call and one mismatch list per execution. Verification still repeats ranking by design; moving
+The trusted path adds one `bucketOf` call and one mismatch list per execution; the validator's request-derived list is computed separately and not shared, a deliberate trade of about 800 B for keeping the validator independent of the verifier. Verification still repeats ranking by design; moving
 it behind a port does not remove that cost.
 
 ### 18.8 Follow-up

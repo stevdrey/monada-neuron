@@ -36,7 +36,7 @@ class TrustedLexicographicVerifierTest {
     private final LexicographicDecisionVerifier trusted =
             LexicographicDecisionVerifier.trusted(reference.parameters(), DEFINITION);
 
-    private void verify(LexicographicDecisionVerifier verifier, RoutingDecision decision, RoutingInput input) {
+    private void verify(RoutingDecisionVerifier verifier, RoutingDecision decision, RoutingInput input) {
         verifier.verify(decision, input, filter.evaluate(input.request(), input.catalog()));
     }
 
@@ -44,7 +44,7 @@ class TrustedLexicographicVerifierTest {
         return rejected(trusted, decision, input);
     }
 
-    private String rejected(LexicographicDecisionVerifier verifier, RoutingDecision decision, RoutingInput input) {
+    private String rejected(RoutingDecisionVerifier verifier, RoutingDecision decision, RoutingInput input) {
         return assertThrows(IllegalStateException.class, () -> verify(verifier, decision, input)).getMessage();
     }
 
@@ -137,7 +137,7 @@ class TrustedLexicographicVerifierTest {
 
         assertTrue(rejected(forged, cold).contains("differ from the trusted configuration"));
         // The self-reported mode checks the decision against what it records about itself, so it accepts the forgery.
-        assertDoesNotThrow(() -> verify(LexicographicDecisionVerifier.selfReported(), forged, cold));
+        assertDoesNotThrow(() -> verify(new SelfReportedLexicographicVerifier(), forged, cold));
     }
 
     @Test
@@ -184,7 +184,7 @@ class TrustedLexicographicVerifierTest {
         assertTrue(rejected(bucket, cold).contains("trusted mapping derives"));
         assertTrue(rejected(mapping, cold).contains("trusted mapping derives"));
         // Self-reported verification cannot tell: it ranks with whatever bucket the decision names.
-        assertDoesNotThrow(() -> verify(LexicographicDecisionVerifier.selfReported(), bucket, cold));
+        assertDoesNotThrow(() -> verify(new SelfReportedLexicographicVerifier(), bucket, cold));
     }
 
     @Test
@@ -206,6 +206,67 @@ class TrustedLexicographicVerifierTest {
                 new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), otherMapping.mappingVersion(),
                         otherMapping.cohortMapping().featureSchemaVersion()), otherMapping);
         assertTrue(rejected(strict, honest, smallInput).contains("trusted mapping derives"));
+    }
+
+    @Test
+    void aFabricatedCohortOnATierCapAbstentionIsRejected() {
+        var capped = new LexicographicRoutingPolicy(DEFINITION, 3, OptionalInt.of(1), Optional.empty());
+        var hostVerifier = LexicographicDecisionVerifier.trusted(capped.parameters(), DEFINITION);
+        var overflow = request(List.of("long-context"), true);
+        var in = input(overflow, demo(), empty(overflow));
+        var honest = assertInstanceOf(RoutingDecision.Abstain.class, capped.decide(overflow, demo(), in.preference()));
+        var binding = honest.cohortBinding().orElseThrow();
+
+        for (var forged : List.of(
+                new CohortBinding("L", binding.bucketMappingVersion(), binding.mappingVersion(),
+                        binding.featureSchemaVersion()),
+                new CohortBinding(binding.cohortBucket(), "change-size/9", binding.mappingVersion(),
+                        binding.featureSchemaVersion()))) {
+            var abstention = new RoutingDecision.Abstain(honest.provenance(), honest.reason(), honest.eligible(),
+                    honest.candidates(), honest.candidatesTruncated(), honest.exclusions(), Optional.of(forged));
+            assertTrue(rejected(hostVerifier, abstention, in).contains("trusted mapping derives"), forged.toString());
+        }
+        verify(hostVerifier, honest, in);
+    }
+
+    @Test
+    void aTrustedMappingThatProducesAnInvalidBucketIsRejectedAsAnIllegalState() {
+        var invalid = new CohortMapping() {
+            @Override
+            public String bucketMappingVersion() {
+                return "b/1";
+            }
+
+            @Override
+            public String featureSchemaVersion() {
+                return "task-features/1";
+            }
+
+            @Override
+            public String bucketOf(TaskFeatures features) {
+                return "x".repeat(200);
+            }
+        };
+        var definition = new RoutingStateDefinition("routing-state/1", invalid);
+        var hostVerifier = LexicographicDecisionVerifier.trusted(
+                new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "routing-state/1", "task-features/1"),
+                definition);
+        var java = request(List.of("java"), false);
+        var cold = input(java, demo(), empty(java));
+
+        assertTrue(rejected(hostVerifier, selected(cold), cold).contains("invalid cohort binding"));
+    }
+
+    @Test
+    void aVerifierCanBeBoundToAnotherPolicyIdentity() {
+        var java = request(List.of("java"), false);
+        var cold = input(java, demo(), empty(java));
+        var audit = LexicographicDecisionVerifier.trusted("route-lex-audit", "1", reference.parameters(), DEFINITION);
+
+        // The reference decision is stamped route-lex/1, which this verifier does not check.
+        assertTrue(rejected(audit, selected(cold), cold).contains("route-lex-audit/1"));
+        assertThrows(IllegalArgumentException.class,
+                () -> LexicographicDecisionVerifier.trusted(" ", "1", reference.parameters(), DEFINITION));
     }
 
     @Test

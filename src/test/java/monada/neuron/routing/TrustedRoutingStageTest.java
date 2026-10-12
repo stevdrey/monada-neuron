@@ -97,35 +97,36 @@ class TrustedRoutingStageTest {
         }
     }
 
-    /** The host's verifier for {@link AuditPolicy}: it checks the underlying reference ordering under its own id. */
-    private static final class AuditVerifier implements RoutingDecisionVerifier {
+    /** Counts the calls the host's verifier receives, delegating to the reference verifier under the audit identity. */
+    private static final class CountingVerifier implements RoutingDecisionVerifier {
 
-        private final LexicographicDecisionVerifier inner;
+        private final RoutingDecisionVerifier inner;
         private final AtomicInteger calls = new AtomicInteger();
 
-        AuditVerifier(LexicographicRoutingPolicy configuration) {
-            this.inner = LexicographicDecisionVerifier.trusted(configuration.parameters(), configuration.definition());
+        CountingVerifier(LexicographicRoutingPolicy configuration) {
+            this.inner = LexicographicDecisionVerifier.trusted(CUSTOM_ID, "1", configuration.parameters(),
+                    configuration.definition());
         }
 
         @Override
         public String policyId() {
-            return CUSTOM_ID;
+            return inner.policyId();
         }
 
         @Override
         public String policyVersion() {
-            return "1";
+            return inner.policyVersion();
         }
 
         @Override
         public String decisionContractVersion() {
-            return RoutingDecision.CONTRACT_VERSION;
+            return inner.decisionContractVersion();
         }
 
         @Override
         public void verify(RoutingDecision decision, RoutingInput input, EligibilityReport report) {
             calls.incrementAndGet();
-            inner.verify(restamp(decision, LexicographicRoutingPolicy.POLICY_ID), input, report);
+            inner.verify(decision, input, report);
         }
     }
 
@@ -157,13 +158,12 @@ class TrustedRoutingStageTest {
 
     @Test
     void everyDecisionVariantPassesTheTrustedPath() {
-        var profile = TrustedRoutingProfile.lexicographic(reference);
         var capped = new LexicographicRoutingPolicy(RoutingStateDefinition.reference(), 3, OptionalInt.of(1),
                 Optional.empty());
 
         var abstention = run(new RoutingReasoningStage(capped, TrustedRoutingProfile.lexicographic(capped),
                 resolving(request(List.of("long-context"), true)), DOMAIN));
-        var none = run(new RoutingReasoningStage(reference, profile,
+        var none = run(new RoutingReasoningStage(reference, TrustedRoutingProfile.lexicographic(reference),
                 resolving(request(List.of("nonexistent"), false)), DOMAIN));
 
         assertEquals(AbstainReason.POLICY_TRADEOFF_UNRESOLVED,
@@ -237,7 +237,7 @@ class TrustedRoutingStageTest {
     void aCustomPolicyWithAHostVerifierReachesEvaluationWithoutChangingTheStage() {
         var request = request(List.of("java"), false);
         var audit = new AuditPolicy(reference);
-        var verifier = new AuditVerifier(reference);
+        var verifier = new CountingVerifier(reference);
         var profile = new TrustedRoutingProfile(CUSTOM_ID, "1", RoutingDecision.CONTRACT_VERSION, verifier);
         var stage = new RoutingReasoningStage(audit, profile, context -> Optional.of(
                 new RoutingInput(request, demo(), RoutingPreference.empty(request, RoutingStateDefinition.reference(),
@@ -284,8 +284,22 @@ class TrustedRoutingStageTest {
     }
 
     @Test
+    void aSeparatelySuppliedConfigurationRejectsAPolicyConfiguredDifferently() {
+        var request = request(List.of("java"), false);
+        var hostParameters = reference.parameters();
+        var wrong = new LexicographicRoutingPolicy(RoutingStateDefinition.reference(), 1, OptionalInt.empty(),
+                Optional.empty());
+        var profile = TrustedRoutingProfile.lexicographic(hostParameters, RoutingStateDefinition.reference());
+
+        // The profile does not read the policy object, so a wrongly configured instance cannot vouch for itself.
+        var stage = new RoutingReasoningStage(wrong, profile, resolving(request), DOMAIN);
+
+        assertRejected(stage, "differ from the trusted configuration");
+    }
+
+    @Test
     void anIncompatibleFamilyOrContractIsRejectedBeforeAnyDecisionExists() {
-        var verifier = new AuditVerifier(reference);
+        var verifier = new CountingVerifier(reference);
 
         var contract = assertThrows(IllegalArgumentException.class,
                 () -> new TrustedRoutingProfile(CUSTOM_ID, "1", "routing-decision/2", verifier));
@@ -403,8 +417,7 @@ class TrustedRoutingStageTest {
         var preference = RoutingFixtures.maximumPreference();
         var objective = new LexicographicRoutingPolicy(RoutingStateDefinition.reference(), 3, OptionalInt.empty(),
                 Optional.of(new ResourceObjective("cost", ResourceObjective.Direction.MINIMIZE)));
-        var capped = new LexicographicRoutingPolicy(RoutingStateDefinition.reference(), 3, OptionalInt.empty(),
-                Optional.empty());
+        var plain = LexicographicRoutingPolicy.reference();
         var context = new CognitiveContext(MINIMUM, HOST);
         var monad = monad();
         RoutingInputResolver resolver = c -> Optional.of(new RoutingInput(request, catalog, preference));
@@ -419,13 +432,14 @@ class TrustedRoutingStageTest {
         reporter.publishEntry("selected.trustedAllocatedBytes", Long.toString(trustedBytes));
         assertTrue(trustedBytes < TRUSTED_STAGE_LIMIT_BYTES, "allocated " + trustedBytes);
 
-        // State-incompatible abstention and no-route decisions exercise the other variants on the same sizes.
+        // A state-incompatible abstention (stale mapping version, no ranking) and a no-route decision exercise the other
+        // variants on the same sizes; a tier-cap abstention ranks like Selected and is not measured separately.
         var stale = new RoutingPreference("scope-demo", "task-features/1", "forge-gates", "1", "routing-state/0",
                 "route-lex", "1", 40, List.of());
         RoutingInputResolver staleResolver = c -> Optional.of(new RoutingInput(request, catalog, stale));
-        var staleTrusted = new RoutingReasoningStage(capped, TrustedRoutingProfile.lexicographic(capped),
+        var staleTrusted = new RoutingReasoningStage(plain, TrustedRoutingProfile.lexicographic(plain),
                 staleResolver, DOMAIN);
-        var staleLegacy = new RoutingReasoningStage(capped, staleResolver, DOMAIN);
+        var staleLegacy = new RoutingReasoningStage(plain, staleResolver, DOMAIN);
         long abstainLegacy = AllocationProbe.measure(20_000, () -> staleLegacy.execute(monad, List.of(), context));
         long abstainTrusted = AllocationProbe.measure(20_000, () -> staleTrusted.execute(monad, List.of(), context));
         reporter.publishEntry("abstain.legacyAllocatedBytes", Long.toString(abstainLegacy));

@@ -43,16 +43,27 @@ public record TrustedRoutingProfile(
     }
 
     /**
-     * Profile for the reference policy, verified against that policy's own effective parameters and state definition.
-     * The host passes the policy instance it composes into the stage, so the configuration is the host's, not a
-     * decision's.
+     * Profile for the reference policy identity, verified against configuration the host supplies separately from the
+     * policy object.
+     *
+     * @param parameters the effective parameters the host configured
+     * @param definition the state definition the host configured
+     */
+    public static TrustedRoutingProfile lexicographic(PolicyParameters parameters, RoutingStateDefinition definition) {
+        return new TrustedRoutingProfile(LexicographicRoutingPolicy.POLICY_ID, LexicographicRoutingPolicy.POLICY_VERSION,
+                RoutingDecision.CONTRACT_VERSION, LexicographicDecisionVerifier.trusted(parameters, definition));
+    }
+
+    /**
+     * Convenience profile for the reference policy that reads the expected configuration from the policy instance
+     * itself. The trust therefore equals that instance's own configuration: it detects a different policy (or a decision
+     * recording other values) but not a host that composes a wrongly configured instance. Prefer
+     * {@link #lexicographic(PolicyParameters, RoutingStateDefinition)} when the configuration comes from a separate source.
      *
      * @param policy the host's reference policy
      */
     public static TrustedRoutingProfile lexicographic(LexicographicRoutingPolicy policy) {
         Objects.requireNonNull(policy, "policy must not be null");
-        return new TrustedRoutingProfile(LexicographicRoutingPolicy.POLICY_ID, LexicographicRoutingPolicy.POLICY_VERSION,
-                RoutingDecision.CONTRACT_VERSION,
-                LexicographicDecisionVerifier.trusted(policy.parameters(), policy.definition()));
+        return lexicographic(policy.parameters(), policy.definition());
     }
 }

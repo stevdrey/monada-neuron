@@ -21,11 +21,16 @@ Add an explicit, host-chosen verifier boundary (Forge Routing Contract v1, Secti
   rejects null, mismatched or unsupported (`!= routing-decision/1`) combinations at construction;
 - an additive `RoutingReasoningStage` constructor taking the profile; the three-argument constructor keeps the legacy
   self-reported `route-lex/1` verification and is documented as not independent;
-- `LexicographicDecisionVerifier.trusted(PolicyParameters, RoutingStateDefinition)`, which compares recorded identity and
+- `LexicographicDecisionVerifier.trusted(...)` (also bindable to another policy identity), which compares recorded identity and
   parameters with the host's, derives the expected `StateMismatch` list and the cohort bucket from the trusted definition, and
   recomputes the ranking from trusted values only.
 
 `RoutingDecisionValidator` stays package-private, stage-owned and always first; no constructor can replace or skip it.
+
+`TrustedRoutingProfile.lexicographic(PolicyParameters, RoutingStateDefinition)` takes configuration supplied separately from the
+policy; the `lexicographic(LexicographicRoutingPolicy)` convenience reads it from the policy instance, so its trust equals that
+instance's own configuration. The legacy path is `SelfReportedLexicographicVerifier`, sharing the ordering checks with the trusted
+verifier.
 
 ## Alternatives
 
