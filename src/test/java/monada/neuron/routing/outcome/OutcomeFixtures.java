@@ -16,14 +16,15 @@ import monada.neuron.routing.features.TaskFeatures;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /** Fictional decision, outcome and evidence fixtures; no provider, credential or Store type. */
 final class OutcomeFixtures {
 
     static final EvidencePolicy GATES =
-            new EvidencePolicy("forge-gates", "1", java.util.Set.of(QualityDimension.TESTS, QualityDimension.SECURITY));
+            new EvidencePolicy("forge-gates", "1", Set.of(QualityDimension.TESTS, QualityDimension.SECURITY));
     static final EvidencePolicy TESTS_ONLY =
-            new EvidencePolicy("forge-gates", "1", java.util.Set.of(QualityDimension.TESTS));
+            new EvidencePolicy("forge-gates", "1", Set.of(QualityDimension.TESTS));
 
     static final RoutingRequest REQUEST = request();
     static final RoutingDecision.Selected DECISION = decide(REQUEST);

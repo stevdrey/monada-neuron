@@ -1171,7 +1171,7 @@ inspection, clock, randomness or billing arithmetic. `DecisionRef`, `CohortBindi
 
 | Type | Behavior |
 | --- | --- |
-| `RoutingOutcome` | Contract version, `DecisionRef`, **executed** `RouteKey`, `CohortBinding`, `catalogVersion`, routing policy id/version, the three fingerprints, evaluation policy, `cutoff`, `InvocationStatus`, recorded `OutcomeStatus` + `OutcomeOrigin`, accepted attempt (required for `ACCEPTED`), `outcomeSequence <= cutoff`, at most 32 `QualityObservation`s (including superseded revisions) and 32 `EvidenceRevision` pins in canonical order, `ResourceSummary`, `StageAttribution`. Duplicate observations are rejected. |
+| `RoutingOutcome` | Contract version, `DecisionRef`, **executed** `RouteKey`, `CohortBinding`, `catalogVersion`, routing policy id/version, the three fingerprints, evaluation policy, `cutoff`, `InvocationStatus`, recorded `OutcomeStatus` + `OutcomeOrigin`, accepted attempt (required for, and only allowed on, `ACCEPTED`), `outcomeSequence <= cutoff`, at most 32 `QualityObservation`s (including superseded revisions) and 32 `EvidenceRevision` pins in canonical order, `ResourceSummary`, `StageAttribution`. Duplicates are rejected: one exact event revision has one ledger position and one judgment per dimension. |
 | `RoutingObservation` | Outcome plus the opaque sample reference (up to 512 code points), revision, `ledgerSequence <= cutoff` and optional `supersedesSequence` (< `ledgerSequence`). No Store type. |
 | `QualityObservation` | One of `CORRECTNESS`, `TESTS`, `SECURITY`, `ARCHITECTURE`, `MAINTAINABILITY`, `COMPLEXITY` with `PASS`/`FAIL`/`UNKNOWN`/`NOT_APPLICABLE`; `NOT_APPLICABLE` requires a justification and only it may carry one; evaluator and policy id/version; source; attempt; event reference and revision; ledger sequence; at most 8 evidence references. |
 | `EvidencePolicy` | Host-set mandatory dimensions (non-empty; no vacuous validation) under the evaluation policy id/version. Neuron has no built-in set. |
@@ -1198,14 +1198,14 @@ or `NEUTRAL` and owns the scores. Blocking reasons: `PROVENANCE_MISMATCH`, `ENVI
 
 | Condition | Reason |
 | --- | --- |
-| Decision ref, executed route (a different route than advised earns no credit), cohort binding, catalog version, routing policy, fingerprints or evaluation policy differ from the decision/request; a judged revision names an event that is not listed | `PROVENANCE_MISMATCH` with every differing `ProvenanceField` |
+| Decision ref, executed route (a different route than advised earns no credit), cohort binding, catalog version, routing policy, fingerprints or evaluation policy differ from the decision/request; a judged revision names an event revision newer than, or absent from, the listed evidence | `PROVENANCE_MISMATCH` with every differing `ProvenanceField` |
 | `UNAVAILABLE` or `TIMED_OUT` invocation (even with failing evidence) | `ENVIRONMENTAL_FAILURE` |
 | Outcome or invocation cancelled; pending outcome | `CANCELLED`; `PENDING` |
 | The host's `EvidencePolicy` differs from the outcome's, or a mandatory dimension has only observations under another policy | `STALE_EVALUATION_POLICY` (plus `MISSING_EVIDENCE`) |
 | A judged revision is older than the latest listed revision of that event | `STALE_ARTIFACT_REVISION` |
-| Two different states at the same highest sequence for a dimension; `ACCEPTED` claimed while the invocation did not complete | `CONTRADICTORY_EVIDENCE` |
+| Two different states at the same highest sequence for any dimension, mandatory or not; `ACCEPTED` claimed while the invocation did not complete | `CONTRADICTORY_EVIDENCE` |
 | No applicable effective observation / effective `UNKNOWN` | `MISSING_EVIDENCE` / `UNKNOWN_EVIDENCE` |
-| `IMPORTED_CLAIM` origin | `IMPORTED_CLAIM` |
+| `IMPORTED_CLAIM` origin, whatever the status | `IMPORTED_CLAIM` |
 | Validated or failed result without `STAGE_LOCAL` attribution | `NO_STAGE_ATTRIBUTION` |
 | `NOT_ACCEPTED` with no proven mandatory failure | `NO_ATTRIBUTABLE_FAILURE` |
 

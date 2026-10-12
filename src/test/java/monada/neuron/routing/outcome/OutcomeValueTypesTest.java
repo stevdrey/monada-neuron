@@ -71,6 +71,19 @@ class OutcomeValueTypesTest {
         var duplicate = new OutcomeFixtures.Spec().passing().with(obs("ev-tests", 0, QualityDimension.TESTS, QualityState.PASS, "att-1", 5));
         assertThrows(IllegalArgumentException.class, duplicate::outcome);
 
+        var sameRevisionTwice = new OutcomeFixtures.Spec()
+                .with(obs("e1", 0, QualityDimension.TESTS, QualityState.PASS, "att-1", 5))
+                .with(obs("e1", 0, QualityDimension.TESTS, QualityState.FAIL, "att-1", 9));
+        assertThrows(IllegalArgumentException.class, sameRevisionTwice::outcome);
+        var splitPosition = new OutcomeFixtures.Spec()
+                .with(obs("e1", 0, QualityDimension.TESTS, QualityState.PASS, "att-1", 5))
+                .with(obs("e1", 0, QualityDimension.SECURITY, QualityState.PASS, "att-1", 9));
+        assertThrows(IllegalArgumentException.class, splitPosition::outcome);
+
+        var rejectedWithAttempt = new OutcomeFixtures.Spec();
+        rejectedWithAttempt.status = OutcomeStatus.REJECTED;
+        assertThrows(IllegalArgumentException.class, rejectedWithAttempt::outcome);
+
         var noAttempt = new OutcomeFixtures.Spec();
         noAttempt.acceptedAttempt = Feature.unknown();
         assertThrows(IllegalArgumentException.class, noAttempt::outcome);

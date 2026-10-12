@@ -8,8 +8,12 @@ import monada.neuron.routing.features.Feature;
 
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * The host-evaluated result of executing a routing decision, with the provenance needed to match it to that exact
@@ -35,7 +39,7 @@ import java.util.Objects;
  * @param invocation worker invocation result
  * @param outcomeStatus current outcome status
  * @param outcomeOrigin whether the outcome was validated or is an imported claim
- * @param acceptedAttemptId attempt the outcome accepted; required for {@code ACCEPTED}
+ * @param acceptedAttemptId attempt the outcome accepted; required for, and only allowed on, {@code ACCEPTED}
  * @param outcomeSequence ledger sequence of the current outcome event, at most {@code cutoff}
  * @param observations at most 32 observations including superseded revisions, canonical order
  * @param judgedRevisions at most 32 evidence revisions the host judged on, one per event, canonical order
@@ -95,6 +99,9 @@ public record RoutingOutcome(
         Objects.requireNonNull(acceptedAttemptId, "acceptedAttemptId must not be null");
         if (acceptedAttemptId instanceof Feature.Known<String> known) {
             OutcomeTokens.token(known.value(), "acceptedAttemptId");
+            if (outcomeStatus != OutcomeStatus.ACCEPTED) {
+                throw new IllegalArgumentException("only an ACCEPTED outcome names an accepted attempt");
+            }
         } else if (outcomeStatus == OutcomeStatus.ACCEPTED) {
             throw new IllegalArgumentException("an ACCEPTED outcome must name the accepted attempt");
         }
@@ -104,10 +111,33 @@ public record RoutingOutcome(
         }
         observations = Ordering.canonical((Collection<QualityObservation>) observations, QualityObservation.ORDER,
                 MAX_EVIDENCE, "observations");
+        requireConsistentPositions(observations);
         judgedRevisions = Ordering.canonical((Collection<EvidenceRevision>) judgedRevisions,
                 Comparator.comparing(EvidenceRevision::eventRef, OutcomeTokens::compare), MAX_EVIDENCE,
                 "judgedRevisions");
         Objects.requireNonNull(resources, "resources must not be null");
         Objects.requireNonNull(attribution, "attribution must not be null");
+    }
+
+    /** One exact event revision has one ledger position and one judgment per dimension. */
+    private static void requireConsistentPositions(List<QualityObservation> observations) {
+        record Revision(String eventRef, long revision) {
+        }
+        record Judgment(Revision revision, QualityDimension dimension) {
+        }
+        Map<Revision, Long> positions = new HashMap<>();
+        Set<Judgment> judgments = new HashSet<>();
+        for (QualityObservation o : observations) {
+            var revision = new Revision(o.eventRef(), o.revision());
+            Long known = positions.putIfAbsent(revision, o.ledgerSequence());
+            if (known != null && known != o.ledgerSequence()) {
+                throw new IllegalArgumentException("event revision " + o.eventRef() + "@" + o.revision()
+                        + " appears at ledger sequences " + known + " and " + o.ledgerSequence());
+            }
+            if (!judgments.add(new Judgment(revision, o.dimension()))) {
+                throw new IllegalArgumentException("event revision " + o.eventRef() + "@" + o.revision()
+                        + " judges " + o.dimension() + " more than once");
+            }
+        }
     }
 }

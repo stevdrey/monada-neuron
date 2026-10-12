@@ -1,10 +1,12 @@
 package monada.neuron.routing.outcome;
 
+import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.features.Feature;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 import static monada.neuron.routing.outcome.OutcomeFixtures.GATES;
@@ -277,6 +279,37 @@ class OutcomeEvaluatorTest {
     }
 
     @Test
+    void pinToARevisionAbsentFromTheListedEvidenceIsAMismatch() {
+        var s = spec().passing();
+        s.judged.add(new EvidenceRevision("ev-tests", 2));
+        var a = s.assess();
+        assertEquals(List.of(ProvenanceField.EVIDENCE_REFERENCE), a.mismatches());
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+    }
+
+    @Test
+    void contradictionInAnOptionalDimensionStillBlocks() {
+        var s = spec().passing()
+                .with(obs("a1", 0, QualityDimension.ARCHITECTURE, PASS, "att-1", 7))
+                .with(obs("a2", 0, QualityDimension.ARCHITECTURE, FAIL, "att-1", 7));
+        var a = s.assess();
+        assertTrue(a.reasons().contains(IneligibilityReason.CONTRADICTORY_EVIDENCE));
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+        assertEquals(DerivedAcceptance.VALIDATED_ACCEPTED, a.derivedAcceptance());
+    }
+
+    @Test
+    void importedClaimIsReportedForRejectedOutcomesToo() {
+        var s = spec().with(obs("e1", 0, TESTS, FAIL, "att-1", 5));
+        s.status = OutcomeStatus.REJECTED;
+        s.origin = OutcomeOrigin.IMPORTED_CLAIM;
+        s.acceptedAttempt = Feature.unknown();
+        var a = s.assess();
+        assertTrue(a.reasons().contains(IneligibilityReason.IMPORTED_CLAIM));
+        assertEquals(EligibilityVerdict.NEGATIVE_CANDIDATE, a.verdict());
+    }
+
+    @Test
     void futureEvidenceDoesNotLeakBackward() {
         var s = spec().with(obs("e1", 0, TESTS, PASS, "att-1", 5)).with(obs("e2", 0, SECURITY, PASS, "att-1", 6))
                 .with(obs("e3", 0, TESTS, FAIL, "att-1", 101));
@@ -288,7 +321,7 @@ class OutcomeEvaluatorTest {
     @Test
     void provenanceMismatchesAreReportedInDeclarationOrder() {
         var s = spec().passing();
-        s.route = new monada.neuron.routing.catalog.RouteKey("sub-b", 1);
+        s.route = new RouteKey("sub-b", 1);
         s.catalogVersion = "other-catalog";
         s.sourceFingerprint = "src-2";
         var a = s.assess();
@@ -309,7 +342,7 @@ class OutcomeEvaluatorTest {
     void cheapOrZeroCostCannotOvercomeAFailedGate() {
         var s = spec().with(obs("e1", 0, TESTS, FAIL, "att-1", 5)).with(obs("e2", 0, SECURITY, PASS, "att-1", 6));
         s.resources = new ResourceSummary(UsageDeclaration.NO_BILLABLE_USAGE, Feature.known("local deterministic check"),
-                List.of(), List.of(new Money(java.math.BigDecimal.ZERO, "USD")), List.of());
+                List.of(), List.of(new Money(BigDecimal.ZERO, "USD")), List.of());
         var a = s.assess();
         assertEquals(DerivedAcceptance.ACCEPTED_UNVALIDATED, a.derivedAcceptance());
         assertNotEquals(EligibilityVerdict.POSITIVE_CANDIDATE, a.verdict());

@@ -130,9 +130,12 @@ public final class OutcomeEvaluator {
             }
         }
 
+        if (!tied.isEmpty()) {
+            reasons.add(IneligibilityReason.CONTRADICTORY_EVIDENCE);
+        }
         for (EvidenceRevision pin : outcome.judgedRevisions()) {
             Long latest = latestRevision.get(pin.eventRef());
-            if (latest == null) {
+            if (latest == null || latest < pin.revision()) {
                 if (!mismatches.contains(ProvenanceField.EVIDENCE_REFERENCE)) {
                     mismatches = withMismatch(mismatches, ProvenanceField.EVIDENCE_REFERENCE);
                     reasons.add(IneligibilityReason.PROVENANCE_MISMATCH);
@@ -147,14 +150,14 @@ public final class OutcomeEvaluator {
             case PENDING -> reasons.add(IneligibilityReason.PENDING);
             case CANCELLED -> reasons.add(IneligibilityReason.CANCELLED);
             case ACCEPTED -> {
-                if (outcome.outcomeOrigin() == OutcomeOrigin.IMPORTED_CLAIM) {
-                    reasons.add(IneligibilityReason.IMPORTED_CLAIM);
-                }
                 if (outcome.invocation() != InvocationStatus.COMPLETED) {
                     reasons.add(IneligibilityReason.CONTRADICTORY_EVIDENCE);
                 }
             }
             case REJECTED, FAILED -> { }
+        }
+        if (outcome.outcomeOrigin() == OutcomeOrigin.IMPORTED_CLAIM) {
+            reasons.add(IneligibilityReason.IMPORTED_CLAIM);
         }
         if (outcome.invocation() == InvocationStatus.CANCELLED) {
             reasons.add(IneligibilityReason.CANCELLED);
