@@ -1,0 +1,169 @@
+package monada.neuron.routing.outcome;
+
+import monada.neuron.routing.catalog.ResourceValue;
+import monada.neuron.routing.features.Feature;
+import org.junit.jupiter.api.Test;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+
+import static monada.neuron.routing.outcome.OutcomeFixtures.obs;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class OutcomeValueTypesTest {
+
+    private static final ResourceValue.Known REPORTED_ZERO = new ResourceValue.Known(0, ResourceValue.Provenance.REPORTED);
+
+    @Test
+    void notApplicableNeedsAJustificationAndOnlyItCarriesOne() {
+        assertThrows(IllegalArgumentException.class, () -> new QualityObservation("e", 0, QualityDimension.TESTS,
+                QualityState.NOT_APPLICABLE, Feature.unknown(), "r", "1", "p", "1", EvidenceSource.TOOL, "a", 1, List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new QualityObservation("e", 0, QualityDimension.TESTS,
+                QualityState.PASS, Feature.known("why"), "r", "1", "p", "1", EvidenceSource.TOOL, "a", 1, List.of()));
+    }
+
+    @Test
+    void malformedTokensAndNumbersAreRejected() {
+        for (String bad : new String[] {"", " padded", "padded ", "ctl\u0007", "zero​", "x".repeat(129)}) {
+            assertThrows(IllegalArgumentException.class, () -> obs("e", 0, QualityDimension.TESTS, QualityState.PASS, bad, 1));
+        }
+        assertThrows(NullPointerException.class, () -> obs("e", 0, QualityDimension.TESTS, QualityState.PASS, null, 1));
+        assertThrows(IllegalArgumentException.class, () -> obs("e", -1, QualityDimension.TESTS, QualityState.PASS, "a", 1));
+        assertThrows(IllegalArgumentException.class, () -> obs("e", 0, QualityDimension.TESTS, QualityState.PASS, "a", -1));
+        assertEquals("x".repeat(128), obs("e", 0, QualityDimension.TESTS, QualityState.PASS, "x".repeat(128), 1).attemptId());
+    }
+
+    @Test
+    void evidencePolicyNeedsMandatoryDimensions() {
+        assertThrows(IllegalArgumentException.class, () -> new EvidencePolicy("p", "1", Set.of()));
+        var copy = new ArrayList<>(List.of(QualityDimension.TESTS));
+        var policy = new EvidencePolicy("p", "1", Set.copyOf(copy));
+        copy.add(QualityDimension.SECURITY);
+        assertEquals(Set.of(QualityDimension.TESTS), policy.mandatoryDimensions());
+        assertThrows(UnsupportedOperationException.class, () -> policy.mandatoryDimensions().add(QualityDimension.SECURITY));
+    }
+
+    @Test
+    void callerMutationNeverChangesAnOutcome() {
+        var spec = new OutcomeFixtures.Spec().passing();
+        spec.judged.add(new EvidenceRevision("ev-tests", 0));
+        var outcome = spec.outcome();
+        spec.observations.add(obs("late", 0, QualityDimension.TESTS, QualityState.FAIL, "att-1", 50));
+        spec.judged.clear();
+        assertEquals(2, outcome.observations().size());
+        assertEquals(1, outcome.judgedRevisions().size());
+        assertThrows(UnsupportedOperationException.class, () -> outcome.observations().clear());
+        assertThrows(UnsupportedOperationException.class, () -> outcome.judgedRevisions().clear());
+    }
+
+    @Test
+    void outcomeBoundsAndCrossFieldRulesAreEnforced() {
+        var many = new OutcomeFixtures.Spec();
+        for (int i = 0; i < 33; i++) {
+            many.with(obs("e" + i, 0, QualityDimension.TESTS, QualityState.PASS, "att-1", i));
+        }
+        assertThrows(IllegalArgumentException.class, many::outcome);
+
+        var duplicate = new OutcomeFixtures.Spec().passing().with(obs("ev-tests", 0, QualityDimension.TESTS, QualityState.PASS, "att-1", 5));
+        assertThrows(IllegalArgumentException.class, duplicate::outcome);
+
+        var noAttempt = new OutcomeFixtures.Spec();
+        noAttempt.acceptedAttempt = Feature.unknown();
+        assertThrows(IllegalArgumentException.class, noAttempt::outcome);
+
+        var beyondCutoff = new OutcomeFixtures.Spec();
+        beyondCutoff.outcomeSequence = 101;
+        assertThrows(IllegalArgumentException.class, beyondCutoff::outcome);
+
+        var spec = new OutcomeFixtures.Spec();
+        var outcome = spec.outcome();
+        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", 0, 101, Feature.unknown()));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", 0, 5, Feature.known(5L)));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", -1, 5, Feature.unknown()));
+        assertEquals(Feature.known(4L), new RoutingObservation(outcome, "x", 1, 5, Feature.known(4L)).supersedesSequence());
+    }
+
+    @Test
+    void attributionRulesNeverInventEvidence() {
+        assertThrows(IllegalArgumentException.class, () -> new StageAttribution(StageAttribution.Basis.STAGE_LOCAL, 1, List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new StageAttribution(StageAttribution.Basis.CHAIN_ONLY, 1, List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new StageAttribution(StageAttribution.Basis.NONE, 1,
+                List.of(new EvidenceRef("log", "r", Feature.unknown()))));
+        assertEquals(StageAttribution.Basis.NONE, StageAttribution.none().basis());
+    }
+
+    @Test
+    void evidenceReferencesAreBoundedAndCanonical() {
+        var refs = new ArrayList<EvidenceRef>();
+        for (int i = 0; i < 9; i++) {
+            refs.add(new EvidenceRef("log", "r" + i, Feature.unknown()));
+        }
+        assertThrows(IllegalArgumentException.class, () -> new QualityObservation("e", 0, QualityDimension.TESTS,
+                QualityState.PASS, Feature.unknown(), "r", "1", "p", "1", EvidenceSource.TOOL, "a", 1, refs));
+        assertThrows(IllegalArgumentException.class, () -> new EvidenceRef("log", "x".repeat(513), Feature.unknown()));
+        assertEquals("x".repeat(512), new EvidenceRef("log", "x".repeat(512), Feature.unknown()).reference());
+        var unordered = List.of(new EvidenceRef("log", "b", Feature.unknown()), new EvidenceRef("log", "a", Feature.unknown()));
+        var observation = new QualityObservation("e", 0, QualityDimension.TESTS, QualityState.PASS, Feature.unknown(),
+                "r", "1", "p", "1", EvidenceSource.TOOL, "a", 1, unordered);
+        assertEquals("a", observation.evidenceRefs().getFirst().reference());
+    }
+
+    @Test
+    void moneyKeepsExactDecimalsAndRejectsBadCurrencies() {
+        assertEquals(new BigDecimal("0.002000"), new Money(new BigDecimal("0.002000"), "USD").amount());
+        for (String bad : new String[] {"usd", "US", "USDX", "U5D", ""}) {
+            assertThrows(IllegalArgumentException.class, () -> new Money(BigDecimal.ONE, bad));
+        }
+        assertThrows(IllegalArgumentException.class, () -> new Money(new BigDecimal("-0.01"), "USD"));
+        assertThrows(IllegalArgumentException.class, () -> new Money(new BigDecimal("1".repeat(39)), "USD"));
+    }
+
+    @Test
+    void resourcesKeepCostKindsApartAndNeverTurnMissingIntoZero() {
+        var summary = new ResourceSummary(UsageDeclaration.MEASURED, Feature.unknown(),
+                List.of(new UsageCounter(UsageKind.OUTPUT_TOKENS, new ResourceValue.Unknown()),
+                        new UsageCounter(UsageKind.INPUT_TOKENS, REPORTED_ZERO),
+                        new UsageCounter(UsageKind.REQUESTS, new ResourceValue.NotMeasured())),
+                List.of(new Money(new BigDecimal("1.50"), "EUR")),
+                List.of(new HypotheticalCost(new Money(new BigDecimal("0.002"), "USD"), "prices", "3", "list price")));
+        assertEquals(UsageKind.INPUT_TOKENS, summary.counters().getFirst().kind());
+        assertEquals(List.of(UsageKind.OUTPUT_TOKENS, UsageKind.REQUESTS, UsageKind.TOOL_CALLS),
+                summary.unmeasured(Set.of(UsageKind.INPUT_TOKENS, UsageKind.OUTPUT_TOKENS, UsageKind.REQUESTS, UsageKind.TOOL_CALLS)));
+        assertEquals("EUR", summary.actualBilling().getFirst().currency());
+        assertEquals("USD", summary.hypotheticalCosts().getFirst().amount().currency());
+        assertEquals(List.of(UsageKind.INPUT_TOKENS), ResourceSummary.unrecorded().unmeasured(Set.of(UsageKind.INPUT_TOKENS)));
+    }
+
+    @Test
+    void usageDeclarationRulesFollowTheStoreContract() {
+        assertThrows(IllegalArgumentException.class, () -> new ResourceSummary(UsageDeclaration.NO_BILLABLE_USAGE,
+                Feature.unknown(), List.of(), List.of(), List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new ResourceSummary(UsageDeclaration.NO_BILLABLE_USAGE,
+                Feature.known("local check"), List.of(new UsageCounter(UsageKind.REQUESTS, REPORTED_ZERO)), List.of(), List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new ResourceSummary(UsageDeclaration.MEASURED,
+                Feature.known("nothing"), List.of(), List.of(), List.of()));
+        var declared = new ResourceSummary(UsageDeclaration.NO_BILLABLE_USAGE, Feature.known("local check"),
+                List.of(), List.of(), List.of());
+        assertTrue(declared.unmeasured(Set.of(UsageKind.INPUT_TOKENS)).isEmpty());
+        var twoUsd = List.of(new Money(BigDecimal.ONE, "USD"), new Money(BigDecimal.TEN, "USD"));
+        assertThrows(IllegalArgumentException.class, () -> new ResourceSummary(UsageDeclaration.MEASURED,
+                Feature.unknown(), List.of(), twoUsd, List.of()));
+    }
+
+    @Test
+    void assessmentInvariantsRejectInconsistentVerdicts() {
+        assertThrows(IllegalArgumentException.class, () -> new LearningAssessment(DerivedAcceptance.ACCEPTED_UNVALIDATED,
+                EligibilityVerdict.POSITIVE_CANDIDATE, List.of(), List.of(), List.of(), List.of(), 0));
+        assertThrows(IllegalArgumentException.class, () -> new LearningAssessment(DerivedAcceptance.NOT_ACCEPTED,
+                EligibilityVerdict.NEGATIVE_CANDIDATE, List.of(), List.of(), List.of(), List.of(), 0));
+        assertThrows(IllegalArgumentException.class, () -> new LearningAssessment(DerivedAcceptance.NOT_ACCEPTED,
+                EligibilityVerdict.NOT_ELIGIBLE, List.of(IneligibilityReason.PROVENANCE_MISMATCH), List.of(), List.of(), List.of(), 0));
+        assertThrows(IllegalArgumentException.class, () -> new LearningAssessment(DerivedAcceptance.NOT_ACCEPTED,
+                EligibilityVerdict.NOT_ELIGIBLE, List.of(IneligibilityReason.PENDING, IneligibilityReason.CANCELLED),
+                List.of(), List.of(), List.of(), 0));
+    }
+}

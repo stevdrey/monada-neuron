@@ -1,0 +1,341 @@
+package monada.neuron.routing.outcome;
+
+import monada.neuron.routing.features.Feature;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+
+import java.util.List;
+
+import static monada.neuron.routing.outcome.OutcomeFixtures.GATES;
+import static monada.neuron.routing.outcome.OutcomeFixtures.TESTS_ONLY;
+import static monada.neuron.routing.outcome.OutcomeFixtures.obs;
+import static monada.neuron.routing.outcome.QualityDimension.SECURITY;
+import static monada.neuron.routing.outcome.QualityDimension.TESTS;
+import static monada.neuron.routing.outcome.QualityState.FAIL;
+import static monada.neuron.routing.outcome.QualityState.NOT_APPLICABLE;
+import static monada.neuron.routing.outcome.QualityState.PASS;
+import static monada.neuron.routing.outcome.QualityState.UNKNOWN;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class OutcomeEvaluatorTest {
+
+    private OutcomeFixtures.Spec spec() {
+        return new OutcomeFixtures.Spec();
+    }
+
+    // ---- Store v1 section 8 normative cases (policy forge-gates v1, mandatory TESTS, accepted attempt a2) ----
+
+    private OutcomeFixtures.Spec storeCase(QualityObservation... observations) {
+        var spec = spec();
+        spec.acceptedAttempt = Feature.known("a2");
+        for (var o : observations) {
+            spec.with(o);
+        }
+        return spec;
+    }
+
+    @Test
+    void storeCasePassIsValidatedAccepted() {
+        var a = storeCase(obs("e1", 0, TESTS, PASS, "a2", 5)).assess(TESTS_ONLY);
+        assertEquals(DerivedAcceptance.VALIDATED_ACCEPTED, a.derivedAcceptance());
+        assertEquals(EligibilityVerdict.POSITIVE_CANDIDATE, a.verdict());
+        assertTrue(a.reasons().isEmpty());
+    }
+
+    @Test
+    void storeCaseLaterFailOverridesEarlierPass() {
+        var a = storeCase(obs("e1", 0, TESTS, PASS, "a2", 5), obs("e2", 0, TESTS, FAIL, "a2", 7)).assess(TESTS_ONLY);
+        assertEquals(DerivedAcceptance.ACCEPTED_UNVALIDATED, a.derivedAcceptance());
+        assertEquals(List.of(TESTS), a.provenFailures());
+        assertEquals(EligibilityVerdict.NEGATIVE_CANDIDATE, a.verdict());
+    }
+
+    @Test
+    void storeCaseLaterPassOverridesEarlierFail() {
+        var a = storeCase(obs("e1", 0, TESTS, FAIL, "a2", 5), obs("e2", 0, TESTS, PASS, "a2", 7)).assess(TESTS_ONLY);
+        assertEquals(DerivedAcceptance.VALIDATED_ACCEPTED, a.derivedAcceptance());
+        assertEquals(7L, a.effectiveEvidence().getFirst().ledgerSequence());
+    }
+
+    @Test
+    void storeCaseLaterUnknownOverridesEarlierPass() {
+        var a = storeCase(obs("e1", 0, TESTS, PASS, "a2", 5), obs("e2", 0, TESTS, UNKNOWN, "a2", 7)).assess(TESTS_ONLY);
+        assertEquals(DerivedAcceptance.ACCEPTED_UNVALIDATED, a.derivedAcceptance());
+        assertTrue(a.reasons().contains(IneligibilityReason.UNKNOWN_EVIDENCE));
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+    }
+
+    @Test
+    void storeCasePolicyV2ObservationIsIgnored() {
+        var a = storeCase(obs("e1", 0, TESTS, PASS, "2", "a2", 5)).assess(TESTS_ONLY);
+        assertEquals(DerivedAcceptance.ACCEPTED_UNVALIDATED, a.derivedAcceptance());
+        assertTrue(a.reasons().containsAll(List.of(IneligibilityReason.MISSING_EVIDENCE,
+                IneligibilityReason.STALE_EVALUATION_POLICY)));
+        assertEquals(1, a.excludedObservations());
+    }
+
+    @Test
+    void storeCaseEvidenceOfAnotherAttemptIsIgnored() {
+        var a = storeCase(obs("e1", 0, TESTS, PASS, "a1", 3)).assess(TESTS_ONLY);
+        assertEquals(DerivedAcceptance.ACCEPTED_UNVALIDATED, a.derivedAcceptance());
+        assertTrue(a.reasons().contains(IneligibilityReason.MISSING_EVIDENCE));
+    }
+
+    @Test
+    void storeCaseCorrectedRevisionReplacesTheOriginal() {
+        var a = storeCase(obs("e1", 0, TESTS, PASS, "a2", 5), obs("e1", 1, TESTS, FAIL, "a2", 9)).assess(TESTS_ONLY);
+        assertEquals(DerivedAcceptance.ACCEPTED_UNVALIDATED, a.derivedAcceptance());
+        assertEquals(List.of(TESTS), a.provenFailures());
+        assertEquals(1, a.excludedObservations());
+    }
+
+    @Test
+    void storeCaseJustifiedNotApplicableValidates() {
+        var a = storeCase(obs("e1", 0, TESTS, NOT_APPLICABLE, "a2", 5)).assess(TESTS_ONLY);
+        assertEquals(DerivedAcceptance.VALIDATED_ACCEPTED, a.derivedAcceptance());
+    }
+
+    // ---- Acceptance criteria and required examples ----
+
+    @Test
+    void accepted() {
+        var a = spec().passing().assess();
+        assertEquals(DerivedAcceptance.VALIDATED_ACCEPTED, a.derivedAcceptance());
+        assertEquals(EligibilityVerdict.POSITIVE_CANDIDATE, a.verdict());
+        assertEquals(List.of(TESTS, SECURITY), a.effectiveEvidence().stream()
+                .map(LearningAssessment.EffectiveEvidence::dimension).toList());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = QualityState.class, names = {"FAIL", "UNKNOWN"})
+    void completedInvocationWithFailingOrUnknownMandatoryGateIsNeverPositive(QualityState bad) {
+        var failingTests = spec().with(obs("e1", 0, TESTS, bad, "att-1", 5))
+                .with(obs("e2", 0, SECURITY, PASS, "att-1", 6)).assess();
+        var badSecurity = spec().with(obs("e1", 0, TESTS, PASS, "att-1", 5))
+                .with(obs("e2", 0, SECURITY, bad, "att-1", 6)).assess();
+        for (var a : List.of(failingTests, badSecurity)) {
+            assertNotEquals(EligibilityVerdict.POSITIVE_CANDIDATE, a.verdict());
+            assertNotEquals(DerivedAcceptance.VALIDATED_ACCEPTED, a.derivedAcceptance());
+        }
+    }
+
+    private static void assertNotEquals(Object unexpected, Object actual) {
+        assertFalse(unexpected.equals(actual), "unexpected " + actual);
+    }
+
+    @Test
+    void acceptedFlagAloneIsInsufficient() {
+        var a = spec().assess();
+        assertEquals(DerivedAcceptance.ACCEPTED_UNVALIDATED, a.derivedAcceptance());
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+        assertEquals(List.of(IneligibilityReason.MISSING_EVIDENCE), a.reasons());
+    }
+
+    @Test
+    void importedClaimIsNeverPositive() {
+        var s = spec().passing();
+        s.origin = OutcomeOrigin.IMPORTED_CLAIM;
+        var a = s.assess();
+        assertEquals(DerivedAcceptance.ACCEPTED_UNVALIDATED, a.derivedAcceptance());
+        assertTrue(a.reasons().contains(IneligibilityReason.IMPORTED_CLAIM));
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+    }
+
+    @Test
+    void repairedChainWithoutStageLocalEvidenceIsNotCredited() {
+        var s = spec().with(obs("e1", 0, TESTS, PASS, "att-2", 5)).with(obs("e2", 0, SECURITY, PASS, "att-2", 6));
+        s.acceptedAttempt = Feature.known("att-2");
+        s.attribution = new StageAttribution(StageAttribution.Basis.CHAIN_ONLY, 2, List.of());
+        var a = s.assess();
+        assertEquals(DerivedAcceptance.VALIDATED_ACCEPTED, a.derivedAcceptance());
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+        assertEquals(List.of(IneligibilityReason.NO_STAGE_ATTRIBUTION), a.reasons());
+    }
+
+    @Test
+    void repairedChainWithStageLocalEvidenceIsCredited() {
+        var s = spec().with(obs("e1", 0, TESTS, PASS, "att-2", 5)).with(obs("e2", 0, SECURITY, PASS, "att-2", 6));
+        s.acceptedAttempt = Feature.known("att-2");
+        assertEquals(EligibilityVerdict.POSITIVE_CANDIDATE, s.assess().verdict());
+    }
+
+    @Test
+    void rejectedWithProvenFailureIsANegativeCandidate() {
+        var s = spec().with(obs("e1", 0, TESTS, FAIL, "att-1", 5));
+        s.status = OutcomeStatus.REJECTED;
+        s.acceptedAttempt = Feature.unknown();
+        var a = s.assess();
+        assertEquals(DerivedAcceptance.NOT_ACCEPTED, a.derivedAcceptance());
+        assertEquals(EligibilityVerdict.NEGATIVE_CANDIDATE, a.verdict());
+        assertEquals(List.of(TESTS), a.provenFailures());
+    }
+
+    @Test
+    void rejectedWithoutGateEvidenceIsNotAProvenFailure() {
+        var s = spec();
+        s.status = OutcomeStatus.REJECTED;
+        s.acceptedAttempt = Feature.unknown();
+        var a = s.assess();
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+        assertTrue(a.reasons().contains(IneligibilityReason.NO_ATTRIBUTABLE_FAILURE));
+    }
+
+    @Test
+    void provenFailureWithoutStageAttributionIsNotPenalized() {
+        var s = spec().with(obs("e1", 0, TESTS, FAIL, "att-1", 5));
+        s.status = OutcomeStatus.REJECTED;
+        s.acceptedAttempt = Feature.unknown();
+        s.attribution = StageAttribution.none();
+        var a = s.assess();
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+        assertTrue(a.reasons().contains(IneligibilityReason.NO_STAGE_ATTRIBUTION));
+    }
+
+    @Test
+    void pendingAndCancelledSayNothing() {
+        var pending = spec().passing();
+        pending.status = OutcomeStatus.PENDING;
+        pending.acceptedAttempt = Feature.unknown();
+        var a = pending.assess();
+        assertEquals(DerivedAcceptance.PENDING, a.derivedAcceptance());
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+        assertTrue(a.reasons().contains(IneligibilityReason.PENDING));
+
+        var cancelled = spec().with(obs("e1", 0, TESTS, FAIL, "att-1", 5));
+        cancelled.status = OutcomeStatus.CANCELLED;
+        cancelled.acceptedAttempt = Feature.unknown();
+        var c = cancelled.assess();
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, c.verdict());
+        assertTrue(c.reasons().contains(IneligibilityReason.CANCELLED));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = InvocationStatus.class, names = {"UNAVAILABLE", "TIMED_OUT"})
+    void environmentalFailureNeverPenalizesEvenWithFailingEvidence(InvocationStatus environmental) {
+        var s = spec().with(obs("e1", 0, TESTS, FAIL, "att-1", 5));
+        s.invocation = environmental;
+        s.status = OutcomeStatus.FAILED;
+        s.acceptedAttempt = Feature.unknown();
+        var a = s.assess();
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+        assertTrue(a.reasons().contains(IneligibilityReason.ENVIRONMENTAL_FAILURE));
+        assertFalse(a.reasons().contains(IneligibilityReason.PROVENANCE_MISMATCH));
+    }
+
+    @Test
+    void acceptedClaimWithFailedInvocationIsContradictory() {
+        var s = spec().passing();
+        s.invocation = InvocationStatus.FAILED;
+        var a = s.assess();
+        assertTrue(a.reasons().contains(IneligibilityReason.CONTRADICTORY_EVIDENCE));
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+    }
+
+    @Test
+    void conflictingJudgmentsAtOneSequenceAreContradictory() {
+        var s = spec().with(obs("e1", 0, TESTS, PASS, "att-1", 5)).with(obs("e2", 0, TESTS, FAIL, "att-1", 5))
+                .with(obs("e3", 0, SECURITY, PASS, "att-1", 6));
+        var a = s.assess();
+        assertTrue(a.reasons().contains(IneligibilityReason.CONTRADICTORY_EVIDENCE));
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+    }
+
+    @Test
+    void staleEvaluationPolicyOfTheHostIsReported() {
+        var a = spec().passing().assess(new EvidencePolicy("forge-gates", "2", GATES.mandatoryDimensions()));
+        assertTrue(a.reasons().contains(IneligibilityReason.STALE_EVALUATION_POLICY));
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+    }
+
+    @Test
+    void staleArtifactRevisionBlocksLearning() {
+        var s = spec().with(obs("e1", 0, TESTS, PASS, "att-1", 5)).with(obs("e1", 1, TESTS, PASS, "att-1", 20))
+                .with(obs("e2", 0, SECURITY, PASS, "att-1", 6));
+        s.judged.add(new EvidenceRevision("e1", 0));
+        var a = s.assess();
+        assertTrue(a.reasons().contains(IneligibilityReason.STALE_ARTIFACT_REVISION));
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+    }
+
+    @Test
+    void currentJudgedRevisionIsNotStale() {
+        var s = spec().passing();
+        s.judged.add(new EvidenceRevision("ev-tests", 0));
+        assertEquals(EligibilityVerdict.POSITIVE_CANDIDATE, s.assess().verdict());
+    }
+
+    @Test
+    void unknownJudgedEvidenceIsAProvenanceMismatch() {
+        var s = spec().passing();
+        s.judged.add(new EvidenceRevision("not-listed", 0));
+        var a = s.assess();
+        assertEquals(List.of(ProvenanceField.EVIDENCE_REFERENCE), a.mismatches());
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+    }
+
+    @Test
+    void futureEvidenceDoesNotLeakBackward() {
+        var s = spec().with(obs("e1", 0, TESTS, PASS, "att-1", 5)).with(obs("e2", 0, SECURITY, PASS, "att-1", 6))
+                .with(obs("e3", 0, TESTS, FAIL, "att-1", 101));
+        var a = s.assess();
+        assertEquals(EligibilityVerdict.POSITIVE_CANDIDATE, a.verdict());
+        assertEquals(1, a.excludedObservations());
+    }
+
+    @Test
+    void provenanceMismatchesAreReportedInDeclarationOrder() {
+        var s = spec().passing();
+        s.route = new monada.neuron.routing.catalog.RouteKey("sub-b", 1);
+        s.catalogVersion = "other-catalog";
+        s.sourceFingerprint = "src-2";
+        var a = s.assess();
+        assertEquals(List.of(ProvenanceField.EXECUTED_ROUTE, ProvenanceField.CATALOG_VERSION,
+                ProvenanceField.SOURCE_FINGERPRINT), a.mismatches());
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+        assertEquals(List.of(IneligibilityReason.PROVENANCE_MISMATCH), a.reasons());
+    }
+
+    @Test
+    void outcomeUnderAnotherEvaluationPolicyThanTheRequestMismatches() {
+        var s = spec().passing();
+        s.evaluationPolicyVersion = "2";
+        assertTrue(s.assess().mismatches().contains(ProvenanceField.EVALUATION_POLICY));
+    }
+
+    @Test
+    void cheapOrZeroCostCannotOvercomeAFailedGate() {
+        var s = spec().with(obs("e1", 0, TESTS, FAIL, "att-1", 5)).with(obs("e2", 0, SECURITY, PASS, "att-1", 6));
+        s.resources = new ResourceSummary(UsageDeclaration.NO_BILLABLE_USAGE, Feature.known("local deterministic check"),
+                List.of(), List.of(new Money(java.math.BigDecimal.ZERO, "USD")), List.of());
+        var a = s.assess();
+        assertEquals(DerivedAcceptance.ACCEPTED_UNVALIDATED, a.derivedAcceptance());
+        assertNotEquals(EligibilityVerdict.POSITIVE_CANDIDATE, a.verdict());
+    }
+
+    @Test
+    void assessmentIsDeterministicAcrossObservationOrder() {
+        var forward = spec().passing().with(obs("e9", 0, TESTS, FAIL, "att-1", 3));
+        var backward = new OutcomeFixtures.Spec().with(obs("e9", 0, TESTS, FAIL, "att-1", 3));
+        backward.observations.add(obs("ev-sec", 0, SECURITY, PASS, "att-1", 6));
+        backward.observations.add(obs("ev-tests", 0, TESTS, PASS, "att-1", 5));
+        assertEquals(forward.outcome(), backward.outcome());
+        assertEquals(forward.assess(), backward.assess());
+    }
+
+    @Test
+    void thirtyTwoObservationsAllocateBoundedAndStayLinear() {
+        var s = spec();
+        for (int i = 0; i < 32; i++) {
+            s.with(obs("e" + i, 0, i % 2 == 0 ? TESTS : SECURITY, PASS, "att-1", i));
+        }
+        var observation = s.observation();
+        var evaluator = new OutcomeEvaluator();
+        long bytes = AllocationProbe.measure(20_000,
+                () -> evaluator.assess(observation, OutcomeFixtures.DECISION, OutcomeFixtures.REQUEST, GATES));
+        System.out.println("assess@32 observations allocated bytes: " + bytes);
+        assertTrue(bytes < 16 * 1024, "allocation regression guard, measured " + bytes);
+    }
+}
