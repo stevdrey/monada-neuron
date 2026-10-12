@@ -24,10 +24,16 @@ final class LexicographicDecisionVerifier {
      * @param decision the policy's decision
      * @param input the resolved inputs the policy decided on
      * @param report the eligibility filter's report for {@code input}, the same one the validator used
+     * @throws IllegalArgumentException if {@code report} was computed for another catalog than {@code input}'s
      * @throws IllegalStateException if the decision disagrees with the contract ordering recomputed from its recorded
      *         parameters
      */
     void verify(RoutingDecision decision, RoutingInput input, EligibilityReport report) {
+        // Checked here too, because the ranking reads report.eligible() and this verifier must stay usable on its own.
+        if (!report.catalogVersion().equals(input.catalog().catalogVersion())) {
+            throw new IllegalArgumentException("eligibility report was computed for catalog " + report.catalogVersion()
+                    + ", not " + input.catalog().catalogVersion());
+        }
         verifyState(decision.provenance().validation(), decision.provenance().parameters(), input);
         switch (decision) {
             case RoutingDecision.Selected selected -> verifySelectedRanking(selected, report, input);
@@ -44,6 +50,9 @@ final class LexicographicDecisionVerifier {
      * parameters imply.
      */
     private void verifyState(StateValidation validation, PolicyParameters parameters, RoutingInput input) {
+        if (validation instanceof StateValidation.NotEvaluated) {
+            return;
+        }
         RoutingPreference preference = input.preference();
         var implied = EnumSet.noneOf(StateMismatch.class);
         if (!parameters.stateFeatureSchemaVersion().equals(input.request().features().schemaVersion())) {
@@ -54,6 +63,9 @@ final class LexicographicDecisionVerifier {
         }
         switch (validation) {
             case StateValidation.Compatible compatible -> {
+                // Implied when RoutingDecisionValidator ran first (Provenance ties a compatible state to the
+                // parameters and the validator ties the state to the preference and the request); kept so that this
+                // verifier fails closed on its own.
                 if (!implied.isEmpty()) {
                     throw new IllegalStateException("policy decision accepted a preference snapshot that conflicts "
                             + "with the policy mapping: " + implied);

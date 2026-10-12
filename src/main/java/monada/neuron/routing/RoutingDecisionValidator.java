@@ -22,10 +22,13 @@ final class RoutingDecisionValidator {
      * @param decision the policy's decision
      * @param input the resolved inputs the policy decided on
      * @param policy the hosted policy; only its identity is read
-     * @param report the eligibility filter's report for {@code input}, computed once by the caller
+     * @param report the eligibility filter's report for {@code input}, computed once by the caller; only its catalog
+     *         version can be checked against {@code input}, because a report carries no request identity
+     * @throws IllegalArgumentException if {@code report} was computed for another catalog than {@code input}'s
      * @throws IllegalStateException if the decision disagrees with the inputs, the policy identity or the report
      */
     void validate(RoutingDecision decision, RoutingInput input, RoutingPolicy policy, EligibilityReport report) {
+        requireReportFor(report, input);
         Provenance provenance = decision.provenance();
         if (!provenance.catalogVersion().equals(input.catalog().catalogVersion())) {
             throw new IllegalStateException("policy decision refers to catalog " + provenance.catalogVersion()
@@ -88,6 +91,14 @@ final class RoutingDecisionValidator {
                 }
             }
             case StateValidation.NotEvaluated notEvaluated -> { }
+        }
+    }
+
+    /** A report for another catalog would make every eligibility check compare against the wrong routes. */
+    private void requireReportFor(EligibilityReport report, RoutingInput input) {
+        if (!report.catalogVersion().equals(input.catalog().catalogVersion())) {
+            throw new IllegalArgumentException("eligibility report was computed for catalog " + report.catalogVersion()
+                    + ", not " + input.catalog().catalogVersion());
         }
     }
 

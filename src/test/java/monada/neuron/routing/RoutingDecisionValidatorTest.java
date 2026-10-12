@@ -1,6 +1,7 @@
 package monada.neuron.routing;
 
 import monada.neuron.routing.catalog.EligibilityReport;
+import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteEligibilityFilter;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
@@ -10,8 +11,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 
+import static monada.neuron.routing.RoutingFixtures.APPLIED;
 import static monada.neuron.routing.RoutingFixtures.COLD_COHORT;
 import static monada.neuron.routing.RoutingFixtures.PARAMETERS;
+import static monada.neuron.routing.RoutingFixtures.SKIPPED;
 import static monada.neuron.routing.RoutingFixtures.SUB_A;
 import static monada.neuron.routing.RoutingFixtures.SUB_B;
 import static monada.neuron.routing.RoutingFixtures.demo;
@@ -24,11 +27,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The mandatory, policy-independent validation: provenance, request-derived admission and hard eligibility. */
 class RoutingDecisionValidatorTest {
-
-    private static final List<RoutingRule> APPLIED =
-            List.of(RoutingRule.TIER, RoutingRule.FALLBACK_PRIORITY, RoutingRule.ROUTE_ORDER);
-    private static final List<RoutingRule> SKIPPED =
-            List.of(RoutingRule.LEARNED_PREFERENCE, RoutingRule.RESOURCE_OBJECTIVE);
 
     private final RoutingDecisionValidator validator = new RoutingDecisionValidator();
     private final RouteEligibilityFilter filter = new RouteEligibilityFilter();
@@ -98,25 +96,45 @@ class RoutingDecisionValidatorTest {
         var input = input(request, empty(request));
         var excluded = report(input).excluded();
 
+        var verifier = new LexicographicDecisionVerifier();
+
         // A reversed ranking passes the mandatory validation and is rejected only by the route-lex/1 verifier.
         var reversed = selected(provenance(request, empty(request), new StateValidation.Compatible(), PARAMETERS),
                 SUB_B, "sandboxed", false, inOrder(SUB_B, SUB_A), excluded);
         validate(reversed, input);
-        assertThrows(IllegalStateException.class,
-                () -> new LexicographicDecisionVerifier().verify(reversed, input, report(input)));
+        assertTrue(assertThrows(IllegalStateException.class, () -> verifier.verify(reversed, input, report(input)))
+                .getMessage().contains("recomputed ranking"));
 
-        // Omitting a mismatch the recorded parameters imply, or adding a spurious reason, is left to that verifier too.
-        var otherMapping = new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "other-mapping",
-                "task-features/1");
-        for (var recorded : List.of(
-                new StateValidation.Incompatible(List.of(StateMismatch.SCOPE_MISMATCH)),
-                new StateValidation.Incompatible(List.of(StateMismatch.FEATURE_SCHEMA_MISMATCH)))) {
-            var abstain = new RoutingDecision.Abstain(provenance(request, empty(request), recorded, otherMapping),
-                    AbstainReason.STATE_INCOMPATIBLE, List.of(SUB_A, SUB_B), List.of(), false, excluded);
-            validate(abstain, input);
-            assertThrows(IllegalStateException.class,
-                    () -> new LexicographicDecisionVerifier().verify(abstain, input, report(input)));
-        }
+        // Omitting one of two mismatches only the recorded parameters imply (another schema and another mapping),
+        // with no spurious reason, is left to that verifier.
+        var otherDefinition = new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "other-mapping",
+                "task-features/0");
+        var omitting = new RoutingDecision.Abstain(provenance(request, empty(request),
+                new StateValidation.Incompatible(List.of(StateMismatch.FEATURE_SCHEMA_MISMATCH)), otherDefinition),
+                AbstainReason.STATE_INCOMPATIBLE, List.of(SUB_A, SUB_B), List.of(), false, excluded);
+        validate(omitting, input);
+        assertTrue(assertThrows(IllegalStateException.class, () -> verifier.verify(omitting, input, report(input)))
+                .getMessage().contains("omits state mismatches the recorded policy parameters imply"));
+
+        // A spurious reason with nothing omitted: neither the request nor the parameters imply a scope mismatch.
+        var spurious = new RoutingDecision.Abstain(provenance(request, empty(request),
+                new StateValidation.Incompatible(List.of(StateMismatch.SCOPE_MISMATCH)), PARAMETERS),
+                AbstainReason.STATE_INCOMPATIBLE, List.of(SUB_A, SUB_B), List.of(), false, excluded);
+        validate(spurious, input);
+        assertTrue(assertThrows(IllegalStateException.class, () -> verifier.verify(spurious, input, report(input)))
+                .getMessage().contains("does not exist"));
+    }
+
+    @Test
+    void aReportForAnotherCatalogIsRejected() {
+        var request = request(List.of("java"), false);
+        var input = input(request, empty(request));
+        var decision = policy.decide(request, demo(), empty(request));
+        var foreign = filter.evaluate(request, RouteCatalog.of("cat-other", demo().entries()));
+
+        var failure = assertThrows(IllegalArgumentException.class,
+                () -> validator.validate(decision, input, policy, foreign));
+        assertTrue(failure.getMessage().contains("cat-other"));
     }
 
     @Test

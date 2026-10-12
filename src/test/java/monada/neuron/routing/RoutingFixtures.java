@@ -29,6 +29,13 @@ final class RoutingFixtures {
     static final PolicyParameters PARAMETERS =
             new PolicyParameters(3, OptionalInt.empty(), Optional.empty(), "routing-state/1", "task-features/1");
 
+    /** The rules a cold-start ordering applies: tier, fallback priority and route order. */
+    static final List<RoutingRule> APPLIED =
+            List.of(RoutingRule.TIER, RoutingRule.FALLBACK_PRIORITY, RoutingRule.ROUTE_ORDER);
+
+    /** The optional rules a cold-start ordering skips. */
+    static final List<RoutingRule> SKIPPED = List.of(RoutingRule.LEARNED_PREFERENCE, RoutingRule.RESOURCE_OBJECTIVE);
+
     /** A cohort binding for the default request (bucket {@code UNKNOWN}) under the reference mapping and schema. */
     static final CohortBinding COLD_COHORT = new CohortBinding("UNKNOWN", "b/1", "routing-state/1", "task-features/1");
 
@@ -88,7 +95,13 @@ final class RoutingFixtures {
     /** Provenance of a {@code route-lex/1} decision over {@link #demo()} for the given request and preference. */
     static Provenance provenance(RoutingRequest request, RoutingPreference preference, StateValidation validation,
             PolicyParameters parameters) {
-        return new Provenance(DecisionRef.of(request), "cat-demo-7", LexicographicRoutingPolicy.POLICY_ID,
+        return provenance(request, demo().catalogVersion(), preference, validation, parameters);
+    }
+
+    /** Provenance of a {@code route-lex/1} decision over the catalog with the given version. */
+    static Provenance provenance(RoutingRequest request, String catalogVersion, RoutingPreference preference,
+            StateValidation validation, PolicyParameters parameters) {
+        return new Provenance(DecisionRef.of(request), catalogVersion, LexicographicRoutingPolicy.POLICY_ID,
                 LexicographicRoutingPolicy.POLICY_VERSION, request.cutoff(), preference.binding(), validation,
                 parameters);
     }

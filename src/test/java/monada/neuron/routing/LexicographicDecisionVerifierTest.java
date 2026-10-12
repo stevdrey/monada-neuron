@@ -14,8 +14,10 @@ import java.util.Optional;
 import java.util.OptionalInt;
 
 import static monada.neuron.routing.RoutingFixtures.API_X;
+import static monada.neuron.routing.RoutingFixtures.APPLIED;
 import static monada.neuron.routing.RoutingFixtures.COLD_COHORT;
 import static monada.neuron.routing.RoutingFixtures.PARAMETERS;
+import static monada.neuron.routing.RoutingFixtures.SKIPPED;
 import static monada.neuron.routing.RoutingFixtures.SUB_A;
 import static monada.neuron.routing.RoutingFixtures.SUB_B;
 import static monada.neuron.routing.RoutingFixtures.demo;
@@ -28,11 +30,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The {@code route-lex/1} verification: parameter-derived admission, exact ranking, truncation and the tier cap. */
 class LexicographicDecisionVerifierTest {
-
-    private static final List<RoutingRule> APPLIED =
-            List.of(RoutingRule.TIER, RoutingRule.FALLBACK_PRIORITY, RoutingRule.ROUTE_ORDER);
-    private static final List<RoutingRule> SKIPPED =
-            List.of(RoutingRule.LEARNED_PREFERENCE, RoutingRule.RESOURCE_OBJECTIVE);
 
     private final LexicographicDecisionVerifier verifier = new LexicographicDecisionVerifier();
     private final RouteEligibilityFilter filter = new RouteEligibilityFilter();
@@ -93,14 +90,40 @@ class LexicographicDecisionVerifierTest {
     void provenanceAndEligibilityAreNotItsResponsibility() {
         var request = request(List.of("java"), false);
         var input = new RoutingInput(request, demo(), empty(request));
+        var report = filter.evaluate(request, demo());
+        var validator = new RoutingDecisionValidator();
+        var reference = LexicographicRoutingPolicy.reference();
+        var compatible = provenance(request, empty(request), new StateValidation.Compatible(), PARAMETERS);
         var foreign = new Provenance(DecisionRef.of(request), "cat-other", "stub", "9", request.cutoff(),
                 empty(request).binding(), new StateValidation.Compatible(), PARAMETERS);
-        // Foreign identity, another execution mode and missing exclusions: only the mandatory validator rejects these.
-        var decision = selected(foreign, SUB_A, "other-mode", false, inOrder(SUB_A, SUB_B), false, List.of());
 
-        verify(decision, input);
-        assertThrows(IllegalStateException.class, () -> new RoutingDecisionValidator().validate(decision, input,
-                LexicographicRoutingPolicy.reference(), filter.evaluate(request, demo())));
+        // Each fault alone, then all together: the verifier accepts them and only the mandatory validator rejects them.
+        record Case(RoutingDecision decision, String message) { }
+        for (Case c : List.of(
+                new Case(selected(foreign, SUB_A, "sandboxed", false, inOrder(SUB_A, SUB_B), false,
+                        report.excluded()), "cat-other"),
+                new Case(selected(compatible, SUB_A, "other-mode", false, inOrder(SUB_A, SUB_B), false,
+                        report.excluded()), "disagrees"),
+                new Case(selected(compatible, SUB_A, "sandboxed", false, inOrder(SUB_A, SUB_B), false, List.of()),
+                        "exclusions disagree"),
+                new Case(selected(foreign, SUB_A, "other-mode", false, inOrder(SUB_A, SUB_B), false, List.of()),
+                        "cat-other"))) {
+            verify(c.decision(), input);
+            var failure = assertThrows(IllegalStateException.class,
+                    () -> validator.validate(c.decision(), input, reference, report));
+            assertTrue(failure.getMessage().contains(c.message()), c.toString());
+        }
+    }
+
+    @Test
+    void aReportForAnotherCatalogIsRejected() {
+        var request = request(List.of("java"), false);
+        var input = new RoutingInput(request, demo(), empty(request));
+        var decision = LexicographicRoutingPolicy.reference().decide(request, demo(), empty(request));
+        var foreign = filter.evaluate(request, RouteCatalog.of("cat-other", demo().entries()));
+
+        var failure = assertThrows(IllegalArgumentException.class, () -> verifier.verify(decision, input, foreign));
+        assertTrue(failure.getMessage().contains("cat-other"));
     }
 
     @Test
@@ -162,8 +185,10 @@ class LexicographicDecisionVerifierTest {
             }
         }
         var twelve = new RoutingInput(request, RouteCatalog.of("cat-twelve", entries), empty(request));
-        verify(selected(compatible, firstEight[0], "sandboxed", false, inOrder(firstEight), true, List.of()), twelve);
-        assertTrue(rejected(selected(compatible, firstEight[0], "sandboxed", false, inOrder(firstEight), false,
+        var overTwelve = provenance(request, "cat-twelve", empty(request), new StateValidation.Compatible(),
+                PARAMETERS);
+        verify(selected(overTwelve, firstEight[0], "sandboxed", false, inOrder(firstEight), true, List.of()), twelve);
+        assertTrue(rejected(selected(overTwelve, firstEight[0], "sandboxed", false, inOrder(firstEight), false,
                 List.of()), twelve).contains("recomputed ranking"));
     }
 
