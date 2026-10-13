@@ -1,0 +1,7 @@
+package monada.neuron.routing.outcome;
+
+/** The part of an outcome that disagrees with its decision or request. */
+public enum ProvenanceField {
+    DECISION_REF, CUTOFF, EXECUTED_ROUTE, COHORT_BINDING, FEATURE_SCHEMA_VERSION, CATALOG_VERSION, ROUTING_POLICY, SOURCE_FINGERPRINT,
+    CONTEXT_FINGERPRINT, CONSTRAINTS_FINGERPRINT, EVALUATION_POLICY, STATE_BINDING, EVIDENCE_REFERENCE
+}

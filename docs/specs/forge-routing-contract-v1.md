@@ -1,6 +1,6 @@
 # Forge Routing Contract v1
 
-Status: **proposed contract; implemented so far: `TaskFeatures` and its signal encoder (#60, Section 15), the route catalog and eligibility filter (#61, Section 16), and the routing policy, decisions and composition seam (#62, Section 17).** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
+Status: **proposed contract; implemented so far: `TaskFeatures` and its signal encoder (#60, Section 15), the route catalog and eligibility filter (#61, Section 16), the routing policy, decisions and composition seam (#62, Section 17), and outcome evidence with learning eligibility (#63, Section 19).** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
 Issue: [#59](https://github.com/stevdrey/monada-neuron/issues/59) (Forge Routing 1/10).
 
 This document is the normative v1 contract that issues #60–#68 implement. Later issues may refine exact Java
@@ -9,7 +9,7 @@ signatures, but must not change the semantics defined here without updating this
 Normative words: **must**, **must not**, **should** and **may** carry their usual specification meaning.
 
 Every type and package name below (`monada.neuron.routing`, `TaskFeatures`, `RouteCatalog`, `RoutingDecision`, ...) is a
-**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them exists; since #60, `TaskFeatures` and the other types of `monada.neuron.routing.features` (Section 15), and since #61 the types of `monada.neuron.routing.catalog` (Section 16), and since #62 the policy, decision, preference and composition types of `monada.neuron.routing` (Section 17), are implemented. Types that do exist are named with
+**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them existed; since #60, `TaskFeatures` and the other types of `monada.neuron.routing.features` (Section 15), and since #61 the types of `monada.neuron.routing.catalog` (Section 16), and since #62 the policy, decision, preference and composition types of `monada.neuron.routing` (Section 17), and since #63 the outcome evidence and learning-eligibility types of `monada.neuron.routing.outcome` (Section 19), are implemented. Types that do exist are named with
 their current package and are described only as they exist today.
 
 ## Background
@@ -33,7 +33,7 @@ Inspected `main` at `d1dd569` (Java 27). Already implemented and **reused unchan
 - `RuntimeBackendSelector`, which selects *internal computational backends* (SCALAR/VECTOR_API, object/CSR graph, ...). It
   never selects external workers or models.
 
-Not present: any typed route, worker catalog, routing decision, or routing outcome. `ActionRequest` carries Signals and an
+At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 19 describe what has been added since. Still absent: `RoutingFeedback`, the caller-owned preference state store and Store export translation (#64 to #68). `ActionRequest` carries Signals and an
 opaque host context, not a route. `Signal` carries no identity (ADR 0005).
 
 ## Goal
@@ -159,8 +159,8 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 | `RoutingPolicy` | #62 (implemented, Section 17) | Versioned, explicit, rule-based policy; `decide(RoutingRequest, RouteCatalog, RoutingPreference) -> RoutingDecision`; the policy carries its `ResourceObjective`. |
 | `ResourceEstimate` | #61 (implemented, Section 16) | Host-supplied, per-route annotation inside the `RouteCatalog` snapshot: `(RouteId, RouteVersion, dimension, unit, value, provenance)` with `value` Known, Unknown or NotMeasured (Section 5). At most one estimate per route and dimension (Section 3.1), and at most 4 dimensions per route. |
 | `RoutingDecision` | #62 (implemented, Section 17) | Sealed: `Selected`, `Abstain`, `NoEligibleRoute`. |
-| `RoutingOutcome` | #63 | Host-evaluated result of executing a decision, with evidence and provenance. |
-| `RoutingObservation` | #63 | Neutral, Store-independent record of one effective execution sample, defined with `RoutingOutcome` so feedback derivation needs only #63. #64 only *produces* it from Store exports. |
+| `RoutingOutcome` | #63 (implemented, Section 19) | Host-evaluated result of executing a decision, with evidence and provenance. |
+| `RoutingObservation` | #63 (implemented, Section 19) | Neutral, Store-independent record of one effective execution sample, defined with `RoutingOutcome` so feedback derivation needs only #63. #64 only *produces* it from Store exports. |
 | `RoutingFeedback` | #65 | Bounded artifact derived from an observation; separate from `OutcomeFeedback`. |
 | `RoutingPreference`, `CohortMapping`, `RoutingStateDefinition` | #62 (implemented, Section 17) | `CohortMapping` is the pure, versioned `TaskFeatures -> cohortBucket` function with its `bucketMappingVersion`. `RoutingStateDefinition` groups the `CohortMapping`, `initialNodeState`, `AdaptationConfig` and feedback scoring and eligibility rules under one composite `mappingVersion` that changes when any part changes. `RoutingPreference` is the **immutable value snapshot** of `scopeId`, `featureSchemaVersion`, `evaluationPolicy`, `mappingVersion`, cohort preference values, supporting counts and `processedCutoff`, taken from the caller's mutable state and passed to `decide`. #62 defines the value type, its valid empty cold-start form (`EMPTY` for a scope, feature schema, evaluation policy and mapping version) and its admission validation, so `decide` needs no later type; #66 only builds non-empty snapshots from the caller's state. |
 | `RoutingStateStore` (caller-owned, mutable) | #66 | The caller's `Node` bindings, applied-revision ledger and `RoutingStateCheckpoint`; it produces the `RoutingPreference` snapshots. It is never passed to `decide`. |
@@ -1023,7 +1023,7 @@ The tests publish the figures and assert only upper bounds (24 KiB for `decide`,
 
 The tests cover the Section 9 fixtures (cold start, no eligible route then explicit overflow, subscription-first, learned promotion that cannot cross a tier), ties and numeric version order, unknown and incomparable resource metrics, both abstention reasons, every admission mismatch, input permutations (catalog entries, estimates and cohorts) giving equal decisions, injected cheap invalid candidates, bounds and truncation, and the cycle composition with a minimum positive budget (`maxSteps >= 1`, `maxSignals >= 1`): full result preserved by normalization, typed hand-off to `EVALUATION`, `NO_SIGNALS` for a following stage without typed-only support, rejection of initial Signals.
 
-Evidence gaps: no claim that the ordering improves quality, acceptance or cost; the default cohort thresholds are unvalidated; learned preference values can only be produced by #63 to #66, so non-empty snapshots are test fixtures here; latency is unmeasured; `RoutingEnvelope` transport, outcomes and feedback are not implemented.
+Evidence gaps: no claim that the ordering improves quality, acceptance or cost; the default cohort thresholds are unvalidated; learned preference values can only be produced by #63 to #66, so non-empty snapshots are test fixtures here; latency is unmeasured; `RoutingEnvelope` transport (#64) and feedback (#65) are not implemented; outcome evidence and learning eligibility are (Section 19).
 
 ### 17.5 Verification responsibilities (#76)
 
@@ -1157,4 +1157,93 @@ it behind a port does not remove that cost.
 ### 18.8 Follow-up
 
 A versioned successor of the decision types (new `RoutingRule`/`Placement`/`Basis` semantics) for non-reference ordering families;
-#63 to #68 build on this boundary and stay separate.
+#64 to #68 build on this boundary and stay separate.
+
+## 19. Implemented: Outcome Evidence and Learning Eligibility (#63)
+
+Package `monada.neuron.routing.outcome`. This section describes **implemented behavior** and refines Sections 3, 5 and 6; it
+does not change their semantics. Everything is additive and opt-in; no existing type changed (`ActionStatus`,
+`OutcomeFeedback` and the Store are untouched), nothing is wired into a cycle, and there is no persistence, judge call, code
+inspection, clock, randomness or billing arithmetic. `DecisionRef`, `CohortBinding`, `RouteKey`, `ResourceValue` and
+`Feature` are reused from #60 to #62.
+
+### 19.1 Types and rules
+
+| Type | Behavior |
+| --- | --- |
+| `RoutingOutcome` | Contract version, `DecisionRef`, **executed** `RouteKey`, `CohortBinding`, `catalogVersion`, routing policy id/version, the three fingerprints, evaluation policy, `cutoff`, `InvocationStatus`, recorded `OutcomeStatus` + `OutcomeOrigin`, accepted attempt (required for, and only allowed on, `ACCEPTED`) and `acceptedAttemptStatus` (`COMPLETED`/`FAILED`/`CANCELLED`, only for an accepted attempt other than the routed one; unknown means unfinished; for the routed attempt the `invocation` is the source of truth), `outcomeSequence <= cutoff`, at most 32 `QualityObservation`s (including superseded revisions) and 32 `EvidenceRevision` pins in canonical order, `ResourceSummary`, `StageAttribution`. Duplicates are rejected: one exact event revision has one ledger position and one judgment per dimension, and a higher revision of an event must sit at a strictly higher ledger sequence. |
+| `RoutingObservation` | Outcome plus the opaque sample reference (up to 512 code points), revision, `ledgerSequence <= cutoff` and no earlier than the outcome event or any in-cutoff evidence it includes, and optional `supersedesSequence` (< `ledgerSequence`). No Store type. |
+| `QualityObservation` | One of `CORRECTNESS`, `TESTS`, `SECURITY`, `ARCHITECTURE`, `MAINTAINABILITY`, `COMPLEXITY` with `PASS`/`FAIL`/`UNKNOWN`/`NOT_APPLICABLE`; `NOT_APPLICABLE` requires a justification and only it may carry one; evaluator and policy id/version; source; attempt; event reference and revision; ledger sequence; at most 8 evidence references. |
+| `EvidencePolicy` | Host-set mandatory dimensions (non-empty; no vacuous validation) under the evaluation policy id/version. Neuron has no built-in set. |
+| `InvocationStatus` | `COMPLETED`, `FAILED`, `CANCELLED`, `UNAVAILABLE`, `TIMED_OUT`; the last two are environmental. `COMPLETED` is never acceptance. |
+| `StageAttribution` | `STAGE_LOCAL` (needs evidence references), `CHAIN_ONLY` (at least 2 stages) or `NONE`; retained, never invented. |
+| `ResourceSummary` | Up to 6 usage counters (one per kind) as `ResourceValue` (`Known` incl. a real zero, `Unknown`, `NotMeasured`); `MEASURED` or `NO_BILLABLE_USAGE` (needs a justification, no counters); actual billing and hypothetical API cost as separate exact-decimal `Money` lists, one entry per currency, never summed. `unmeasured(required)` lists gaps and never substitutes zero. |
+| `OutcomeEvaluator.assess(observation, selectedDecision, request, evidencePolicy)` | Stateless. Returns `LearningAssessment(derivedAcceptance, verdict, reasons, mismatches, effectiveEvidence, provenFailures, excludedObservations)`. |
+
+**Effective evidence** follows Store v1 section 8: an observation is applicable when it is about the evidence attempt (the
+accepted attempt, else the decision's attempt), was judged under the evaluation policy in force, is not after the cutoff and
+is the latest listed revision of its event; the effective one per dimension has the highest ledger sequence, so a later
+`FAIL`/`UNKNOWN` overrides an earlier `PASS` and the reverse. All eight normative cases of the Store table are tests.
+**Derived acceptance** is the Store's: `VALIDATED_ACCEPTED` only for `ACCEPTED` + `VALIDATED` with the accepted attempt finished `COMPLETED` and every mandatory dimension
+`PASS` or justified `NOT_APPLICABLE`; otherwise (including an unfinished, `FAILED` or `CANCELLED` accepted attempt with passing evidence) `ACCEPTED_UNVALIDATED`; `NOT_ACCEPTED` for rejected, failed or cancelled;
+`PENDING`. An accepted flag alone, a completed invocation, and every resource field are never read as evidence.
+
+**Verdict.** `POSITIVE_CANDIDATE` only for `VALIDATED_ACCEPTED` with `STAGE_LOCAL` attribution and none of the blocking
+reasons; `NEGATIVE_CANDIDATE` only for a proven effective mandatory `FAIL` with `STAGE_LOCAL` attribution and no blocking
+reason; otherwise `NOT_ELIGIBLE`. It is not a feedback disposition: #65 maps verdict and reasons to `REINFORCE`, `PENALIZE`
+or `NEUTRAL` and owns the scores. Blocking reasons: `PROVENANCE_MISMATCH`, `ENVIRONMENTAL_FAILURE`, `CANCELLED`, `PENDING`,
+`STALE_ARTIFACT_REVISION`, `CONTRADICTORY_EVIDENCE`. Informational reasons that may accompany any verdict:
+`STALE_EVALUATION_POLICY`, `MISSING_EVIDENCE`, `UNKNOWN_EVIDENCE`, `IMPORTED_CLAIM`, `NO_STAGE_ATTRIBUTION`,
+`NO_ATTRIBUTABLE_FAILURE`. Reasons are unique and reported in declaration order; `LearningAssessment` canonicalizes all its lists (reasons, mismatches, effective evidence) and rejects duplicates. A `RoutingObservation` with `revision > 0` must carry the `supersedesSequence` it replaces and an initial revision must not. A positive candidate needs non-empty effective evidence, every state `PASS` or `NOT_APPLICABLE`. A candidate verdict never accompanies a blocking reason (`IneligibilityReason.blocking()`); `LearningAssessment` enforces this for a negative candidate and, being reason-free, for a positive one.
+
+| Condition | Reason |
+| --- | --- |
+| Decision ref, the decision's cutoff against the request's cutoff, executed route (a different route than advised earns no credit), cohort binding, feature schema (the request's `features.schemaVersion` against the decision's cohort binding), catalog version, routing policy, fingerprints or evaluation policy (the outcome and request against each other and against the decision's recorded state binding); the state binding's scope and `processedCutoff` against the request (`STATE_BINDING`) differ from the decision/request; a judged revision `(event, revision)` that is not itself listed (absent, intermediate or newer) | `PROVENANCE_MISMATCH` with every differing `ProvenanceField` |
+| `UNAVAILABLE` or `TIMED_OUT` invocation (even with failing evidence) | `ENVIRONMENTAL_FAILURE` |
+| Outcome or invocation cancelled; pending outcome | `CANCELLED`; `PENDING` |
+| The host's `EvidencePolicy` differs from the outcome's, or a mandatory dimension has only observations under another policy | `STALE_EVALUATION_POLICY` (plus `MISSING_EVIDENCE`) |
+| A judged revision is older than the latest listed revision of that event | `STALE_ARTIFACT_REVISION` |
+| Two different states at the same highest sequence for any dimension, mandatory or not; `ACCEPTED` claimed for the routed attempt while its invocation did not complete (a repaired chain whose routed attempt failed is not contradictory) | `CONTRADICTORY_EVIDENCE` |
+| No applicable effective observation / effective `UNKNOWN` | `MISSING_EVIDENCE` / `UNKNOWN_EVIDENCE` |
+| `IMPORTED_CLAIM` origin, whatever the status | `IMPORTED_CLAIM` |
+| Validated or failed result without `STAGE_LOCAL` attribution | `NO_STAGE_ATTRIBUTION` |
+| `NOT_ACCEPTED` with no proven mandatory failure | `NO_ATTRIBUTABLE_FAILURE` |
+
+Observations after the cutoff are excluded, so no later acceptance, correction or usage leaks backward.
+
+### 19.2 Limits
+
+32 observations and 32 judged revisions per outcome, 8 evidence references per observation and per attribution, 6 usage
+counters, 4 currencies each for billing and hypothetical cost, identifiers 128 code points, references and free text 512,
+decimal precision 38. Violations of a caller-built value throw `IllegalArgumentException`; an assessment never throws for
+well-formed arguments, whatever the evidence says. All lists are immutable copies in canonical order, so permutations of the
+same input give equal records.
+
+### 19.3 Complexity and footprint
+
+`O` <= 32 observations, `D` <= 6 dimensions, `P` <= 32 judged revisions: `assess` is `O(O + D + P*O)` time (the last term is the
+exact-pin check, a linear scan only when pins exist, at most 32 x 32) and `O(O + D)` space; the only hash map (latest
+revision per event) is point-queried and never iterated, so order cannot affect results. No cache, parallelism, SIMD or GPU.
+**Measured** (JDK 27, `ThreadMXBean.getThreadAllocatedBytes`, 20,000 warm-up calls, one `assess`, no pins, five runs on the final
+implementation): 3,152 to 3,272 bytes at 8 observations and 3,536 to 4,264 bytes at 32 (earlier revisions that built a set of
+revision records per call measured 9,104 to 12,640 bytes; the figure varies slightly with JIT state). The test publishes both
+figures through the JUnit report, asserts that 32 observations allocate less than 6x the bytes of 8 (linear would be about 4x,
+quadratic about 16x; the cost is dominated by fixed overhead) and an 8 KiB ceiling, as a regression guard. Latency is not
+measured and no performance claim is made.
+The retained footprint of an outcome is not modeled beyond its bounds.
+
+### 19.4 Verification and evidence gaps
+
+```bash
+./gradlew test
+./gradlew consumerSmokeTest
+```
+
+Examples covered by tests: accepted, repaired chain (with and without stage-local evidence), rejected, pending, cancelled,
+unavailable/timed out, stale policy and artifact revision, incomplete usage, imported claim, contradictory evidence,
+provenance mismatch, future evidence, cost that cannot offset a failed gate.
+
+Evidence gaps: the evaluator trusts the host's judgments, attribution basis and mandatory set (descriptors and evidence are
+observations, not proof); `STAGE_LOCAL` is accepted on the host's assertion plus at least one reference; Store export
+translation, envelope verification and sample `ExperienceRef` handling are #64; feedback scores and dispositions are #65;
+no latency measurement; no claim that eligibility rules improve routing.
