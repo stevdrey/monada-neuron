@@ -1,5 +1,6 @@
 package monada.neuron.routing.features;
 
+import monada.neuron.routing.token.OpaqueTokens;
 import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
 
@@ -52,7 +53,7 @@ public sealed interface EncodingResult permits EncodingResult.Encoded, EncodingR
                     throw new IllegalArgumentException("signals must be OBSERVATION, got: " + signal.kind());
                 }
             }
-            FeatureTokens.require(policyId, "policyId");
+            OpaqueTokens.require(policyId, "policyId");
             if (policyVersion < 1) {
                 throw new IllegalArgumentException("policyVersion must be positive, got: " + policyVersion);
             }

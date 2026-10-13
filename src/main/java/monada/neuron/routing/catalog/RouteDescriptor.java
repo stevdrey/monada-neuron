@@ -1,6 +1,7 @@
 package monada.neuron.routing.catalog;
 
 import monada.neuron.routing.features.Feature;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.Collection;
 import java.util.List;
@@ -76,7 +77,7 @@ public record RouteDescriptor(
     private static Feature<String> token(Feature<String> feature, String name) {
         Objects.requireNonNull(feature, name + " must not be null");
         if (feature instanceof Feature.Known<String> known) {
-            RouteTokens.require(known.value(), name);
+            OpaqueTokens.require(known.value(), name);
         }
         return feature;
     }

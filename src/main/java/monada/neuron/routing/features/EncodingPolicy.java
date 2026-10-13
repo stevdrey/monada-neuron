@@ -1,5 +1,7 @@
 package monada.neuron.routing.features;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -35,7 +37,7 @@ public record EncodingPolicy(
 
     /** Validates tokens, vocabulary bounds and ceilings, and copies the vocabularies. */
     public EncodingPolicy {
-        FeatureTokens.require(id, "id");
+        OpaqueTokens.require(id, "id");
         if (version < 1) {
             throw new IllegalArgumentException("version must be positive, got: " + version);
         }
@@ -78,7 +80,7 @@ public record EncodingPolicy(
         List<String> copy = List.copyOf(tokens);
         HashSet<String> seen = HashSet.newHashSet(copy.size());
         for (String token : copy) {
-            FeatureTokens.require(token, name + " token");
+            OpaqueTokens.require(token, name + " token");
             if (!seen.add(token)) {
                 throw new IllegalArgumentException(name + " contains a duplicate token: " + token);
             }

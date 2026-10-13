@@ -2,6 +2,7 @@ package monada.neuron.routing;
 
 import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.features.TaskFeatures;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.Objects;
 
@@ -24,7 +25,7 @@ public record ChangeSizeCohortMapping(String bucketMappingVersion, long smallMax
 
     /** Validates the version and thresholds. */
     public ChangeSizeCohortMapping {
-        RoutingTokens.require(bucketMappingVersion, "bucketMappingVersion");
+        OpaqueTokens.require(bucketMappingVersion, "bucketMappingVersion");
         if (smallMax < 0 || mediumMax < smallMax) {
             throw new IllegalArgumentException(
                     "thresholds must satisfy 0 <= smallMax <= mediumMax, got: " + smallMax + ", " + mediumMax);

@@ -1,5 +1,7 @@
 package monada.neuron.routing;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 /**
  * The preference snapshot's identity as recorded on every decision, so an abstention or a no-route decision can be
  * replayed without host-side state.
@@ -25,13 +27,13 @@ public record StateBinding(
 
     /** Validates tokens. */
     public StateBinding {
-        RoutingTokens.require(scopeId, "scopeId");
-        RoutingTokens.require(featureSchemaVersion, "featureSchemaVersion");
-        RoutingTokens.require(evaluationPolicyId, "evaluationPolicyId");
-        RoutingTokens.require(evaluationPolicyVersion, "evaluationPolicyVersion");
-        RoutingTokens.require(mappingVersion, "mappingVersion");
-        RoutingTokens.require(producedByPolicyId, "producedByPolicyId");
-        RoutingTokens.require(producedByPolicyVersion, "producedByPolicyVersion");
+        OpaqueTokens.require(scopeId, "scopeId");
+        OpaqueTokens.require(featureSchemaVersion, "featureSchemaVersion");
+        OpaqueTokens.require(evaluationPolicyId, "evaluationPolicyId");
+        OpaqueTokens.require(evaluationPolicyVersion, "evaluationPolicyVersion");
+        OpaqueTokens.require(mappingVersion, "mappingVersion");
+        OpaqueTokens.require(producedByPolicyId, "producedByPolicyId");
+        OpaqueTokens.require(producedByPolicyVersion, "producedByPolicyVersion");
         if (processedCutoff < 0) {
             throw new IllegalArgumentException("processedCutoff must be non-negative, got: " + processedCutoff);
         }

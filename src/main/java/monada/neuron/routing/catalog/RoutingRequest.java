@@ -2,6 +2,7 @@ package monada.neuron.routing.catalog;
 
 import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.features.TaskFeatures;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.Objects;
 
@@ -59,17 +60,17 @@ public record RoutingRequest(
         if (!CONTRACT_VERSION.equals(contractVersion)) {
             throw new IllegalArgumentException("unsupported contractVersion: " + contractVersion);
         }
-        RouteTokens.require(scopeId, "scopeId");
-        RouteTokens.require(taskId, "taskId");
-        RouteTokens.require(executionId, "executionId");
-        RouteTokens.require(attemptId, "attemptId");
-        RouteTokens.require(stageId, "stageId");
-        RouteTokens.require(stageKind, "stageKind");
-        RouteTokens.require(sourceFingerprint, "sourceFingerprint");
-        RouteTokens.require(contextFingerprint, "contextFingerprint");
-        RouteTokens.require(constraintsFingerprint, "constraintsFingerprint");
-        RouteTokens.require(evaluationPolicyId, "evaluationPolicyId");
-        RouteTokens.require(evaluationPolicyVersion, "evaluationPolicyVersion");
+        OpaqueTokens.require(scopeId, "scopeId");
+        OpaqueTokens.require(taskId, "taskId");
+        OpaqueTokens.require(executionId, "executionId");
+        OpaqueTokens.require(attemptId, "attemptId");
+        OpaqueTokens.require(stageId, "stageId");
+        OpaqueTokens.require(stageKind, "stageKind");
+        OpaqueTokens.require(sourceFingerprint, "sourceFingerprint");
+        OpaqueTokens.require(contextFingerprint, "contextFingerprint");
+        OpaqueTokens.require(constraintsFingerprint, "constraintsFingerprint");
+        OpaqueTokens.require(evaluationPolicyId, "evaluationPolicyId");
+        OpaqueTokens.require(evaluationPolicyVersion, "evaluationPolicyVersion");
         Objects.requireNonNull(features, "features must not be null");
         Objects.requireNonNull(requirements, "requirements must not be null");
         if (features.stageKind() instanceof Feature.Known<String> known && !known.value().equals(stageKind)) {

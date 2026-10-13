@@ -6,6 +6,7 @@ import monada.neuron.routing.features.EncodingResult.Encoded;
 import monada.neuron.routing.features.EncodingResult.SchemaMismatch;
 import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
+import monada.neuron.testsupport.AllocationProbe;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -267,19 +268,7 @@ class TaskFeatureEncoderTest {
         assertEquals(List.of(FeatureDimension.DOMAINS), encoded.otherBucketDimensions());
 
         // Measured (not modeled) allocation of one full-capacity encode; an upper-bound check, not a benchmark.
-        var threads = (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
-        long thread = Thread.currentThread().threadId();
-        assertTrue(threads.isThreadAllocatedMemorySupported(), "thread allocation measurement not supported");
-        threads.setThreadAllocatedMemoryEnabled(true);
-        assertTrue(threads.isThreadAllocatedMemoryEnabled(), "thread allocation measurement not enabled");
-        for (int i = 0; i < 20_000; i++) {
-            encoder.encode(full);
-        }
-        long before = threads.getThreadAllocatedBytes(thread);
-        encoder.encode(full);
-        long after = threads.getThreadAllocatedBytes(thread);
-        assertTrue(before >= 0 && after >= before, "allocation counter unavailable: " + before + " -> " + after);
-        long allocated = after - before;
+        long allocated = AllocationProbe.measure(20_000, () -> encoder.encode(full));
         assertTrue(allocated > 0, "encode must allocate its result; measured " + allocated);
         assertTrue(allocated <= ALLOCATION_BOUND_BYTES, "allocated " + allocated + " bytes");
     }

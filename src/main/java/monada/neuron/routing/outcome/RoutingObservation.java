@@ -1,6 +1,7 @@
 package monada.neuron.routing.outcome;
 
 import monada.neuron.routing.features.Feature;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.Objects;
 
@@ -26,7 +27,7 @@ public record RoutingObservation(
     /** Validates the position. */
     public RoutingObservation {
         Objects.requireNonNull(outcome, "outcome must not be null");
-        OutcomeTokens.text(experienceRef, "experienceRef");
+        OpaqueTokens.requireText(experienceRef, "experienceRef");
         if (revision < 0) {
             throw new IllegalArgumentException("revision must be non-negative, got: " + revision);
         }

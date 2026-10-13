@@ -1,11 +1,10 @@
 package monada.neuron.routing.catalog;
 
 import monada.neuron.routing.features.TaskFeatures;
-import org.junit.jupiter.api.Assumptions;
+import monada.neuron.testsupport.AllocationProbe;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestReporter;
 
-import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -376,19 +375,9 @@ class RouteEligibilityFilterTest {
                 available(base("r" + i, 1).capabilities(need).build())).toList();
         RouteCatalog catalog = RouteCatalog.of("v", entries);
         RoutingRequest request = request("plan", need);
-        for (int i = 0; i < 20_000; i++) {
-            filter.evaluate(request, catalog);
-        }
-        var threads = (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
-        Assumptions.assumeTrue(threads.isThreadAllocatedMemorySupported(), "thread allocation tracking unsupported");
-        threads.setThreadAllocatedMemoryEnabled(true);
-        long id = Thread.currentThread().threadId();
-        long before = threads.getThreadAllocatedBytes(id);
-        EligibilityReport report = filter.evaluate(request, catalog);
-        long after = threads.getThreadAllocatedBytes(id);
-        assertTrue(before >= 0 && after >= before, "allocation counter unavailable: " + before + " -> " + after);
-        long allocated = after - before;
+        long allocated = AllocationProbe.measure(20_000, () -> filter.evaluate(request, catalog));
         assertTrue(allocated > 0, "evaluate must allocate its report; measured " + allocated);
+        EligibilityReport report = filter.evaluate(request, catalog);
 
         reporter.publishEntry("allocatedBytes", Long.toString(allocated));
         assertEquals(32, report.eligible().size());

@@ -1,6 +1,7 @@
 package monada.neuron.routing.outcome;
 
 import monada.neuron.routing.features.Feature;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.Objects;
 
@@ -16,17 +17,17 @@ public record EvidenceRef(String kind, String reference, Feature<String> digest)
 
     /** Validates tokens. */
     public EvidenceRef {
-        OutcomeTokens.token(kind, "kind");
-        OutcomeTokens.text(reference, "reference");
+        OpaqueTokens.require(kind, "kind");
+        OpaqueTokens.requireText(reference, "reference");
         Objects.requireNonNull(digest, "digest must not be null");
         if (digest instanceof Feature.Known<String> known) {
-            OutcomeTokens.text(known.value(), "digest");
+            OpaqueTokens.requireText(known.value(), "digest");
         }
     }
 
     @Override
     public int compareTo(EvidenceRef other) {
-        int byKind = OutcomeTokens.compare(kind, other.kind);
-        return byKind != 0 ? byKind : OutcomeTokens.compare(reference, other.reference);
+        int byKind = OpaqueTokens.compareCodePoints(kind, other.kind);
+        return byKind != 0 ? byKind : OpaqueTokens.compareCodePoints(reference, other.reference);
     }
 }

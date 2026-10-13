@@ -1,5 +1,7 @@
 package monada.neuron.routing.features;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -46,7 +48,7 @@ public record TaskFeatures(
 
     /** Validates bounds and canonicalizes the tag sets. */
     public TaskFeatures {
-        FeatureTokens.require(schemaVersion, "schemaVersion");
+        OpaqueTokens.require(schemaVersion, "schemaVersion");
         stageKind = checkToken(stageKind, "stageKind");
         category = checkToken(category, "category");
         languages = canonicalTags(languages, "languages");
@@ -65,7 +67,7 @@ public record TaskFeatures(
     private static Feature<String> checkToken(Feature<String> feature, String name) {
         Objects.requireNonNull(feature, name + " must not be null");
         if (feature instanceof Feature.Known<String> known) {
-            FeatureTokens.require(known.value(), name);
+            OpaqueTokens.require(known.value(), name);
         }
         return feature;
     }
@@ -91,12 +93,12 @@ public record TaskFeatures(
         List<String> sorted = new ArrayList<>(source);
         HashSet<String> seen = HashSet.newHashSet(sorted.size());
         for (String tag : sorted) {
-            FeatureTokens.require(tag, name + " tag");
+            OpaqueTokens.require(tag, name + " tag");
             if (!seen.add(tag)) {
                 throw new IllegalArgumentException(name + " contains a duplicate tag: " + tag);
             }
         }
-        sorted.sort(FeatureTokens.CODE_POINT_ORDER);
+        sorted.sort(OpaqueTokens.CODE_POINT_ORDER);
         return Feature.known(List.copyOf(sorted));
     }
 

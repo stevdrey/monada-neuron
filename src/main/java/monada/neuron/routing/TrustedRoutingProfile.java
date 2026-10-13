@@ -1,5 +1,7 @@
 package monada.neuron.routing;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 import java.util.Objects;
 
 /**
@@ -23,9 +25,9 @@ public record TrustedRoutingProfile(
 
     /** Validates parts and their agreement. */
     public TrustedRoutingProfile {
-        RoutingTokens.require(policyId, "policyId");
-        RoutingTokens.require(policyVersion, "policyVersion");
-        RoutingTokens.require(decisionContractVersion, "decisionContractVersion");
+        OpaqueTokens.require(policyId, "policyId");
+        OpaqueTokens.require(policyVersion, "policyVersion");
+        OpaqueTokens.require(decisionContractVersion, "decisionContractVersion");
         Objects.requireNonNull(verifier, "verifier must not be null");
         if (!RoutingDecision.CONTRACT_VERSION.equals(decisionContractVersion)) {
             throw new IllegalArgumentException("unsupported routing decision contract " + decisionContractVersion

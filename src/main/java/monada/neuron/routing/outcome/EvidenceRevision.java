@@ -1,5 +1,7 @@
 package monada.neuron.routing.outcome;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 /**
  * An exact evidence event revision the host judged an outcome on. If a newer revision of the same event exists at the
  * outcome's cutoff, the judgment is stale.
@@ -11,7 +13,7 @@ public record EvidenceRevision(String eventRef, long revision) {
 
     /** Validates the reference and revision. */
     public EvidenceRevision {
-        OutcomeTokens.text(eventRef, "eventRef");
+        OpaqueTokens.requireText(eventRef, "eventRef");
         if (revision < 0) {
             throw new IllegalArgumentException("revision must be non-negative, got: " + revision);
         }

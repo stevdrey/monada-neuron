@@ -2,6 +2,7 @@ package monada.neuron.routing;
 
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -40,13 +41,13 @@ public record RoutingPreference(
 
     /** Validates bounds and uniqueness and canonicalizes order. */
     public RoutingPreference {
-        RoutingTokens.require(scopeId, "scopeId");
-        RoutingTokens.require(featureSchemaVersion, "featureSchemaVersion");
-        RoutingTokens.require(evaluationPolicyId, "evaluationPolicyId");
-        RoutingTokens.require(evaluationPolicyVersion, "evaluationPolicyVersion");
-        RoutingTokens.require(mappingVersion, "mappingVersion");
-        RoutingTokens.require(producedByPolicyId, "producedByPolicyId");
-        RoutingTokens.require(producedByPolicyVersion, "producedByPolicyVersion");
+        OpaqueTokens.require(scopeId, "scopeId");
+        OpaqueTokens.require(featureSchemaVersion, "featureSchemaVersion");
+        OpaqueTokens.require(evaluationPolicyId, "evaluationPolicyId");
+        OpaqueTokens.require(evaluationPolicyVersion, "evaluationPolicyVersion");
+        OpaqueTokens.require(mappingVersion, "mappingVersion");
+        OpaqueTokens.require(producedByPolicyId, "producedByPolicyId");
+        OpaqueTokens.require(producedByPolicyVersion, "producedByPolicyVersion");
         if (processedCutoff < 0) {
             throw new IllegalArgumentException("processedCutoff must be non-negative, got: " + processedCutoff);
         }
@@ -142,9 +143,9 @@ public record RoutingPreference(
         while (low <= high) {
             int mid = (low + high) >>> 1;
             CohortPreference candidate = cohorts.get(mid);
-            int order = RoutingTokens.CODE_POINT_ORDER.compare(candidate.stageKind(), stageKind);
+            int order = OpaqueTokens.CODE_POINT_ORDER.compare(candidate.stageKind(), stageKind);
             if (order == 0) {
-                order = RoutingTokens.CODE_POINT_ORDER.compare(candidate.cohortBucket(), cohortBucket);
+                order = OpaqueTokens.CODE_POINT_ORDER.compare(candidate.cohortBucket(), cohortBucket);
             }
             if (order == 0) {
                 order = candidate.route().compareTo(route);

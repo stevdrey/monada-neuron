@@ -1,5 +1,7 @@
 package monada.neuron.routing.catalog;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 import java.util.Objects;
 
 /**
@@ -15,8 +17,8 @@ public record ResourceEstimate(RouteKey key, String dimension, String unit, Reso
     /** Validates tokens. */
     public ResourceEstimate {
         Objects.requireNonNull(key, "key must not be null");
-        RouteTokens.require(dimension, "dimension");
-        RouteTokens.require(unit, "unit");
+        OpaqueTokens.require(dimension, "dimension");
+        OpaqueTokens.require(unit, "unit");
         Objects.requireNonNull(value, "value must not be null");
     }
 }

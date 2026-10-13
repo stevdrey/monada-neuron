@@ -1,6 +1,7 @@
 package monada.neuron.routing;
 
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.Objects;
 
@@ -19,11 +20,11 @@ public record DecisionRef(
 
     /** Validates tokens and the ordinal. */
     public DecisionRef {
-        RoutingTokens.require(scopeId, "scopeId");
-        RoutingTokens.require(taskId, "taskId");
-        RoutingTokens.require(executionId, "executionId");
-        RoutingTokens.require(attemptId, "attemptId");
-        RoutingTokens.require(stageId, "stageId");
+        OpaqueTokens.require(scopeId, "scopeId");
+        OpaqueTokens.require(taskId, "taskId");
+        OpaqueTokens.require(executionId, "executionId");
+        OpaqueTokens.require(attemptId, "attemptId");
+        OpaqueTokens.require(stageId, "stageId");
         if (requestOrdinal < 0) {
             throw new IllegalArgumentException("requestOrdinal must be non-negative, got: " + requestOrdinal);
         }
