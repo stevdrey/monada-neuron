@@ -1198,7 +1198,7 @@ or `NEUTRAL` and owns the scores. Blocking reasons: `PROVENANCE_MISMATCH`, `ENVI
 
 | Condition | Reason |
 | --- | --- |
-| Decision ref, the decision's cutoff against the request's cutoff, executed route (a different route than advised earns no credit), cohort binding, feature schema (the request's `features.schemaVersion` against the decision's cohort binding), catalog version, routing policy, fingerprints or evaluation policy differ from the decision/request; a judged revision names an event revision newer than, or absent from, the listed evidence | `PROVENANCE_MISMATCH` with every differing `ProvenanceField` |
+| Decision ref, the decision's cutoff against the request's cutoff, executed route (a different route than advised earns no credit), cohort binding, feature schema (the request's `features.schemaVersion` against the decision's cohort binding), catalog version, routing policy, fingerprints or evaluation policy (the outcome and request against each other and against the decision's recorded state binding) differ from the decision/request; a judged revision names an event revision newer than, or absent from, the listed evidence | `PROVENANCE_MISMATCH` with every differing `ProvenanceField` |
 | `UNAVAILABLE` or `TIMED_OUT` invocation (even with failing evidence) | `ENVIRONMENTAL_FAILURE` |
 | Outcome or invocation cancelled; pending outcome | `CANCELLED`; `PENDING` |
 | The host's `EvidencePolicy` differs from the outcome's, or a mandatory dimension has only observations under another policy | `STALE_EVALUATION_POLICY` (plus `MISSING_EVIDENCE`) |

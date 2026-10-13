@@ -348,6 +348,21 @@ class OutcomeEvaluatorTest {
     }
 
     @Test
+    void outcomeAndRequestUnderAnotherPolicyThanTheDecisionStateMismatch() {
+        var base = OutcomeFixtures.REQUEST;
+        var v2 = new RoutingRequest(base.contractVersion(), base.scopeId(), base.taskId(), base.executionId(),
+                base.attemptId(), base.stageId(), base.stageKind(), base.requestOrdinal(), base.sourceFingerprint(),
+                base.contextFingerprint(), base.constraintsFingerprint(), base.evaluationPolicyId(), "2",
+                base.features(), base.requirements(), base.overflowPermitted(), base.cutoff());
+        var s = spec().with(obs("e1", 0, TESTS, PASS, "2", "att-1", 5)).with(obs("e2", 0, SECURITY, PASS, "2", "att-1", 6));
+        s.evaluationPolicyVersion = "2";
+        var policyV2 = new EvidencePolicy("forge-gates", "2", GATES.mandatoryDimensions());
+        var a = new OutcomeEvaluator().assess(s.observation(), OutcomeFixtures.DECISION, v2, policyV2);
+        assertEquals(List.of(ProvenanceField.EVALUATION_POLICY), a.mismatches());
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+    }
+
+    @Test
     void requestWithAnotherCutoffThanTheDecisionMismatches() {
         var base = OutcomeFixtures.REQUEST;
         var other = new RoutingRequest(base.contractVersion(), base.scopeId(), base.taskId(), base.executionId(),

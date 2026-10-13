@@ -236,8 +236,11 @@ public final class OutcomeEvaluator {
         if (!outcome.constraintsFingerprint().equals(request.constraintsFingerprint())) {
             found.add(ProvenanceField.CONSTRAINTS_FINGERPRINT);
         }
+        var state = provenance.state();
         if (!outcome.evaluationPolicyId().equals(request.evaluationPolicyId())
-                || !outcome.evaluationPolicyVersion().equals(request.evaluationPolicyVersion())) {
+                || !outcome.evaluationPolicyVersion().equals(request.evaluationPolicyVersion())
+                || !state.evaluationPolicyId().equals(request.evaluationPolicyId())
+                || !state.evaluationPolicyVersion().equals(request.evaluationPolicyVersion())) {
             found.add(ProvenanceField.EVALUATION_POLICY);
         }
         return List.copyOf(found);
