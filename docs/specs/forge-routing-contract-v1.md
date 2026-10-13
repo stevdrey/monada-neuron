@@ -1023,7 +1023,7 @@ The tests publish the figures and assert only upper bounds (24 KiB for `decide`,
 
 The tests cover the Section 9 fixtures (cold start, no eligible route then explicit overflow, subscription-first, learned promotion that cannot cross a tier), ties and numeric version order, unknown and incomparable resource metrics, both abstention reasons, every admission mismatch, input permutations (catalog entries, estimates and cohorts) giving equal decisions, injected cheap invalid candidates, bounds and truncation, and the cycle composition with a minimum positive budget (`maxSteps >= 1`, `maxSignals >= 1`): full result preserved by normalization, typed hand-off to `EVALUATION`, `NO_SIGNALS` for a following stage without typed-only support, rejection of initial Signals.
 
-Evidence gaps: no claim that the ordering improves quality, acceptance or cost; the default cohort thresholds are unvalidated; learned preference values can only be produced by #63 to #66, so non-empty snapshots are test fixtures here; latency is unmeasured; `RoutingEnvelope` transport, outcomes and feedback are not implemented.
+Evidence gaps: no claim that the ordering improves quality, acceptance or cost; the default cohort thresholds are unvalidated; learned preference values can only be produced by #63 to #66, so non-empty snapshots are test fixtures here; latency is unmeasured; `RoutingEnvelope` transport (#64) and feedback (#65) are not implemented; outcome evidence and learning eligibility are (Section 19).
 
 ### 17.5 Verification responsibilities (#76)
 
@@ -1172,7 +1172,7 @@ inspection, clock, randomness or billing arithmetic. `DecisionRef`, `CohortBindi
 | Type | Behavior |
 | --- | --- |
 | `RoutingOutcome` | Contract version, `DecisionRef`, **executed** `RouteKey`, `CohortBinding`, `catalogVersion`, routing policy id/version, the three fingerprints, evaluation policy, `cutoff`, `InvocationStatus`, recorded `OutcomeStatus` + `OutcomeOrigin`, accepted attempt (required for, and only allowed on, `ACCEPTED`), `outcomeSequence <= cutoff`, at most 32 `QualityObservation`s (including superseded revisions) and 32 `EvidenceRevision` pins in canonical order, `ResourceSummary`, `StageAttribution`. Duplicates are rejected: one exact event revision has one ledger position and one judgment per dimension, and a higher revision of an event must sit at a strictly higher ledger sequence. |
-| `RoutingObservation` | Outcome plus the opaque sample reference (up to 512 code points), revision, `ledgerSequence <= cutoff` and optional `supersedesSequence` (< `ledgerSequence`). No Store type. |
+| `RoutingObservation` | Outcome plus the opaque sample reference (up to 512 code points), revision, `ledgerSequence <= cutoff` and no earlier than the outcome event or any in-cutoff evidence it includes, and optional `supersedesSequence` (< `ledgerSequence`). No Store type. |
 | `QualityObservation` | One of `CORRECTNESS`, `TESTS`, `SECURITY`, `ARCHITECTURE`, `MAINTAINABILITY`, `COMPLEXITY` with `PASS`/`FAIL`/`UNKNOWN`/`NOT_APPLICABLE`; `NOT_APPLICABLE` requires a justification and only it may carry one; evaluator and policy id/version; source; attempt; event reference and revision; ledger sequence; at most 8 evidence references. |
 | `EvidencePolicy` | Host-set mandatory dimensions (non-empty; no vacuous validation) under the evaluation policy id/version. Neuron has no built-in set. |
 | `InvocationStatus` | `COMPLETED`, `FAILED`, `CANCELLED`, `UNAVAILABLE`, `TIMED_OUT`; the last two are environmental. `COMPLETED` is never acceptance. |
@@ -1223,7 +1223,7 @@ same input give equal records.
 
 `O` <= 32 observations, `D` <= 6 dimensions: `assess` is `O(O + D)` time and space; the only hash map (latest revision per
 event) is point-queried and never iterated, so order cannot affect results. No cache, parallelism, SIMD or GPU. **Measured**
-(JDK 27, `ThreadMXBean.getThreadAllocatedBytes`, 20,000 warm-up calls, one `assess` over 32 observations): 2,896 bytes; the
+(JDK 27, `ThreadMXBean.getThreadAllocatedBytes`, 20,000 warm-up calls, one `assess` over 32 observations, final implementation, which builds a set of evidence revisions per call, six runs): between 9,104 and 12,640 bytes (isolated test class 11,416 to 11,648; whole suite 9,104, 11,272 and 12,640; the figure varies with JIT state; an earlier revision without the revision set measured 2,896); the
 test asserts only an upper bound of 16 KiB as a regression guard. Latency is not measured and no performance claim is made.
 The retained footprint of an outcome is not modeled beyond its bounds.
 

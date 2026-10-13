@@ -110,7 +110,14 @@ final class OutcomeFixtures {
         }
 
         RoutingObservation observation() {
-            return new RoutingObservation(outcome(), "exp-1", 0, 12L, Feature.unknown());
+            var outcome = outcome();
+            long position = Math.max(12L, outcome.outcomeSequence());
+            for (var o : outcome.observations()) {
+                if (o.ledgerSequence() <= outcome.cutoff()) {
+                    position = Math.max(position, o.ledgerSequence());
+                }
+            }
+            return new RoutingObservation(outcome, "exp-1", 0, position, Feature.unknown());
         }
 
         LearningAssessment assess() {

@@ -97,11 +97,31 @@ class OutcomeValueTypesTest {
         var spec = new OutcomeFixtures.Spec();
         var outcome = spec.outcome();
         assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", 0, 101, Feature.unknown()));
-        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", 1, 5, Feature.known(5L)));
-        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", -1, 5, Feature.unknown()));
-        assertEquals(Feature.known(4L), new RoutingObservation(outcome, "x", 1, 5, Feature.known(4L)).supersedesSequence());
-        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", 1, 5, Feature.unknown()));
-        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", 0, 5, Feature.known(4L)));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", 1, 11, Feature.known(11L)));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", -1, 11, Feature.unknown()));
+        assertEquals(Feature.known(10L), new RoutingObservation(outcome, "x", 1, 11, Feature.known(10L)).supersedesSequence());
+        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", 1, 11, Feature.unknown()));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", 0, 11, Feature.known(10L)));
+    }
+
+    @Test
+    void sampleCannotPrecedeItsOutcomeOrIncludedEvidence() {
+        var spec = new OutcomeFixtures.Spec().passing();
+        spec.outcomeSequence = 10;
+        var outcome = spec.outcome();
+        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", 0, 9, Feature.unknown()));
+        new RoutingObservation(outcome, "x", 0, 10, Feature.unknown());
+
+        var evidence = new OutcomeFixtures.Spec().passing()
+                .with(obs("late", 0, QualityDimension.ARCHITECTURE, QualityState.PASS, "att-1", 20));
+        evidence.outcomeSequence = 5;
+        var withLate = evidence.outcome();
+        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(withLate, "x", 0, 19, Feature.unknown()));
+        new RoutingObservation(withLate, "x", 0, 20, Feature.unknown());
+
+        var future = new OutcomeFixtures.Spec().passing()
+                .with(obs("future", 0, QualityDimension.ARCHITECTURE, QualityState.FAIL, "att-1", 101));
+        new RoutingObservation(future.outcome(), "x", 0, 10, Feature.unknown());
     }
 
     @Test
