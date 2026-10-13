@@ -1,5 +1,7 @@
 package monada.neuron.routing.catalog;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -8,42 +10,15 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
- * Validation and ordering rules for opaque host tokens (Forge Routing Contract v1, section 2).
- *
- * <p>Deliberately mirrors the package-private rules of the {@code features} package, which this issue may not edit.
+ * Token-set canonicalization and merge helpers for catalog routes and requests. Single-token rules and code point
+ * ordering (Forge Routing Contract v1, section 2) live in {@link OpaqueTokens}.
  */
 final class RouteTokens {
-
-    /** Maximum token length in Unicode code points. */
-    static final int MAX_CODE_POINTS = 128;
 
     /** Maximum tokens in any route-side or request-side token set. */
     static final int MAX_SET = 16;
 
-    /** Orders strings by Unicode code point, not by UTF-16 code unit. */
-    static final Comparator<String> CODE_POINT_ORDER = RouteTokens::compareCodePoints;
-
     private RouteTokens() {
-    }
-
-    /** Requires 1 to 128 code points, no control characters and no invisible leading or trailing padding. */
-    static String require(String token, String name) {
-        Objects.requireNonNull(token, name + " must not be null");
-        if (token.length() > MAX_CODE_POINTS * 2) {
-            throw new IllegalArgumentException(name + " exceeds " + MAX_CODE_POINTS + " code points");
-        }
-        int codePoints = token.codePointCount(0, token.length());
-        if (codePoints < 1 || codePoints > MAX_CODE_POINTS) {
-            throw new IllegalArgumentException(
-                    name + " must have 1 to " + MAX_CODE_POINTS + " code points, got: " + codePoints);
-        }
-        if (token.codePoints().anyMatch(Character::isISOControl)) {
-            throw new IllegalArgumentException(name + " must not contain control characters");
-        }
-        if (isPadding(token.codePointAt(0)) || isPadding(token.codePointBefore(token.length()))) {
-            throw new IllegalArgumentException(name + " must not have leading or trailing whitespace");
-        }
-        return token;
     }
 
     /**
@@ -56,9 +31,9 @@ final class RouteTokens {
             throw new IllegalArgumentException(name + " allows at most " + MAX_SET + " tokens, got: " + source.size());
         }
         for (String token : source) {
-            require(token, name + " token");
+            OpaqueTokens.require(token, name + " token");
         }
-        return canonicalOrder(source, CODE_POINT_ORDER, duplicate -> {
+        return canonicalOrder(source, OpaqueTokens.CODE_POINT_ORDER, duplicate -> {
             throw new IllegalArgumentException(name + " contains a duplicate token: " + duplicate);
         });
     }
@@ -107,7 +82,7 @@ final class RouteTokens {
     static boolean containsAll(List<String> offered, List<String> required) {
         int i = 0;
         for (String need : required) {
-            while (i < offered.size() && compareCodePoints(offered.get(i), need) < 0) {
+            while (i < offered.size() && OpaqueTokens.compareCodePoints(offered.get(i), need) < 0) {
                 i++;
             }
             if (i == offered.size() || !offered.get(i).equals(need)) {
@@ -123,7 +98,7 @@ final class RouteTokens {
         int i = 0;
         int j = 0;
         while (i < left.size() && j < right.size()) {
-            int c = compareCodePoints(left.get(i), right.get(j));
+            int c = OpaqueTokens.compareCodePoints(left.get(i), right.get(j));
             if (c == 0) {
                 return left.get(i);
             }
@@ -134,25 +109,5 @@ final class RouteTokens {
             }
         }
         return null;
-    }
-
-    private static boolean isPadding(int codePoint) {
-        return Character.isWhitespace(codePoint) || Character.isSpaceChar(codePoint)
-                || Character.getType(codePoint) == Character.FORMAT;
-    }
-
-    private static int compareCodePoints(String left, String right) {
-        int i = 0;
-        int j = 0;
-        while (i < left.length() && j < right.length()) {
-            int a = left.codePointAt(i);
-            int b = right.codePointAt(j);
-            if (a != b) {
-                return Integer.compare(a, b);
-            }
-            i += Character.charCount(a);
-            j += Character.charCount(b);
-        }
-        return Integer.compare(left.length() - i, right.length() - j);
     }
 }

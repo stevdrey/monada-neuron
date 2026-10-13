@@ -1,5 +1,7 @@
 package monada.neuron.routing;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -34,7 +36,7 @@ public record PolicyParameters(
                     "maxAutoSelectTier must be at least 1, got: " + maxAutoSelectTier.getAsInt());
         }
         Objects.requireNonNull(objective, "objective must not be null");
-        RoutingTokens.require(stateMappingVersion, "stateMappingVersion");
-        RoutingTokens.require(stateFeatureSchemaVersion, "stateFeatureSchemaVersion");
+        OpaqueTokens.require(stateMappingVersion, "stateMappingVersion");
+        OpaqueTokens.require(stateFeatureSchemaVersion, "stateFeatureSchemaVersion");
     }
 }

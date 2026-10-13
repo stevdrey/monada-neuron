@@ -1,5 +1,7 @@
 package monada.neuron.routing.outcome;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 import java.util.Objects;
 
 /**
@@ -16,8 +18,8 @@ public record HypotheticalCost(Money amount, String priceSnapshotId, String pric
     /** Validates the parts. */
     public HypotheticalCost {
         Objects.requireNonNull(amount, "amount must not be null");
-        OutcomeTokens.token(priceSnapshotId, "priceSnapshotId");
-        OutcomeTokens.token(priceSnapshotVersion, "priceSnapshotVersion");
-        OutcomeTokens.text(assumptions, "assumptions");
+        OpaqueTokens.require(priceSnapshotId, "priceSnapshotId");
+        OpaqueTokens.require(priceSnapshotVersion, "priceSnapshotVersion");
+        OpaqueTokens.requireText(assumptions, "assumptions");
     }
 }

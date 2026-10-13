@@ -1,5 +1,7 @@
 package monada.neuron.routing.outcome;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
@@ -18,8 +20,8 @@ public record EvidencePolicy(String id, String version, Set<QualityDimension> ma
 
     /** Validates tokens and copies the set. */
     public EvidencePolicy {
-        OutcomeTokens.token(id, "id");
-        OutcomeTokens.token(version, "version");
+        OpaqueTokens.require(id, "id");
+        OpaqueTokens.require(version, "version");
         Objects.requireNonNull(mandatoryDimensions, "mandatoryDimensions must not be null");
         if (mandatoryDimensions.isEmpty()) {
             throw new IllegalArgumentException("mandatoryDimensions must not be empty");

@@ -1,6 +1,7 @@
 package monada.neuron.routing;
 
 import monada.neuron.routing.catalog.RouteKey;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.Comparator;
 import java.util.Objects;
@@ -19,14 +20,14 @@ public record CohortPreference(
 
     /** Canonical order: stage kind and bucket by code point, then route. */
     static final Comparator<CohortPreference> ORDER = Comparator
-            .comparing(CohortPreference::stageKind, RoutingTokens.CODE_POINT_ORDER)
-            .thenComparing(CohortPreference::cohortBucket, RoutingTokens.CODE_POINT_ORDER)
+            .comparing(CohortPreference::stageKind, OpaqueTokens.CODE_POINT_ORDER)
+            .thenComparing(CohortPreference::cohortBucket, OpaqueTokens.CODE_POINT_ORDER)
             .thenComparing(CohortPreference::route);
 
     /** Validates parts; {@code -0.0} is normalized to {@code 0.0}. */
     public CohortPreference {
-        RoutingTokens.require(stageKind, "stageKind");
-        RoutingTokens.require(cohortBucket, "cohortBucket");
+        OpaqueTokens.require(stageKind, "stageKind");
+        OpaqueTokens.require(cohortBucket, "cohortBucket");
         Objects.requireNonNull(route, "route must not be null");
         if (!Double.isFinite(preferenceValue)) {
             throw new IllegalArgumentException("preferenceValue must be finite, got: " + preferenceValue);

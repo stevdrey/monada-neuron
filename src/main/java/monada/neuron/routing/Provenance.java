@@ -1,5 +1,7 @@
 package monada.neuron.routing;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 import java.util.Objects;
 
 /**
@@ -27,9 +29,9 @@ public record Provenance(
     /** Validates parts. */
     public Provenance {
         Objects.requireNonNull(decisionRef, "decisionRef must not be null");
-        RoutingTokens.require(catalogVersion, "catalogVersion");
-        RoutingTokens.require(policyId, "policyId");
-        RoutingTokens.require(policyVersion, "policyVersion");
+        OpaqueTokens.require(catalogVersion, "catalogVersion");
+        OpaqueTokens.require(policyId, "policyId");
+        OpaqueTokens.require(policyVersion, "policyVersion");
         if (cutoff < 0) {
             throw new IllegalArgumentException("cutoff must be non-negative, got: " + cutoff);
         }

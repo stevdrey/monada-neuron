@@ -5,6 +5,7 @@ import monada.neuron.routing.DecisionRef;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -86,14 +87,14 @@ public record RoutingOutcome(
         Objects.requireNonNull(decisionRef, "decisionRef must not be null");
         Objects.requireNonNull(executedRoute, "executedRoute must not be null");
         Objects.requireNonNull(cohortBinding, "cohortBinding must not be null");
-        OutcomeTokens.token(catalogVersion, "catalogVersion");
-        OutcomeTokens.token(routingPolicyId, "routingPolicyId");
-        OutcomeTokens.token(routingPolicyVersion, "routingPolicyVersion");
-        OutcomeTokens.token(sourceFingerprint, "sourceFingerprint");
-        OutcomeTokens.token(contextFingerprint, "contextFingerprint");
-        OutcomeTokens.token(constraintsFingerprint, "constraintsFingerprint");
-        OutcomeTokens.token(evaluationPolicyId, "evaluationPolicyId");
-        OutcomeTokens.token(evaluationPolicyVersion, "evaluationPolicyVersion");
+        OpaqueTokens.require(catalogVersion, "catalogVersion");
+        OpaqueTokens.require(routingPolicyId, "routingPolicyId");
+        OpaqueTokens.require(routingPolicyVersion, "routingPolicyVersion");
+        OpaqueTokens.require(sourceFingerprint, "sourceFingerprint");
+        OpaqueTokens.require(contextFingerprint, "contextFingerprint");
+        OpaqueTokens.require(constraintsFingerprint, "constraintsFingerprint");
+        OpaqueTokens.require(evaluationPolicyId, "evaluationPolicyId");
+        OpaqueTokens.require(evaluationPolicyVersion, "evaluationPolicyVersion");
         if (cutoff < 0) {
             throw new IllegalArgumentException("cutoff must be non-negative, got: " + cutoff);
         }
@@ -102,7 +103,7 @@ public record RoutingOutcome(
         Objects.requireNonNull(outcomeOrigin, "outcomeOrigin must not be null");
         Objects.requireNonNull(acceptedAttemptId, "acceptedAttemptId must not be null");
         if (acceptedAttemptId instanceof Feature.Known<String> known) {
-            OutcomeTokens.token(known.value(), "acceptedAttemptId");
+            OpaqueTokens.require(known.value(), "acceptedAttemptId");
             if (outcomeStatus != OutcomeStatus.ACCEPTED) {
                 throw new IllegalArgumentException("only an ACCEPTED outcome names an accepted attempt");
             }
@@ -124,7 +125,7 @@ public record RoutingOutcome(
                 MAX_EVIDENCE, "observations");
         requireConsistentPositions(observations);
         judgedRevisions = Ordering.canonical((Collection<EvidenceRevision>) judgedRevisions,
-                Comparator.comparing(EvidenceRevision::eventRef, OutcomeTokens::compare), MAX_EVIDENCE,
+                Comparator.comparing(EvidenceRevision::eventRef, OpaqueTokens::compareCodePoints), MAX_EVIDENCE,
                 "judgedRevisions");
         Objects.requireNonNull(resources, "resources must not be null");
         Objects.requireNonNull(attribution, "attribution must not be null");
@@ -151,7 +152,7 @@ public record RoutingOutcome(
             }
         }
         List<QualityObservation> byRevision = new ArrayList<>(observations);
-        byRevision.sort(Comparator.comparing(QualityObservation::eventRef, OutcomeTokens::compare)
+        byRevision.sort(Comparator.comparing(QualityObservation::eventRef, OpaqueTokens::compareCodePoints)
                 .thenComparingLong(QualityObservation::revision));
         for (int i = 1; i < byRevision.size(); i++) {
             QualityObservation earlier = byRevision.get(i - 1);

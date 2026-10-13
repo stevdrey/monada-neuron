@@ -1,6 +1,7 @@
 package monada.neuron.routing;
 
 import monada.neuron.routing.catalog.EligibilityReport;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.List;
 import java.util.Objects;
@@ -60,8 +61,8 @@ public final class LexicographicDecisionVerifier implements RoutingDecisionVerif
      */
     public static LexicographicDecisionVerifier trusted(
             String policyId, String policyVersion, PolicyParameters parameters, RoutingStateDefinition definition) {
-        RoutingTokens.require(policyId, "policyId");
-        RoutingTokens.require(policyVersion, "policyVersion");
+        OpaqueTokens.require(policyId, "policyId");
+        OpaqueTokens.require(policyVersion, "policyVersion");
         Objects.requireNonNull(parameters, "parameters must not be null");
         Objects.requireNonNull(definition, "definition must not be null");
         if (!parameters.stateMappingVersion().equals(definition.mappingVersion())

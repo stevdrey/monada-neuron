@@ -4,6 +4,7 @@ import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.features.TaskFeatures;
+import monada.neuron.testsupport.AllocationProbe;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestReporter;
 import org.junit.jupiter.params.ParameterizedTest;

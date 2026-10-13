@@ -2,6 +2,7 @@ package monada.neuron.routing.outcome;
 
 import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.features.Feature;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.Comparator;
 import java.util.List;
@@ -52,7 +53,7 @@ public record ResourceSummary(
             throw new IllegalArgumentException("only NO_BILLABLE_USAGE carries a justification");
         }
         if (noBillableJustification instanceof Feature.Known<String> known) {
-            OutcomeTokens.text(known.value(), "noBillableJustification");
+            OpaqueTokens.requireText(known.value(), "noBillableJustification");
         }
     }
 

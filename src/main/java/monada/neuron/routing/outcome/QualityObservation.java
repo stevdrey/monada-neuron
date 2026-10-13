@@ -1,6 +1,7 @@
 package monada.neuron.routing.outcome;
 
 import monada.neuron.routing.features.Feature;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.Collection;
 import java.util.Comparator;
@@ -47,13 +48,13 @@ public record QualityObservation(
     /** Canonical order of observations: ledger sequence, event reference, revision, dimension. */
     static final Comparator<QualityObservation> ORDER = Comparator
             .comparingLong(QualityObservation::ledgerSequence)
-            .thenComparing(QualityObservation::eventRef, OutcomeTokens::compare)
+            .thenComparing(QualityObservation::eventRef, OpaqueTokens::compareCodePoints)
             .thenComparingLong(QualityObservation::revision)
             .thenComparing(QualityObservation::dimension);
 
     /** Validates tokens, bounds and the justification rule, and copies the references. */
     public QualityObservation {
-        OutcomeTokens.text(eventRef, "eventRef");
+        OpaqueTokens.requireText(eventRef, "eventRef");
         if (revision < 0) {
             throw new IllegalArgumentException("revision must be non-negative, got: " + revision);
         }
@@ -68,14 +69,14 @@ public record QualityObservation(
             throw new IllegalArgumentException("only NOT_APPLICABLE carries a justification");
         }
         if (justification instanceof Feature.Known<String> known) {
-            OutcomeTokens.text(known.value(), "justification");
+            OpaqueTokens.requireText(known.value(), "justification");
         }
-        OutcomeTokens.token(evaluatorId, "evaluatorId");
-        OutcomeTokens.token(evaluatorVersion, "evaluatorVersion");
-        OutcomeTokens.token(policyId, "policyId");
-        OutcomeTokens.token(policyVersion, "policyVersion");
+        OpaqueTokens.require(evaluatorId, "evaluatorId");
+        OpaqueTokens.require(evaluatorVersion, "evaluatorVersion");
+        OpaqueTokens.require(policyId, "policyId");
+        OpaqueTokens.require(policyVersion, "policyVersion");
         Objects.requireNonNull(source, "source must not be null");
-        OutcomeTokens.token(attemptId, "attemptId");
+        OpaqueTokens.require(attemptId, "attemptId");
         if (ledgerSequence < 0) {
             throw new IllegalArgumentException("ledgerSequence must be non-negative, got: " + ledgerSequence);
         }

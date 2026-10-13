@@ -15,6 +15,7 @@ import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteEligibilityFilter;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.testsupport.AllocationProbe;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestReporter;
 

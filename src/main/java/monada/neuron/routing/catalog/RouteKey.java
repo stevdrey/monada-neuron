@@ -1,5 +1,7 @@
 package monada.neuron.routing.catalog;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 /**
  * Identity of one route: caller-issued {@code RouteId} and caller-assigned positive {@code RouteVersion}.
  *
@@ -13,7 +15,7 @@ public record RouteKey(String routeId, long routeVersion) implements Comparable<
 
     /** Validates the token and the version. */
     public RouteKey {
-        RouteTokens.require(routeId, "routeId");
+        OpaqueTokens.require(routeId, "routeId");
         if (routeVersion < 1) {
             throw new IllegalArgumentException("routeVersion must be at least 1, got: " + routeVersion);
         }
@@ -21,7 +23,7 @@ public record RouteKey(String routeId, long routeVersion) implements Comparable<
 
     @Override
     public int compareTo(RouteKey other) {
-        int byId = RouteTokens.CODE_POINT_ORDER.compare(routeId, other.routeId);
+        int byId = OpaqueTokens.CODE_POINT_ORDER.compare(routeId, other.routeId);
         return byId != 0 ? byId : Long.compare(routeVersion, other.routeVersion);
     }
 }

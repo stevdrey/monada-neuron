@@ -1,5 +1,7 @@
 package monada.neuron.routing;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 import java.util.Objects;
 
 /**
@@ -17,7 +19,7 @@ public record RoutingStateDefinition(String mappingVersion, CohortMapping cohort
 
     /** Validates parts. */
     public RoutingStateDefinition {
-        RoutingTokens.require(mappingVersion, "mappingVersion");
+        OpaqueTokens.require(mappingVersion, "mappingVersion");
         Objects.requireNonNull(cohortMapping, "cohortMapping must not be null");
     }
 

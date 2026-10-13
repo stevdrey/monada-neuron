@@ -29,6 +29,7 @@ import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
+import monada.neuron.testsupport.AllocationProbe;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestReporter;
 

@@ -1,5 +1,7 @@
 package monada.neuron.routing;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 import java.util.Objects;
 
 /**
@@ -24,7 +26,7 @@ public record ResourceObjective(String dimension, Direction direction) {
 
     /** Validates parts. */
     public ResourceObjective {
-        RoutingTokens.require(dimension, "dimension");
+        OpaqueTokens.require(dimension, "dimension");
         Objects.requireNonNull(direction, "direction must not be null");
     }
 }

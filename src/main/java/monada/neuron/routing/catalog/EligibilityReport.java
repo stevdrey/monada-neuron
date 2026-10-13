@@ -1,5 +1,7 @@
 package monada.neuron.routing.catalog;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -24,7 +26,7 @@ public record EligibilityReport(String catalogVersion, List<EligibleRoute> eligi
 
     /** Validates bounds, key uniqueness and canonicalizes order; the stored lists are immutable. */
     public EligibilityReport {
-        RouteTokens.require(catalogVersion, "catalogVersion");
+        OpaqueTokens.require(catalogVersion, "catalogVersion");
         Objects.requireNonNull(eligible, "eligible must not be null");
         Objects.requireNonNull(excluded, "excluded must not be null");
         if ((long) eligible.size() + excluded.size() > RouteCatalog.MAX_ROUTES) {
@@ -74,7 +76,7 @@ public record EligibilityReport(String catalogVersion, List<EligibleRoute> eligi
         /** Requires non-null parts. */
         public EligibleRoute {
             Objects.requireNonNull(key, "key must not be null");
-            RouteTokens.require(executionMode, "executionMode");
+            OpaqueTokens.require(executionMode, "executionMode");
         }
     }
 

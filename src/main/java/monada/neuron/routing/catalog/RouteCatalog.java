@@ -1,5 +1,7 @@
 package monada.neuron.routing.catalog;
 
+import monada.neuron.routing.token.OpaqueTokens;
+
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -32,11 +34,11 @@ public record RouteCatalog(String catalogVersion, List<CatalogEntry> entries, Li
     private static final Comparator<CatalogEntry> ENTRY_ORDER = Comparator.comparing(CatalogEntry::key);
 
     private static final Comparator<ResourceEstimate> ESTIMATE_ORDER = Comparator.comparing(ResourceEstimate::key)
-            .thenComparing(ResourceEstimate::dimension, RouteTokens.CODE_POINT_ORDER);
+            .thenComparing(ResourceEstimate::dimension, OpaqueTokens.CODE_POINT_ORDER);
 
     /** Validates bounds and uniqueness and canonicalizes order. */
     public RouteCatalog {
-        RouteTokens.require(catalogVersion, "catalogVersion");
+        OpaqueTokens.require(catalogVersion, "catalogVersion");
         Objects.requireNonNull(entries, "entries must not be null");
         Objects.requireNonNull(estimates, "estimates must not be null");
         if (estimates.size() > MAX_ESTIMATES) {

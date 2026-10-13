@@ -3,6 +3,7 @@ package monada.neuron.routing;
 import monada.neuron.routing.catalog.EligibilityReport;
 import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteKey;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -73,7 +74,7 @@ public sealed interface RoutingDecision
         public Selected {
             Objects.requireNonNull(provenance, "provenance must not be null");
             Objects.requireNonNull(route, "route must not be null");
-            RoutingTokens.require(executionMode, "executionMode");
+            OpaqueTokens.require(executionMode, "executionMode");
             Objects.requireNonNull(basis, "basis must not be null");
             candidates = ranked(candidates);
             if (candidates.isEmpty() || !candidates.getFirst().key().equals(route)) {

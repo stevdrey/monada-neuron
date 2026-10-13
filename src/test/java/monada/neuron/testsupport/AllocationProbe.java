@@ -1,5 +1,6 @@
-package monada.neuron.routing;
+package monada.neuron.testsupport;
 
+import com.sun.management.ThreadMXBean;
 import org.junit.jupiter.api.Assumptions;
 
 import java.lang.management.ManagementFactory;
@@ -7,18 +8,19 @@ import java.lang.management.ManagementFactory;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Measures the bytes the current thread allocates while running an action (skips the test when unsupported). */
-final class AllocationProbe {
+public final class AllocationProbe {
 
     private AllocationProbe() {
     }
 
     /** Runs {@code action} {@code warmUps} times, then once more and returns the bytes allocated by that last run. */
-    static long measure(int warmUps, Runnable action) {
+    public static long measure(int warmUps, Runnable action) {
         for (int i = 0; i < warmUps; i++) {
             action.run();
         }
-        // Fully qualified: the simple name collides with java.lang.management.ThreadMXBean.
-        var threads = (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
+        var bean = ManagementFactory.getThreadMXBean();
+        Assumptions.assumeTrue(bean instanceof ThreadMXBean, "com.sun.management.ThreadMXBean is unavailable");
+        var threads = (ThreadMXBean) bean;
         Assumptions.assumeTrue(threads.isThreadAllocatedMemorySupported(), "thread allocation tracking unsupported");
         threads.setThreadAllocatedMemoryEnabled(true);
         long id = Thread.currentThread().threadId();
