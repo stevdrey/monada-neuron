@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -67,9 +68,11 @@ public final class OutcomeEvaluator {
         long cutoff = outcome.cutoff();
 
         Map<String, Long> latestRevision = new HashMap<>();
+        Set<EvidenceRevision> listed = new HashSet<>();
         for (QualityObservation o : outcome.observations()) {
             if (o.ledgerSequence() <= cutoff) {
                 latestRevision.merge(o.eventRef(), o.revision(), Math::max);
+                listed.add(new EvidenceRevision(o.eventRef(), o.revision()));
             }
         }
 
@@ -135,12 +138,13 @@ public final class OutcomeEvaluator {
         }
         for (EvidenceRevision pin : outcome.judgedRevisions()) {
             Long latest = latestRevision.get(pin.eventRef());
-            if (latest == null || latest < pin.revision()) {
+            if (!listed.contains(pin)) {
                 if (!mismatches.contains(ProvenanceField.EVIDENCE_REFERENCE)) {
                     mismatches = withMismatch(mismatches, ProvenanceField.EVIDENCE_REFERENCE);
                     reasons.add(IneligibilityReason.PROVENANCE_MISMATCH);
                 }
-            } else if (latest > pin.revision()) {
+            }
+            if (latest != null && latest > pin.revision()) {
                 reasons.add(IneligibilityReason.STALE_ARTIFACT_REVISION);
             }
         }
@@ -242,6 +246,9 @@ public final class OutcomeEvaluator {
                 || !state.evaluationPolicyId().equals(request.evaluationPolicyId())
                 || !state.evaluationPolicyVersion().equals(request.evaluationPolicyVersion())) {
             found.add(ProvenanceField.EVALUATION_POLICY);
+        }
+        if (!state.scopeId().equals(request.scopeId()) || state.processedCutoff() > request.cutoff()) {
+            found.add(ProvenanceField.STATE_BINDING);
         }
         return List.copyOf(found);
     }

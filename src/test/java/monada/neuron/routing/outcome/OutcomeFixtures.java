@@ -40,11 +40,19 @@ final class OutcomeFixtures {
     }
 
     private static RoutingDecision.Selected decide(RoutingRequest request) {
+        return decide(request, 0L);
+    }
+
+    /** A decision whose state snapshot carries the given processed-cutoff watermark. */
+    static RoutingDecision.Selected decide(RoutingRequest request, long watermark) {
         var descriptor = RouteDescriptor.builder("sub-a", 1).stages(List.of("implement"))
                 .executionModes(List.of("sandboxed")).locality("hosted").build();
         var catalog = RouteCatalog.of("cat-demo-7", List.of(new CatalogEntry(descriptor, Availability.AVAILABLE, 1)));
         var policy = LexicographicRoutingPolicy.reference();
-        var preference = RoutingPreference.empty(request, policy.definition(), policy.policyId(), policy.policyVersion());
+        var empty = RoutingPreference.empty(request, policy.definition(), policy.policyId(), policy.policyVersion());
+        var preference = new RoutingPreference(empty.scopeId(), empty.featureSchemaVersion(), empty.evaluationPolicyId(),
+                empty.evaluationPolicyVersion(), empty.mappingVersion(), empty.producedByPolicyId(),
+                empty.producedByPolicyVersion(), watermark, List.of());
         return (RoutingDecision.Selected) policy.decide(request, catalog, preference);
     }
 

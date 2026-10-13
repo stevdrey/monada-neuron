@@ -97,9 +97,11 @@ class OutcomeValueTypesTest {
         var spec = new OutcomeFixtures.Spec();
         var outcome = spec.outcome();
         assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", 0, 101, Feature.unknown()));
-        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", 0, 5, Feature.known(5L)));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", 1, 5, Feature.known(5L)));
         assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", -1, 5, Feature.unknown()));
         assertEquals(Feature.known(4L), new RoutingObservation(outcome, "x", 1, 5, Feature.known(4L)).supersedesSequence());
+        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", 1, 5, Feature.unknown()));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingObservation(outcome, "x", 0, 5, Feature.known(4L)));
     }
 
     @Test
@@ -225,6 +227,19 @@ class OutcomeValueTypesTest {
                 .with(obs("e1", 0, QualityDimension.TESTS, QualityState.FAIL, "att-1", 5))
                 .with(obs("e1", 1, QualityDimension.TESTS, QualityState.PASS, "att-1", 9));
         assertEquals(2, forward.outcome().observations().size());
+    }
+
+    @Test
+    void positiveCandidateNeedsPassingEffectiveEvidence() {
+        assertThrows(IllegalArgumentException.class, () -> new LearningAssessment(DerivedAcceptance.VALIDATED_ACCEPTED,
+                EligibilityVerdict.POSITIVE_CANDIDATE, List.of(), List.of(), List.of(), List.of(), 0));
+        assertThrows(IllegalArgumentException.class, () -> new LearningAssessment(DerivedAcceptance.VALIDATED_ACCEPTED,
+                EligibilityVerdict.POSITIVE_CANDIDATE, List.of(), List.of(),
+                List.of(new LearningAssessment.EffectiveEvidence(QualityDimension.TESTS, QualityState.UNKNOWN, 5)),
+                List.of(), 0));
+        new LearningAssessment(DerivedAcceptance.VALIDATED_ACCEPTED, EligibilityVerdict.POSITIVE_CANDIDATE, List.of(),
+                List.of(), List.of(new LearningAssessment.EffectiveEvidence(QualityDimension.TESTS,
+                        QualityState.NOT_APPLICABLE, 5)), List.of(), 0);
     }
 
     @Test

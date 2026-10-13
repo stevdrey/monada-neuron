@@ -13,7 +13,7 @@ import java.util.Objects;
  * @param revision revision of the sample, non-negative
  * @param ledgerSequence ledger sequence of the sample, at most the outcome's cutoff
  * @param supersedesSequence sequence of the earliest revision this sample replaces, strictly less than
- *         {@code ledgerSequence}; unknown when it replaces nothing
+ *         {@code ledgerSequence}; required when {@code revision > 0}, unknown for an initial revision
  */
 public record RoutingObservation(
         RoutingOutcome outcome,
@@ -34,10 +34,16 @@ public record RoutingObservation(
                     "ledgerSequence must be within [0, cutoff=" + outcome.cutoff() + "], got: " + ledgerSequence);
         }
         Objects.requireNonNull(supersedesSequence, "supersedesSequence must not be null");
-        if (supersedesSequence instanceof Feature.Known<Long> known
-                && (known.value() < 0 || known.value() >= ledgerSequence)) {
-            throw new IllegalArgumentException("supersedesSequence must be in [0, ledgerSequence), got: "
-                    + known.value());
+        if (supersedesSequence instanceof Feature.Known<Long> known) {
+            if (revision == 0) {
+                throw new IllegalArgumentException("an initial revision replaces nothing, so it has no supersedesSequence");
+            }
+            if (known.value() < 0 || known.value() >= ledgerSequence) {
+                throw new IllegalArgumentException("supersedesSequence must be in [0, ledgerSequence), got: "
+                        + known.value());
+            }
+        } else if (revision > 0) {
+            throw new IllegalArgumentException("a corrected revision must carry the supersedesSequence it replaces");
         }
     }
 }

@@ -69,6 +69,12 @@ public record LearningAssessment(
                         || !reasons.isEmpty())) {
             throw new IllegalArgumentException("a positive candidate must be validated, failure-free and reason-free");
         }
+        if (verdict == EligibilityVerdict.POSITIVE_CANDIDATE && (effectiveEvidence.isEmpty()
+                || effectiveEvidence.stream().anyMatch(e -> e.state() != QualityState.PASS
+                        && e.state() != QualityState.NOT_APPLICABLE))) {
+            throw new IllegalArgumentException(
+                    "a positive candidate needs effective evidence and every effective state PASS or NOT_APPLICABLE");
+        }
         if (verdict == EligibilityVerdict.NEGATIVE_CANDIDATE && provenFailures.isEmpty()) {
             throw new IllegalArgumentException("a negative candidate needs a proven mandatory failure");
         }

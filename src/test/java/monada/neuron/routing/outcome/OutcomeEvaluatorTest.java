@@ -265,6 +265,33 @@ class OutcomeEvaluatorTest {
     }
 
     @Test
+    void pinToAnAbsentIntermediateRevisionIsAMismatchAndStale() {
+        var s = spec().with(obs("e1", 0, TESTS, PASS, "att-1", 5)).with(obs("e1", 2, TESTS, PASS, "att-1", 20))
+                .with(obs("e2", 0, SECURITY, PASS, "att-1", 6));
+        s.judged.add(new EvidenceRevision("e1", 1));
+        var a = s.assess();
+        assertEquals(List.of(ProvenanceField.EVIDENCE_REFERENCE), a.mismatches());
+        assertTrue(a.reasons().contains(IneligibilityReason.STALE_ARTIFACT_REVISION));
+    }
+
+    @Test
+    void decisionStateWithANewerWatermarkThanTheRequestMismatches() {
+        var base = OutcomeFixtures.REQUEST;
+        var decision = OutcomeFixtures.decide(base, 50L);
+        var evaluator = new OutcomeEvaluator();
+        var ok = evaluator.assess(spec().passing().observation(), decision, base, GATES);
+        assertEquals(EligibilityVerdict.POSITIVE_CANDIDATE, ok.verdict());
+        // same decision, but the supplied request is older than the state it was decided with
+        var older = new RoutingRequest(base.contractVersion(), base.scopeId(), base.taskId(), base.executionId(),
+                base.attemptId(), base.stageId(), base.stageKind(), base.requestOrdinal(), base.sourceFingerprint(),
+                base.contextFingerprint(), base.constraintsFingerprint(), base.evaluationPolicyId(),
+                base.evaluationPolicyVersion(), base.features(), base.requirements(), base.overflowPermitted(), 40L);
+        var a = evaluator.assess(spec().passing().observation(), decision, older, GATES);
+        assertTrue(a.mismatches().contains(ProvenanceField.STATE_BINDING));
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+    }
+
+    @Test
     void currentJudgedRevisionIsNotStale() {
         var s = spec().passing();
         s.judged.add(new EvidenceRevision("ev-tests", 0));
