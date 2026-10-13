@@ -33,7 +33,7 @@ Inspected `main` at `d1dd569` (Java 27). Already implemented and **reused unchan
 - `RuntimeBackendSelector`, which selects *internal computational backends* (SCALAR/VECTOR_API, object/CSR graph, ...). It
   never selects external workers or models.
 
-At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 19 describe what has been added since. Still absent: `RoutingFeedback`, the caller-owned preference state store and Store export translation (#64 to #68). `ActionRequest` carries Signals and an
+At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 20 describe what has been added since. Still absent: `RoutingFeedback` and the caller-owned preference state store (#65 to #68). `ActionRequest` carries Signals and an
 opaque host context, not a route. `Signal` carries no identity (ADR 0005).
 
 ## Goal
@@ -727,9 +727,10 @@ policy defines another table. The numeric quota, the provider, and the decision 
 
 ## 10. Store Dependencies and Implementation Order
 
-The Store's execution-memory v1 contract is accepted but **not implemented**; Store issues
-[#94](https://github.com/stevdrey/monada-resonance-store/issues/94)-[#102](https://github.com/stevdrey/monada-resonance-store/issues/102)
-are dependencies, not baseline capabilities. Each Neuron issue must re-check the exact public Store API before use.
+The Store's execution-memory v1 contract is accepted. Store issues
+[#94](https://github.com/stevdrey/monada-resonance-store/issues/94)-[#101](https://github.com/stevdrey/monada-resonance-store/issues/101)
+are implemented on the Store's `main` (checked against Store commit `b2dcab1`, Issue-101); #102 is informational. Each Neuron
+issue must still re-check the exact public Store API before use, because the Store is an unpublished sibling checkout.
 
 | Store issue | Capability | Neuron consumer |
 | --- | --- | --- |
@@ -1156,7 +1157,7 @@ it behind a port does not remove that cost.
 ### 18.8 Follow-up
 
 A versioned successor of the decision types (new `RoutingRule`/`Placement`/`Basis` semantics) for non-reference ordering families;
-#64 to #68 build on this boundary and stay separate.
+#64 (implemented, Section 20) and #65 to #68 build on this boundary and stay separate.
 
 ## 19. Implemented: Outcome Evidence and Learning Eligibility (#63)
 
@@ -1244,5 +1245,94 @@ provenance mismatch, future evidence, cost that cannot offset a failed gate.
 
 Evidence gaps: the evaluator trusts the host's judgments, attribution basis and mandatory set (descriptors and evidence are
 observations, not proof); `STAGE_LOCAL` is accepted on the host's assertion plus at least one reference; Store export
-translation, envelope verification and sample `ExperienceRef` handling are #64; feedback scores and dispositions are #65;
+translation, envelope verification and sample `ExperienceRef` handling were delivered by #64 (Section 20); feedback scores and dispositions are #65;
 no latency measurement; no claim that eligibility rules improve routing.
+
+## 20. Implemented: Store Experience Export Translation (#64)
+
+Package `monada.neuron.resonance.adapter.experience` in `monada-neuron-resonance-adapter`. Behavior described here is
+implemented and opt-in; no existing signature changed, root production code is untouched and gained no Store dependency,
+nothing is persisted, and the translator triggers no learning, adaptation or `feedback()`. The module exists in the build
+only when the sibling `../monada-resonance-store` checkout is present (ADR 0018); a skipped module is not integration
+evidence.
+
+### 20.1 Types and rules
+
+| Type | Role |
+| --- | --- |
+| `StoreExperienceTranslator` | The only class that reads Store execution-memory types (plus the `ExperienceRefs` formatter). Takes a **caller-owned** `ExecutionMemory` (writable or read-only), a `RoutingEnvelopeResolver` and an optional `HypotheticalCostAnnotations`; never closes the memory, never records. `importSamples(ExperienceExportRequest) -> ExperienceImport`; `highWatermark()` gives a full-snapshot cutoff. |
+| `ExperienceExportRequest` | Explicit `scopeId`, `cutoffSequence` (pins the snapshot), `pageSize` (1 to 500), `maxTotalSamples` (1 to 10,000) and optional additional gates. No `latest`, clock or hidden cursor. |
+| `ExperienceImport` | Observations in the applied order `(ledgerSequence, experienceRef by code point)`, typed `ExperienceRejection`s in Store order, `ImportDiagnostic`s and the pinned `Snapshot` (schema, cutoff, Store ledger prefix digest, pages, samples examined). |
+| `RoutingEnvelope`, `ExecutedRouteDescriptor`, `RoutingEnvelopeResolver` | The Section 3.2 mechanism. The envelope has a canonical payload (fixed field order, UTF-8, every string as `<code-point-count>:<text>`) and `digest()` = lower-case SHA-256 of it. Forge records the digest on a `neuron-routing-envelope/1` `ArtifactRef`; the host resolver returns the envelope. |
+| `HypotheticalCostAnnotations` | Host seam for evaluation-only API-equivalent cost. The Store export carries usage only, `actualBilling` stays empty, and production code does not depend on `monada-evaluation`. |
+
+**Pipeline per sample** (view `ADAPTER_READY`, schema `execution-sample/1` only): scope check, duplicate check, then routed
+stage selection (exactly one stage with an envelope reference), then envelope verification in the Section 3.2 order
+(digest, identity, descriptor, then cohort binding), then mapping:
+
+- `RoutingOutcome`: decision, route, cohort binding, catalog and routing policy from the verified envelope; the three
+  fingerprints and the evaluation policy from the sample; `OutcomeStatus`/`OutcomeOrigin`, accepted attempt and
+  `outcomeSequence` from the recorded outcome; `InvocationStatus` from the routed attempt's result (`COMPLETED`, `FAILED`,
+  `CANCELLED`). `UNAVAILABLE` and `TIMED_OUT` are never produced because the Store cannot express them.
+- Evidence: every effective observation of every attempt becomes a `QualityObservation` with its exact event reference,
+  revision, ledger sequence, evaluator, policy, source and evidence references; each included event revision is pinned in
+  `judgedRevisions`. Store revision `n` is Neuron revision `n - 1`.
+- `RoutingObservation`: `experienceRef` is the canonical text `xr1|<len>:<scope>|<len>:<task>|<len>:<execution>|<attempt or ->|<len>:<event>`
+  of the routed stage event (not hashed, no revision); `revision` and `supersedesSequence` describe that stage (the earliest
+  superseded revision is resolved with one `loadEvent` point read); `ledgerSequence` is the sample's `lastSequence`, so a later
+  evidence correction advances it.
+- `ResourceSummary`: the routed stage's usage only. `REPORTED`/`ESTIMATED` become `Known` with that provenance, `UNKNOWN` and
+  `NOT_MEASURED` stay distinct and are never zero, `DECLARED_NO_BILLABLE_USAGE` becomes `NO_BILLABLE_USAGE` with its justification.
+- `StageAttribution`: `STAGE_LOCAL` only when the routed attempt has exactly one stage and recorded evidence (references:
+  its first 8 evidence events); `CHAIN_ONLY` when it has two or more stages; otherwise `NONE`. Verdicts stay with `OutcomeEvaluator`.
+- The Store `label`, `successOrdinal`, eligibility and recalled similarity are **not** read as quality, confidence or reward.
+
+**Typed refusals** (`RejectionReason`, one per sample, deterministic): `SCOPE_MISMATCH`, `MISSING_ENVELOPE_REFERENCE`,
+`AMBIGUOUS_ROUTED_STAGE`, `ENVELOPE_UNRESOLVED`, `ENVELOPE_DIGEST_MISMATCH`, `ENVELOPE_IDENTITY_MISMATCH`,
+`ENVELOPE_ROUTE_MISMATCH`, `MISSING_COHORT_BINDING`, `MISSING_OUTCOME`, `ROUTED_ATTEMPT_UNFINISHED`, `MALFORMED_SAMPLE`
+(a neutral-record bound or rule is violated, for example more than 32 observations; never truncated), `INVALID_ANNOTATION`,
+`DUPLICATE_OR_CONFLICTING_VERSION`. **Import diagnostics**: `SCOPE_MISMATCH` (the request's scope is not the memory's scope;
+nothing is read, and a page of another scope stops paging), `UNSUPPORTED_SCHEMA` (stops paging, nothing guessed),
+`PROJECTION_NOT_CURRENT` (informational; the export does not use the projection) and `SAMPLE_CAP_REACHED`. A Store failure
+(closed memory, cutoff beyond the ledger, altered ledger) is a `ResonanceStoreAdapterException`, never a partial result.
+
+**Snapshot semantics.** The first request pins `ExportCutoff.atSequence(cutoffSequence)`; later pages resume with the Store's
+stateless cursor, so an append between pages cannot enter the snapshot and a repeat gives an equal result. One effective sample
+per execution comes from the Store (corrections replace, with the superseded refs listed); a second sight of an execution in one
+import is refused.
+
+### 20.2 Limits
+
+Page size at most 500, at most 10,000 samples examined per import (translated or refused), at most 32 observations and 32 judged
+revisions per outcome and 8 evidence references per observation (the Section 19 bounds), a reference text of at most 512 code
+points (a longer Store reference is refused as malformed), identifiers 128. Reaching the cap with more samples available adds
+`SAMPLE_CAP_REACHED`; reaching it exactly at the end does not.
+
+### 20.3 Complexity and footprint
+
+`S` samples examined, `P` page size, `E` events per execution (bounded by the Section 19 limits): time `O(S log S)` (the final
+sort) plus the Store's own export cost, which the Store documents as `O(pages x ledger size)`; retained state `O(S)` observations
+plus `O(P)` for the current page and one hash set of execution ids. `ArrayList` plus one sort is used because the result is
+consumed in order; a `HashSet` is used only for point membership. No cache, parallelism, SIMD, GPU, clock or randomness. No
+latency or allocation figure was measured and no performance claim is made.
+
+### 20.4 Verification and evidence gaps
+
+```bash
+./gradlew :monada-neuron-resonance-adapter:test
+./gradlew test
+```
+
+The adapter tests use a temporary **real** `ExecutionMemory` (append, reopen read-only, export, translate) and prove: scope,
+exact revision, ledger cutoff, prefix digest and evidence are preserved; repeated and append-between-pages imports give the same
+snapshot; the sample cap; every refusal above, including envelope digest, identity and route mismatches with a valid digest;
+negative, pending, unfinished and outcome-less executions; evidence and routed-stage corrections (`supersedesSequence` is the
+earliest superseded sequence); unknown usage is not zero; the SHA-256 of **every file under the Store root is unchanged** after
+reading, and the memory stays open; root production sources contain no Store import and no source depends on `monada-evaluation`.
+There is no Store ranking-feedback digest helper at the Store baseline; the whole-directory digest covers its files.
+
+Evidence gaps: the Store reference may exceed 512 code points with long tokens; one routed stage per execution (a repaired chain
+with two routed stages is refused, not split); the routed attempt's invocation is the only environmental signal and is never
+`UNAVAILABLE`/`TIMED_OUT`; usage is stage-level, not full-chain (full-chain cost stays an evaluation-tool annotation); no
+allocation or latency measurement; translated observations are not yet fed to `OutcomeEvaluator` in an adapter test because that
+needs the decision/request fixtures of the root test sources; feedback (#65) and state (#66) are out of scope.
