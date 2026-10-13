@@ -9,7 +9,6 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -68,11 +67,9 @@ public final class OutcomeEvaluator {
         long cutoff = outcome.cutoff();
 
         Map<String, Long> latestRevision = new HashMap<>();
-        Set<EvidenceRevision> listed = new HashSet<>();
         for (QualityObservation o : outcome.observations()) {
             if (o.ledgerSequence() <= cutoff) {
                 latestRevision.merge(o.eventRef(), o.revision(), Math::max);
-                listed.add(new EvidenceRevision(o.eventRef(), o.revision()));
             }
         }
 
@@ -138,12 +135,6 @@ public final class OutcomeEvaluator {
         }
         for (EvidenceRevision pin : outcome.judgedRevisions()) {
             Long latest = latestRevision.get(pin.eventRef());
-            if (!listed.contains(pin)) {
-                if (!mismatches.contains(ProvenanceField.EVIDENCE_REFERENCE)) {
-                    mismatches = withMismatch(mismatches, ProvenanceField.EVIDENCE_REFERENCE);
-                    reasons.add(IneligibilityReason.PROVENANCE_MISMATCH);
-                }
-            }
             if (latest != null && latest > pin.revision()) {
                 reasons.add(IneligibilityReason.STALE_ARTIFACT_REVISION);
             }
@@ -171,7 +162,6 @@ public final class OutcomeEvaluator {
         }
 
         boolean stageLocal = outcome.attribution().basis() == StageAttribution.Basis.STAGE_LOCAL;
-        boolean blocked = reasons.stream().anyMatch(IneligibilityReason::blocking);
 
         if ((derived == DerivedAcceptance.VALIDATED_ACCEPTED || !failures.isEmpty()) && !stageLocal) {
             reasons.add(IneligibilityReason.NO_STAGE_ATTRIBUTION);
@@ -180,16 +170,7 @@ public final class OutcomeEvaluator {
             reasons.add(IneligibilityReason.NO_ATTRIBUTABLE_FAILURE);
         }
 
-        EligibilityVerdict verdict = EligibilityVerdict.NOT_ELIGIBLE;
-        if (!blocked && stageLocal) {
-            if (derived == DerivedAcceptance.VALIDATED_ACCEPTED) {
-                verdict = EligibilityVerdict.POSITIVE_CANDIDATE;
-            } else if (!failures.isEmpty()) {
-                verdict = EligibilityVerdict.NEGATIVE_CANDIDATE;
-            }
-        }
-        return new LearningAssessment(derived, verdict, List.copyOf(reasons), mismatches, evidence, failures,
-                excluded);
+        return LearningAssessment.of(derived, stageLocal, reasons, mismatches, evidence, failures, excluded);
     }
 
     private DerivedAcceptance derive(RoutingOutcome outcome, boolean allMandatorySatisfied) {
@@ -205,9 +186,6 @@ public final class OutcomeEvaluator {
             RoutingOutcome outcome, RoutingDecision.Selected decision, RoutingRequest request) {
         Set<ProvenanceField> found = EnumSet.noneOf(ProvenanceField.class);
         var provenance = decision.provenance();
-        if (!RoutingRequest.CONTRACT_VERSION.equals(outcome.contractVersion())) {
-            found.add(ProvenanceField.CONTRACT_VERSION);
-        }
         if (!outcome.decisionRef().equals(provenance.decisionRef())
                 || !provenance.decisionRef().equals(DecisionRef.of(request))) {
             found.add(ProvenanceField.DECISION_REF);
@@ -250,12 +228,27 @@ public final class OutcomeEvaluator {
         if (!state.scopeId().equals(request.scopeId()) || state.processedCutoff() > request.cutoff()) {
             found.add(ProvenanceField.STATE_BINDING);
         }
+        if (unlistedPin(outcome)) {
+            found.add(ProvenanceField.EVIDENCE_REFERENCE);
+        }
         return List.copyOf(found);
     }
 
-    private List<ProvenanceField> withMismatch(List<ProvenanceField> existing, ProvenanceField added) {
-        Set<ProvenanceField> all = EnumSet.of(added);
-        all.addAll(existing);
-        return List.copyOf(all);
+    /** True when a judged revision is not itself listed (absent, intermediate or newer); linear scans, at most 32 x 32. */
+    private boolean unlistedPin(RoutingOutcome outcome) {
+        for (EvidenceRevision pin : outcome.judgedRevisions()) {
+            boolean listed = false;
+            for (QualityObservation o : outcome.observations()) {
+                if (o.ledgerSequence() <= outcome.cutoff() && o.revision() == pin.revision()
+                        && o.eventRef().equals(pin.eventRef())) {
+                    listed = true;
+                    break;
+                }
+            }
+            if (!listed) {
+                return true;
+            }
+        }
+        return false;
     }
 }

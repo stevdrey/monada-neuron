@@ -1221,10 +1221,15 @@ same input give equal records.
 
 ### 19.3 Complexity and footprint
 
-`O` <= 32 observations, `D` <= 6 dimensions: `assess` is `O(O + D)` time and space; the only hash map (latest revision per
-event) is point-queried and never iterated, so order cannot affect results. No cache, parallelism, SIMD or GPU. **Measured**
-(JDK 27, `ThreadMXBean.getThreadAllocatedBytes`, 20,000 warm-up calls, one `assess` over 32 observations, final implementation, which builds a set of evidence revisions per call, six runs): between 9,104 and 12,640 bytes (isolated test class 11,416 to 11,648; whole suite 9,104, 11,272 and 12,640; the figure varies with JIT state; an earlier revision without the revision set measured 2,896); the
-test asserts only an upper bound of 16 KiB as a regression guard. Latency is not measured and no performance claim is made.
+`O` <= 32 observations, `D` <= 6 dimensions, `P` <= 32 judged revisions: `assess` is `O(O + D + P*O)` time (the last term is the
+exact-pin check, a linear scan only when pins exist, at most 32 x 32) and `O(O + D)` space; the only hash map (latest
+revision per event) is point-queried and never iterated, so order cannot affect results. No cache, parallelism, SIMD or GPU.
+**Measured** (JDK 27, `ThreadMXBean.getThreadAllocatedBytes`, 20,000 warm-up calls, one `assess`, no pins, five runs on the final
+implementation): 3,152 to 3,272 bytes at 8 observations and 3,536 to 4,264 bytes at 32 (earlier revisions that built a set of
+revision records per call measured 9,104 to 12,640 bytes; the figure varies slightly with JIT state). The test publishes both
+figures through the JUnit report, asserts that 32 observations allocate less than 6x the bytes of 8 (linear would be about 4x,
+quadratic about 16x; the cost is dominated by fixed overhead) and an 8 KiB ceiling, as a regression guard. Latency is not
+measured and no performance claim is made.
 The retained footprint of an outcome is not modeled beyond its bounds.
 
 ### 19.4 Verification and evidence gaps

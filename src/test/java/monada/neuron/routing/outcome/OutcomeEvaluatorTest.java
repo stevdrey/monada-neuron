@@ -5,6 +5,7 @@ import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.features.TaskFeatures;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestReporter;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
@@ -429,17 +430,42 @@ class OutcomeEvaluatorTest {
         assertEquals(forward.assess(), backward.assess());
     }
 
-    @Test
-    void thirtyTwoObservationsAllocateBoundedAndStayLinear() {
+    private long allocatedBytes(int observations) {
         var s = spec();
-        for (int i = 0; i < 32; i++) {
+        for (int i = 0; i < observations; i++) {
             s.with(obs("e" + i, 0, i % 2 == 0 ? TESTS : SECURITY, PASS, "att-1", i));
         }
         var observation = s.observation();
         var evaluator = new OutcomeEvaluator();
-        long bytes = AllocationProbe.measure(20_000,
+        return AllocationProbe.measure(20_000,
                 () -> evaluator.assess(observation, OutcomeFixtures.DECISION, OutcomeFixtures.REQUEST, GATES));
-        System.out.println("assess@32 observations allocated bytes: " + bytes);
-        assertTrue(bytes < 16 * 1024, "allocation regression guard, measured " + bytes);
+    }
+
+    @Test
+    void allocationGrowsLinearlyWithObservationCount(TestReporter reporter) {
+        long small = allocatedBytes(8);
+        long large = allocatedBytes(32);
+        reporter.publishEntry("assess allocated bytes at 8 observations", Long.toString(small));
+        reporter.publishEntry("assess allocated bytes at 32 observations", Long.toString(large));
+        // linear growth is about 4x for a 4x larger input; a quadratic cost would be about 16x
+        assertTrue(large < 6 * small, "growth is not linear: " + small + " -> " + large);
+        assertTrue(large < CEILING, "allocation regression guard, measured " + large);
+    }
+
+    private static final long CEILING = 8 * 1024;
+
+    @Test
+    void factoryDerivesTheVerdictFromReasonsAndAttribution() {
+        var pass = new LearningAssessment.EffectiveEvidence(TESTS, PASS, 5);
+        var fail = new LearningAssessment.EffectiveEvidence(TESTS, FAIL, 5);
+        var none = List.<IneligibilityReason>of();
+        assertEquals(EligibilityVerdict.POSITIVE_CANDIDATE, LearningAssessment.of(DerivedAcceptance.VALIDATED_ACCEPTED,
+                true, none, List.of(), List.of(pass), List.of(), 0).verdict());
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, LearningAssessment.of(DerivedAcceptance.VALIDATED_ACCEPTED,
+                false, List.of(IneligibilityReason.NO_STAGE_ATTRIBUTION), List.of(), List.of(pass), List.of(), 0).verdict());
+        assertEquals(EligibilityVerdict.NEGATIVE_CANDIDATE, LearningAssessment.of(DerivedAcceptance.NOT_ACCEPTED,
+                true, List.of(IneligibilityReason.MISSING_EVIDENCE), List.of(), List.of(fail), List.of(TESTS), 0).verdict());
+        assertEquals(EligibilityVerdict.NOT_ELIGIBLE, LearningAssessment.of(DerivedAcceptance.NOT_ACCEPTED,
+                true, List.of(IneligibilityReason.CANCELLED), List.of(), List.of(fail), List.of(TESTS), 0).verdict());
     }
 }

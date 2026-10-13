@@ -18,9 +18,10 @@ final class AllocationProbe {
             action.run();
         }
         // Fully qualified: the simple name collides with java.lang.management.ThreadMXBean.
-        Assumptions.assumeTrue(ManagementFactory.getThreadMXBean() instanceof com.sun.management.ThreadMXBean,
-                "the com.sun.management.ThreadMXBean extension is unavailable");
-        var threads = (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
+        if (!(ManagementFactory.getThreadMXBean() instanceof com.sun.management.ThreadMXBean threads)) {
+            Assumptions.abort("the com.sun.management.ThreadMXBean extension is unavailable");
+            return -1;
+        }
         Assumptions.assumeTrue(threads.isThreadAllocatedMemorySupported(), "thread allocation tracking unsupported");
         threads.setThreadAllocatedMemoryEnabled(true);
         long id = Thread.currentThread().threadId();

@@ -1,5 +1,6 @@
 package monada.neuron.routing.outcome;
 
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -39,6 +40,40 @@ public record LearningAssessment(
                 throw new IllegalArgumentException("ledgerSequence must be non-negative, got: " + ledgerSequence);
             }
         }
+    }
+
+    /**
+     * Derives the verdict and builds the assessment; the single owner of the verdict rule. A candidate needs
+     * stage-local attribution and no blocking reason: validated acceptance gives a positive candidate, a proven
+     * mandatory failure a negative one, anything else is not eligible.
+     *
+     * @param derivedAcceptance acceptance derived from the host's judgments
+     * @param stageLocal whether the result is attributable to the executed route's own stage
+     * @param reasons ineligibility reasons, including informational ones
+     * @param mismatches provenance fields that disagree
+     * @param effectiveEvidence effective state per mandatory dimension
+     * @param provenFailures mandatory dimensions whose effective state is {@code FAIL}
+     * @param excludedObservations ignored observations
+     * @return the assessment, validated by the canonical constructor
+     */
+    public static LearningAssessment of(
+            DerivedAcceptance derivedAcceptance,
+            boolean stageLocal,
+            Collection<IneligibilityReason> reasons,
+            Collection<ProvenanceField> mismatches,
+            Collection<EffectiveEvidence> effectiveEvidence,
+            Collection<QualityDimension> provenFailures,
+            int excludedObservations) {
+        EligibilityVerdict verdict = EligibilityVerdict.NOT_ELIGIBLE;
+        if (stageLocal && reasons.stream().noneMatch(IneligibilityReason::blocking)) {
+            if (derivedAcceptance == DerivedAcceptance.VALIDATED_ACCEPTED && reasons.isEmpty()) {
+                verdict = EligibilityVerdict.POSITIVE_CANDIDATE;
+            } else if (!provenFailures.isEmpty() && derivedAcceptance != DerivedAcceptance.VALIDATED_ACCEPTED) {
+                verdict = EligibilityVerdict.NEGATIVE_CANDIDATE;
+            }
+        }
+        return new LearningAssessment(derivedAcceptance, verdict, List.copyOf(reasons), List.copyOf(mismatches),
+                List.copyOf(effectiveEvidence), List.copyOf(provenFailures), excludedObservations);
     }
 
     /** Checks the verdict against the reasons and copies the lists. */

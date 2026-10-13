@@ -1,6 +1,7 @@
 package monada.neuron.routing.outcome;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Set;
@@ -11,7 +12,7 @@ import java.util.Set;
  *
  * @param id evaluation policy id, equal to the Store's {@code evaluationPolicy} id
  * @param version evaluation policy version
- * @param mandatoryDimensions non-empty set of mandatory dimensions
+ * @param mandatoryDimensions non-empty set of mandatory dimensions; iterates in {@link QualityDimension} order
  */
 public record EvidencePolicy(String id, String version, Set<QualityDimension> mandatoryDimensions) {
 
@@ -23,6 +24,6 @@ public record EvidencePolicy(String id, String version, Set<QualityDimension> ma
         if (mandatoryDimensions.isEmpty()) {
             throw new IllegalArgumentException("mandatoryDimensions must not be empty");
         }
-        mandatoryDimensions = Set.copyOf(EnumSet.copyOf((Collection<QualityDimension>) mandatoryDimensions));
+        mandatoryDimensions = Collections.unmodifiableSet(EnumSet.copyOf((Collection<QualityDimension>) mandatoryDimensions));
     }
 }

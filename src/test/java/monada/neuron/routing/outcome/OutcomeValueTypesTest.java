@@ -8,6 +8,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -37,6 +38,14 @@ class OutcomeValueTypesTest {
         assertThrows(IllegalArgumentException.class, () -> obs("e", -1, QualityDimension.TESTS, QualityState.PASS, "a", 1));
         assertThrows(IllegalArgumentException.class, () -> obs("e", 0, QualityDimension.TESTS, QualityState.PASS, "a", -1));
         assertEquals("x".repeat(128), obs("e", 0, QualityDimension.TESTS, QualityState.PASS, "x".repeat(128), 1).attemptId());
+    }
+
+    @Test
+    void mandatoryDimensionsIterateInEnumOrder() {
+        var policy = new EvidencePolicy("p", "1",
+                new LinkedHashSet<>(List.of(QualityDimension.SECURITY, QualityDimension.CORRECTNESS, QualityDimension.TESTS)));
+        assertEquals(List.of(QualityDimension.CORRECTNESS, QualityDimension.TESTS, QualityDimension.SECURITY),
+                List.copyOf(policy.mandatoryDimensions()));
     }
 
     @Test
