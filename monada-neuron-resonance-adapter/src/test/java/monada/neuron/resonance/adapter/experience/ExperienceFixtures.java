@@ -83,8 +83,12 @@ final class ExperienceFixtures {
     }
 
     static RoutingEnvelope envelope(String execution, String attempt, String stage) {
+        return envelope("task-" + execution, execution, attempt, stage);
+    }
+
+    static RoutingEnvelope envelope(String task, String execution, String attempt, String stage) {
         return new RoutingEnvelope(RoutingRequest.CONTRACT_VERSION,
-                new DecisionRef(SCOPE.value(), "task-" + execution, execution, attempt, stage, 1),
+                new DecisionRef(SCOPE.value(), task, execution, attempt, stage, 1),
                 new RouteKey("route-a", 1),
                 new ExecutedRouteDescriptor("worker-a", Feature.known("prov"), Feature.known("small"),
                         Feature.known("low"), monada.neuron.routing.catalog.BillingMode.API_METERED),
@@ -111,7 +115,11 @@ final class ExperienceFixtures {
         final ExecutionId id;
 
         Exec(String execution, Set<QualityDimension> mandatory) {
-            this.task = TaskId.of("task-" + execution);
+            this("task-" + execution, execution, mandatory);
+        }
+
+        Exec(String taskId, String execution, Set<QualityDimension> mandatory) {
+            this.task = TaskId.of(taskId);
             this.id = ExecutionId.of(execution);
             record(ExecutionEvent.executionStarted(id("start"), SCOPE, task, id,
                     new SourceProvenance("rev-1", "ctx-1", "constraints-1"),
@@ -206,6 +214,10 @@ final class ExperienceFixtures {
 
     Exec exec(String execution) {
         return new Exec(execution, Set.of(QualityDimension.TESTS));
+    }
+
+    Exec execOfTask(String task, String execution) {
+        return new Exec(task, execution, Set.of(QualityDimension.TESTS));
     }
 
     static QualityObservation observation(QualityDimension dimension, ObservationState state) {

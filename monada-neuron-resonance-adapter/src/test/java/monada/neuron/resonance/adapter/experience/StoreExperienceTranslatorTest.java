@@ -231,4 +231,142 @@ final class StoreExperienceTranslatorTest {
             assertTrue(imported.snapshot().isEmpty());
         }
     }
+
+    @Test
+    void correctingOnlyEvidenceStillVersionsTheObservationWithAKnownAncestor() {
+        try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
+            var fixtures = new ExperienceFixtures(memory);
+            var exec = fixtures.exec("x-ev").attempt(A1, 1, Optional.empty());
+            exec.routedStage(A1, ExperienceFixtures.envelope("x-ev", "a1", "implement"));
+            var evidence = exec.evidence(A1, QualityDimension.TESTS, ObservationState.PASS);
+            exec.finish(A1, AttemptResult.COMPLETED);
+            exec.outcome(Outcome.accepted(OutcomeOrigin.VALIDATED, A1));
+            var translator = new StoreExperienceTranslator(memory, fixtures.resolver());
+
+            long original = memory.history(SCOPE).highWatermark();
+            RoutingObservation before = translator.importSamples(request(original)).observations().getFirst();
+            assertEquals(0, before.revision());
+
+            var secondRevision = exec.correctEvidence(evidence, 2, A1, QualityDimension.TESTS, ObservationState.FAIL);
+            long corrected = memory.history(SCOPE).highWatermark();
+            RoutingObservation after = translator.importSamples(request(corrected)).observations().getFirst();
+
+            assertEquals(before.experienceRef(), after.experienceRef(), "same observation identity");
+            assertEquals(1, after.revision());
+            assertTrue(after.ledgerSequence() > before.ledgerSequence());
+            assertTrue(after.supersedesSequence() instanceof Feature.Known<Long>);
+            assertTrue(((Feature.Known<Long>) after.supersedesSequence()).value() < after.ledgerSequence());
+
+            exec.correctEvidence(secondRevision, 3, A1, QualityDimension.TESTS, ObservationState.PASS);
+            RoutingObservation twice = translator.importSamples(request(memory.history(SCOPE).highWatermark()))
+                    .observations().getFirst();
+            assertEquals(2, twice.revision(), "every correction advances the version");
+        }
+    }
+
+    @Test
+    void theStoreKeepsExecutionIdsUniquePerScopeSoTheDuplicateKeyNeverHidesADistinctExecution() {
+        try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
+            var fixtures = new ExperienceFixtures(memory);
+            fixtures.execOfTask("task-a", "run-1");
+            // the ledger itself refuses a second start of run-1 under another task (the fixture asserts APPENDED)
+            assertThrows(AssertionError.class, () -> fixtures.execOfTask("task-b", "run-1"));
+        }
+    }
+
+    @Test
+    void repairedChainDoesNotAttributeTheAcceptedAttemptsEvidenceToTheRoutedAttempt() {
+        try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
+            var fixtures = new ExperienceFixtures(memory);
+            var exec = fixtures.exec("x-rep").attempt(A1, 1, Optional.empty());
+            exec.routedStage(A1, ExperienceFixtures.envelope("x-rep", "a1", "implement"));
+            exec.evidence(A1, QualityDimension.TESTS, ObservationState.FAIL);
+            exec.finish(A1, AttemptResult.FAILED);
+            exec.attempt(ExperienceFixtures.A2, 2, Optional.of(A1));
+            exec.plainStage(ExperienceFixtures.A2, "repair");
+            exec.evidence(ExperienceFixtures.A2, QualityDimension.TESTS, ObservationState.PASS);
+            exec.finish(ExperienceFixtures.A2, AttemptResult.COMPLETED);
+            exec.outcome(Outcome.accepted(OutcomeOrigin.VALIDATED, ExperienceFixtures.A2));
+
+            var imported = new StoreExperienceTranslator(memory, fixtures.resolver())
+                    .importSamples(request(memory.history(SCOPE).highWatermark()));
+            assertEquals(1, imported.observations().size(), imported.rejections().toString());
+            var attribution = imported.observations().getFirst().outcome().attribution();
+            assertEquals(StageAttribution.Basis.CHAIN_ONLY, attribution.basis());
+            assertEquals(2, attribution.chainStageCount());
+        }
+    }
+
+    @Test
+    void aFailingSupersededRevisionReadIsAnAdapterFailureNotAStoreException() {
+        try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
+            var fixtures = new ExperienceFixtures(memory);
+            var exec = fixtures.exec("x-fix").attempt(A1, 1, Optional.empty());
+            var stage = exec.routedStage(A1, ExperienceFixtures.envelope("x-fix", "a1", "implement"));
+            exec.correctRoutedStage(stage, 2, A1, ExperienceFixtures.envelope("x-fix", "a1", "implement"));
+            exec.evidence(A1, QualityDimension.TESTS, ObservationState.PASS);
+            exec.finish(A1, AttemptResult.COMPLETED);
+            exec.outcome(Outcome.accepted(OutcomeOrigin.VALIDATED, A1));
+            long cutoff = memory.history(SCOPE).highWatermark();
+
+            var failing = new StoreExperienceTranslator.Reads() {
+                @Override
+                public com.monada.core.execution.ScopeId scope() {
+                    return memory.scope();
+                }
+
+                @Override
+                public com.monada.api.execution.ExperienceSamplePage export(
+                        com.monada.api.execution.ExportRequest request) {
+                    return memory.exportSamples(request);
+                }
+
+                @Override
+                public Optional<com.monada.api.execution.HistoryEntry> loadEvent(
+                        com.monada.core.execution.ScopeId scope, com.monada.core.execution.EventId eventId,
+                        int revision) {
+                    throw new java.io.UncheckedIOException(new java.io.IOException("disk gone"));
+                }
+
+                @Override
+                public long highWatermark(com.monada.core.execution.ScopeId scope) {
+                    return cutoff;
+                }
+            };
+            var translator = new StoreExperienceTranslator(failing, fixtures.resolver(),
+                    HypotheticalCostAnnotations.none());
+            assertThrows(ResonanceStoreAdapterException.class, () -> translator.importSamples(request(cutoff)));
+        }
+    }
+
+    @Test
+    void anOversizedCompositeReferenceIsBoundedExactWhenItFitsAndHashedWhenItDoesNot() {
+        String longToken = "t".repeat(128);
+        var big = new com.monada.core.execution.ExperienceRef(com.monada.core.execution.ScopeId.of(longToken),
+                com.monada.core.execution.TaskId.of(longToken), com.monada.core.execution.ExecutionId.of(longToken),
+                Optional.of(com.monada.core.execution.AttemptId.of(longToken)),
+                com.monada.core.execution.EventId.of(longToken), 1);
+        String formatted = ExperienceRefs.format(big);
+        assertTrue(formatted.startsWith("xr1h|"));
+        assertEquals(formatted, ExperienceRefs.format(big), "deterministic");
+        assertTrue(formatted.length() <= 512);
+        var other = new com.monada.core.execution.ExperienceRef(big.scope(), big.task(), big.execution(),
+                big.attempt(), com.monada.core.execution.EventId.of("u".repeat(128)), 1);
+        assertFalse(formatted.equals(ExperienceRefs.format(other)), "different events stay distinguishable");
+        new RoutingObservationRefProbe().accept(formatted);
+
+        String small = ExperienceRefs.format(new com.monada.core.execution.ExperienceRef(
+                com.monada.core.execution.ScopeId.of("s"), com.monada.core.execution.TaskId.of("t"),
+                com.monada.core.execution.ExecutionId.of("e"), Optional.empty(),
+                com.monada.core.execution.EventId.of("v"), 7));
+        assertEquals("xr1|1:s|1:t|1:e|-|1:v", small, "the exact text is kept when it fits, without the revision");
+    }
+
+    /** The bounded reference must be accepted by the neutral record's text rule. */
+    private static final class RoutingObservationRefProbe implements java.util.function.Consumer<String> {
+        @Override
+        public void accept(String ref) {
+            monada.neuron.routing.token.OpaqueTokens.requireText(ref, "experienceRef");
+        }
+    }
 }

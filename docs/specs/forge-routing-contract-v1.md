@@ -1278,13 +1278,18 @@ stage selection (exactly one stage with an envelope reference), then envelope ve
   revision, ledger sequence, evaluator, policy, source and evidence references; each included event revision is pinned in
   `judgedRevisions`. Store revision `n` is Neuron revision `n - 1`.
 - `RoutingObservation`: `experienceRef` is the canonical text `xr1|<len>:<scope>|<len>:<task>|<len>:<execution>|<attempt or ->|<len>:<event>`
-  of the routed stage event (not hashed, no revision); `revision` and `supersedesSequence` describe that stage (the earliest
-  superseded revision is resolved with one `loadEvent` point read); `ledgerSequence` is the sample's `lastSequence`, so a later
-  evidence correction advances it.
+  of the routed stage event, without a revision. It is kept exactly when it fits 512 code points; five 128-code-point
+  identifiers can exceed that, in which case it is `xr1h|<SHA-256 hex of the exact text>` (deterministic, still one event).
+  `revision` is the sum of `(revision - 1)` over **every** corrected fact of the sample (stage, evidence, finish, outcome), so any
+  correction that changes the effective sample advances the version of the same `experienceRef`; `supersedesSequence` is the
+  smallest ledger sequence among the earliest superseded revision of each corrected fact (one `loadEvent` point read per
+  corrected fact; a Store failure there is a `ResonanceStoreAdapterException`); `ledgerSequence` is the sample's `lastSequence`.
 - `ResourceSummary`: the routed stage's usage only. `REPORTED`/`ESTIMATED` become `Known` with that provenance, `UNKNOWN` and
   `NOT_MEASURED` stay distinct and are never zero, `DECLARED_NO_BILLABLE_USAGE` becomes `NO_BILLABLE_USAGE` with its justification.
-- `StageAttribution`: `STAGE_LOCAL` only when the routed attempt has exactly one stage and recorded evidence (references:
-  its first 8 evidence events); `CHAIN_ONLY` when it has two or more stages; otherwise `NONE`. Verdicts stay with `OutcomeEvaluator`.
+- `StageAttribution`: `STAGE_LOCAL` only when the verdict is about the routed attempt itself: no other attempt was accepted, no
+  later repair attempt exists, and it has exactly one stage and recorded evidence (references: its first 8 evidence events).
+  A repair chain (routed attempt A, accepted attempt B) is `CHAIN_ONLY` when the execution has two or more stages, otherwise
+  `NONE`, so B's evidence never credits or blames A's route. Verdicts stay with `OutcomeEvaluator`.
 - The Store `label`, `successOrdinal`, eligibility and recalled similarity are **not** read as quality, confidence or reward.
 
 **Typed refusals** (`RejectionReason`, one per sample, deterministic): `SCOPE_MISMATCH`, `MISSING_ENVELOPE_REFERENCE`,
@@ -1298,14 +1303,14 @@ nothing is read, and a page of another scope stops paging), `UNSUPPORTED_SCHEMA`
 
 **Snapshot semantics.** The first request pins `ExportCutoff.atSequence(cutoffSequence)`; later pages resume with the Store's
 stateless cursor, so an append between pages cannot enter the snapshot and a repeat gives an equal result. One effective sample
-per execution comes from the Store (corrections replace, with the superseded refs listed); a second sight of an execution in one
-import is refused.
+per execution comes from the Store (corrections replace, with the superseded refs listed); a second sight of the same
+`(task, execution)` in one import is refused. The Store itself keeps execution ids unique per scope.
 
 ### 20.2 Limits
 
 Page size at most 500, at most 10,000 samples examined per import (translated or refused), at most 32 observations and 32 judged
 revisions per outcome and 8 evidence references per observation (the Section 19 bounds), a reference text of at most 512 code
-points (a longer Store reference is refused as malformed), identifiers 128. Reaching the cap with more samples available adds
+points (a longer composite Store reference is replaced by its SHA-256 form, never refused), identifiers 128. Reaching the cap with more samples available adds
 `SAMPLE_CAP_REACHED`; reaching it exactly at the end does not.
 
 ### 20.3 Complexity and footprint
@@ -1326,12 +1331,13 @@ latency or allocation figure was measured and no performance claim is made.
 The adapter tests use a temporary **real** `ExecutionMemory` (append, reopen read-only, export, translate) and prove: scope,
 exact revision, ledger cutoff, prefix digest and evidence are preserved; repeated and append-between-pages imports give the same
 snapshot; the sample cap; every refusal above, including envelope digest, identity and route mismatches with a valid digest;
-negative, pending, unfinished and outcome-less executions; evidence and routed-stage corrections (`supersedesSequence` is the
-earliest superseded sequence); unknown usage is not zero; the SHA-256 of **every file under the Store root is unchanged** after
+negative, pending, unfinished and outcome-less executions; evidence-only and routed-stage corrections (each advances `revision`;
+`supersedesSequence` is the earliest superseded sequence); a repaired chain is never stage-local; an oversized composite reference;
+a failing superseded-revision read surfaces as an adapter exception; unknown usage is not zero; the SHA-256 of **every file under the Store root is unchanged** after
 reading, and the memory stays open; root production sources contain no Store import and no source depends on `monada-evaluation`.
 There is no Store ranking-feedback digest helper at the Store baseline; the whole-directory digest covers its files.
 
-Evidence gaps: the Store reference may exceed 512 code points with long tokens; one routed stage per execution (a repaired chain
+Evidence gaps: one routed stage per execution (a repaired chain
 with two routed stages is refused, not split); the routed attempt's invocation is the only environmental signal and is never
 `UNAVAILABLE`/`TIMED_OUT`; usage is stage-level, not full-chain (full-chain cost stays an evaluation-tool annotation); no
 allocation or latency measurement; translated observations are not yet fed to `OutcomeEvaluator` in an adapter test because that

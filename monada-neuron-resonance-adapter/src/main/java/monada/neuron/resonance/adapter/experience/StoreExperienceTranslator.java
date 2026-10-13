@@ -155,7 +155,7 @@ public final class StoreExperienceTranslator {
         private final List<RoutingObservation> observations = new ArrayList<>();
         private final List<ExperienceRejection> rejections = new ArrayList<>();
         private final Set<ImportDiagnostic> diagnostics = new LinkedHashSet<>();
-        private final Set<String> seenExecutions = new HashSet<>();
+        private final Set<ExecutionKey> seenExecutions = new HashSet<>();
         private ExperienceImport.Snapshot snapshot;
         private int pages;
         private int examined;
@@ -225,9 +225,10 @@ public final class StoreExperienceTranslator {
                 if (!request.scopeId().equals(first.scope().value())) {
                     throw new Refusal(RejectionReason.SCOPE_MISMATCH, "sample belongs to scope " + first.scope().value());
                 }
-                if (!seenExecutions.add(first.execution().value())) {
+                if (!seenExecutions.add(new ExecutionKey(first.task().value(), first.execution().value()))) {
                     throw new Refusal(RejectionReason.DUPLICATE_OR_CONFLICTING_VERSION,
-                            "execution " + first.execution().value() + " was already seen in this import");
+                            "execution " + first.execution().value() + " of task " + first.task().value()
+                                    + " was already seen in this import");
                 }
                 observations.add(build(sample, page.ledger().cutoffSequence()));
             } catch (Refusal refusal) {
@@ -304,29 +305,40 @@ public final class StoreExperienceTranslator {
                 policy.id(), policy.version(), cutoff, invocation,
                 sameName(outcome.status(), OutcomeStatus.class), sameName(outcome.origin(), OutcomeOrigin.class),
                 acceptedId.<Feature<String>>map(Feature::known).orElse(Feature.unknown()), acceptedStatus,
-                outcomeFact.sequence(), evidence, List.copyOf(judged), resources, attribution(routedAttempt));
+                outcomeFact.sequence(), evidence, List.copyOf(judged), resources,
+                attribution(sample, routedAttempt, acceptedId));
 
         ExperienceRef stageRef = routed.stage.ref();
-        long revision = stageRef.revision() - 1L;
+        long revision = 0;
         Feature<Long> supersedes = Feature.unknown();
-        if (revision > 0) {
-            supersedes = Feature.known(earliestSuperseded(sample, stageRef));
+        for (ExperienceSample.Revision corrected : sample.revisions()) {
+            revision += corrected.effective().revision() - 1L;
+            long replaced = sequenceOfEarliestSuperseded(corrected);
+            supersedes = Feature.known(supersedes instanceof Feature.Known<Long> known
+                    ? Math.min(known.value(), replaced) : replaced);
         }
         return new RoutingObservation(routingOutcome, ExperienceRefs.format(stageRef), revision,
                 sample.lastSequence(), supersedes);
     }
 
-    private long earliestSuperseded(ExperienceSample sample, ExperienceRef stageRef) {
-        ExperienceSample.Revision revision = sample.revisions().stream()
-                .filter(r -> r.effective().eventId().equals(stageRef.eventId()))
-                .findFirst()
-                .orElseThrow(() -> new Refusal(RejectionReason.MALFORMED_SAMPLE,
-                        "a corrected routed stage lists no superseded revisions"));
-        ExperienceRef earliest = revision.superseded().getFirst();
-        return reads.loadEvent(earliest.scope(), earliest.eventId(), earliest.revision())
-                .map(HistoryEntry::sequence)
-                .orElseThrow(() -> new Refusal(RejectionReason.MALFORMED_SAMPLE,
-                        "the superseded revision " + earliest.revision() + " of the routed stage is not readable"));
+    /** Any corrected fact of the sample (stage, evidence, finish or outcome) advances the observation's version. */
+    private long sequenceOfEarliestSuperseded(ExperienceSample.Revision corrected) {
+        if (corrected.superseded().isEmpty()) {
+            throw new Refusal(RejectionReason.MALFORMED_SAMPLE,
+                    "a corrected fact lists no superseded revisions");
+        }
+        ExperienceRef earliest = corrected.superseded().getFirst();
+        Optional<HistoryEntry> entry;
+        try {
+            entry = reads.loadEvent(earliest.scope(), earliest.eventId(), earliest.revision());
+        } catch (IllegalStateException | UncheckedIOException e) {
+            throw new ResonanceStoreAdapterException("could not read a superseded revision from the Store", e);
+        }
+        return entry.map(HistoryEntry::sequence).orElseThrow(() -> new Refusal(RejectionReason.MALFORMED_SAMPLE,
+                "the superseded revision " + earliest.revision() + " is not readable"));
+    }
+
+    private record ExecutionKey(String task, String execution) {
     }
 
     private record RoutedStage(ExperienceSample.SampleStage stage, ArtifactRef envelopeArtifact) {
@@ -448,17 +460,26 @@ public final class StoreExperienceTranslator {
         return new ResourceSummary(UsageDeclaration.MEASURED, Feature.unknown(), counters, List.of(), costs);
     }
 
-    private static StageAttribution attribution(ExperienceSample.SampleAttempt routedAttempt) {
-        int stages = routedAttempt.stages().size();
-        if (stages == 1 && !routedAttempt.evidence().isEmpty()) {
+    /**
+     * Stage-local attribution only when the verdict is about the routed attempt itself: no other attempt was accepted,
+     * no later repair attempt exists, and the attempt has exactly one stage and recorded evidence. A repair chain
+     * (routed attempt A, accepted attempt B) never credits or blames A's route with B's evidence.
+     */
+    private static StageAttribution attribution(
+            ExperienceSample sample, ExperienceSample.SampleAttempt routedAttempt, Optional<String> acceptedId) {
+        int chainStages = sample.attempts().stream().mapToInt(a -> a.stages().size()).sum();
+        boolean evidenceIsTheRoutedAttempts = acceptedId.map(routedAttempt.id().value()::equals).orElse(true);
+        boolean last = sample.attempts().getLast().id().equals(routedAttempt.id());
+        if (evidenceIsTheRoutedAttempts && last && routedAttempt.stages().size() == 1
+                && !routedAttempt.evidence().isEmpty()) {
             List<EvidenceRef> refs = routedAttempt.evidence().stream()
                     .limit(StageAttribution.MAX_REFS)
                     .map(e -> new EvidenceRef(EVIDENCE_EVENT_KIND, ExperienceRefs.format(e.ref()), Feature.unknown()))
                     .toList();
             return new StageAttribution(StageAttribution.Basis.STAGE_LOCAL, 1, refs);
         }
-        return new StageAttribution(stages >= 2 ? StageAttribution.Basis.CHAIN_ONLY : StageAttribution.Basis.NONE,
-                Math.max(stages, 1), List.of());
+        return new StageAttribution(chainStages >= 2 ? StageAttribution.Basis.CHAIN_ONLY : StageAttribution.Basis.NONE,
+                Math.max(chainStages, 1), List.of());
     }
 
     private static <E extends Enum<E>> E sameName(Enum<?> source, Class<E> target) {
