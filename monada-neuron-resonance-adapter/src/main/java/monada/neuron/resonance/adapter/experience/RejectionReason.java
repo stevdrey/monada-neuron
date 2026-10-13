@@ -16,6 +16,8 @@ public enum RejectionReason {
     ENVELOPE_IDENTITY_MISMATCH,
     /** The envelope descriptor differs from the recorded worker, provider, model, effort or billing mode. */
     ENVELOPE_ROUTE_MISMATCH,
+    /** The envelope was routed under another evaluation policy than the one the execution is judged by. */
+    ENVELOPE_POLICY_MISMATCH,
     /** The envelope has no cohort binding. */
     MISSING_COHORT_BINDING,
     /** The execution has no recorded outcome. */

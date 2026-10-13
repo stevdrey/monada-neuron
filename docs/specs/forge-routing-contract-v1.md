@@ -1268,7 +1268,7 @@ evidence.
 
 **Pipeline per sample** (view `ADAPTER_READY`, schema `execution-sample/1` only): scope check, duplicate check, then routed
 stage selection (exactly one stage with an envelope reference), then envelope verification in the Section 3.2 order
-(digest, identity, descriptor, then cohort binding), then mapping:
+(digest, identity, descriptor, evaluation policy, then cohort binding), then mapping:
 
 - `RoutingOutcome`: decision, route, cohort binding, catalog and routing policy from the verified envelope; the three
   fingerprints and the evaluation policy from the sample; `OutcomeStatus`/`OutcomeOrigin`, accepted attempt and
@@ -1294,9 +1294,9 @@ stage selection (exactly one stage with an envelope reference), then envelope ve
 
 **Typed refusals** (`RejectionReason`, one per sample, deterministic): `SCOPE_MISMATCH`, `MISSING_ENVELOPE_REFERENCE`,
 `AMBIGUOUS_ROUTED_STAGE`, `ENVELOPE_UNRESOLVED`, `ENVELOPE_DIGEST_MISMATCH`, `ENVELOPE_IDENTITY_MISMATCH`,
-`ENVELOPE_ROUTE_MISMATCH`, `MISSING_COHORT_BINDING`, `MISSING_OUTCOME`, `ROUTED_ATTEMPT_UNFINISHED`, `MALFORMED_SAMPLE`
+`ENVELOPE_ROUTE_MISMATCH`, `ENVELOPE_POLICY_MISMATCH` (the envelope was routed under another evaluation policy than the execution's), `MISSING_COHORT_BINDING`, `MISSING_OUTCOME`, `ROUTED_ATTEMPT_UNFINISHED`, `MALFORMED_SAMPLE`
 (a neutral-record bound or rule is violated, for example more than 32 observations; never truncated), `INVALID_ANNOTATION`,
-`DUPLICATE_OR_CONFLICTING_VERSION`. **Import diagnostics**: `SCOPE_MISMATCH` (the request's scope is not the memory's scope;
+`DUPLICATE_OR_CONFLICTING_VERSION`. A failing host seam is also a typed refusal of that sample only (`ENVELOPE_UNRESOLVED` when the resolver throws, `INVALID_ANNOTATION` when the cost seam throws) and any other unexpected runtime failure on one sample is `MALFORMED_SAMPLE`; the rest of the import is still returned. **Import diagnostics**: `SCOPE_MISMATCH` (the request's scope is not the memory's scope;
 nothing is read, and a page of another scope stops paging), `UNSUPPORTED_SCHEMA` (stops paging, nothing guessed),
 `PROJECTION_NOT_CURRENT` (informational; the export does not use the projection) and `SAMPLE_CAP_REACHED`. A Store failure
 (closed memory, cutoff beyond the ledger, altered ledger) is a `ResonanceStoreAdapterException`, never a partial result.

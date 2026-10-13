@@ -9,6 +9,7 @@ import com.monada.api.execution.ExportEvidencePolicy;
 import com.monada.api.execution.ExportRequest;
 import com.monada.api.execution.ExportView;
 import com.monada.api.execution.HistoryEntry;
+import com.monada.api.execution.ProjectionStatus;
 import com.monada.core.execution.ArtifactRef;
 import com.monada.core.execution.EventId;
 import com.monada.core.execution.ExperienceRef;
@@ -60,14 +61,20 @@ import java.util.stream.Collectors;
  * {@link monada.neuron.routing.outcome.OutcomeEvaluator}. Corrections yield one effective observation per execution.
  *
  * <p>Bounds: at most {@link ExperienceExportRequest#MAX_TOTAL_SAMPLES} samples per import; time and retained space are
- * {@code O(samples)} plus {@code O(pageSize)}, with one extra point lookup per corrected routed stage. Ordering is total
+ * {@code O(samples)} plus {@code O(pageSize)}, with one extra Store point lookup per corrected fact of a sample (stage,
+ * evidence, finish or outcome). Ordering is total
  * and deterministic. The translator performs no clock or random lookup. One instance is not thread-safe, like the Store
  * facade it reads.
  *
  * <p>Known limits: one routed stage per execution (a second routed stage is refused as ambiguous); the invocation is
  * derived from the routed attempt's result only, so {@code UNAVAILABLE} and {@code TIMED_OUT} are never produced; only
- * the routed stage's usage is carried as {@link ResourceSummary}; stage-local attribution is claimed only when the routed
- * attempt has exactly one stage and recorded evidence.
+ * the routed stage's usage is carried as {@link ResourceSummary}; stage-local attribution is claimed only when no other
+ * attempt was accepted, no later attempt exists, and the routed attempt has exactly one stage and recorded evidence (its
+ * real chain size is kept).
+ *
+ * <p>Failures: a Store failure aborts the import with {@link ResonanceStoreAdapterException}. Anything wrong with one sample
+ * or with a host seam ({@link RoutingEnvelopeResolver}, {@link HypotheticalCostAnnotations}) refuses that sample only,
+ * with a typed {@link RejectionReason}.
  */
 public final class StoreExperienceTranslator {
 
@@ -188,7 +195,7 @@ public final class StoreExperienceTranslator {
                     return;
                 }
                 pages++;
-                if (page.projection().state() != com.monada.api.execution.ProjectionStatus.State.CURRENT
+                if (page.projection().state() != ProjectionStatus.State.CURRENT
                         || !page.projection().coversCutoff()) {
                     diagnostics.add(ImportDiagnostic.PROJECTION_NOT_CURRENT);
                 }
@@ -233,9 +240,11 @@ public final class StoreExperienceTranslator {
                 observations.add(build(sample, page.ledger().cutoffSequence()));
             } catch (Refusal refusal) {
                 rejections.add(new ExperienceRejection(executionRef, refusal.reason, refusal.getMessage()));
-            } catch (IllegalArgumentException e) {
+            } catch (ResonanceStoreAdapterException storeFailure) {
+                throw storeFailure;
+            } catch (RuntimeException e) {
                 rejections.add(new ExperienceRejection(executionRef, RejectionReason.MALFORMED_SAMPLE,
-                        bounded(String.valueOf(e.getMessage()))));
+                        bounded(e.getClass().getSimpleName() + ": " + e.getMessage())));
             }
         }
 
@@ -250,7 +259,7 @@ public final class StoreExperienceTranslator {
     private RoutingObservation build(ExperienceSample sample, long cutoff) {
         ExperienceRef sampleRef = sample.execution();
         RoutedStage routed = routedStage(sample);
-        RoutingEnvelope envelope = verifiedEnvelope(sampleRef, routed);
+        RoutingEnvelope envelope = verifiedEnvelope(sample, routed);
 
         ExperienceSample.OutcomeFact outcomeFact = sample.outcome().orElseThrow(
                 () -> new Refusal(RejectionReason.MISSING_OUTCOME, "the execution has no recorded outcome"));
@@ -290,8 +299,7 @@ public final class StoreExperienceTranslator {
             }
         }
 
-        List<HypotheticalCost> costs = annotations.costsFor(
-                sampleRef.scope().value(), sampleRef.task().value(), sampleRef.execution().value());
+        List<HypotheticalCost> costs = costsOf(sampleRef);
         requireValidCosts(costs);
         ResourceSummary resources = resources(routed.stage, costs);
 
@@ -366,11 +374,13 @@ public final class StoreExperienceTranslator {
         return found.getFirst();
     }
 
-    private RoutingEnvelope verifiedEnvelope(ExperienceRef sampleRef, RoutedStage routed) {
+    private RoutingEnvelope verifiedEnvelope(ExperienceSample sample, RoutedStage routed) {
         ExperienceRef stageRef = routed.stage.ref();
-        RoutingEnvelope envelope = resolver.resolve(stageRef.scope().value(), routed.envelopeArtifact.reference())
-                .orElseThrow(() -> new Refusal(RejectionReason.ENVELOPE_UNRESOLVED,
-                        "the host has no envelope for the recorded reference"));
+        ExperienceRef sampleRef = sample.execution();
+        if (!stageRef.task().equals(sampleRef.task()) || !stageRef.execution().equals(sampleRef.execution())) {
+            throw new Refusal(RejectionReason.MALFORMED_SAMPLE, "the routed stage belongs to another execution");
+        }
+        RoutingEnvelope envelope = resolve(stageRef.scope().value(), routed.envelopeArtifact.reference());
         // 1. integrity
         if (!routed.envelopeArtifact.digest().map(envelope.digest()::equals).orElse(false)) {
             throw new Refusal(RejectionReason.ENVELOPE_DIGEST_MISMATCH,
@@ -392,10 +402,29 @@ public final class StoreExperienceTranslator {
             throw new Refusal(RejectionReason.ENVELOPE_ROUTE_MISMATCH,
                     "the envelope descriptor differs from the recorded route");
         }
+        // 4. the evaluation policy the envelope was routed under is the one the execution is judged by
+        var policy = sample.policy();
+        if (!envelope.evaluationPolicyId().equals(policy.id())
+                || !envelope.evaluationPolicyVersion().equals(policy.version())) {
+            throw new Refusal(RejectionReason.ENVELOPE_POLICY_MISMATCH,
+                    "the envelope was routed under another evaluation policy than the execution's");
+        }
         if (!(envelope.cohortBinding() instanceof Feature.Known<CohortBinding>)) {
             throw new Refusal(RejectionReason.MISSING_COHORT_BINDING, "the envelope has no cohort binding");
         }
         return envelope;
+    }
+
+    private RoutingEnvelope resolve(String scopeId, String envelopeRef) {
+        Optional<RoutingEnvelope> resolved;
+        try {
+            resolved = resolver.resolve(scopeId, envelopeRef);
+        } catch (RuntimeException e) {
+            throw new Refusal(RejectionReason.ENVELOPE_UNRESOLVED,
+                    bounded("the envelope resolver failed: " + e.getClass().getSimpleName()));
+        }
+        return resolved.orElseThrow(() -> new Refusal(RejectionReason.ENVELOPE_UNRESOLVED,
+                "the host has no envelope for the recorded reference"));
     }
 
     private boolean matches(ExecutedRouteDescriptor expected, RouteDescriptor recorded) {
@@ -426,6 +455,16 @@ public final class StoreExperienceTranslator {
                 observation.evaluatorId(), observation.evaluatorVersion(), observation.policyId(),
                 observation.policyVersion(), sameName(observation.source(), EvidenceSource.class), attemptId, sequence,
                 refs);
+    }
+
+    private List<HypotheticalCost> costsOf(ExperienceRef sampleRef) {
+        try {
+            return List.copyOf(annotations.costsFor(
+                    sampleRef.scope().value(), sampleRef.task().value(), sampleRef.execution().value()));
+        } catch (RuntimeException e) {
+            throw new Refusal(RejectionReason.INVALID_ANNOTATION,
+                    bounded("the cost annotation seam failed: " + e.getClass().getSimpleName()));
+        }
     }
 
     private void requireValidCosts(List<HypotheticalCost> costs) {

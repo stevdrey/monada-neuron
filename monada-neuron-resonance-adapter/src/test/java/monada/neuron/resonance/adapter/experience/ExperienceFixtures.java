@@ -15,6 +15,7 @@ import com.monada.core.execution.ExecutionEvent.AttemptFinished;
 import com.monada.core.execution.ExecutionEvent.AttemptStarted;
 import com.monada.core.execution.ExecutionEvent.Correction;
 import com.monada.core.execution.ExecutionEvent.EvidenceRecorded;
+import com.monada.core.execution.ExecutionEvent.OutcomeRecorded;
 import com.monada.core.execution.ExecutionEvent.StageRecorded;
 import com.monada.core.execution.ExecutionId;
 import com.monada.core.execution.ObservationSource;
@@ -93,6 +94,18 @@ final class ExperienceFixtures {
                 new ExecutedRouteDescriptor("worker-a", Feature.known("prov"), Feature.known("small"),
                         Feature.known("low"), monada.neuron.routing.catalog.BillingMode.API_METERED),
                 "catalog-1", "policy", "1", "gates", "1", Feature.known(COHORT), "local");
+    }
+
+    static RoutingEnvelope withDescriptor(RoutingEnvelope e, ExecutedRouteDescriptor descriptor) {
+        return new RoutingEnvelope(e.contractVersion(), e.decisionRef(), e.route(), descriptor, e.catalogVersion(),
+                e.routingPolicyId(), e.routingPolicyVersion(), e.evaluationPolicyId(), e.evaluationPolicyVersion(),
+                e.cohortBinding(), e.executionMode());
+    }
+
+    static RoutingEnvelope withEvaluationPolicy(RoutingEnvelope e, String id, String version) {
+        return new RoutingEnvelope(e.contractVersion(), e.decisionRef(), e.route(), e.descriptor(),
+                e.catalogVersion(), e.routingPolicyId(), e.routingPolicyVersion(), id, version, e.cohortBinding(),
+                e.executionMode());
     }
 
     private Instant advance() {
@@ -207,8 +220,46 @@ final class ExperienceFixtures {
             return eventId;
         }
 
-        long outcome(Outcome outcome) {
-            return record(ExecutionEvent.outcomeRecorded(id("out"), SCOPE, task, id, outcome, advance()));
+        /** Records the outcome and returns its event id, so a test can correct it. */
+        EventId outcome(Outcome outcome) {
+            EventId eventId = id("out");
+            record(ExecutionEvent.outcomeRecorded(eventId, SCOPE, task, id, outcome, advance()));
+            return eventId;
+        }
+
+        /** Corrects the finish of {@code attempt}. */
+        EventId correctFinish(EventId target, int revision, AttemptId attempt, AttemptResult result) {
+            Instant t = advance();
+            EventId eventId = id("corr");
+            EventEnvelope outer = new EventEnvelope(eventId, SCOPE, task, id, Optional.of(attempt), revision,
+                    Optional.of(target), t, t);
+            record(new Correction(outer, new AttemptFinished(
+                    EventEnvelope.original(eventId, SCOPE, task, id, attempt, t, t), result,
+                    Optional.of("solution"), Optional.of("lesson")), "re-judged"));
+            return eventId;
+        }
+
+        /** Corrects the execution outcome. */
+        EventId correctOutcome(EventId target, int revision, Outcome outcome) {
+            Instant t = advance();
+            EventId eventId = id("corr");
+            EventEnvelope outer = new EventEnvelope(eventId, SCOPE, task, id, Optional.empty(), revision,
+                    Optional.of(target), t, t);
+            record(new Correction(outer, new OutcomeRecorded(
+                    EventEnvelope.original(eventId, SCOPE, task, id, t, t), outcome), "re-judged"));
+            return eventId;
+        }
+
+        /** Routed stage that declares no billable usage. */
+        EventId routedNoBillableStage(AttemptId attempt, RoutingEnvelope envelope, String justification) {
+            Instant t = advance();
+            EventId eventId = id("stage");
+            String ref = "env-" + eventId.value();
+            publish(ref, envelope);
+            record(StageRecorded.noBillableUsage(EventEnvelope.original(eventId, SCOPE, task, id, attempt, t, t),
+                    envelope.decisionRef().stageId(), WORKER, t, t, justification,
+                    List.of(ArtifactRef.of(RoutingEnvelope.ARTIFACT_KIND, ref, envelope.digest()))));
+            return eventId;
         }
     }
 

@@ -19,7 +19,22 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.Function;
+import java.util.OptionalLong;
+import com.monada.api.execution.ExperienceSample;
+import com.monada.api.execution.ExportCutoff;
+import com.monada.api.execution.ExportEvidencePolicy;
+import com.monada.api.execution.ExportRequest;
+import com.monada.api.execution.ExportView;
+import com.monada.api.execution.HistoryEntry;
+import com.monada.core.execution.EventId;
+import com.monada.core.execution.ExperienceRef;
+import com.monada.core.execution.UsageKind;
+import com.monada.core.execution.ScopeId;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.util.function.BiConsumer;
+import monada.neuron.routing.catalog.BillingMode;
 
 import static monada.neuron.resonance.adapter.experience.ExperienceFixtures.A1;
 import static monada.neuron.resonance.adapter.experience.ExperienceFixtures.SCOPE;
@@ -33,7 +48,7 @@ final class ExperienceRejectionTest {
     Path root;
 
     /** Imports one execution recorded by {@code recorder} and returns the single rejection reason. */
-    private RejectionReason rejectionOf(String execution, java.util.function.BiConsumer<ExperienceFixtures,
+    private RejectionReason rejectionOf(String execution, BiConsumer<ExperienceFixtures,
             ExperienceFixtures.Exec> recorder) {
         try (ExecutionMemory memory = ExecutionMemory.open(freshStore(), SCOPE)) {
             var fixtures = new ExperienceFixtures(memory);
@@ -52,14 +67,10 @@ final class ExperienceRejectionTest {
 
     private Path freshStore() {
         try {
-            return java.nio.file.Files.createTempDirectory(root, "store");
-        } catch (java.io.IOException e) {
-            throw new java.io.UncheckedIOException(e);
+            return Files.createTempDirectory(root, "store");
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
-    }
-
-    private static RoutingEnvelope with(RoutingEnvelope e, Function<RoutingEnvelope, RoutingEnvelope> change) {
-        return change.apply(e);
     }
 
     @Test
@@ -110,10 +121,8 @@ final class ExperienceRejectionTest {
                 new ExecutedRouteDescriptor("worker-a", Feature.known("prov"), Feature.unknown(),
                         Feature.known("low"), base.descriptor().billingMode()),
                 new ExecutedRouteDescriptor("worker-a", Feature.known("prov"), Feature.known("small"),
-                        Feature.known("low"), monada.neuron.routing.catalog.BillingMode.LOCAL))) {
-            RoutingEnvelope other = with(base, e -> new RoutingEnvelope(e.contractVersion(), e.decisionRef(), e.route(),
-                    descriptor, e.catalogVersion(), e.routingPolicyId(), e.routingPolicyVersion(),
-                    e.evaluationPolicyId(), e.evaluationPolicyVersion(), e.cohortBinding(), e.executionMode()));
+                        Feature.known("low"), BillingMode.LOCAL))) {
+            RoutingEnvelope other = ExperienceFixtures.withDescriptor(base, descriptor);
             assertEquals(RejectionReason.ENVELOPE_ROUTE_MISMATCH, rejectionOf("x", (f, e) -> {
                 f.publish("env", other);
                 e.stageWithReference(A1, "implement", "env", Optional.of(other.digest()));
@@ -174,38 +183,38 @@ final class ExperienceRejectionTest {
         fixtures.accepted("x-1");
         fixtures.accepted("x-2");
         long cutoff = memory.history(SCOPE).highWatermark();
-        return memory.exportSamples(com.monada.api.execution.ExportRequest.first(SCOPE,
-                com.monada.api.execution.ExportCutoff.atSequence(cutoff), 10, com.monada.api.execution.ExportView.ADAPTER_READY,
-                com.monada.api.execution.ExportEvidencePolicy.executionPolicyOnly()));
+        return memory.exportSamples(ExportRequest.first(SCOPE,
+                ExportCutoff.atSequence(cutoff), 10, ExportView.ADAPTER_READY,
+                ExportEvidencePolicy.executionPolicyOnly()));
     }
 
     private static StoreExperienceTranslator.Reads serving(ExecutionMemory memory, ExperienceSamplePage page) {
         return new StoreExperienceTranslator.Reads() {
             @Override
-            public com.monada.core.execution.ScopeId scope() {
+            public ScopeId scope() {
                 return memory.scope();
             }
 
             @Override
-            public ExperienceSamplePage export(com.monada.api.execution.ExportRequest request) {
+            public ExperienceSamplePage export(ExportRequest request) {
                 return page;
             }
 
             @Override
-            public Optional<com.monada.api.execution.HistoryEntry> loadEvent(com.monada.core.execution.ScopeId scope,
-                    com.monada.core.execution.EventId eventId, int revision) {
+            public Optional<HistoryEntry> loadEvent(ScopeId scope,
+                    EventId eventId, int revision) {
                 return memory.loadEvent(scope, eventId, revision);
             }
 
             @Override
-            public long highWatermark(com.monada.core.execution.ScopeId scope) {
+            public long highWatermark(ScopeId scope) {
                 return memory.history(scope).highWatermark();
             }
         };
     }
 
-    private static ExperienceSamplePage rebuilt(ExperienceSamplePage p, String schema, com.monada.core.execution.ScopeId scope,
-            ExperienceSamplePage.ProjectionStamp projection, List<com.monada.api.execution.ExperienceSample> samples) {
+    private static ExperienceSamplePage rebuilt(ExperienceSamplePage p, String schema, ScopeId scope,
+            ExperienceSamplePage.ProjectionStamp projection, List<ExperienceSample> samples) {
         return new ExperienceSamplePage(schema, scope, p.view(), p.additionalGates(), p.ledger(), projection, samples,
                 false, Optional.empty());
     }
@@ -229,7 +238,7 @@ final class ExperienceRejectionTest {
         try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
             var fixtures = new ExperienceFixtures(memory);
             ExperienceSamplePage page = realPage(fixtures, memory);
-            var crafted = rebuilt(page, page.schema(), com.monada.core.execution.ScopeId.of("scope-other"),
+            var crafted = rebuilt(page, page.schema(), ScopeId.of("scope-other"),
                     page.projection(), page.samples());
             ExperienceImport imported = new StoreExperienceTranslator(serving(memory, crafted), fixtures.resolver(),
                     HypotheticalCostAnnotations.none())
@@ -270,5 +279,116 @@ final class ExperienceRejectionTest {
             assertEquals(List.of(RejectionReason.DUPLICATE_OR_CONFLICTING_VERSION),
                     imported.rejections().stream().map(ExperienceRejection::reason).toList());
         }
+    }
+
+    @Test
+    void envelopeRoutedUnderAnotherEvaluationPolicyIsRefusedEvenWithAValidDigest() {
+        RoutingEnvelope foreign = ExperienceFixtures.withEvaluationPolicy(
+                envelope("x", "a1", "implement"), "gates", "2");
+        assertEquals(RejectionReason.ENVELOPE_POLICY_MISMATCH, rejectionOf("x", (f, e) -> {
+            f.publish("env", foreign);
+            e.stageWithReference(A1, "implement", "env", Optional.of(foreign.digest()));
+        }));
+    }
+
+    // --- host seams that fail, and samples that are wrong in ways the Store cannot produce ---------------------------
+
+    private ExperienceImport importWith(ExecutionMemory memory, RoutingEnvelopeResolver resolver,
+                                        HypotheticalCostAnnotations annotations) {
+        return new StoreExperienceTranslator(memory, resolver, annotations).importSamples(
+                ExperienceExportRequest.of(SCOPE.value(), memory.history(SCOPE).highWatermark(), 10, 10));
+    }
+
+    @Test
+    void aThrowingResolverRefusesOnlyTheAffectedSample() {
+        try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
+            var fixtures = new ExperienceFixtures(memory);
+            fixtures.accepted("x-good");
+            fixtures.accepted("x-bad");
+            RoutingEnvelopeResolver flaky = (scope, ref) -> {
+                RoutingEnvelope found = fixtures.resolver().resolve(scope, ref).orElseThrow();
+                if (found.decisionRef().executionId().equals("x-bad")) {
+                    throw new IllegalStateException("host storage is down");
+                }
+                return Optional.of(found);
+            };
+            ExperienceImport imported = importWith(memory, flaky, HypotheticalCostAnnotations.none());
+            assertEquals(1, imported.observations().size());
+            assertEquals("x-good", imported.observations().getFirst().outcome().decisionRef().executionId());
+            assertEquals(List.of(RejectionReason.ENVELOPE_UNRESOLVED),
+                    imported.rejections().stream().map(ExperienceRejection::reason).toList());
+        }
+    }
+
+    @Test
+    void aThrowingAnnotationSeamRefusesTheSampleAsInvalidAnnotation() {
+        try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
+            var fixtures = new ExperienceFixtures(memory);
+            fixtures.accepted("x-a");
+            ExperienceImport imported = importWith(memory, fixtures.resolver(), (s, t, x) -> {
+                throw new UnsupportedOperationException("no price book");
+            });
+            assertTrue(imported.observations().isEmpty());
+            assertEquals(RejectionReason.INVALID_ANNOTATION, imported.rejections().getFirst().reason());
+        }
+    }
+
+    @Test
+    void anyOtherRuntimeFailureOnOneSampleIsAMalformedSampleNotAnAbortedImport() {
+        try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
+            var fixtures = new ExperienceFixtures(memory);
+            ExperienceSamplePage page = realPage(fixtures, memory);
+            // a REPORTED counter without a value: the sample record allows it, the translator must not crash on it
+            var broken = withReportedUsageMissingItsValue(page.samples().getFirst());
+            var crafted = rebuilt(page, page.schema(), SCOPE, page.projection(),
+                    List.of(broken, page.samples().get(1)));
+            ExperienceImport imported = new StoreExperienceTranslator(serving(memory, crafted), fixtures.resolver(),
+                    HypotheticalCostAnnotations.none())
+                    .importSamples(ExperienceExportRequest.of(SCOPE.value(), 1, 10, 10));
+            assertEquals(1, imported.observations().size());
+            assertEquals(List.of(RejectionReason.MALFORMED_SAMPLE),
+                    imported.rejections().stream().map(ExperienceRejection::reason).toList());
+        }
+    }
+
+    @Test
+    void aSampleOfAnotherScopeInsideAnAcceptedPageIsRefusedIndividually() {
+        try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
+            var fixtures = new ExperienceFixtures(memory);
+            ExperienceSamplePage page = realPage(fixtures, memory);
+            ExperienceSample first = page.samples().getFirst();
+            ExperienceRef foreignRef = new ExperienceRef(ScopeId.of("scope-other"), first.execution().task(),
+                    first.execution().execution(), first.execution().attempt(), first.execution().eventId(),
+                    first.execution().revision());
+            var foreign = new ExperienceSample(foreignRef, first.taskSummary(), first.provenance(), first.policy(),
+                    first.requiredGates(), first.outcome(), first.acceptance(), first.label(), first.successOrdinal(),
+                    first.group(), first.eligibility(), first.gates(), first.attempts(), first.revisions(),
+                    first.firstSequence(), first.lastSequence(), first.diagnostics());
+            var crafted = rebuilt(page, page.schema(), SCOPE, page.projection(),
+                    List.of(foreign, page.samples().get(1)));
+            ExperienceImport imported = new StoreExperienceTranslator(serving(memory, crafted), fixtures.resolver(),
+                    HypotheticalCostAnnotations.none())
+                    .importSamples(ExperienceExportRequest.of(SCOPE.value(), 1, 10, 10));
+            assertEquals(1, imported.observations().size());
+            assertEquals(List.of(RejectionReason.SCOPE_MISMATCH),
+                    imported.rejections().stream().map(ExperienceRejection::reason).toList());
+        }
+    }
+
+    private static ExperienceSample withReportedUsageMissingItsValue(ExperienceSample sample) {
+        var attempt = sample.attempts().getFirst();
+        var stage = attempt.stages().getFirst();
+        var usage = List.of(new ExperienceSample.SampleUsage(UsageKind.INPUT_TOKENS, OptionalLong.empty(),
+                ExperienceSample.UsageState.REPORTED, Optional.of("provider")));
+        var brokenStage = new ExperienceSample.SampleStage(stage.ref(), stage.sequence(), stage.stage(), stage.route(),
+                stage.startedAt(), stage.endedAt(), stage.usageDeclaration(), stage.justification(), usage,
+                stage.artifacts());
+        var brokenAttempt = new ExperienceSample.SampleAttempt(attempt.id(), attempt.start(), attempt.ordinal(),
+                attempt.reason(), attempt.previousAttempt(), attempt.accepted(), attempt.result(), attempt.finish(),
+                attempt.solutionSummary(), attempt.lessonSummary(), List.of(brokenStage), attempt.evidence());
+        return new ExperienceSample(sample.execution(), sample.taskSummary(), sample.provenance(), sample.policy(),
+                sample.requiredGates(), sample.outcome(), sample.acceptance(), sample.label(), sample.successOrdinal(),
+                sample.group(), sample.eligibility(), sample.gates(), List.of(brokenAttempt), sample.revisions(),
+                sample.firstSequence(), sample.lastSequence(), sample.diagnostics());
     }
 }

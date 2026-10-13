@@ -13,6 +13,7 @@ import monada.neuron.routing.outcome.OutcomeStatus;
 import monada.neuron.routing.outcome.ResourceSummary;
 import monada.neuron.routing.outcome.RoutingObservation;
 import monada.neuron.routing.outcome.StageAttribution;
+import monada.neuron.routing.outcome.UsageDeclaration;
 import monada.neuron.routing.catalog.ResourceValue;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -21,6 +22,26 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import com.monada.api.execution.ExperienceSamplePage;
+import com.monada.api.execution.ExportRequest;
+import com.monada.api.execution.HistoryEntry;
+import com.monada.core.execution.AttemptId;
+import com.monada.core.execution.EventId;
+import com.monada.core.execution.ExecutionId;
+import com.monada.core.execution.ExperienceRef;
+import com.monada.core.execution.ScopeId;
+import com.monada.core.execution.TaskId;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.TreeMap;
+import java.util.function.Consumer;
+import monada.neuron.routing.outcome.HypotheticalCost;
+import monada.neuron.routing.outcome.Money;
+import monada.neuron.routing.outcome.QualityState;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import static monada.neuron.resonance.adapter.experience.ExperienceFixtures.A1;
 import static monada.neuron.resonance.adapter.experience.ExperienceFixtures.SCOPE;
@@ -107,19 +128,19 @@ final class StoreExperienceTranslatorTest {
 
     @Test
     void hypotheticalCostComesOnlyFromTheHostSeam() {
-        var cost = new monada.neuron.routing.outcome.HypotheticalCost(
-                new monada.neuron.routing.outcome.Money(new java.math.BigDecimal("0.0123"), "USD"), "prices", "1",
+        var cost = new HypotheticalCost(
+                new Money(new BigDecimal("0.0123"), "USD"), "prices", "1",
                 "api list price");
         ExperienceImport imported;
         try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
             var fixtures = new ExperienceFixtures(memory);
             fixtures.accepted("x-ok");
             imported = new StoreExperienceTranslator(memory, fixtures.resolver(),
-                    (scope, task, execution) -> execution.equals("x-ok") ? java.util.List.of(cost) : java.util.List.of())
+                    (scope, task, execution) -> execution.equals("x-ok") ? List.of(cost) : List.of())
                     .importSamples(request(memory.history(SCOPE).highWatermark()));
         }
         var resources = imported.observations().getFirst().outcome().resources();
-        assertEquals(java.util.List.of(cost), resources.hypotheticalCosts());
+        assertEquals(List.of(cost), resources.hypotheticalCosts());
         assertTrue(resources.actualBilling().isEmpty());
     }
 
@@ -142,7 +163,7 @@ final class StoreExperienceTranslatorTest {
         var evidence = observation.outcome().observations();
         assertEquals(1, evidence.size());
         assertEquals(1, evidence.getFirst().revision());
-        assertEquals(monada.neuron.routing.outcome.QualityState.PASS, evidence.getFirst().state());
+        assertEquals(QualityState.PASS, evidence.getFirst().state());
 
         assertEquals(1, observation.outcome().judgedRevisions().getFirst().revision());
     }
@@ -170,7 +191,7 @@ final class StoreExperienceTranslatorTest {
     }
 
     private static Map<String, RejectionReason> reasonsByExecution(ExperienceImport imported) {
-        Map<String, RejectionReason> reasons = new java.util.TreeMap<>();
+        Map<String, RejectionReason> reasons = new TreeMap<>();
         for (ExperienceRejection rejection : imported.rejections()) {
             String ref = rejection.executionRef();
             reasons.put(ref.contains("x-pending") ? "x-pending" : "x-no-outcome", rejection.reason());
@@ -227,7 +248,7 @@ final class StoreExperienceTranslatorTest {
             ExperienceImport imported = new StoreExperienceTranslator(memory, fixtures.resolver())
                     .importSamples(ExperienceExportRequest.of("scope-other", 1, 10, 10));
             assertTrue(imported.observations().isEmpty());
-            assertEquals(java.util.List.of(ImportDiagnostic.SCOPE_MISMATCH), imported.diagnostics());
+            assertEquals(List.of(ImportDiagnostic.SCOPE_MISMATCH), imported.diagnostics());
             assertTrue(imported.snapshot().isEmpty());
         }
     }
@@ -333,25 +354,25 @@ final class StoreExperienceTranslatorTest {
 
             var failing = new StoreExperienceTranslator.Reads() {
                 @Override
-                public com.monada.core.execution.ScopeId scope() {
+                public ScopeId scope() {
                     return memory.scope();
                 }
 
                 @Override
-                public com.monada.api.execution.ExperienceSamplePage export(
-                        com.monada.api.execution.ExportRequest request) {
+                public ExperienceSamplePage export(
+                        ExportRequest request) {
                     return memory.exportSamples(request);
                 }
 
                 @Override
-                public Optional<com.monada.api.execution.HistoryEntry> loadEvent(
-                        com.monada.core.execution.ScopeId scope, com.monada.core.execution.EventId eventId,
+                public Optional<HistoryEntry> loadEvent(
+                        ScopeId scope, EventId eventId,
                         int revision) {
-                    throw new java.io.UncheckedIOException(new java.io.IOException("disk gone"));
+                    throw new UncheckedIOException(new IOException("disk gone"));
                 }
 
                 @Override
-                public long highWatermark(com.monada.core.execution.ScopeId scope) {
+                public long highWatermark(ScopeId scope) {
                     return cutoff;
                 }
             };
@@ -364,31 +385,125 @@ final class StoreExperienceTranslatorTest {
     @Test
     void anOversizedCompositeReferenceIsBoundedExactWhenItFitsAndHashedWhenItDoesNot() {
         String longToken = "t".repeat(128);
-        var big = new com.monada.core.execution.ExperienceRef(com.monada.core.execution.ScopeId.of(longToken),
-                com.monada.core.execution.TaskId.of(longToken), com.monada.core.execution.ExecutionId.of(longToken),
-                Optional.of(com.monada.core.execution.AttemptId.of(longToken)),
-                com.monada.core.execution.EventId.of(longToken), 1);
+        var big = new ExperienceRef(ScopeId.of(longToken),
+                TaskId.of(longToken), ExecutionId.of(longToken),
+                Optional.of(AttemptId.of(longToken)),
+                EventId.of(longToken), 1);
         String formatted = ExperienceRefs.format(big);
         assertTrue(formatted.startsWith("xr1h|"));
         assertEquals(formatted, ExperienceRefs.format(big), "deterministic");
         assertTrue(formatted.length() <= 512);
-        var other = new com.monada.core.execution.ExperienceRef(big.scope(), big.task(), big.execution(),
-                big.attempt(), com.monada.core.execution.EventId.of("u".repeat(128)), 1);
+        var other = new ExperienceRef(big.scope(), big.task(), big.execution(),
+                big.attempt(), EventId.of("u".repeat(128)), 1);
         assertFalse(formatted.equals(ExperienceRefs.format(other)), "different events stay distinguishable");
-        new RoutingObservationRefProbe().accept(formatted);
+        OpaqueTokens.requireText(formatted, "experienceRef");
 
-        String small = ExperienceRefs.format(new com.monada.core.execution.ExperienceRef(
-                com.monada.core.execution.ScopeId.of("s"), com.monada.core.execution.TaskId.of("t"),
-                com.monada.core.execution.ExecutionId.of("e"), Optional.empty(),
-                com.monada.core.execution.EventId.of("v"), 7));
+        String small = ExperienceRefs.format(new ExperienceRef(
+                ScopeId.of("s"), TaskId.of("t"),
+                ExecutionId.of("e"), Optional.empty(),
+                EventId.of("v"), 7));
         assertEquals("xr1|1:s|1:t|1:e|-|1:v", small, "the exact text is kept when it fits, without the revision");
     }
 
-    /** The bounded reference must be accepted by the neutral record's text rule. */
-    private static final class RoutingObservationRefProbe implements java.util.function.Consumer<String> {
-        @Override
-        public void accept(String ref) {
-            monada.neuron.routing.token.OpaqueTokens.requireText(ref, "experienceRef");
+    @Test
+    void correctingOnlyTheOutcomeOrTheFinishAlsoAdvancesTheVersion() {
+        try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
+            var fixtures = new ExperienceFixtures(memory);
+            var exec = fixtures.exec("x-out").attempt(A1, 1, Optional.empty());
+            exec.routedStage(A1, ExperienceFixtures.envelope("x-out", "a1", "implement"));
+            exec.evidence(A1, QualityDimension.TESTS, ObservationState.PASS);
+            var finish = exec.finish(A1, AttemptResult.COMPLETED);
+            var outcome = exec.outcome(Outcome.accepted(OutcomeOrigin.VALIDATED, A1));
+            var translator = new StoreExperienceTranslator(memory, fixtures.resolver());
+
+            exec.correctOutcome(outcome, 2, Outcome.rejected(OutcomeOrigin.VALIDATED));
+            RoutingObservation corrected = translator.importSamples(request(memory.history(SCOPE).highWatermark()))
+                    .observations().getFirst();
+            assertEquals(1, corrected.revision());
+            assertEquals(OutcomeStatus.REJECTED, corrected.outcome().outcomeStatus());
+            assertTrue(corrected.supersedesSequence() instanceof Feature.Known<Long>);
+
+            exec.correctFinish(finish, 2, A1, AttemptResult.FAILED);
+            RoutingObservation twice = translator.importSamples(request(memory.history(SCOPE).highWatermark()))
+                    .observations().getFirst();
+            assertEquals(2, twice.revision());
+            assertEquals(InvocationStatus.FAILED, twice.outcome().invocation());
+        }
+    }
+
+    @Test
+    void additionalGatesAreForwardedToTheStoreExport() {
+        try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
+            var fixtures = new ExperienceFixtures(memory);
+            fixtures.accepted("x-a");
+            long cutoff = memory.history(SCOPE).highWatermark();
+            var seen = new ArrayList<ExportRequest>();
+            var spying = new StoreExperienceTranslator.Reads() {
+                @Override
+                public ScopeId scope() {
+                    return memory.scope();
+                }
+
+                @Override
+                public ExperienceSamplePage export(ExportRequest request) {
+                    seen.add(request);
+                    return memory.exportSamples(request);
+                }
+
+                @Override
+                public Optional<HistoryEntry> loadEvent(ScopeId scope, EventId eventId, int revision) {
+                    return memory.loadEvent(scope, eventId, revision);
+                }
+
+                @Override
+                public long highWatermark(ScopeId scope) {
+                    return cutoff;
+                }
+            };
+            var withGates = new ExperienceExportRequest(SCOPE.value(), cutoff, 10, 10,
+                    Set.of(monada.neuron.routing.outcome.QualityDimension.SECURITY));
+            var imported = new StoreExperienceTranslator(spying, fixtures.resolver(),
+                    HypotheticalCostAnnotations.none()).importSamples(withGates);
+
+            assertEquals(Set.of(QualityDimension.SECURITY), seen.getFirst().evidencePolicy().additionalGates());
+            assertEquals(1, imported.observations().size(), "a missing extra gate does not hide the evidence");
+        }
+    }
+
+    @Test
+    void aNoBillableStageKeepsItsJustificationAndNoCounters() {
+        try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
+            var fixtures = new ExperienceFixtures(memory);
+            var exec = fixtures.exec("x-nb").attempt(A1, 1, Optional.empty());
+            exec.routedNoBillableStage(A1, ExperienceFixtures.envelope("x-nb", "a1", "implement"),
+                    "deterministic local check");
+            exec.evidence(A1, QualityDimension.TESTS, ObservationState.PASS);
+            exec.finish(A1, AttemptResult.COMPLETED);
+            exec.outcome(Outcome.accepted(OutcomeOrigin.VALIDATED, A1));
+            var imported = new StoreExperienceTranslator(memory, fixtures.resolver())
+                    .importSamples(request(memory.history(SCOPE).highWatermark()));
+            ResourceSummary resources = imported.observations().getFirst().outcome().resources();
+            assertEquals(UsageDeclaration.NO_BILLABLE_USAGE, resources.declaration());
+            assertEquals(Feature.known("deterministic local check"), resources.noBillableJustification());
+            assertTrue(resources.counters().isEmpty());
+        }
+    }
+
+    @Test
+    void anUnfinishedAcceptedRepairAttemptHasAnUnknownStatus() {
+        try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
+            var fixtures = new ExperienceFixtures(memory);
+            var exec = fixtures.exec("x-unfin").attempt(A1, 1, Optional.empty());
+            exec.routedStage(A1, ExperienceFixtures.envelope("x-unfin", "a1", "implement"));
+            exec.evidence(A1, QualityDimension.TESTS, ObservationState.FAIL);
+            exec.finish(A1, AttemptResult.FAILED);
+            exec.attempt(ExperienceFixtures.A2, 2, Optional.of(A1));
+            exec.outcome(Outcome.accepted(OutcomeOrigin.VALIDATED, ExperienceFixtures.A2));
+            var imported = new StoreExperienceTranslator(memory, fixtures.resolver())
+                    .importSamples(request(memory.history(SCOPE).highWatermark()));
+            var outcome = imported.observations().getFirst().outcome();
+            assertEquals(Feature.known("a2"), outcome.acceptedAttemptId());
+            assertEquals(Feature.unknown(), outcome.acceptedAttemptStatus());
         }
     }
 }
