@@ -1,6 +1,7 @@
 package monada.neuron.resonance.adapter.experience;
 
 import com.monada.api.execution.ExecutionMemory;
+import com.monada.api.execution.ExecutionView;
 import com.monada.api.execution.ExperienceSample;
 import com.monada.api.execution.ExperienceSamplePage;
 import com.monada.api.execution.ExportCursor;
@@ -12,6 +13,8 @@ import com.monada.api.execution.HistoryEntry;
 import com.monada.api.execution.ProjectionStatus;
 import com.monada.core.execution.ArtifactRef;
 import com.monada.core.execution.EventId;
+import com.monada.core.execution.ExecutionEvent;
+import com.monada.core.execution.ExecutionId;
 import com.monada.core.execution.ExperienceRef;
 import com.monada.core.execution.RouteDescriptor;
 import com.monada.core.execution.ScopeId;
@@ -43,9 +46,11 @@ import monada.neuron.routing.token.OpaqueTokens;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -61,8 +66,7 @@ import java.util.stream.Collectors;
  * {@link monada.neuron.routing.outcome.OutcomeEvaluator}. Corrections yield one effective observation per execution.
  *
  * <p>Bounds: at most {@link ExperienceExportRequest#MAX_TOTAL_SAMPLES} samples per import; time and retained space are
- * {@code O(samples)} plus {@code O(pageSize)}, with one extra Store point lookup per corrected fact of a sample (stage,
- * evidence, finish or outcome). Ordering is total
+ * {@code O(samples)} plus {@code O(pageSize)}, plus one bounded read of the execution's own event history per sample. Ordering is total
  * and deterministic. The translator performs no clock or random lookup. One instance is not thread-safe, like the Store
  * facade it reads.
  *
@@ -93,7 +97,7 @@ public final class StoreExperienceTranslator {
 
         ExperienceSamplePage export(ExportRequest request);
 
-        Optional<HistoryEntry> loadEvent(ScopeId scope, EventId eventId, int revision);
+        List<HistoryEntry> executionHistory(ScopeId scope, ExecutionId execution, long cutoffSequence);
 
         long highWatermark(ScopeId scope);
     }
@@ -317,33 +321,74 @@ public final class StoreExperienceTranslator {
                 attribution(sample, routedAttempt, acceptedId));
 
         ExperienceRef stageRef = routed.stage.ref();
-        long revision = 0;
-        Feature<Long> supersedes = Feature.unknown();
-        for (ExperienceSample.Revision corrected : sample.revisions()) {
-            revision += corrected.effective().revision() - 1L;
-            long replaced = sequenceOfEarliestSuperseded(corrected);
-            supersedes = Feature.known(supersedes instanceof Feature.Known<Long> known
-                    ? Math.min(known.value(), replaced) : replaced);
-        }
-        return new RoutingObservation(routingOutcome, ExperienceRefs.format(stageRef), revision,
-                sample.lastSequence(), supersedes);
+        ObservationVersion version = versionOf(sample, routed, routedAttempt, cutoff);
+        ExperienceRef identity = new ExperienceRef(stageRef.scope(), stageRef.task(), stageRef.execution(),
+                stageRef.attempt(), version.stageOrigin(), 1);
+        return new RoutingObservation(routingOutcome, ExperienceRefs.format(identity), version.revision(),
+                sample.lastSequence(), version.supersedes());
     }
 
-    /** Any corrected fact of the sample (stage, evidence, finish or outcome) advances the observation's version. */
-    private long sequenceOfEarliestSuperseded(ExperienceSample.Revision corrected) {
-        if (corrected.superseded().isEmpty()) {
-            throw new Refusal(RejectionReason.MALFORMED_SAMPLE,
-                    "a corrected fact lists no superseded revisions");
-        }
-        ExperienceRef earliest = corrected.superseded().getFirst();
-        Optional<HistoryEntry> entry;
+    /**
+     * Version of an observation: its revision, the ledger point of the earliest version it may replace, and the original
+     * event of the routed stage, which keeps the observation's identity stable when that stage is itself corrected.
+     */
+    private record ObservationVersion(long revision, Feature<Long> supersedes, EventId stageOrigin) {
+    }
+
+    /**
+     * Deterministic, monotonic version of the observation for every change of the execution after the first point at
+     * which an observation could exist, whatever kind of event caused it: a correction, new evidence on a still open
+     * attempt, a new current outcome or a new attempt. {@code firstTranslatable} is the largest of the first outcome
+     * event, the routed stage event and the routed attempt's finish, so an earlier import can only have produced its
+     * observation at that ledger sequence; the version is the number of the execution's events after it. A change that
+     * leaves the effective judgment equal still advances the version, which only causes a safe rebuild downstream.
+     */
+    private ObservationVersion versionOf(
+            ExperienceSample sample, RoutedStage routed, ExperienceSample.SampleAttempt routedAttempt, long cutoff) {
+        ExperienceRef first = sample.execution();
+        List<HistoryEntry> history;
         try {
-            entry = reads.loadEvent(earliest.scope(), earliest.eventId(), earliest.revision());
+            history = reads.executionHistory(first.scope(), first.execution(), cutoff);
         } catch (IllegalStateException | UncheckedIOException e) {
-            throw new ResonanceStoreAdapterException("could not read a superseded revision from the Store", e);
+            throw new ResonanceStoreAdapterException("could not read the execution history from the Store", e);
         }
-        return entry.map(HistoryEntry::sequence).orElseThrow(() -> new Refusal(RejectionReason.MALFORMED_SAMPLE,
-                "the superseded revision " + earliest.revision() + " is not readable"));
+        Map<EventId, HistoryEntry> byEvent = new HashMap<>();
+        history.forEach(entry -> byEvent.put(entry.event().envelope().eventId(), entry));
+        EventId lineage = routed.stage.ref().eventId();
+        for (HistoryEntry entry = byEvent.get(lineage); entry != null
+                && entry.event().envelope().supersedes().isPresent();
+                entry = byEvent.get(lineage)) {
+            lineage = entry.event().envelope().supersedes().get();
+        }
+        final EventId stageOrigin = lineage;
+        long firstOutcome = Long.MAX_VALUE;
+        long stage = Long.MAX_VALUE;
+        long finish = Long.MAX_VALUE;
+        for (HistoryEntry entry : history) {
+            var envelope = entry.event().envelope();
+            if (envelope.revision() != 1) {
+                continue;
+            }
+            switch (entry.event()) {
+                case ExecutionEvent.OutcomeRecorded outcome -> firstOutcome = Math.min(firstOutcome, entry.sequence());
+                case ExecutionEvent.StageRecorded recorded when envelope.eventId().equals(stageOrigin) ->
+                        stage = entry.sequence();
+                case ExecutionEvent.AttemptFinished finished when envelope.attemptId()
+                        .map(a -> a.equals(routedAttempt.id())).orElse(false) -> finish = entry.sequence();
+                default -> {
+                }
+            }
+        }
+        if (firstOutcome == Long.MAX_VALUE || stage == Long.MAX_VALUE || finish == Long.MAX_VALUE) {
+            throw new Refusal(RejectionReason.MALFORMED_SAMPLE,
+                    "the execution history lacks the original outcome, routed stage or routed attempt finish");
+        }
+        long firstTranslatable = Math.max(firstOutcome, Math.max(stage, finish));
+        long revision = history.stream()
+                .filter(entry -> entry.sequence() > firstTranslatable && entry.sequence() <= sample.lastSequence())
+                .count();
+        return new ObservationVersion(revision, revision > 0 ? Feature.known(firstTranslatable) : Feature.unknown(),
+                stageOrigin);
     }
 
     private record ExecutionKey(String task, String execution) {
@@ -561,8 +606,9 @@ public final class StoreExperienceTranslator {
         }
 
         @Override
-        public Optional<HistoryEntry> loadEvent(ScopeId scope, EventId eventId, int revision) {
-            return memory.loadEvent(scope, eventId, revision);
+        public List<HistoryEntry> executionHistory(ScopeId scope, ExecutionId execution, long cutoffSequence) {
+            return memory.loadExecution(scope, execution, cutoffSequence).map(ExecutionView::history)
+                    .orElse(List.of());
         }
 
         @Override

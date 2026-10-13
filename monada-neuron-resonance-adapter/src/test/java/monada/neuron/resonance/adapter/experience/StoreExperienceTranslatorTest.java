@@ -1,5 +1,6 @@
 package monada.neuron.resonance.adapter.experience;
 
+import com.monada.api.execution.ExecutionView;
 import com.monada.api.execution.ExecutionMemory;
 import com.monada.core.execution.AttemptResult;
 import com.monada.core.execution.ObservationState;
@@ -365,9 +366,8 @@ final class StoreExperienceTranslatorTest {
                 }
 
                 @Override
-                public Optional<HistoryEntry> loadEvent(
-                        ScopeId scope, EventId eventId,
-                        int revision) {
+                public List<HistoryEntry> executionHistory(ScopeId scope, ExecutionId execution,
+                                                               long cutoffSequence) {
                     throw new UncheckedIOException(new IOException("disk gone"));
                 }
 
@@ -451,8 +451,10 @@ final class StoreExperienceTranslatorTest {
                 }
 
                 @Override
-                public Optional<HistoryEntry> loadEvent(ScopeId scope, EventId eventId, int revision) {
-                    return memory.loadEvent(scope, eventId, revision);
+                public List<HistoryEntry> executionHistory(ScopeId scope, ExecutionId execution,
+                                                               long cutoffSequence) {
+                    return memory.loadExecution(scope, execution, cutoffSequence).map(ExecutionView::history)
+                            .orElse(List.of());
                 }
 
                 @Override

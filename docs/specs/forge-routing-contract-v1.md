@@ -1280,10 +1280,20 @@ stage selection (exactly one stage with an envelope reference), then envelope ve
 - `RoutingObservation`: `experienceRef` is the canonical text `xr1|<len>:<scope>|<len>:<task>|<len>:<execution>|<attempt or ->|<len>:<event>`
   of the routed stage event, without a revision. It is kept exactly when it fits 512 code points; five 128-code-point
   identifiers can exceed that, in which case it is `xr1h|<SHA-256 hex of the exact text>` (deterministic, still one event).
-  `revision` is the sum of `(revision - 1)` over **every** corrected fact of the sample (stage, evidence, finish, outcome), so any
-  correction that changes the effective sample advances the version of the same `experienceRef`; `supersedesSequence` is the
-  smallest ledger sequence among the earliest superseded revision of each corrected fact (one `loadEvent` point read per
-  corrected fact; a Store failure there is a `ResonanceStoreAdapterException`); `ledgerSequence` is the sample's `lastSequence`.
+  Its identity stays stable when the routed stage is itself corrected: the reference names the **original** stage event, found
+  by following the correction chain back to the revision-1 event. `revision` and `supersedesSequence` version the observation
+  for **every** change of the execution, whatever recorded it (a correction, new evidence on a still open attempt, a new current
+  outcome, a new attempt), without relying on Store correction records. The translator reads the execution's own event history
+  (`ExecutionMemory.loadExecution(scope, execution, cutoff)`, bounded to that execution, read-only) and takes
+  `firstTranslatable` = the largest of the sequence of the first original `OutcomeRecorded`, of the original routed stage event
+  and of the original finish of the routed attempt: no earlier import can have produced this observation, and one made at that
+  point has `ledgerSequence = firstTranslatable`. `revision` is the number of the execution's events (any kind, any revision)
+  with a sequence after `firstTranslatable` and up to the snapshot, so it is deterministic, strictly increasing with every later
+  event and a pure function of the pinned snapshot; events before `firstTranslatable` never advance it. `supersedesSequence` is
+  `firstTranslatable` when `revision > 0` (otherwise unknown): the safe boundary, because a checkpoint whose `processedCutoff`
+  is strictly below it cannot contain any earlier version's effect. The bump is conservative: an event that leaves the effective
+  judgment equal (for example evidence under another policy) still advances the version, which only costs a rebuild.
+  `ledgerSequence` is the sample's `lastSequence`.
 - `ResourceSummary`: the routed stage's usage only. `REPORTED`/`ESTIMATED` become `Known` with that provenance, `UNKNOWN` and
   `NOT_MEASURED` stay distinct and are never zero, `DECLARED_NO_BILLABLE_USAGE` becomes `NO_BILLABLE_USAGE` with its justification.
 - `StageAttribution`: `STAGE_LOCAL` only when the verdict is about the routed attempt itself: no other attempt was accepted, no
@@ -1316,7 +1326,7 @@ points (a longer composite Store reference is replaced by its SHA-256 form, neve
 ### 20.3 Complexity and footprint
 
 `S` samples examined, `P` page size, `E` events per execution (bounded by the Section 19 limits): time `O(S log S)` (the final
-sort) plus the Store's own export cost, which the Store documents as `O(pages x ledger size)`; retained state `O(S)` observations
+sort) plus the Store's own export cost, which the Store documents as `O(pages x ledger size)`; one bounded read of each sample's own event history (`O(E)` per sample); retained state `O(S)` observations
 plus `O(P)` for the current page and one hash set of execution ids. `ArrayList` plus one sort is used because the result is
 consumed in order; a `HashSet` is used only for point membership. No cache, parallelism, SIMD, GPU, clock or randomness. No
 latency or allocation figure was measured and no performance claim is made.
@@ -1331,13 +1341,12 @@ latency or allocation figure was measured and no performance claim is made.
 The adapter tests use a temporary **real** `ExecutionMemory` (append, reopen read-only, export, translate) and prove: scope,
 exact revision, ledger cutoff, prefix digest and evidence are preserved; repeated and append-between-pages imports give the same
 snapshot; the sample cap; every refusal above, including envelope digest, identity and route mismatches with a valid digest;
-negative, pending, unfinished and outcome-less executions; evidence-only and routed-stage corrections (each advances `revision`;
-`supersedesSequence` is the earliest superseded sequence); a repaired chain is never stage-local; an oversized composite reference;
+negative, pending, unfinished and outcome-less executions; corrections of the stage, evidence, finish and outcome, new evidence on an open attempt and a new current outcome (each advances `revision`; `supersedesSequence` is `firstTranslatable`; the identity is stable; repeats and older cutoffs are equal); a correction before `firstTranslatable` does not advance it; a repaired chain is never stage-local; an oversized composite reference;
 a failing superseded-revision read surfaces as an adapter exception; unknown usage is not zero; the SHA-256 of **every file under the Store root is unchanged** after
 reading, and the memory stays open; root production sources contain no Store import and no source depends on `monada-evaluation`.
 There is no Store ranking-feedback digest helper at the Store baseline; the whole-directory digest covers its files.
 
-Evidence gaps: one routed stage per execution (a repaired chain
+Evidence gaps: version bumps may be spurious (any later event of the execution advances it, even when the effective judgment is equal); one routed stage per execution (a repaired chain
 with two routed stages is refused, not split); the routed attempt's invocation is the only environmental signal and is never
 `UNAVAILABLE`/`TIMED_OUT`; usage is stage-level, not full-chain (full-chain cost stays an evaluation-tool annotation); no
 allocation or latency measurement; translated observations are not yet fed to `OutcomeEvaluator` in an adapter test because that

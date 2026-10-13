@@ -1,5 +1,7 @@
 package monada.neuron.resonance.adapter.experience;
 
+import com.monada.core.execution.ExecutionId;
+import com.monada.api.execution.ExecutionView;
 import com.monada.api.execution.ExecutionMemory;
 import com.monada.api.execution.ExperienceSamplePage;
 import com.monada.api.execution.ProjectionStatus;
@@ -201,9 +203,10 @@ final class ExperienceRejectionTest {
             }
 
             @Override
-            public Optional<HistoryEntry> loadEvent(ScopeId scope,
-                    EventId eventId, int revision) {
-                return memory.loadEvent(scope, eventId, revision);
+            public List<HistoryEntry> executionHistory(ScopeId scope, ExecutionId execution,
+                                                       long cutoffSequence) {
+                return memory.loadExecution(scope, execution, cutoffSequence).map(ExecutionView::history)
+                        .orElse(List.of());
             }
 
             @Override
