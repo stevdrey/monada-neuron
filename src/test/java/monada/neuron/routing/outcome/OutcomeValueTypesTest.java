@@ -95,6 +95,19 @@ class OutcomeValueTypesTest {
         rejectedWithAttempt.status = OutcomeStatus.REJECTED;
         assertThrows(IllegalArgumentException.class, rejectedWithAttempt::outcome);
 
+        var statusOnRoutedAttempt = new OutcomeFixtures.Spec();
+        statusOnRoutedAttempt.acceptedAttemptStatus = Feature.known(AttemptStatus.COMPLETED);
+        assertThrows(IllegalArgumentException.class, statusOnRoutedAttempt::outcome);
+        var statusOnRejected = new OutcomeFixtures.Spec();
+        statusOnRejected.status = OutcomeStatus.REJECTED;
+        statusOnRejected.acceptedAttempt = Feature.unknown();
+        statusOnRejected.acceptedAttemptStatus = Feature.known(AttemptStatus.COMPLETED);
+        assertThrows(IllegalArgumentException.class, statusOnRejected::outcome);
+        var statusOnRepair = new OutcomeFixtures.Spec();
+        statusOnRepair.acceptedAttempt = Feature.known("att-2");
+        statusOnRepair.acceptedAttemptStatus = Feature.known(AttemptStatus.COMPLETED);
+        assertEquals(Feature.known(AttemptStatus.COMPLETED), statusOnRepair.outcome().acceptedAttemptStatus());
+
         var noAttempt = new OutcomeFixtures.Spec();
         noAttempt.acceptedAttempt = Feature.unknown();
         assertThrows(IllegalArgumentException.class, noAttempt::outcome);

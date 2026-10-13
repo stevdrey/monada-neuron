@@ -41,6 +41,8 @@ import java.util.Set;
  * @param outcomeStatus current outcome status
  * @param outcomeOrigin whether the outcome was validated or is an imported claim
  * @param acceptedAttemptId attempt the outcome accepted; required for, and only allowed on, {@code ACCEPTED}
+ * @param acceptedAttemptStatus how the accepted attempt finished, <em>only</em> when it is not the routed attempt (for the
+ *         routed attempt the {@code invocation} is the source of truth); unknown means unfinished
  * @param outcomeSequence ledger sequence of the current outcome event, at most {@code cutoff}
  * @param observations at most 32 observations including superseded revisions, canonical order
  * @param judgedRevisions at most 32 evidence revisions the host judged on, one per event, canonical order
@@ -65,6 +67,7 @@ public record RoutingOutcome(
         OutcomeStatus outcomeStatus,
         OutcomeOrigin outcomeOrigin,
         Feature<String> acceptedAttemptId,
+        Feature<AttemptStatus> acceptedAttemptStatus,
         long outcomeSequence,
         List<QualityObservation> observations,
         List<EvidenceRevision> judgedRevisions,
@@ -105,6 +108,13 @@ public record RoutingOutcome(
             }
         } else if (outcomeStatus == OutcomeStatus.ACCEPTED) {
             throw new IllegalArgumentException("an ACCEPTED outcome must name the accepted attempt");
+        }
+        Objects.requireNonNull(acceptedAttemptStatus, "acceptedAttemptStatus must not be null");
+        if (acceptedAttemptStatus instanceof Feature.Known<AttemptStatus>
+                && !(acceptedAttemptId instanceof Feature.Known<String> accepted
+                        && !accepted.value().equals(decisionRef.attemptId()))) {
+            throw new IllegalArgumentException(
+                    "acceptedAttemptStatus applies only to an accepted attempt other than the routed attempt");
         }
         if (outcomeSequence < 0 || outcomeSequence > cutoff) {
             throw new IllegalArgumentException(

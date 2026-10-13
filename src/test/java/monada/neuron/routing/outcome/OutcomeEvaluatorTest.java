@@ -36,6 +36,7 @@ class OutcomeEvaluatorTest {
     private OutcomeFixtures.Spec storeCase(QualityObservation... observations) {
         var spec = spec();
         spec.acceptedAttempt = Feature.known("a2");
+        spec.acceptedAttemptStatus = Feature.known(AttemptStatus.COMPLETED);
         for (var o : observations) {
             spec.with(o);
         }
@@ -153,6 +154,7 @@ class OutcomeEvaluatorTest {
     void repairedChainWithoutStageLocalEvidenceIsNotCredited() {
         var s = spec().with(obs("e1", 0, TESTS, PASS, "att-2", 5)).with(obs("e2", 0, SECURITY, PASS, "att-2", 6));
         s.acceptedAttempt = Feature.known("att-2");
+        s.acceptedAttemptStatus = Feature.known(AttemptStatus.COMPLETED);
         s.attribution = new StageAttribution(StageAttribution.Basis.CHAIN_ONLY, 2, List.of());
         var a = s.assess();
         assertEquals(DerivedAcceptance.VALIDATED_ACCEPTED, a.derivedAcceptance());
@@ -164,6 +166,7 @@ class OutcomeEvaluatorTest {
     void repairedChainWithStageLocalEvidenceIsCredited() {
         var s = spec().with(obs("e1", 0, TESTS, PASS, "att-2", 5)).with(obs("e2", 0, SECURITY, PASS, "att-2", 6));
         s.acceptedAttempt = Feature.known("att-2");
+        s.acceptedAttemptStatus = Feature.known(AttemptStatus.COMPLETED);
         assertEquals(EligibilityVerdict.POSITIVE_CANDIDATE, s.assess().verdict());
     }
 
@@ -230,13 +233,42 @@ class OutcomeEvaluatorTest {
         assertFalse(a.reasons().contains(IneligibilityReason.PROVENANCE_MISMATCH));
     }
 
-    @Test
-    void acceptedClaimWithFailedInvocationIsContradictory() {
+    @ParameterizedTest
+    @EnumSource(value = InvocationStatus.class, names = "COMPLETED", mode = EnumSource.Mode.EXCLUDE)
+    void acceptedClaimWithoutACompletedRoutedInvocationIsNotValidated(InvocationStatus invocation) {
         var s = spec().passing();
-        s.invocation = InvocationStatus.FAILED;
+        s.invocation = invocation;
         var a = s.assess();
-        assertTrue(a.reasons().contains(IneligibilityReason.CONTRADICTORY_EVIDENCE));
+        assertEquals(DerivedAcceptance.ACCEPTED_UNVALIDATED, a.derivedAcceptance());
         assertEquals(EligibilityVerdict.NOT_ELIGIBLE, a.verdict());
+        assertTrue(a.reasons().contains(IneligibilityReason.CONTRADICTORY_EVIDENCE));
+        assertEquals(invocation == InvocationStatus.CANCELLED, a.reasons().contains(IneligibilityReason.CANCELLED));
+        assertEquals(invocation.environmental(), a.reasons().contains(IneligibilityReason.ENVIRONMENTAL_FAILURE));
+    }
+
+    @Test
+    void repairedChainWithAFailedRoutedAttemptAndACompletedAcceptedAttemptIsValidated() {
+        var s = spec().with(obs("e1", 0, TESTS, PASS, "att-2", 5)).with(obs("e2", 0, SECURITY, PASS, "att-2", 6));
+        s.invocation = InvocationStatus.FAILED;
+        s.acceptedAttempt = Feature.known("att-2");
+        s.acceptedAttemptStatus = Feature.known(AttemptStatus.COMPLETED);
+        var a = s.assess();
+        assertEquals(DerivedAcceptance.VALIDATED_ACCEPTED, a.derivedAcceptance());
+        assertFalse(a.reasons().contains(IneligibilityReason.CONTRADICTORY_EVIDENCE));
+        assertEquals(EligibilityVerdict.POSITIVE_CANDIDATE, a.verdict());
+    }
+
+    @Test
+    void acceptedAttemptThatDidNotCompleteStaysUnvalidatedEvenWithPassingEvidence() {
+        for (Feature<AttemptStatus> status : List.of(Feature.<AttemptStatus>unknown(),
+                Feature.known(AttemptStatus.FAILED), Feature.known(AttemptStatus.CANCELLED))) {
+            var s = spec().with(obs("e1", 0, TESTS, PASS, "att-2", 5)).with(obs("e2", 0, SECURITY, PASS, "att-2", 6));
+            s.acceptedAttempt = Feature.known("att-2");
+            s.acceptedAttemptStatus = status;
+            var a = s.assess();
+            assertEquals(DerivedAcceptance.ACCEPTED_UNVALIDATED, a.derivedAcceptance(), String.valueOf(status));
+            assertNotEquals(EligibilityVerdict.POSITIVE_CANDIDATE, a.verdict());
+        }
     }
 
     @Test

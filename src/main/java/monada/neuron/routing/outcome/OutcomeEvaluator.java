@@ -145,7 +145,7 @@ public final class OutcomeEvaluator {
             case PENDING -> reasons.add(IneligibilityReason.PENDING);
             case CANCELLED -> reasons.add(IneligibilityReason.CANCELLED);
             case ACCEPTED -> {
-                if (outcome.invocation() != InvocationStatus.COMPLETED) {
+                if (routedAttemptAccepted(outcome) && outcome.invocation() != InvocationStatus.COMPLETED) {
                     reasons.add(IneligibilityReason.CONTRADICTORY_EVIDENCE);
                 }
             }
@@ -178,8 +178,22 @@ public final class OutcomeEvaluator {
             case PENDING -> DerivedAcceptance.PENDING;
             case REJECTED, FAILED, CANCELLED -> DerivedAcceptance.NOT_ACCEPTED;
             case ACCEPTED -> outcome.outcomeOrigin() == OutcomeOrigin.VALIDATED && allMandatorySatisfied
+                    && acceptedAttemptCompleted(outcome)
                     ? DerivedAcceptance.VALIDATED_ACCEPTED : DerivedAcceptance.ACCEPTED_UNVALIDATED;
         };
+    }
+
+    /** True when the accepted attempt is the routed one and its invocation completed, or it finished {@code COMPLETED}. */
+    private boolean acceptedAttemptCompleted(RoutingOutcome outcome) {
+        return routedAttemptAccepted(outcome)
+                ? outcome.invocation() == InvocationStatus.COMPLETED
+                : outcome.acceptedAttemptStatus() instanceof Feature.Known<AttemptStatus> known
+                        && known.value() == AttemptStatus.COMPLETED;
+    }
+
+    private boolean routedAttemptAccepted(RoutingOutcome outcome) {
+        return outcome.acceptedAttemptId() instanceof Feature.Known<String> accepted
+                && accepted.value().equals(outcome.decisionRef().attemptId());
     }
 
     private List<ProvenanceField> mismatches(

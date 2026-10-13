@@ -79,6 +79,7 @@ final class OutcomeFixtures {
         OutcomeStatus status = OutcomeStatus.ACCEPTED;
         OutcomeOrigin origin = OutcomeOrigin.VALIDATED;
         Feature<String> acceptedAttempt = Feature.known("att-1");
+        Feature<AttemptStatus> acceptedAttemptStatus = Feature.unknown();
         long outcomeSequence = 10L;
         long cutoff = 100L;
         RouteKey route = DECISION.route();
@@ -105,7 +106,7 @@ final class OutcomeFixtures {
             return new RoutingOutcome(RoutingRequest.CONTRACT_VERSION, DecisionRef.of(REQUEST), route,
                     DECISION.cohortBinding(), catalogVersion, DECISION.provenance().policyId(),
                     DECISION.provenance().policyVersion(), sourceFingerprint, "ctx-1", "con-1", "forge-gates",
-                    evaluationPolicyVersion, cutoff, invocation, status, origin, acceptedAttempt, outcomeSequence,
+                    evaluationPolicyVersion, cutoff, invocation, status, origin, acceptedAttempt, acceptedAttemptStatus, outcomeSequence,
                     observations, judged, resources, attribution);
         }
 
