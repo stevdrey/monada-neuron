@@ -69,6 +69,10 @@ Deferred: no artifact repository exists yet; a composite build keeps sources aut
 - Recall quality depends on the injected codec; the defaults are for reproducibility only.
 - The store's Java 26 toolchain must be installed alongside Java 27 for adapter builds.
 
+- Execution experience is read through a second, separate seam (Issue #64): `StoreExperienceTranslator` turns the Store's
+  bounded `execution-sample/1` exports into Neuron-owned `RoutingObservation`s. It is read-only against a caller-owned
+  `ExecutionMemory`, keeps Store types inside the adapter module, never calls `feedback()` and never learns; recalled
+  similarity is not quality or reward. See contract Section 20 of `docs/specs/forge-routing-contract-v1.md`.
 - The adapter delegates each store query to the public `ResonanceStoreRecall` seam (production wraps
   `MonadaMemory`) and derives references through `OpaqueReference`. Behavior is unchanged; the seam lets
   the Neuron-owned translation and merge work run, and be benchmarked, without a store or duplicated logic.
@@ -80,3 +84,4 @@ Deferred: no artifact repository exists yet; a composite build keeps sources aut
 - Publish the store to a versioned repository and replace the composite build with a version range.
 - ~~Measure adapter translation overhead separately from store recall.~~ Done in Issue #49 with JMH; see
   [adapter overhead benchmark](../benchmarks/resonance-store-adapter-overhead.md).
+- ~~Translate Store execution exports into routing observations.~~ Done in Issue #64; see the contract Section 20.
