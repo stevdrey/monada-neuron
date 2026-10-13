@@ -69,11 +69,12 @@ Deferred: no artifact repository exists yet; a composite build keeps sources aut
 - Recall quality depends on the injected codec; the defaults are for reproducibility only.
 - The store builds with the same Java 27 toolchain as Neuron, so adapter builds need no second JDK.
 - CI exercises the adapter (Issue #84): the `adapter` job in `.github/workflows/ci.yml` checks out the store next to
-  this repository, fails when `./gradlew projects` does not list `:monada-neuron-resonance-adapter`, and runs
-  `./gradlew :monada-neuron-resonance-adapter:test`. It tracks store `main` rather than a pinned commit, because the
-  store is still evolving in lockstep with Neuron and a pin would need constant bumps. Each run records the tested
-  store commit in the job summary; reproduce a run with a manual `workflow_dispatch` and `resonance_store_ref=<sha>`,
-  or locally with the sibling checkout at that commit. Trade-off: a store change can turn a Neuron pull request red
+  this repository and runs `./gradlew :monada-neuron-resonance-adapter:test`; it fails when the store checkout is
+  missing or that task does not exist. It tracks store `main` rather than a pinned commit, because the store is still
+  evolving in lockstep with Neuron and a pin would need constant bumps. Each run records the tested Neuron commit (the
+  merge commit for pull requests) and store commit in the job summary; reproduce a run locally by checking out both at
+  those commits in the sibling layout. A manual `workflow_dispatch` with `resonance_store_ref=<sha>` re-tests a branch
+  head only, not a pull request merge commit, and is unavailable for fork pull requests. Trade-off: a store change can turn a Neuron pull request red
   without any Neuron change, and re-running the same pull request may test a different store commit. The Neuron-only
   `verify` job keeps proving that core builds and tests do not need the store.
 

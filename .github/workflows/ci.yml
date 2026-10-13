@@ -15,7 +15,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: java-ci-${{ github.workflow }}-${{ github.ref }}
+  # The event is part of the group so a manual reproduce run never cancels a push or pull request run.
+  group: java-ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -56,7 +57,7 @@ jobs:
   adapter:
     # Runs the optional adapter module, which is part of the build only when the Store sits next to this
     # repository (ADR 0018). It tracks Store main while the Store evolves; the tested Store commit is
-    # recorded in the job summary so a run can be reproduced with workflow_dispatch and that SHA.
+    # recorded in the job summary, with the tested Neuron commit, so a run can be reproduced.
     name: Resonance Store adapter (Java 27, Store main)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -65,6 +66,8 @@ jobs:
         uses: actions/checkout@v7
         with:
           path: monada-neuron
+          # Store build scripts run in this job; keep the job token off disk.
+          persist-credentials: false
 
       - name: Check out Monada Resonance Store
         uses: actions/checkout@v7
@@ -74,17 +77,29 @@ jobs:
           path: monada-resonance-store
           persist-credentials: false
 
-      - name: Record tested Store revision
+      - name: Record tested revisions
+        env:
+          NEURON_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           sha="$(git -C monada-resonance-store rev-parse HEAD)"
           subject="$(git -C monada-resonance-store log -1 --format=%s)"
-          echo "::notice title=Resonance Store revision::${sha} ${subject}"
+          # Workflow command data must escape %, CR and LF; % first so the other escapes survive.
+          escaped="${subject//'%'/%25}"
+          escaped="${escaped//$'\r'/%0D}"
+          escaped="${escaped//$'\n'/%0A}"
+          echo "::notice title=Resonance Store revision::${sha} ${escaped}"
           {
-            echo "### Monada Resonance Store revision"
+            echo "### Tested revisions"
             echo ""
-            echo "- Commit: [\`${sha}\`](https://github.com/stevdrey/monada-resonance-store/commit/${sha})"
-            echo "- Subject: ${subject}"
-            echo "- Reproduce: run this workflow manually with \`resonance_store_ref=${sha}\`"
+            echo "- Neuron commit (\`${EVENT_NAME}\`; the merge commit for pull requests): \`${NEURON_SHA}\`"
+            echo "- Store commit: [\`${sha}\`](https://github.com/stevdrey/monada-resonance-store/commit/${sha})"
+            echo "- Store subject: \`${subject//\`/}\`"
+            echo ""
+            echo "Reproduce locally: check out Neuron at the commit above with \`../monada-resonance-store\` at the Store"
+            echo "commit, then run \`./gradlew :monada-neuron-resonance-adapter:test\`. A manual run of this workflow with"
+            echo "\`resonance_store_ref=${sha}\` re-tests a branch head, not a pull request merge commit, and is not"
+            echo "available for pull requests from forks."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Java 27
@@ -96,13 +111,12 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Assert adapter module is included
-        working-directory: monada-neuron
+      - name: Assert Store checkout is in the sibling layout
+        # settings.gradle.kts includes the adapter only when this file exists; if the module is still missing,
+        # the test task below fails with "project not found".
         run: |
-          ./gradlew --no-daemon -q projects > "$RUNNER_TEMP/projects.txt"
-          cat "$RUNNER_TEMP/projects.txt"
-          if ! grep -qF ":monada-neuron-resonance-adapter" "$RUNNER_TEMP/projects.txt"; then
-            echo "::error:::monada-neuron-resonance-adapter is not part of the build; is ../monada-resonance-store present?"
+          if [ ! -f monada-resonance-store/settings.gradle.kts ]; then
+            echo "::error::monada-resonance-store/settings.gradle.kts is missing; the adapter module would not be part of the build."
             exit 1
           fi
 
