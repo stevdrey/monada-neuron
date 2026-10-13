@@ -16,7 +16,8 @@ follow-up. A rule change would have to be applied four times, and the copies cou
 ## Decision
 
 - One `public final class OpaqueTokens` in the new package `monada.neuron.routing.token` owns `require`,
-  `requireText` (512 code points), `CODE_POINT_ORDER` and `compareCodePoints`. The code moved verbatim, so
+  `requireText` (512 code points, a Neuron outcome extension aligned with the Store's artifact references and not
+  part of contract section 2), `CODE_POINT_ORDER` and `compareCodePoints`. The code moved verbatim, so
   messages, exception types and the allocation behavior of the validation path are unchanged.
 - It is public only because the artifact has no JPMS boundary (ADR 0025) and the callers live in four packages.
   `package-info` documents it as shared infrastructure and not a supported extension point; hosts should not depend
@@ -37,8 +38,8 @@ follow-up. A rule change would have to be applied four times, and the copies cou
 ## Consequences
 
 - One place to change or test the section 2 rules (`OpaqueTokensTest`).
-- One additional public type in the published jar; it is outside the supported API by convention only, so removing
-  or changing it is not a compatibility break the project will announce.
+- One additional public type in the published jar. No compatibility is promised for it: a host that imports it does
+  so at its own risk, and it may change in any release.
 - Two allocation tests that asserted tracking support now skip instead of failing when it is unsupported.
 
 ## Follow-Up

@@ -18,10 +18,9 @@ public final class AllocationProbe {
         for (int i = 0; i < warmUps; i++) {
             action.run();
         }
-        if (!(ManagementFactory.getThreadMXBean() instanceof ThreadMXBean threads)) {
-            Assumptions.abort("the com.sun.management.ThreadMXBean extension is unavailable");
-            return -1;
-        }
+        var bean = ManagementFactory.getThreadMXBean();
+        Assumptions.assumeTrue(bean instanceof ThreadMXBean, "com.sun.management.ThreadMXBean is unavailable");
+        var threads = (ThreadMXBean) bean;
         Assumptions.assumeTrue(threads.isThreadAllocatedMemorySupported(), "thread allocation tracking unsupported");
         threads.setThreadAllocatedMemoryEnabled(true);
         long id = Thread.currentThread().threadId();

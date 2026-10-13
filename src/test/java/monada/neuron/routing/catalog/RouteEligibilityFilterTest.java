@@ -375,9 +375,10 @@ class RouteEligibilityFilterTest {
                 available(base("r" + i, 1).capabilities(need).build())).toList();
         RouteCatalog catalog = RouteCatalog.of("v", entries);
         RoutingRequest request = request("plan", need);
-        long allocated = AllocationProbe.measure(20_000, () -> filter.evaluate(request, catalog));
+        EligibilityReport[] measured = new EligibilityReport[1];
+        long allocated = AllocationProbe.measure(20_000, () -> measured[0] = filter.evaluate(request, catalog));
         assertTrue(allocated > 0, "evaluate must allocate its report; measured " + allocated);
-        EligibilityReport report = filter.evaluate(request, catalog);
+        EligibilityReport report = measured[0];
 
         reporter.publishEntry("allocatedBytes", Long.toString(allocated));
         assertEquals(32, report.eligible().size());

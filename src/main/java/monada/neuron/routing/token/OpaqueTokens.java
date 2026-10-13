@@ -12,7 +12,10 @@ public final class OpaqueTokens {
     /** Maximum token length in Unicode code points. */
     public static final int MAX_CODE_POINTS = 128;
 
-    /** Maximum length of an artifact reference or free text, as in the Store's opaque artifact references. */
+    /**
+     * Maximum length of an artifact reference or free text, as in the Store's opaque artifact references. A Neuron
+     * outcome-package extension: contract section 2 itself only defines the {@value #MAX_CODE_POINTS}-code-point token.
+     */
     public static final int MAX_TEXT_CODE_POINTS = 512;
 
     /** Orders strings by Unicode code point, not by UTF-16 code unit. */
