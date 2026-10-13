@@ -1287,7 +1287,7 @@ stage selection (exactly one stage with an envelope reference), then envelope ve
 - `ResourceSummary`: the routed stage's usage only. `REPORTED`/`ESTIMATED` become `Known` with that provenance, `UNKNOWN` and
   `NOT_MEASURED` stay distinct and are never zero, `DECLARED_NO_BILLABLE_USAGE` becomes `NO_BILLABLE_USAGE` with its justification.
 - `StageAttribution`: `STAGE_LOCAL` only when the verdict is about the routed attempt itself: no other attempt was accepted, no
-  later repair attempt exists, and it has exactly one stage and recorded evidence (references: its first 8 evidence events).
+  later repair attempt exists, and it has exactly one stage and recorded evidence (references: its first 8 evidence events); `chainStageCount` records the real number of stages in the execution, even when the routed attempt is a later repair.
   A repair chain (routed attempt A, accepted attempt B) is `CHAIN_ONLY` when the execution has two or more stages, otherwise
   `NONE`, so B's evidence never credits or blames A's route. Verdicts stay with `OutcomeEvaluator`.
 - The Store `label`, `successOrdinal`, eligibility and recalled similarity are **not** read as quality, confidence or reward.

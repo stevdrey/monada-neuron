@@ -298,6 +298,28 @@ final class StoreExperienceTranslatorTest {
     }
 
     @Test
+    void aRoutedRepairAttemptKeepsTheFullChainSizeInItsStageLocalAttribution() {
+        try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
+            var fixtures = new ExperienceFixtures(memory);
+            var exec = fixtures.exec("x-late").attempt(A1, 1, Optional.empty());
+            exec.plainStage(A1, "first-try");
+            exec.finish(A1, AttemptResult.FAILED);
+            exec.attempt(ExperienceFixtures.A2, 2, Optional.of(A1));
+            exec.routedStage(ExperienceFixtures.A2, ExperienceFixtures.envelope("x-late", "a2", "repair"));
+            exec.evidence(ExperienceFixtures.A2, QualityDimension.TESTS, ObservationState.PASS);
+            exec.finish(ExperienceFixtures.A2, AttemptResult.COMPLETED);
+            exec.outcome(Outcome.accepted(OutcomeOrigin.VALIDATED, ExperienceFixtures.A2));
+
+            var imported = new StoreExperienceTranslator(memory, fixtures.resolver())
+                    .importSamples(request(memory.history(SCOPE).highWatermark()));
+            assertEquals(1, imported.observations().size(), imported.rejections().toString());
+            var attribution = imported.observations().getFirst().outcome().attribution();
+            assertEquals(StageAttribution.Basis.STAGE_LOCAL, attribution.basis());
+            assertEquals(2, attribution.chainStageCount());
+        }
+    }
+
+    @Test
     void aFailingSupersededRevisionReadIsAnAdapterFailureNotAStoreException() {
         try (ExecutionMemory memory = ExecutionMemory.open(root, SCOPE)) {
             var fixtures = new ExperienceFixtures(memory);

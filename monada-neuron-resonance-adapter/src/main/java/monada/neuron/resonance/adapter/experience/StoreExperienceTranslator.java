@@ -344,7 +344,7 @@ public final class StoreExperienceTranslator {
     private record RoutedStage(ExperienceSample.SampleStage stage, ArtifactRef envelopeArtifact) {
     }
 
-    private static RoutedStage routedStage(ExperienceSample sample) {
+    private RoutedStage routedStage(ExperienceSample sample) {
         List<RoutedStage> found = new ArrayList<>(1);
         for (ExperienceSample.SampleAttempt attempt : sample.attempts()) {
             for (ExperienceSample.SampleStage stage : attempt.stages()) {
@@ -398,7 +398,7 @@ public final class StoreExperienceTranslator {
         return envelope;
     }
 
-    private static boolean matches(ExecutedRouteDescriptor expected, RouteDescriptor recorded) {
+    private boolean matches(ExecutedRouteDescriptor expected, RouteDescriptor recorded) {
         return expected.worker().equals(recorded.worker())
                 && sameOptional(expected.provider(), recorded.provider())
                 && sameOptional(expected.model(), recorded.model())
@@ -406,14 +406,14 @@ public final class StoreExperienceTranslator {
                 && expected.billingMode().name().equals(recorded.billingMode().name());
     }
 
-    private static boolean sameOptional(Feature<String> expected, Optional<String> recorded) {
+    private boolean sameOptional(Feature<String> expected, Optional<String> recorded) {
         return switch (expected) {
             case Feature.Known<String> known -> recorded.map(known.value()::equals).orElse(false);
             case Feature.Unknown<String> unknown -> recorded.isEmpty();
         };
     }
 
-    private static QualityObservation quality(
+    private QualityObservation quality(
             com.monada.core.execution.QualityObservation observation, String eventRef, long revision,
             String attemptId, long sequence) {
         List<EvidenceRef> refs = observation.evidence().stream()
@@ -428,7 +428,7 @@ public final class StoreExperienceTranslator {
                 refs);
     }
 
-    private static void requireValidCosts(List<HypotheticalCost> costs) {
+    private void requireValidCosts(List<HypotheticalCost> costs) {
         Set<String> currencies = new HashSet<>();
         if (costs.size() > ResourceSummary.MAX_CURRENCIES
                 || !costs.stream().allMatch(c -> currencies.add(c.amount().currency()))) {
@@ -438,7 +438,7 @@ public final class StoreExperienceTranslator {
         }
     }
 
-    private static ResourceSummary resources(ExperienceSample.SampleStage stage, List<HypotheticalCost> costs) {
+    private ResourceSummary resources(ExperienceSample.SampleStage stage, List<HypotheticalCost> costs) {
         if (stage.usageDeclaration() == com.monada.core.execution.UsageDeclaration.NO_BILLABLE_USAGE) {
             String justification = stage.justification().orElseThrow(() -> new Refusal(
                     RejectionReason.MALFORMED_SAMPLE, "a no-billable-usage stage lacks its justification"));
@@ -465,7 +465,7 @@ public final class StoreExperienceTranslator {
      * no later repair attempt exists, and the attempt has exactly one stage and recorded evidence. A repair chain
      * (routed attempt A, accepted attempt B) never credits or blames A's route with B's evidence.
      */
-    private static StageAttribution attribution(
+    private StageAttribution attribution(
             ExperienceSample sample, ExperienceSample.SampleAttempt routedAttempt, Optional<String> acceptedId) {
         int chainStages = sample.attempts().stream().mapToInt(a -> a.stages().size()).sum();
         boolean evidenceIsTheRoutedAttempts = acceptedId.map(routedAttempt.id().value()::equals).orElse(true);
@@ -476,13 +476,13 @@ public final class StoreExperienceTranslator {
                     .limit(StageAttribution.MAX_REFS)
                     .map(e -> new EvidenceRef(EVIDENCE_EVENT_KIND, ExperienceRefs.format(e.ref()), Feature.unknown()))
                     .toList();
-            return new StageAttribution(StageAttribution.Basis.STAGE_LOCAL, 1, refs);
+            return new StageAttribution(StageAttribution.Basis.STAGE_LOCAL, chainStages, refs);
         }
         return new StageAttribution(chainStages >= 2 ? StageAttribution.Basis.CHAIN_ONLY : StageAttribution.Basis.NONE,
                 Math.max(chainStages, 1), List.of());
     }
 
-    private static <E extends Enum<E>> E sameName(Enum<?> source, Class<E> target) {
+    private <E extends Enum<E>> E sameName(Enum<?> source, Class<E> target) {
         try {
             return Enum.valueOf(target, source.name());
         } catch (IllegalArgumentException e) {
@@ -491,7 +491,7 @@ public final class StoreExperienceTranslator {
         }
     }
 
-    private static String bounded(String text) {
+    private String bounded(String text) {
         String trimmed = text.strip();
         if (trimmed.isEmpty()) {
             return "invalid sample";
