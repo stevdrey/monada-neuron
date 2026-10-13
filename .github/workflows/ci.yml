@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      resonance_store_ref:
+        description: 'Monada Resonance Store ref for the adapter job (branch, tag or commit SHA)'
+        required: false
+        default: main
 
 permissions:
   contents: read
@@ -45,5 +50,73 @@ jobs:
           path: |
             **/build/reports/tests/**
             **/build/test-results/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+  adapter:
+    # Runs the optional adapter module, which is part of the build only when the Store sits next to this
+    # repository (ADR 0018). It tracks Store main while the Store evolves; the tested Store commit is
+    # recorded in the job summary so a run can be reproduced with workflow_dispatch and that SHA.
+    name: Resonance Store adapter (Java 27, Store main)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          path: monada-neuron
+
+      - name: Check out Monada Resonance Store
+        uses: actions/checkout@v7
+        with:
+          repository: stevdrey/monada-resonance-store
+          ref: ${{ inputs.resonance_store_ref || 'main' }}
+          path: monada-resonance-store
+          persist-credentials: false
+
+      - name: Record tested Store revision
+        run: |
+          sha="$(git -C monada-resonance-store rev-parse HEAD)"
+          subject="$(git -C monada-resonance-store log -1 --format=%s)"
+          echo "::notice title=Resonance Store revision::${sha} ${subject}"
+          {
+            echo "### Monada Resonance Store revision"
+            echo ""
+            echo "- Commit: [\`${sha}\`](https://github.com/stevdrey/monada-resonance-store/commit/${sha})"
+            echo "- Subject: ${subject}"
+            echo "- Reproduce: run this workflow manually with \`resonance_store_ref=${sha}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up Java 27
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '27'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Assert adapter module is included
+        working-directory: monada-neuron
+        run: |
+          ./gradlew --no-daemon -q projects > "$RUNNER_TEMP/projects.txt"
+          cat "$RUNNER_TEMP/projects.txt"
+          if ! grep -qF ":monada-neuron-resonance-adapter" "$RUNNER_TEMP/projects.txt"; then
+            echo "::error:::monada-neuron-resonance-adapter is not part of the build; is ../monada-resonance-store present?"
+            exit 1
+          fi
+
+      - name: Run adapter tests
+        working-directory: monada-neuron
+        run: ./gradlew --no-daemon :monada-neuron-resonance-adapter:test
+
+      - name: Upload adapter test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adapter-test-reports
+          path: |
+            monada-neuron/**/build/reports/tests/**
+            monada-neuron/**/build/test-results/**
           if-no-files-found: ignore
           retention-days: 7

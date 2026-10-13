@@ -1254,7 +1254,7 @@ Package `monada.neuron.resonance.adapter.experience` in `monada-neuron-resonance
 implemented and opt-in; no existing signature changed, root production code is untouched and gained no Store dependency,
 nothing is persisted, and the translator triggers no learning, adaptation or `feedback()`. The module exists in the build
 only when the sibling `../monada-resonance-store` checkout is present (ADR 0018); a skipped module is not integration
-evidence.
+evidence. CI's `adapter` job provides that evidence against store `main`, recording the tested store commit (Issue #84).
 
 ### 20.1 Types and rules
 
