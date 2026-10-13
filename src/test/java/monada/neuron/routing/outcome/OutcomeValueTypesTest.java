@@ -250,6 +250,13 @@ class OutcomeValueTypesTest {
     }
 
     @Test
+    void effectiveEvidenceNeedsANonNegativeLedgerPosition() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new LearningAssessment.EffectiveEvidence(QualityDimension.TESTS, QualityState.PASS, -1));
+        assertEquals(0L, new LearningAssessment.EffectiveEvidence(QualityDimension.TESTS, QualityState.PASS, 0).ledgerSequence());
+    }
+
+    @Test
     void positiveCandidateNeedsPassingEffectiveEvidence() {
         assertThrows(IllegalArgumentException.class, () -> new LearningAssessment(DerivedAcceptance.VALIDATED_ACCEPTED,
                 EligibilityVerdict.POSITIVE_CANDIDATE, List.of(), List.of(), List.of(), List.of(), 0));

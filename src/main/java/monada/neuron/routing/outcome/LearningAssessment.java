@@ -31,10 +31,13 @@ public record LearningAssessment(
     /** The effective judgment of one mandatory dimension. */
     public record EffectiveEvidence(QualityDimension dimension, QualityState state, long ledgerSequence) {
 
-        /** Requires both parts. */
+        /** Requires both parts and a non-negative ledger position. */
         public EffectiveEvidence {
             Objects.requireNonNull(dimension, "dimension must not be null");
             Objects.requireNonNull(state, "state must not be null");
+            if (ledgerSequence < 0) {
+                throw new IllegalArgumentException("ledgerSequence must be non-negative, got: " + ledgerSequence);
+            }
         }
     }
 
