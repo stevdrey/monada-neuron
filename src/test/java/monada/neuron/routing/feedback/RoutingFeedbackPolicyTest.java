@@ -212,6 +212,43 @@ class RoutingFeedbackPolicyTest {
     }
 
     @Test
+    void aRequestOfAnotherFeatureSchemaIsRejectedBeforeTheCohortMappingRuns() {
+        spec.passing();
+        var strict = new CohortMapping() {
+            @Override
+            public String bucketMappingVersion() {
+                return DEFINITION.cohortMapping().bucketMappingVersion();
+            }
+
+            @Override
+            public String featureSchemaVersion() {
+                return DEFINITION.cohortMapping().featureSchemaVersion();
+            }
+
+            @Override
+            public String bucketOf(TaskFeatures features) {
+                if (!featureSchemaVersion().equals(features.schemaVersion())) {
+                    throw new IllegalArgumentException("built for " + featureSchemaVersion());
+                }
+                return DEFINITION.cohortMapping().bucketOf(features);
+            }
+        };
+        var policy = new RoutingFeedbackPolicy(new RoutingStateDefinition(DEFINITION.mappingVersion(), strict),
+                CONFIG, GATES);
+        var other = new RoutingRequest(spec.request.contractVersion(), spec.request.scopeId(), spec.request.taskId(),
+                spec.request.executionId(), spec.request.attemptId(), spec.request.stageId(),
+                spec.request.stageKind(), spec.request.requestOrdinal(), spec.request.sourceFingerprint(),
+                spec.request.contextFingerprint(), spec.request.constraintsFingerprint(),
+                spec.request.evaluationPolicyId(), spec.request.evaluationPolicyVersion(),
+                TaskFeatures.builder().schemaVersion("task-features/other").stageKind("implement").build(),
+                spec.request.requirements(), false, spec.request.cutoff());
+        var none = noUpdate(policy.derive(spec.observation(), spec.decision, other,
+                bindings(spec.decision, other, NODE_A)));
+        assertEquals(NoUpdateReason.PROVENANCE_MISMATCH, none.reason());
+        assertEquals(List.of(ProvenanceField.FEATURE_SCHEMA_VERSION), none.mismatches());
+    }
+
+    @Test
     void aForeignBucketMappingVersionOnTheDecisionOrOutcomeIsAForeignPartition() {
         spec.passing();
         var observation = spec.observation();

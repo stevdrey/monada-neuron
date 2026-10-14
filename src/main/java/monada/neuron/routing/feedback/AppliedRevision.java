@@ -49,6 +49,9 @@ public record AppliedRevision(
         Objects.requireNonNull(cohortKey, "cohortKey must not be null");
         Objects.requireNonNull(targetNodeId, "targetNodeId must not be null");
         Objects.requireNonNull(costPeer, "costPeer must not be null");
+        if (costPeer.isPresent() && disposition != FeedbackDisposition.REINFORCE) {
+            throw new IllegalArgumentException("only a reinforcing entry can depend on a cost peer");
+        }
         if (targetNodeId.isPresent() != (disposition != FeedbackDisposition.NEUTRAL)) {
             throw new IllegalArgumentException("a target Node is recorded exactly when the entry moved a Node");
         }

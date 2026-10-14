@@ -191,6 +191,31 @@ class RevisionReconcilerTest {
     }
 
     @Test
+    void aPeerRebuildStartsAtTheEarliestDependentRewardEvenWhenThePeerHasItsOwnEntry() {
+        // reward A at sequence 10 was refined against peer exp-2@0 (sequence 20); the peer itself was rewarded at 20
+        var self = new FeedbackFixtures.Spec().passing();
+        self.ledgerSequence = 10L;
+        self.resources = FeedbackFixtures.tokens(400, ResourceValue.Provenance.REPORTED);
+        var request = FeedbackFixtures.request("scope-demo", "task-17", "exec-2", "att-1", "s-impl-2", 102L);
+        var peer = new FeedbackFixtures.Spec(request, FeedbackFixtures.decide(request, "sub-b")).passing();
+        peer.experienceRef = "exp-2";
+        peer.ledgerSequence = 20L;
+        peer.resources = FeedbackFixtures.tokens(900, ResourceValue.Provenance.REPORTED);
+        var refined = (FeedbackDerivation.Derived) policy().derive(self.observation(), self.decision, self.request,
+                FeedbackFixtures.bindings(self.decision, self.request, NODE_A),
+                Optional.of(new CostReference(peer.observation(), peer.decision, peer.request)));
+        assertEquals(ScoreRule.REINFORCE_COST_REFINED, refined.feedback().rule());
+        var ledger = List.of(AppliedRevision.of(refined.feedback()), applied(derive(policy(), peer)));
+
+        var correction = corrected(peer, 1, 40L).failing();
+        var rebuild = assertInstanceOf(Reconciliation.RebuildRequired.class,
+                reconciler.reconcile(ledger, correction.observation(), derive(policy(), correction)));
+        // without the dependency the rebuild would start at 20, and a checkpoint at 15 would keep A's stale bonus
+        assertEquals(10L, rebuild.affectedFromSequence());
+        assertEquals(ledger.get(1), rebuild.superseded());
+    }
+
+    @Test
     void aForeignSchemaObservationIsNeverRecorded() {
         var none = new FeedbackDerivation.NoUpdate(NoUpdateReason.FEATURE_SCHEMA_MISMATCH, List.of(), List.of());
         assertEquals(new Reconciliation.OutOfPartition(NoUpdateReason.FEATURE_SCHEMA_MISMATCH),

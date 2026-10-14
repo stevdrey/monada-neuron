@@ -18,7 +18,8 @@ import java.util.Set;
  * observation's revision with the entry of the same reference:
  * <ul>
  * <li>a result that would be {@code Apply} or {@code RecordOnly} becomes {@code RebuildRequired} when an applied
- *     entry was cost-refined against an older revision of this very sample;</li>
+ *     entry was cost-refined against an older revision of this very sample, and an existing rebuild starts at the
+ *     earliest such entry if that is earlier;</li>
  * <li>a no-update caused by another state partition (mapping version, scope or evaluation policy):
  *     {@code OutOfPartition}, nothing recorded;</li>
  * <li>a newer revision at a ledger position that is not strictly later (or an older one that is not strictly
@@ -57,17 +58,30 @@ public final class RevisionReconciler {
         Objects.requireNonNull(derivation, "derivation must not be null");
         requireLedger(ledger);
         Reconciliation result = classify(ledger, observation, derivation);
-        if (result instanceof Reconciliation.Apply || result instanceof Reconciliation.RecordOnly) {
-            // a reward that was refined by a cost peer is obsolete once that peer has a newer revision
-            for (AppliedRevision entry : ledger) {
-                if (entry.costPeer().isPresent()
-                        && entry.costPeer().get().experienceRef().equals(observation.experienceRef())
-                        && entry.costPeer().get().revision() < observation.revision()) {
-                    return new Reconciliation.RebuildRequired(entry, entry.ledgerSequence());
-                }
+        if (!(result instanceof Reconciliation.Apply) && !(result instanceof Reconciliation.RecordOnly)
+                && !(result instanceof Reconciliation.RebuildRequired)) {
+            return result;
+        }
+        // a reward that was refined by a cost peer is obsolete once that peer has a newer revision; the earliest such
+        // reward also bounds which checkpoints can still be trusted
+        AppliedRevision dependent = null;
+        for (AppliedRevision entry : ledger) {
+            if (entry.costPeer().isPresent()
+                    && entry.costPeer().get().experienceRef().equals(observation.experienceRef())
+                    && entry.costPeer().get().revision() < observation.revision()
+                    && (dependent == null || entry.ledgerSequence() < dependent.ledgerSequence())) {
+                dependent = entry;
             }
         }
-        return result;
+        if (dependent == null) {
+            return result;
+        }
+        if (result instanceof Reconciliation.RebuildRequired rebuild) {
+            return dependent.ledgerSequence() < rebuild.affectedFromSequence()
+                    ? new Reconciliation.RebuildRequired(rebuild.superseded(), dependent.ledgerSequence())
+                    : rebuild;
+        }
+        return new Reconciliation.RebuildRequired(dependent, dependent.ledgerSequence());
     }
 
     private Reconciliation classify(

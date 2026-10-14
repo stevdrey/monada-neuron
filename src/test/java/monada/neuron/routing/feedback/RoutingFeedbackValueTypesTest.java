@@ -267,6 +267,28 @@ class RoutingFeedbackValueTypesTest {
     }
 
     @Test
+    void aCostPeerMustNotLieBeyondTheCutoffNorAttachToANonRewardLedgerEntry() {
+        var f = reward();
+        var future = Optional.of(new PeerRevision("exp-2", 0, f.cutoff() + 1));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingFeedback(f.contractVersion(), f.identity(),
+                f.supersedesSequence(), f.cohortKey(), f.routingPolicyId(), f.routingPolicyVersion(),
+                f.catalogVersion(), f.cutoff(), f.derivedAcceptance(), ScoreRule.REINFORCE_COST_REFINED,
+                f.disposition(), f.entries(), f.reasons(), f.effectiveEvidence(), f.provenFailures(), future));
+        var onTime = Optional.of(new PeerRevision("exp-2", 0, f.cutoff()));
+        new RoutingFeedback(f.contractVersion(), f.identity(), f.supersedesSequence(), f.cohortKey(),
+                f.routingPolicyId(), f.routingPolicyVersion(), f.catalogVersion(), f.cutoff(), f.derivedAcceptance(),
+                ScoreRule.REINFORCE_COST_REFINED, f.disposition(), f.entries(), f.reasons(), f.effectiveEvidence(),
+                f.provenFailures(), onTime);
+        // a neutral marker, or a penalty, cannot carry a cost dependency
+        assertThrows(IllegalArgumentException.class, () -> new AppliedRevision(f.identity(), f.routingPolicyId(),
+                f.routingPolicyVersion(), f.supersedesSequence(), Optional.empty(), Optional.empty(), onTime,
+                FeedbackDisposition.NEUTRAL, 0.0));
+        assertThrows(IllegalArgumentException.class, () -> new AppliedRevision(f.identity(), f.routingPolicyId(),
+                f.routingPolicyVersion(), f.supersedesSequence(), Optional.of(f.cohortKey()), Optional.of(NODE_A),
+                onTime, FeedbackDisposition.PENALIZE, -0.4));
+    }
+
+    @Test
     void correctionAncestryFollowsTheRevision() {
         var f = reward();
         var id = f.identity();

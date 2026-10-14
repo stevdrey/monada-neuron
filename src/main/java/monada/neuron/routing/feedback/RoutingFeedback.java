@@ -86,6 +86,10 @@ public record RoutingFeedback(
         if (costPeer.isPresent() != (rule == ScoreRule.REINFORCE_COST_REFINED)) {
             throw new IllegalArgumentException("a cost peer is recorded exactly for REINFORCE_COST_REFINED");
         }
+        if (costPeer.isPresent() && costPeer.get().ledgerSequence() > cutoff) {
+            throw new IllegalArgumentException("the cost peer at sequence " + costPeer.get().ledgerSequence()
+                    + " lies beyond the cutoff " + cutoff);
+        }
         Objects.requireNonNull(disposition, "disposition must not be null");
         if (rule.disposition() != disposition) {
             throw new IllegalArgumentException("rule " + rule + " yields " + rule.disposition() + ", not " + disposition);

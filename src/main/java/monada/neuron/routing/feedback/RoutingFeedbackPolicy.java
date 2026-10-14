@@ -118,6 +118,11 @@ public final class RoutingFeedbackPolicy {
                 || !bindings.featureSchemaVersion().equals(definition.cohortMapping().featureSchemaVersion())) {
             return noUpdate(NoUpdateReason.BINDING_PARTITION_MISMATCH, null);
         }
+        if (!definition.cohortMapping().featureSchemaVersion().equals(request.features().schemaVersion())) {
+            // checked before the cohort mapping runs: a mapping built for its own schema may reject foreign features
+            return new FeedbackDerivation.NoUpdate(NoUpdateReason.PROVENANCE_MISMATCH,
+                    List.of(IneligibilityReason.PROVENANCE_MISMATCH), List.of(ProvenanceField.FEATURE_SCHEMA_VERSION));
+        }
         if (!producedBy(request, decision)) {
             // the request is not the one whose features produced the decision, so its stage kind cannot be trusted
             return new FeedbackDerivation.NoUpdate(NoUpdateReason.PROVENANCE_MISMATCH,
@@ -176,7 +181,8 @@ public final class RoutingFeedbackPolicy {
 
     /** True when the request's features reproduce the cohort bucket the decision recorded. */
     private boolean producedBy(RoutingRequest request, RoutingDecision.Selected decision) {
-        return definition.cohortMapping().bucketOf(request.features()).equals(decision.cohortBinding().cohortBucket());
+        return definition.cohortMapping().featureSchemaVersion().equals(request.features().schemaVersion())
+                && definition.cohortMapping().bucketOf(request.features()).equals(decision.cohortBinding().cohortBucket());
     }
 
     private FeedbackDerivation credit(
