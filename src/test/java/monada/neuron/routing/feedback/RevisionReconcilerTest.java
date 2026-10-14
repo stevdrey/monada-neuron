@@ -6,6 +6,7 @@ import monada.neuron.evolution.FeedbackDisposition;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
+import monada.neuron.routing.CohortBinding;
 import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.features.Feature;
@@ -317,6 +318,74 @@ class RevisionReconcilerTest {
         later.ledgerSequence = 50L;
         assertInstanceOf(Reconciliation.RebuildRequired.class, reconciler.reconcile(
                 List.of(marker, applied(derive(policy(), later))), s.observation(), derive(policy(), s)));
+    }
+
+    @Test
+    void bindingTheNodeLaterRequiresTheSameCohortAsTheMarker() {
+        var s = new FeedbackFixtures.Spec().passing();
+        var empty = new TargetBindings("scope-demo", "forge-gates", "1", FeedbackFixtures.DEFINITION.mappingVersion(),
+                FeedbackFixtures.SCHEMA, List.of());
+        var marker = assertInstanceOf(Reconciliation.RecordOnly.class, reconciler.reconcile(List.of(),
+                s.observation(), policy().derive(s.observation(), s.decision, s.request, empty))).marker();
+        var binding = ((EntryBasis.NoUpdateMarker) marker.basis()).cohortBinding();
+        var otherBucket = FeedbackFixtures.variant(marker, Optional.empty(), Optional.empty(),
+                new EntryBasis.NoUpdateMarker(NoUpdateReason.NO_TARGET_BINDING,
+                        new CohortBinding("L", binding.bucketMappingVersion(), binding.mappingVersion(),
+                                binding.featureSchemaVersion())),
+                FeedbackDisposition.NEUTRAL, 0.0);
+        assertInstanceOf(Reconciliation.ConflictingRevision.class,
+                reconciler.reconcile(List.of(otherBucket), s.observation(), derive(policy(), s)));
+        assertEquals(new Reconciliation.Apply(Optional.of(marker)),
+                reconciler.reconcile(List.of(marker), s.observation(), derive(policy(), s)));
+    }
+
+    private FeedbackFixtures.Spec costPeerSpec(long sequence) {
+        var request = FeedbackFixtures.request("scope-demo", "task-17", "exec-2", "att-1", "s-impl-2", 102L);
+        var peer = new FeedbackFixtures.Spec(request, FeedbackFixtures.decide(request, "sub-b")).passing();
+        peer.experienceRef = "exp-2";
+        peer.ledgerSequence = sequence;
+        peer.resources = FeedbackFixtures.tokens(900, ResourceValue.Provenance.REPORTED);
+        return peer;
+    }
+
+    private FeedbackDerivation refinedAgainst(FeedbackFixtures.Spec self, FeedbackFixtures.Spec peer) {
+        return policy().derive(self.observation(), self.decision, self.request,
+                FeedbackFixtures.bindings(self.decision, self.request, NODE_A),
+                Optional.of(new CostReference(peer.observation(), peer.decision, peer.request)));
+    }
+
+    @Test
+    void aPeerClaimThatContradictsTheLedgerOnItsSequenceIsRejected() {
+        var self = new FeedbackFixtures.Spec().passing();
+        self.resources = FeedbackFixtures.tokens(400, ResourceValue.Provenance.REPORTED);
+        var claimed = refinedAgainst(self, costPeerSpec(10L));
+        // the ledger holds the same peer revision at another position
+        var ledger = List.of(applied(derive(policy(), costPeerSpec(11L))));
+        assertThrows(IllegalArgumentException.class, () -> reconciler.reconcile(ledger, self.observation(), claimed));
+        // the same position agrees
+        var agreeing = List.of(applied(derive(policy(), costPeerSpec(10L))));
+        assertInstanceOf(Reconciliation.Apply.class, reconciler.reconcile(agreeing, self.observation(), claimed));
+    }
+
+    @Test
+    void invalidatingACostBonusWinsOverCapacityExhaustion() {
+        var self = new FeedbackFixtures.Spec().passing();
+        self.resources = FeedbackFixtures.tokens(400, ResourceValue.Provenance.REPORTED);
+        var peer = costPeerSpec(10L);
+        var refined = (FeedbackDerivation.Derived) refinedAgainst(self, peer);
+        var ledger = new ArrayList<>(ledgerOf(RevisionReconciler.MAX_LEDGER - 1));
+        ledger.add(AppliedRevision.of(refined.feedback()));
+        assertEquals(RevisionReconciler.MAX_LEDGER, ledger.size());
+        // the peer has no entry of its own; a newer revision of it must still invalidate the bonus on a full ledger
+        var correction = corrected(peer, 1, 40L).failing();
+        var rebuild = assertInstanceOf(Reconciliation.RebuildRequired.class,
+                reconciler.reconcile(ledger, correction.observation(), derive(policy(), correction)));
+        assertEquals(ledger.getLast(), rebuild.superseded());
+        // an unrelated new sample on the full ledger is still just a capacity report
+        var other = new FeedbackFixtures.Spec().passing();
+        other.experienceRef = "zzz";
+        assertEquals(new Reconciliation.CapacityExhausted(),
+                reconciler.reconcile(ledger, other.observation(), derive(policy(), other)));
     }
 
     @Test

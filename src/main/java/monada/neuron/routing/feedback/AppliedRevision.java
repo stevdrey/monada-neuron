@@ -60,6 +60,36 @@ public record AppliedRevision(
         Objects.requireNonNull(costPeer, "costPeer must not be null");
         Objects.requireNonNull(basis, "basis must not be null");
         Objects.requireNonNull(disposition, "disposition must not be null");
+        if (identity.ledgerSequence() > cutoff) {
+            throw new IllegalArgumentException("the entry at sequence " + identity.ledgerSequence()
+                    + " lies beyond the cutoff " + cutoff);
+        }
+        if (supersedesSequence instanceof Feature.Known<Long> known) {
+            if (identity.revision() == 0) {
+                throw new IllegalArgumentException("an initial revision replaces nothing, so it has no supersedesSequence");
+            }
+            if (known.value() < 0 || known.value() >= identity.ledgerSequence()) {
+                throw new IllegalArgumentException(
+                        "supersedesSequence must be in [0, ledgerSequence), got: " + known.value());
+            }
+        } else if (identity.revision() > 0) {
+            throw new IllegalArgumentException("a corrected revision must carry the supersedesSequence it replaces");
+        }
+        if (basis instanceof EntryBasis.Derived derived
+                && (!derived.cohortKey().route().equals(identity.route())
+                        || !derived.cohortKey().scopeId().equals(identity.decisionRef().scopeId()))) {
+            throw new IllegalArgumentException("the cohort " + derived.cohortKey()
+                    + " does not belong to the executed route " + identity.route());
+        }
+        if (basis instanceof EntryBasis.NoUpdateMarker marker
+                && !marker.cohortBinding().mappingVersion().equals(identity.mappingVersion())) {
+            throw new IllegalArgumentException("the marker's cohort binding was recorded under another mappingVersion");
+        }
+        if (costPeer.isPresent() && (costPeer.get().experienceRef().equals(identity.experienceRef())
+                || !costPeer.get().precedes(identity.ledgerSequence(), identity.experienceRef()))) {
+            throw new IllegalArgumentException("the cost peer " + costPeer.get().experienceRef()
+                    + " must be another sample that precedes the reward in applied order");
+        }
         if (costPeer.isPresent() != (basis instanceof EntryBasis.Derived derived
                 && derived.rule() == ScoreRule.REINFORCE_COST_REFINED)) {
             throw new IllegalArgumentException("a cost peer is recorded exactly for a cost-refined reward");

@@ -35,10 +35,11 @@ import java.util.Set;
  * <li>an application that moves a Node is incremental only if its applied position {@code (ledgerSequence,
  *     experienceRef by code point)} is after every entry that moved a Node, because adaptation is clamped and order
  *     dependent; otherwise {@code RebuildRequired} from its own position;</li>
- * <li>a derived reward that looked at a revision of its cost peer that the ledger already superseded, or the same
+ * <li>a derived reward whose recorded peer claim contradicts the ledger (same revision at another sequence) is
+ *     rejected; one that looked at a revision of its cost peer that the ledger already superseded, or the same
  *     revision as an entry that differs from it only in the cost refinement: {@code StalePeerDependency}, nothing
  *     applied, the caller derives again against the latest peer;</li>
- * <li>an {@code Apply}, {@code RecordOnly} or {@code RebuildRequired} becomes {@code RebuildRequired} (or starts
+ * <li>an {@code Apply}, {@code RecordOnly}, {@code RebuildRequired} or {@code CapacityExhausted} becomes {@code RebuildRequired} (or starts
  *     earlier) when an entry was cost-refined against an older revision of this very sample.</li>
  * </ul>
  *
@@ -66,18 +67,23 @@ public final class RevisionReconciler {
         Objects.requireNonNull(observation, "observation must not be null");
         Objects.requireNonNull(derivation, "derivation must not be null");
         requireLedger(ledger);
+        PeerRevision peerView = derivation instanceof FeedbackDerivation.Derived derived
+                ? derived.feedback().costPeer().orElse(null) : null;
+        if (peerView != null) {
+            requirePeerClaimAgrees(ledger, peerView);
+        }
         Reconciliation result = classify(ledger, observation, derivation);
-        if (result instanceof Reconciliation.Apply && derivation instanceof FeedbackDerivation.Derived derived
-                && derived.feedback().costPeer().isPresent()) {
-            PeerRevision peer = derived.feedback().costPeer().get();
+        if (peerView != null && result instanceof Reconciliation.Apply) {
             for (AppliedRevision entry : ledger) {
-                if (entry.experienceRef().equals(peer.experienceRef()) && entry.revision() > peer.revision()) {
+                if (entry.experienceRef().equals(peerView.experienceRef()) && entry.revision() > peerView.revision()) {
                     return new Reconciliation.StalePeerDependency(entry);
                 }
             }
         }
+        // invalidating a bonus wins over every report that would leave it in place, including a full ledger
         if (!(result instanceof Reconciliation.Apply) && !(result instanceof Reconciliation.RecordOnly)
-                && !(result instanceof Reconciliation.RebuildRequired)) {
+                && !(result instanceof Reconciliation.RebuildRequired)
+                && !(result instanceof Reconciliation.CapacityExhausted)) {
             return result;
         }
         // a reward that was refined by a cost peer is obsolete once that peer has a newer revision; the earliest such
@@ -222,7 +228,22 @@ public final class RevisionReconciler {
                 && marker.routingPolicyVersion().equals(derived.routingPolicyVersion())
                 && marker.supersedesSequence().equals(derived.supersedesSequence())
                 && marker.catalogVersion().equals(derived.catalogVersion())
-                && marker.cutoff() == derived.cutoff();
+                && marker.cutoff() == derived.cutoff()
+                && marker.basis() instanceof EntryBasis.NoUpdateMarker unbound
+                && derived.basis() instanceof EntryBasis.Derived credited
+                && unbound.cohortBinding().cohortBucket().equals(credited.cohortKey().cohortBucket());
+    }
+
+    /** The ledger's entry for the peer sample must not contradict the peer claim a derivation recorded. */
+    private void requirePeerClaimAgrees(List<AppliedRevision> ledger, PeerRevision peer) {
+        for (AppliedRevision entry : ledger) {
+            if (entry.experienceRef().equals(peer.experienceRef()) && entry.revision() == peer.revision()
+                    && entry.ledgerSequence() != peer.ledgerSequence()) {
+                throw new IllegalArgumentException("the cost peer " + peer.experienceRef() + "@" + peer.revision()
+                        + " was recorded at sequence " + peer.ledgerSequence() + " but the ledger holds it at "
+                        + entry.ledgerSequence());
+            }
+        }
     }
 
     /** A newer revision sits at a strictly later ledger position and an older one at a strictly earlier one. */

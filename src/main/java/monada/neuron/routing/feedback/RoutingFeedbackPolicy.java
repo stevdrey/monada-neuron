@@ -316,7 +316,8 @@ public final class RoutingFeedbackPolicy {
                 || !self.evaluationPolicyId().equals(peer.evaluationPolicyId())
                 || !self.evaluationPolicyVersion().equals(peer.evaluationPolicyVersion())
                 || self.executedRoute().equals(peer.executedRoute())
-                || self.decisionRef().equals(peer.decisionRef())) {
+                || self.decisionRef().equals(peer.decisionRef())
+                || observation.experienceRef().equals(reference.peer().experienceRef())) {
             return false;
         }
         if (partitionMismatch(reference.peerDecision().cohortBinding(), peer.cohortBinding()).isPresent()

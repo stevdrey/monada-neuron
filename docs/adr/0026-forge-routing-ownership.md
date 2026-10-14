@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (contract; implemented so far: `TaskFeatures` and its signal encoder, issue #60, the route catalog and eligibility filter, issue #61, and the routing policy, decision types and composition seam, issue #62, with its decision verification split into focused validators by issue #76 and host-trusted extensible verification added by issue #78; outcome evidence and quality-gated learning eligibility added by issue #63; the rest is pending issues #64 to #68)
+Accepted (contract; implemented so far: `TaskFeatures` and its signal encoder, issue #60, the route catalog and eligibility filter, issue #61, and the routing policy, decision types and composition seam, issue #62, with its decision verification split into focused validators by issue #76 and host-trusted extensible verification added by issue #78; outcome evidence and quality-gated learning eligibility added by issue #63; Store experience export translation by issue #64; routing feedback with executed-route credit assignment and caller-owned applied-revision rules by issue #65; the rest is pending issues #66 to #68)
 
 ## Context
 
@@ -10,7 +10,7 @@ Monada Forge needs vendor-neutral, stage-level recommendations of which authoriz
 validated outcomes of earlier work. Three repositories are involved and their responsibilities must not blur:
 
 - ADR 0001 keeps cognition in Neuron and long-term memory in Monada Resonance Store. The Store's accepted
-  execution-memory v1 contract (not yet implemented; its issues #94 to #102 are pending) extends that ownership to execution
+  execution-memory v1 contract (its issues #94 to #101 are implemented on the Store's `main`, #102 is informational, and each Neuron issue re-checks the public API before use; contract Section 10) extends that ownership to execution
   history, outcomes, quality evidence, usage and `execution-sample/1` exports, and leaves routing and adaptation to Neuron
   and evidence collection and judgment to Forge.
 - ADR 0005 keeps `Signal` free of identity. ADR 0023 added an opaque `HostExecutionContext`; ADR 0024 added a host
@@ -119,8 +119,10 @@ Rejected as a non-goal: persistence belongs to the Store (ADR 0001, ADR 0018).
   later issue in the track has fixed semantics, bounds and a dependency order to implement against.
 - All behavior is additive and opt-in; existing public signatures, defaults, `OutcomeFeedback` behavior and the canonical
   stage order are unchanged.
-- The Store's execution-memory contract is accepted but not implemented, so end-to-end behavior with real exports is
-  unverified until #64 and #68. The contract names those dependencies and does not claim the types or Store capabilities exist.
+- The translation of real Store exports was exercised against a real `ExecutionMemory` by issue #64's adapter tests (contract
+  Section 20), and routing feedback and its applied-revision rules by issue #65 (Section 21). The published API and the
+  consumer loop over real exports remain unverified until #68. The contract names those dependencies and does not claim
+  the types or Store capabilities it has not yet implemented exist.
 - Routing quality, cost and adaptation effect are unmeasured. Footprint numbers are a model. No improvement claim is made until
   the replay evaluation (#67) provides a reproducible workload and controls, and replay on observed exports cannot prove
   counterfactual or online improvement.

@@ -1413,7 +1413,7 @@ cost and actual billing are carried by the outcome but are not read.
 
 ### 21.3 Caller-owned applied-revision bookkeeping and rebuild
 
-The caller keeps a ledger of `AppliedRevision(identity, routingPolicyId, routingPolicyVersion, supersedesSequence, catalogVersion, cutoff, Optional<targetNodeId>, Optional<costPeer>, EntryBasis, disposition, score)`: **one entry per sample reference, the latest examined revision**, at most 4,096 entries. Neuron holds no ledger. Two entries compare equal only when everything the contract validates about the claim is equal, apart from the bulky evidence lists:
+The caller keeps a ledger of `AppliedRevision(identity, routingPolicyId, routingPolicyVersion, supersedesSequence, catalogVersion, cutoff, Optional<targetNodeId>, Optional<costPeer>, EntryBasis, disposition, score)`: **one entry per sample reference, the latest examined revision**, at most 4,096 entries. Neuron holds no ledger. Two entries compare equal only when everything the contract validates about the claim is equal, apart from the bulky evidence lists, and an entry enforces the same invariants as the feedback it records (position at or before its cutoff, correction ancestry following the revision, a cohort of the executed route and scope, a rule that the recorded assessment could have selected, a cost peer that is another sample and precedes the reward in applied order):
 
 - the producing routing policy, the correction ancestry, the catalog version and the cutoff;
 - the credited Node, recorded exactly when the entry moved a Node;
@@ -1430,7 +1430,7 @@ The caller keeps a ledger of `AppliedRevision(identity, routingPolicyId, routing
 | No entry, a feedback derived | `Apply`, subject to the order rule below |
 | No entry, nothing derived | `RecordOnly(marker)`, which only accepts the `NoUpdateMarker` form |
 | Same revision, equal entry (duplicate delivery) | `AlreadyApplied` |
-| Same revision, the entry is a marker for a missing Node binding (`NO_TARGET_BINDING`) and a feedback is now derived with the same claim | A first application, subject to the order rule (`Apply` replacing the marker, or `RebuildRequired`) |
+| Same revision, the entry is a marker for a missing Node binding (`NO_TARGET_BINDING`) and a feedback is now derived with the same claim, including the same cohort bucket | A first application, subject to the order rule (`Apply` replacing the marker, or `RebuildRequired`) |
 | Same revision, two rewards equal except for the cost refinement (rule or peer) | `StalePeerDependency(entry)`: nothing applied; the derivation looked at another view of the peer, so the caller derives again against the latest one |
 | Same revision, any other difference (score under another configuration, assessment, catalog, cutoff, Node, policy, ancestry) | `ConflictingRevision` |
 | Older revision | `StaleRevision` |
@@ -1440,7 +1440,7 @@ The caller keeps a ledger of `AppliedRevision(identity, routingPolicyId, routing
 Two further rules apply on top of the table:
 
 - **Order rule.** Adaptation is clamped and order dependent, so an application that moves a Node is incremental only if its applied position `(ledgerSequence, experienceRef by code point)` is after the position of every ledger entry that moved a Node. Otherwise the result is `RebuildRequired(earliest later entry, affectedFromSequence = the incoming ledgerSequence)`: a late first delivery, a late binding or a correction placed before already-applied effects cannot be applied in place. Neutral results and markers move no Node and are never affected.
-- **Cost peer dependencies.** A derived reward that looked at a revision of its cost peer that the ledger already superseded is not applied: `StalePeerDependency`. Conversely, any result that would be `Apply`, `RecordOnly` or `RebuildRequired` for a sample becomes `RebuildRequired(dependent entry, its ledgerSequence)` when an entry was cost-refined against an **older revision of this very sample**, even if the peer has no ledger entry of its own; an existing rebuild starts at the earliest such dependent entry.
+- **Cost peer dependencies.** A derived reward whose recorded peer claim contradicts the ledger (the same peer revision at another ledger sequence) is rejected with `IllegalArgumentException`, because a rebuild containing both claims would reject them. A derived reward that looked at a revision of its cost peer that the ledger already superseded is not applied: `StalePeerDependency`. Conversely, any result that would be `Apply`, `RecordOnly` or `RebuildRequired` for a sample becomes `RebuildRequired(dependent entry, its ledgerSequence)` when an entry was cost-refined against an **older revision of this very sample**, even if the peer has no ledger entry of its own; an existing rebuild starts at the earliest such dependent entry. Invalidating a bonus wins over a `CapacityExhausted` report. A cost peer is another sample reference, never an older revision of the rewarded one.
 
 `affectedFromSequence` is the smaller of the superseded entry's `ledgerSequence` and the observation's `supersedesSequence` when
 known; a checkpoint is a valid starting point only if its `processedCutoff` is strictly below it (Section 7). Node adaptation is not

@@ -325,6 +325,23 @@ class RoutingFeedbackPolicyTest {
     }
 
     @Test
+    void anOlderRevisionOfTheSameSampleIsNotACostPeer() {
+        var self = new FeedbackFixtures.Spec().passing();
+        self.experienceRef = "exp-1";
+        self.revision = 1;
+        self.ledgerSequence = 30L;
+        self.supersedes = Feature.known(20L);
+        self.resources = tokens(400, ResourceValue.Provenance.REPORTED);
+        // an earlier revision of the same sample reference, but with another decision and route
+        var request = request("scope-demo", "task-17", "exec-2", "att-1", "s-impl-2", 102L);
+        var older = new FeedbackFixtures.Spec(request, decide(request, "sub-b")).passing();
+        older.experienceRef = "exp-1";
+        older.ledgerSequence = 20L;
+        older.resources = tokens(900, ResourceValue.Provenance.REPORTED);
+        assertEquals(ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL, withCost(policy(), self, older).rule());
+    }
+
+    @Test
     void aPeerFromAfterTheFeedbackCutoffCannotInfluenceIt() {
         var self = new FeedbackFixtures.Spec().passing();
         self.resources = tokens(400, ResourceValue.Provenance.REPORTED);

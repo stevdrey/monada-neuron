@@ -97,6 +97,10 @@ public record RoutingFeedback(
             throw new IllegalArgumentException("only a reward considers a cost peer");
         }
         if (rule == ScoreRule.REINFORCE_COST_REFINED
+                && costPeer.get().experienceRef().equals(identity.experienceRef())) {
+            throw new IllegalArgumentException("a cost peer is another sample, not a revision of the rewarded one");
+        }
+        if (rule == ScoreRule.REINFORCE_COST_REFINED
                 && !costPeer.get().precedes(identity.ledgerSequence(), identity.experienceRef())) {
             throw new IllegalArgumentException("the cost peer " + costPeer.get().experienceRef() + " at sequence "
                     + costPeer.get().ledgerSequence() + " does not precede the reward at " + identity.ledgerSequence()

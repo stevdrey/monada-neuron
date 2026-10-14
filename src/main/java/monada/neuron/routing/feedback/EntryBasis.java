@@ -33,6 +33,42 @@ public sealed interface EntryBasis permits EntryBasis.Derived, EntryBasis.NoUpda
             Objects.requireNonNull(acceptance, "acceptance must not be null");
             reasons = Canonical.sortedUnique(reasons, Comparator.naturalOrder(), IneligibilityReason.values().length,
                     "reasons");
+            // the same rule/assessment consistency RoutingFeedback enforces, so a ledger entry cannot claim a rule
+            // that the recorded assessment could never have selected
+            if (reasons.contains(IneligibilityReason.PROVENANCE_MISMATCH)
+                    || reasons.contains(IneligibilityReason.STALE_ARTIFACT_REVISION)
+                    || reasons.contains(IneligibilityReason.CONTRADICTORY_EVIDENCE)) {
+                throw new IllegalArgumentException("the policy derives nothing for reasons " + reasons);
+            }
+            switch (rule.disposition()) {
+                case REINFORCE -> {
+                    if (acceptance != DerivedAcceptance.VALIDATED_ACCEPTED || !reasons.isEmpty()) {
+                        throw new IllegalArgumentException("a reward needs validated acceptance and no reason");
+                    }
+                }
+                case PENALIZE -> {
+                    if ((acceptance != DerivedAcceptance.NOT_ACCEPTED
+                            && acceptance != DerivedAcceptance.ACCEPTED_UNVALIDATED)
+                            || reasons.stream().anyMatch(IneligibilityReason::blocking)
+                            || reasons.contains(IneligibilityReason.IMPORTED_CLAIM)
+                            || reasons.contains(IneligibilityReason.NO_STAGE_ATTRIBUTION)
+                            || reasons.contains(IneligibilityReason.NO_ATTRIBUTABLE_FAILURE)) {
+                        throw new IllegalArgumentException("a penalty cannot follow " + acceptance + " " + reasons);
+                    }
+                }
+                case NEUTRAL -> {
+                    if (!rule.covers(acceptance, reasons, List.of())) {
+                        throw new IllegalArgumentException(
+                                "rule " + rule + " does not match the recorded assessment: " + acceptance + " " + reasons);
+                    }
+                    for (ScoreRule earlier : ScoreRule.values()) {
+                        if (earlier.ordinal() < rule.ordinal() && earlier.covers(acceptance, reasons, List.of())) {
+                            throw new IllegalArgumentException(
+                                    "rule " + earlier + " takes precedence over " + rule + " for " + reasons);
+                        }
+                    }
+                }
+            }
         }
     }
 

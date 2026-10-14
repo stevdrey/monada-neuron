@@ -3,6 +3,7 @@ package monada.neuron.routing.feedback;
 import monada.neuron.evolution.FeedbackDisposition;
 import monada.neuron.evolution.FeedbackEntry;
 import monada.neuron.model.FrequencyState;
+import monada.neuron.routing.CohortBinding;
 import monada.neuron.routing.ResourceObjective;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.features.Feature;
@@ -373,6 +374,73 @@ class RoutingFeedbackValueTypesTest {
                 FeedbackDisposition.NEUTRAL, 0.0));
         assertThrows(IllegalArgumentException.class, () -> FeedbackFixtures.variant(entry, Optional.of(NODE_A),
                 onTime, entry.basis(), FeedbackDisposition.PENALIZE, -0.4));
+    }
+
+    @Test
+    void aCostRefinedRewardCannotBeComparedAgainstItsOwnSample() {
+        var f = reward();
+        var self = Optional.of(new PeerRevision(f.identity().experienceRef(), 0, f.identity().ledgerSequence() - 1));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingFeedback(f.contractVersion(), f.identity(),
+                f.supersedesSequence(), f.cohortKey(), f.routingPolicyId(), f.routingPolicyVersion(),
+                f.catalogVersion(), f.cutoff(), f.derivedAcceptance(), ScoreRule.REINFORCE_COST_REFINED,
+                f.disposition(), f.entries(), f.reasons(), f.effectiveEvidence(), f.provenFailures(), self));
+    }
+
+    private static AppliedRevision entryWith(AppliedRevision base, FeedbackIdentity identity, long cutoff,
+            Feature<Long> supersedes, EntryBasis basis, Optional<PeerRevision> peer) {
+        return new AppliedRevision(identity, base.routingPolicyId(), base.routingPolicyVersion(), supersedes,
+                base.catalogVersion(), cutoff, base.targetNodeId(), peer, basis, base.disposition(), base.score());
+    }
+
+    private static FeedbackIdentity withSequence(FeedbackIdentity id, long revision, long sequence) {
+        return new FeedbackIdentity(id.experienceRef(), revision, sequence, id.decisionRef(), id.route(),
+                id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion());
+    }
+
+    @Test
+    void aLedgerEntryMirrorsTheInvariantsOfTheFeedbackItRecords() {
+        var base = AppliedRevision.of(reward());
+        var id = base.identity();
+        long position = id.ledgerSequence();
+        // valid reference construction
+        entryWith(base, id, base.cutoff(), base.supersedesSequence(), base.basis(), Optional.empty());
+        // beyond its cutoff
+        assertThrows(IllegalArgumentException.class, () -> entryWith(base, id, position - 1,
+                base.supersedesSequence(), base.basis(), Optional.empty()));
+        // ancestry follows the revision
+        assertThrows(IllegalArgumentException.class, () -> entryWith(base, withSequence(id, 1, position), base.cutoff(),
+                Feature.unknown(), base.basis(), Optional.empty()));
+        assertThrows(IllegalArgumentException.class, () -> entryWith(base, id, base.cutoff(), Feature.known(3L),
+                base.basis(), Optional.empty()));
+        assertThrows(IllegalArgumentException.class, () -> entryWith(base, withSequence(id, 1, position), base.cutoff(),
+                Feature.known(position), base.basis(), Optional.empty()));
+        // the cohort belongs to the executed route and scope
+        var derived = (EntryBasis.Derived) base.basis();
+        var otherRoute = new EntryBasis.Derived(
+                new CohortKey(derived.cohortKey().scopeId(), derived.cohortKey().stageKind(),
+                        derived.cohortKey().cohortBucket(), new RouteKey("sub-z", 1)),
+                derived.rule(), derived.acceptance(), derived.reasons());
+        assertThrows(IllegalArgumentException.class, () -> entryWith(base, id, base.cutoff(),
+                base.supersedesSequence(), otherRoute, Optional.empty()));
+        // a marker's binding was recorded under the identity's mapping version
+        var marker = AppliedRevision.ofNoUpdate(new FeedbackFixtures.Spec().passing().observation(),
+                NoUpdateReason.NO_STAGE_ATTRIBUTION);
+        var binding = ((EntryBasis.NoUpdateMarker) marker.basis()).cohortBinding();
+        var foreignMarker = new EntryBasis.NoUpdateMarker(NoUpdateReason.NO_STAGE_ATTRIBUTION,
+                new CohortBinding(binding.cohortBucket(), binding.bucketMappingVersion(), "routing-state/other",
+                        binding.featureSchemaVersion()));
+        assertThrows(IllegalArgumentException.class, () -> entryWith(marker, marker.identity(), marker.cutoff(),
+                marker.supersedesSequence(), foreignMarker, Optional.empty()));
+        // a cost peer is another sample that precedes the reward in applied order
+        var refined = new EntryBasis.Derived(derived.cohortKey(), ScoreRule.REINFORCE_COST_REFINED,
+                derived.acceptance(), derived.reasons());
+        entryWith(base, id, base.cutoff(), base.supersedesSequence(), refined,
+                Optional.of(new PeerRevision("exp-2", 0, position - 1)));
+        assertThrows(IllegalArgumentException.class, () -> entryWith(base, id, base.cutoff(),
+                base.supersedesSequence(), refined, Optional.of(new PeerRevision("exp-2", 0, position + 1))));
+        assertThrows(IllegalArgumentException.class, () -> entryWith(base, id, base.cutoff(),
+                base.supersedesSequence(), refined,
+                Optional.of(new PeerRevision(id.experienceRef(), 0, position - 1))));
     }
 
     @Test
