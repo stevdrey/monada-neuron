@@ -290,8 +290,8 @@ versioned contract is defined in [Forge Routing Contract v1](docs/specs/forge-ro
 (`Selected`, `Abstain`, `NoEligibleRoute`) and the optional `RoutingReasoningStage` (`monada.neuron.routing`, issue #62), with its decision verification split into a
 mandatory validator and a policy-specific verifier (issue #76) and a host-configured `RoutingDecisionVerifier` and
 `TrustedRoutingProfile` (issue #78, [ADR 0027](docs/adr/0027-trusted-routing-decision-verification.md)), and the
-provenance-preserving `RoutingOutcome` / `RoutingObservation` with the quality-gated `OutcomeEvaluator` (`monada.neuron.routing.outcome`, issue #63),
-are implemented, while the other routing types it names are proposals that issues #64 to #68 implement, all additive and opt-in, and the Monada Resonance Store capabilities it depends on are not yet
+provenance-preserving `RoutingOutcome` / `RoutingObservation` with the quality-gated `OutcomeEvaluator` (`monada.neuron.routing.outcome`, issue #63), and the separate `RoutingFeedback` with executed-route credit assignment and caller-owned applied-revision rules (`monada.neuron.routing.feedback`, issue #65, [ADR 0029](docs/adr/0029-routing-feedback-credit-assignment.md)),
+are implemented, while the other routing types it names are proposals that issues #64 and #66 to #68 implement, all additive and opt-in, and the Monada Resonance Store capabilities it depends on are not yet
 available. A routing decision is advice. Forge keeps authorization, execution and evidence judgment, and Monada Resonance Store
 keeps persistent experience.
 
