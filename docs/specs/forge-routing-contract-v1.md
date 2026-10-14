@@ -1,6 +1,6 @@
 # Forge Routing Contract v1
 
-Status: **proposed contract; implemented so far: `TaskFeatures` and its signal encoder (#60, Section 15), the route catalog and eligibility filter (#61, Section 16), the routing policy, decisions and composition seam (#62, Section 17), and outcome evidence with learning eligibility (#63, Section 19).** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
+Status: **proposed contract; implemented so far: `TaskFeatures` and its signal encoder (#60, Section 15), the route catalog and eligibility filter (#61, Section 16), the routing policy, decisions and composition seam (#62, Section 17), outcome evidence with learning eligibility (#63, Section 19), Store export translation (#64, Section 20), and routing feedback with executed-route credit assignment (#65, Section 21).** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
 Issue: [#59](https://github.com/stevdrey/monada-neuron/issues/59) (Forge Routing 1/10).
 
 This document is the normative v1 contract that issues #60–#68 implement. Later issues may refine exact Java
@@ -9,7 +9,7 @@ signatures, but must not change the semantics defined here without updating this
 Normative words: **must**, **must not**, **should** and **may** carry their usual specification meaning.
 
 Every type and package name below (`monada.neuron.routing`, `TaskFeatures`, `RouteCatalog`, `RoutingDecision`, ...) is a
-**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them existed; since #60, `TaskFeatures` and the other types of `monada.neuron.routing.features` (Section 15), and since #61 the types of `monada.neuron.routing.catalog` (Section 16), and since #62 the policy, decision, preference and composition types of `monada.neuron.routing` (Section 17), and since #63 the outcome evidence and learning-eligibility types of `monada.neuron.routing.outcome` (Section 19), are implemented. Types that do exist are named with
+**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them existed; since #60, `TaskFeatures` and the other types of `monada.neuron.routing.features` (Section 15), and since #61 the types of `monada.neuron.routing.catalog` (Section 16), and since #62 the policy, decision, preference and composition types of `monada.neuron.routing` (Section 17), and since #63 the outcome evidence and learning-eligibility types of `monada.neuron.routing.outcome` (Section 19), and since #65 the routing feedback, target-binding and applied-revision types of `monada.neuron.routing.feedback` (Section 21), are implemented. Types that do exist are named with
 their current package and are described only as they exist today.
 
 ## Background
@@ -33,7 +33,7 @@ Inspected `main` at `d1dd569` (Java 27). Already implemented and **reused unchan
 - `RuntimeBackendSelector`, which selects *internal computational backends* (SCALAR/VECTOR_API, object/CSR graph, ...). It
   never selects external workers or models.
 
-At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 20 describe what has been added since. Still absent: `RoutingFeedback` and the caller-owned preference state store (#65 to #68). `ActionRequest` carries Signals and an
+At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 20 describe what has been added since. Still absent: the caller-owned preference state store (#66 to #68). `ActionRequest` carries Signals and an
 opaque host context, not a route. `Signal` carries no identity (ADR 0005).
 
 ## Goal
@@ -161,7 +161,7 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 | `RoutingDecision` | #62 (implemented, Section 17) | Sealed: `Selected`, `Abstain`, `NoEligibleRoute`. |
 | `RoutingOutcome` | #63 (implemented, Section 19) | Host-evaluated result of executing a decision, with evidence and provenance. |
 | `RoutingObservation` | #63 (implemented, Section 19) | Neutral, Store-independent record of one effective execution sample, defined with `RoutingOutcome` so feedback derivation needs only #63. #64 only *produces* it from Store exports. |
-| `RoutingFeedback` | #65 | Bounded artifact derived from an observation; separate from `OutcomeFeedback`. |
+| `RoutingFeedback` | #65 (implemented, Section 21) | Bounded artifact derived from an observation; separate from `OutcomeFeedback`. |
 | `RoutingPreference`, `CohortMapping`, `RoutingStateDefinition` | #62 (implemented, Section 17) | `CohortMapping` is the pure, versioned `TaskFeatures -> cohortBucket` function with its `bucketMappingVersion`. `RoutingStateDefinition` groups the `CohortMapping`, `initialNodeState`, `AdaptationConfig` and feedback scoring and eligibility rules under one composite `mappingVersion` that changes when any part changes. `RoutingPreference` is the **immutable value snapshot** of `scopeId`, `featureSchemaVersion`, `evaluationPolicy`, `mappingVersion`, cohort preference values, supporting counts and `processedCutoff`, taken from the caller's mutable state and passed to `decide`. #62 defines the value type, its valid empty cold-start form (`EMPTY` for a scope, feature schema, evaluation policy and mapping version) and its admission validation, so `decide` needs no later type; #66 only builds non-empty snapshots from the caller's state. |
 | `RoutingStateStore` (caller-owned, mutable) | #66 | The caller's `Node` bindings, applied-revision ledger and `RoutingStateCheckpoint`; it produces the `RoutingPreference` snapshots. It is never passed to `decide`. |
 | `RoutingCognitiveStageResult` | #62 (implemented, Section 17) | Level B stage result that retains the full `RoutingDecision` together with the hypothesis hand-off (Section 3.5). |
@@ -800,7 +800,7 @@ Everything in this contract is additive and opt-in.
 - Stable provenance and schema/policy versions are required for replay; corrections and scope boundaries must not silently
   contaminate learned state, which is why mismatches are reported and rebuilds are explicit.
 - `NeuronRuntime` is sequential and not thread-safe; the preference snapshot must be passed by the host, not shared mutably.
-- The Store's contract is not yet implemented, so end-to-end behavior with real exports is unverified until #64 and #68.
+- The Store's execution-memory issues #94 to #101 are implemented on its `main` and #102 is informational (Section 10). Translation of real exports was exercised against a real `ExecutionMemory` by #64 (Section 20); the published API and the consumer loop over real exports remain unverified until #68.
 
 ## 13. Verification (issue #59, historical)
 
@@ -817,7 +817,7 @@ file.
 
 ## 14. Documentation Updates
 
-- `docs/specs/forge-routing-contract-v1.md` (this file, new; Section 15 added by #60, Section 16 by #61, Section 17 by #62).
+- `docs/specs/forge-routing-contract-v1.md` (this file, new; Section 15 added by #60, Section 16 by #61, Section 17 by #62, Section 21 by #65).
 - `docs/adr/0026-forge-routing-ownership.md` (new).
 - `docs/architecture.md`: "Forge Routing Extension (proposed)" section.
 - `README.md`: pointer under the host-embedding section.
@@ -984,7 +984,7 @@ edit outside the routing packages is in the `reasoning` package: a small interfa
 | Type | Behavior |
 | --- | --- |
 | `RoutingPolicy` / `LexicographicRoutingPolicy` | `decide(RoutingRequest, RouteCatalog, RoutingPreference) -> RoutingDecision`, pure, stateless. The reference policy is `route-lex` v`1`; parameters: `RoutingStateDefinition`, `minSupportingObservations` (default 3, at least 1), `maxAutoSelectTier` (empty = unbounded), optional `ResourceObjective(dimension, MINIMIZE/MAXIMIZE)`. |
-| `RoutingDecision` | Sealed `Selected` / `Abstain` / `NoEligibleRoute`, each with `Provenance(decisionRef, catalogVersion, policyId/Version, cutoff, StateBinding, StateValidation)` and its exclusion reasons (for excluded routes only, reusing `EligibilityReport.Exclusion`). `Selected` adds the route, the chosen `executionMode`, `Basis`, `overflowUsed`, at most 8 `RankedCandidate`s (`Placement` names the rule that separated each from its neighbour) with `candidatesTruncated`, `rulesApplied` / `rulesSkipped` and the `CohortBinding`. A decision is never an `ActionStatus`. |
+| `RoutingDecision` | Sealed `Selected` / `Abstain` / `NoEligibleRoute`, each with `Provenance(decisionRef, catalogVersion, policyId/Version, cutoff, StateBinding, StateValidation, PolicyParameters, Optional<stageKind>)` and its exclusion reasons (for excluded routes only, reusing `EligibilityReport.Exclusion`). `Selected` adds the route, the chosen `executionMode`, `Basis`, `overflowUsed`, at most 8 `RankedCandidate`s (`Placement` names the rule that separated each from its neighbour) with `candidatesTruncated`, `rulesApplied` / `rulesSkipped` and the `CohortBinding`. A decision is never an `ActionStatus`. |
 | `RoutingPreference`, `CohortPreference` | Immutable snapshot (at most 256 cohorts, unique per stage kind, bucket and route, canonical order, finite values, `-0.0` normalized). `RoutingPreference.empty(...)` is the valid cold start; `mismatches(request, definition)` returns the admission failures in the fixed order of Section 3.2 (`StateMismatch`). The snapshot's own producing policy id/version is provenance, not an admission key. |
 | `CohortMapping`, `ChangeSizeCohortMapping`, `RoutingStateDefinition` | Pure feature-to-bucket function with `bucketMappingVersion`; the reference mapping buckets change size (`S` up to 50, `M` up to 500, `L`, `UNKNOWN`) and its thresholds are an **unvalidated policy choice**. In #62 `RoutingStateDefinition(mappingVersion, cohortMapping)` carries only the mapping; the initial Node state, `AdaptationConfig` and feedback rules join the same composite `mappingVersion` in #65 and #66 (a refinement of Section 3, not a change of semantics). |
 | `RoutingInput`, `RoutingInputResolver`, `RoutingCognitiveStageResult`, `RoutingReasoningStage` | Level B (Section 3.5). `RoutingReasoningStage` is a `REASONING` **source** stage: first in the cycle, empty initial Signals, no perception source in the same cycle. It resolves `RoutingInput` from the cycle's `HostExecutionContext` through the host port and throws `IllegalStateException` when there is no host context or the resolver returns empty. It also re-verifies every decision against `RouteEligibilityFilter` and throws `IllegalStateException` on any disagreement, so a custom policy cannot hand off a hypothesis for an ineligible route: a `Selected` route must be eligible with the same execution mode and overflow flag; `NoEligibleRoute` is rejected while a route is eligible; an `Abstain` must list exactly the eligible routes; and the exclusions must equal the filter's. It also rejects a decision whose `catalogVersion`, `decisionRef`, `cutoff`, state binding or `policyId`/`policyVersion` do not match the resolved catalog, request, preference and hosted policy identity (the profile's `policyId`/`policyVersion` on the trusted path, so a policy that later reports another identity cannot change it; the policy's own on the legacy path), because `Proposition.code` is meaningful only with its own catalog snapshot (on the **legacy path** the recorded admission `validation` is recomputed from the request, the preference and the recorded parameters, in both directions for every reason (scope, feature schema, evaluation policy, watermark, mapping version), using the `stateMappingVersion` and `stateFeatureSchemaVersion` of the policy's state definition that `PolicyParameters` records; on that path only the cohort bucket is not re-derived, because the port does not expose the policy's `CohortMapping`; on the **trusted-profile path** the host-selected verifier instead compares the recorded parameters with the host's, derives the expected mismatches from the host's `RoutingStateDefinition` and derives the cohort bucket with its `CohortMapping`, Section 18.3). The checks cost one extra `O(R*Q)` filter pass per cycle. The stage also checks that every ranked candidate is eligible and that the explanation is the bounded prefix the filter implies (`min(8, eligible)` candidates, `candidatesTruncated` iff more than 8 are eligible). The decision types reject a route that is both eligible/ranked and excluded, an `Abstain` candidate that is not in its eligible list, more eligible or ranked plus excluded routes than one catalog holds (32), a `Selected` whose `cohortBinding` schema or mapping version disagrees with the state provenance and `PolicyParameters`, and contradictory rule explanations (`rulesApplied` and `rulesSkipped` must be unique, in `RoutingRule` order, disjoint and together cover all five rules, with tier, priority and route order always applied). The mandatory validator, on both paths, verifies the admission keys that the request alone decides (scope, feature schema, evaluation policy, `processedCutoff` against the cutoff); the mapping-version and recorded-parameter comparisons that follow are the legacy path's, and the trusted path replaces them with the host-configuration comparison above: a decision recorded as `Compatible` is rejected when the preference conflicts with the request or was built under another mapping version than the recorded policy parameters, and an `Incompatible` one must list exactly the mismatches that exist (scope, evaluation policy, watermark and mapping version in both directions; a feature-schema mismatch only needs a real cause on the request side, because it can also stem from the policy's own mapping). A `POLICY_TRADEOFF_UNRESOLVED` abstention must rank `min(8, eligible)` candidates and flag truncation exactly when more than 8 are eligible; a truncated `Selected` ranking lists exactly 8 candidates and counts one further, unlisted eligible route toward the 32-route bound. `Basis` and `Placement` must agree (`Placement.basis()`), every placing rule must be in `rulesApplied`, and `ONLY_ELIGIBLE` marks exactly a sole, untruncated candidate. `Provenance` rejects a `Compatible` state whose mapping version differs from the recorded policy parameters. The two leading ranked candidates must share one `Placement` (each is placed relative to the other). The ordering, recorded-parameter and cohort-bucket checks described from here on are those of the **legacy three-argument constructor**, which applies the `route-lex/1` verifier to every policy it hosts and reads the parameters and cohort bucket from the decision itself. With a host-configured `TrustedRoutingProfile` (Section 18) the mandatory validation is unchanged, but the host-selected verifier replaces this verification, and the reference verifier then compares the recorded identity and parameters with the host's and derives the cohort bucket with the trusted `CohortMapping`. The legacy constructor enforces the fixed ordering of Section 3.3 by recomputing it: `LexicographicRanking` (package-private) is the single definition, used by `LexicographicRoutingPolicy` to decide and by the stage to verify. For a `Selected` decision the stage re-ranks the eligible routes from the decision's recorded `PolicyParameters` and its recorded cohort bucket and requires the same winner, the same first `min(8, n)` candidates and placements, the same truncation flag, the same applied and skipped rules (learned preference applied exactly when every eligible route has a cohort with at least `minSupportingObservations`; resource objective applied exactly when a tied group of known, same-unit estimates was refined) and the same `Basis`, and it rejects a winner above the recorded tier cap. A tier-cap abstention records the cohort binding the ordering used (like `Selected`, and agreeing with the state provenance and the recorded parameters); the stage re-ranks once with that bucket, requires the same candidates, placements and truncation flag, and requires the recomputed winner to exceed the recorded cap. A `STATE_INCOMPATIBLE` abstention ran no ordering and records no cohort. A policy with other ordering rules would be a new policy version and needs its own host-selected verifier (Option C, Section 18). The cost is one extra ranking per cycle, `O(R log R + R log C)`. Since #76 the stage only composes these checks: `RoutingDecisionValidator` owns the mandatory ones and `LexicographicDecisionVerifier` the `route-lex/1` ones (Section 17.5). The stage also recomputes the tier-cap trigger from the recorded parameters: `POLICY_TRADEOFF_UNRESOLVED` is accepted only when `maxAutoSelectTier` is set and the best-ranked route's catalog tier exceeds it, and a `Selected` route above a recorded cap is rejected. A `RESOURCE_OBJECTIVE` placement, or `RESOURCE_OBJECTIVE` among the applied rules, requires a configured objective in the recorded policy parameters, since the parameters could not otherwise reproduce the explanation. On the legacy path the cohort bucket token itself is not re-derived, because the `RoutingPolicy` port does not expose the `CohortMapping`; the trusted profile path derives it (Section 18.3). A `Selected` decision yields one hypothesis `Proposition(domain, zero-based index of the route in the catalog's canonical order)` without `SignalEvidence`; `Abstain` and `NoEligibleRoute` yield none. Output Signals are always empty. |
@@ -1243,9 +1243,9 @@ Examples covered by tests: accepted, repaired chain (with and without stage-loca
 unavailable/timed out, stale policy and artifact revision, incomplete usage, imported claim, contradictory evidence,
 provenance mismatch, future evidence, cost that cannot offset a failed gate.
 
-Evidence gaps: the evaluator trusts the host's judgments, attribution basis and mandatory set (descriptors and evidence are
+Evidence gaps: `stageKind` is not retained in the decision or the outcome, so the request's `stageKind` is host-asserted; the policy only verifies that the request's features reproduce the decision's recorded bucket (the reference mapping ignores `stageKind`), so a request that differs from the original in `stageKind` alone, with the same bucket, is not detected; the evaluator trusts the host's judgments, attribution basis and mandatory set (descriptors and evidence are
 observations, not proof); `STAGE_LOCAL` is accepted on the host's assertion plus at least one reference; Store export
-translation, envelope verification and sample `ExperienceRef` handling were delivered by #64 (Section 20); feedback scores and dispositions are #65;
+translation, envelope verification and sample `ExperienceRef` handling were delivered by #64 (Section 20); feedback scores and dispositions were delivered by #65 (Section 21);
 no latency measurement; no claim that eligibility rules improve routing.
 
 ## 20. Implemented: Store Experience Export Translation (#64)
@@ -1351,3 +1351,143 @@ with two routed stages is refused, not split); the routed attempt's invocation i
 `UNAVAILABLE`/`TIMED_OUT`; usage is stage-level, not full-chain (full-chain cost stays an evaluation-tool annotation); no
 allocation or latency measurement; translated observations are not yet fed to `OutcomeEvaluator` in an adapter test because that
 needs the decision/request fixtures of the root test sources; feedback (#65) and state (#66) are out of scope.
+
+## 21. Implemented: Routing Feedback and Executed-Route Credit Assignment (#65)
+
+Package `monada.neuron.routing.feedback`. This section describes **implemented behavior** and refines Sections 6 and 7; it does
+not change their semantics. Everything is additive and opt-in. `OutcomeFeedback`, `FeedbackAdaptationCognitiveStage`, `ActionStatus`,
+`RoutingStateDefinition` and the Store are untouched; nothing is wired into a cycle, and there is no persistence, hidden history,
+clock, randomness, background task or Node access. The caller-owned mutable state, checkpoints and snapshot production remain #66.
+
+### 21.1 Types
+
+| Type | Role |
+| --- | --- |
+| `RoutingFeedbackPolicy(RoutingStateDefinition, RoutingFeedbackConfig, EvidencePolicy)` | `derive(observation, selectedDecision, request, bindings[, Optional<CostReference>]) -> FeedbackDerivation`. Pure and stateless. Runs `OutcomeEvaluator.assess`, which stays the single owner of the verdict rule, and only maps the assessment. |
+| `FeedbackDerivation` | Sealed: `Derived(RoutingFeedback)` or `NoUpdate(NoUpdateReason, reasons, mismatches)`, where the `PROVENANCE_MISMATCH` reason is present exactly when mismatches are listed. A decision whose recorded stage kind is absent or differs from the request's yields `NoUpdate(PROVENANCE_MISMATCH)` with the `STAGE_KIND` mismatch before any assessment. |
+| `RoutingFeedback` | Contract version, `FeedbackIdentity`, `supersedesSequence`, `CohortKey`, routing policy id/version, catalog version, cutoff, `DerivedAcceptance`, `ScoreRule`, `FeedbackDisposition`, 0 or 1 `FeedbackEntry`, assessment reasons, effective evidence and proven failures. Validates rule, disposition, entries and evidence against each other (the cohort belongs to the executed route and scope; a neutral `ScoreRule` must match the recorded assessment and precedence, as `ScoreRule.covers` defines, and reasons for which the policy derives nothing never appear; a corrected revision carries the `supersedesSequence` it replaces and an initial revision carries none, as in `RoutingObservation`): entries are score-only (no target Signal), `provenFailures` equal the effective `FAIL` dimensions, a `REINFORCE` has non-empty effective evidence that is all `PASS` or `NOT_APPLICABLE`, a `PENALIZE` follows `NOT_ACCEPTED` or `ACCEPTED_UNVALIDATED` and carries no blocking reason and no `IMPORTED_CLAIM`, `NO_STAGE_ATTRIBUTION` or `NO_ATTRIBUTABLE_FAILURE` (the policy derives neutral or nothing for those), and every effective evidence position is at or before the sample position, which is at or before the cutoff. `toFeedbackInputs()` is the explicit adapter to `FeedbackInput`/`AdaptationPolicy`: it manufactures no `ActionStatus` and no `OutcomeFeedback`, and is empty for `NEUTRAL`. |
+| `FeedbackIdentity` | Exact `experienceRef`, `revision`, `ledgerSequence`, `DecisionRef`, executed `RouteKey`, `mappingVersion` and evaluation policy. Compared by equality, never hashed or generated. |
+| `CohortKey`, `TargetBinding`, `TargetBindings` | `(scopeId, stageKind, cohortBucket, RouteKey)`, the caller's binding of a cohort to a Node `UUID`, and an immutable, canonical-order set of at most 256 bindings of one `(scopeId, evaluationPolicy, mappingVersion, featureSchemaVersion)` partition with unique keys and unique Nodes. Only identifiers are carried, so derivation cannot mutate a target. |
+| `RoutingFeedbackConfig`, `CostObjective`, `CostReference` | Scoring rules (below) and the optional cost refinement. |
+| `AppliedRevision`, `Reconciliation`, `RevisionReconciler`, `RebuildOrder` | The caller-owned applied-revision record and the pure functions that relate a new revision to the caller's ledger and order a rebuild (Section 21.3). |
+
+### 21.2 Derivation rules
+
+Evaluated in this order; the first match decides.
+
+| Condition | Result |
+| --- | --- |
+| The policy's `mappingVersion` or the cohort mapping's `bucketMappingVersion` differs from the decision's or the outcome's cohort binding (checked before provenance, so a mispaired foreign outcome is classified as foreign and never recorded) | `NoUpdate(MAPPING_MISMATCH)` |
+| The bindings belong to another scope, evaluation policy, `mappingVersion` or feature schema (checked here, before every neutral or no-update exit, so a foreign sample is never derived and recorded; only the exact target lookup waits for a reward or penalty) | `NoUpdate(BINDING_SCOPE_MISMATCH)` or `NoUpdate(BINDING_PARTITION_MISMATCH)` |
+| The decision was made, or the outcome recorded, under another feature schema than the state definition's cohort mapping (an ADR 0026 admission key) | `NoUpdate(FEATURE_SCHEMA_MISMATCH)` |
+| The request's `TaskFeatures.schemaVersion` differs from the cohort mapping's feature schema (checked before the mapping runs, because a mapping built for its own schema may reject foreign features) | `NoUpdate(PROVENANCE_MISMATCH)` with `FEATURE_SCHEMA_VERSION` |
+| The state definition's cohort mapping, applied to the request's features, does not give the decision's recorded bucket (the request did not produce the decision) | `NoUpdate(PROVENANCE_MISMATCH)` with `COHORT_BINDING` |
+| `PROVENANCE_MISMATCH` (including executing a route other than the advised one, any other scope, stage, catalog, policy, fingerprints or evaluation policy) | `NoUpdate(PROVENANCE_MISMATCH)` with the differing fields; a selected-but-unexecuted candidate never earns credit |
+| `STALE_ARTIFACT_REVISION`, `CONTRADICTORY_EVIDENCE` | `NoUpdate` with that reason |
+| `ENVIRONMENTAL_FAILURE`, `CANCELLED`, `PENDING`, `IMPORTED_CLAIM` | `Derived` `NEUTRAL` (`NEUTRAL_ENVIRONMENTAL`, `NEUTRAL_CANCELLED`, `NEUTRAL_PENDING`, `NEUTRAL_IMPORTED_CLAIM`); an imported claim is neutral even when it carries a failing observation |
+| `NO_STAGE_ATTRIBUTION` (validated or failed, but chain-only or no attribution, e.g. a mixed-route repair) | `NoUpdate(NO_STAGE_ATTRIBUTION)`: no participant receives chain-level credit |
+| `POSITIVE_CANDIDATE` | `REINFORCE` `reinforceScore`, or `reinforceScore + costBonus` under the cost rule below |
+| `NEGATIVE_CANDIDATE` | `PENALIZE` `penalizeScore`; cost is never read |
+| Otherwise | `NEUTRAL`: `NEUTRAL_NO_ATTRIBUTABLE_FAILURE` (rejection without a proven failure), else `NEUTRAL_INCOMPLETE_EVIDENCE` (missing, unknown or foreign-policy evidence), else `NEUTRAL_UNVALIDATED_ACCEPTANCE` |
+
+A `REINFORCE` or `PENALIZE` additionally needs the Node: the bindings must belong to the observation's scope
+(`BINDING_SCOPE_MISMATCH`), to the outcome's evaluation policy, the policy's `mappingVersion` and its feature schema (`BINDING_PARTITION_MISMATCH`)
+and must contain the exact `CohortKey` of the executed route (`NO_TARGET_BINDING`); otherwise nothing is derived. A `NEUTRAL`
+needs no binding because it changes no Node. Foreign-scope and missing bindings therefore mutate nothing.
+
+**Scores.** `RoutingFeedbackConfig(reinforceScore in (0, 1], penalizeScore in [-reinforceScore, 0), costBonus in [0, 1 - reinforceScore], costObjective)`:
+a proven failure is never a stronger signal than a validated success, neither score is zero, and `costObjective` is present exactly
+when `costBonus > 0`. The score is a bounded input to `AdaptationPolicy`, not a calibrated probability. A change of any value changes
+what is learned, so the host must give the state definition a new `mappingVersion`; folding the config into the composite
+`RoutingStateDefinition` is #66 (its signature is deliberately not changed here).
+
+**Cost refinement (optional, reward-only).** `reinforceScore + costBonus` is granted only when a `CostReference` is supplied, the config
+declares a `CostObjective(UsageKind, MINIMIZE|MAXIMIZE)`, and all of the following hold: the peer (assessed by the policy itself with
+its own decision and request, not by a caller-supplied assessment) is a `POSITIVE_CANDIDATE` of **another** route under a different `DecisionRef` (two accounts of one decision are not two executions) whose decision and outcome belong to the same partition (mapping, bucket mapping and schema), whose request reproduces its decision's recorded bucket, which comes strictly before the reward in applied order `(ledgerSequence, experienceRef)` and whose own cohort is bound in this state (so a replay always applies the peer first, and its arrival or correction is always a Node change the ledger sees); scope, task,
+`stageKind` (each side's recorded in its decision, which must match its request), the three fingerprints and the evaluation policy are equal (Section 6, directly comparable pair); both outcomes have
+`MEASURED` usage with a `Known` counter of the declared kind and equal provenance (`REPORTED` or `ESTIMATED`); and the executed
+value is strictly better. Unknown, not-measured, absent and `NO_BILLABLE_USAGE` data, equal values and non-comparable pairs yield
+no bonus, and a known zero is a real zero. Cost never alters a penalty or a neutral result, so cheap failing work cannot gain
+positive feedback. Usage counters have no unit or currency, so the refinement compares a usage counter only; hypothetical API
+cost and actual billing are carried by the outcome but are not read.
+
+### 21.3 Caller-owned applied-revision bookkeeping and rebuild
+
+The caller keeps a ledger of `AppliedRevision(identity, routingPolicyId, routingPolicyVersion, supersedesSequence, catalogVersion, cutoff, Optional<targetNodeId>, Optional<costPeer>, EntryBasis, disposition, score)`: **one entry per sample reference, the latest examined revision**, at most 4,096 entries. Neuron holds no ledger. Two entries compare equal only when everything the contract validates about the claim is equal, apart from the bulky evidence lists and the export `cutoff` (the as-of context of the read, not part of the claim: a sample exported again at a newer cutoff and otherwise unchanged is `AlreadyApplied`, never a conflict), and an entry enforces the same invariants as the feedback it records (position at or before its cutoff, correction ancestry following the revision, a cohort of the executed route and scope, a rule that the recorded assessment could have selected, a cost peer that is another sample and precedes the reward in applied order):
+
+- the producing routing policy, the correction ancestry, the catalog version and the cutoff;
+- the credited Node, recorded exactly when the entry moved a Node;
+- `EntryBasis`, either `Derived(cohortKey, rule, acceptance, reasons)` for a derived feedback (neutral feedback is recorded too, with score `0.0`) or `NoUpdateMarker(reason, cohortBinding)` for a revision that derived nothing, built by `AppliedRevision.ofNoUpdate(observation, reason)`, so a delayed older revision of the same sample stays stale;
+- the exact `PeerRevision` of the cost peer, recorded exactly for a cost-refined reward.
+
+`RevisionReconciler.reconcile(ledger, observation, derivation)` first requires that a derived feedback answers the exact observation (reference, revision, ledger sequence, `supersedesSequence`, decision, executed route, routing policy, catalog, cutoff, evaluation policy, `mappingVersion` and cohort bucket), else `IllegalArgumentException`; it then returns advice and modifies nothing. The rules, in the order they are checked:
+
+| Relation of the observation to the ledger | Result |
+| --- | --- |
+| Nothing derived because the observation belongs to another state partition (`MAPPING_MISMATCH`, `FEATURE_SCHEMA_MISMATCH`, `BINDING_SCOPE_MISMATCH`, `BINDING_PARTITION_MISMATCH`); `NoUpdateReason.recordable()` is false for these | `NotRecorded`: nothing recorded, nothing applied, no capacity used (the caller routes a sample to the ledger of its partition, so one sample reference never alternates between partitions) |
+| Nothing derived for a recordable reason, including `PROVENANCE_MISMATCH` (the outcome does not match its decision or request, a fact about this sample revision) | Handled like any other result below: a marker is recorded, an older reward of the sample is retracted by `RebuildRequired`, and an older revision delivered later is `StaleRevision` |
+| A newer revision at a ledger position that is not strictly later than the entry it replaces, or an older one that is not strictly earlier | `IllegalArgumentException` (inconsistent caller data) |
+| No entry, 4,096 entries exist | `CapacityExhausted` (nothing evicted, nothing applied) |
+| No entry, a feedback derived | `Apply`, subject to the order rule below |
+| No entry, nothing derived | `RecordOnly(marker)`, which only accepts the `NoUpdateMarker` form |
+| Same revision, equal entry (duplicate delivery) | `AlreadyApplied` |
+| Same revision, the entry is a retryable marker (`NO_TARGET_BINDING` or `PROVENANCE_MISMATCH`: the caller can bind the Node or fix the pairing) and the same claim is now delivered with the same cohort bucket | A first application, subject to the order rule (`Apply` or `RecordOnly` replacing the marker, or `RebuildRequired`) |
+| Same revision, two rewards equal except for the cost refinement (rule or peer), and the ledger holds a newer revision of the peer the incoming derivation looked at | `StalePeerDependency(peer entry)`: nothing applied; the ledger is authoritative, so deriving again against the latest peer converges |
+| Same revision, two rewards equal except for the cost refinement, otherwise (the caller knows more than the ledger, or left the cost reference out) | `RebuildRequired(entry, its ledgerSequence)`: only a rebuild converges |
+| Same revision, any other difference (score under another configuration, assessment, catalog, Node, policy, ancestry; a different export cutoff alone is not a difference) | `ConflictingRevision` |
+| Older revision | `StaleRevision` |
+| Newer revision, entry was a reward or penalty, **whatever the new revision derives, including nothing** | `RebuildRequired(superseded, affectedFromSequence)` |
+| Newer revision, entry was neutral or a marker | `Apply` or, when nothing is derived, `RecordOnly` (either replaces the entry), subject to the order rule |
+
+Two further rules apply on top of the table:
+
+- **Order rule.** Adaptation is clamped and order dependent, so an application that moves a Node is incremental only if its applied position `(ledgerSequence, experienceRef by code point)` is after the position of every ledger entry that moved a Node. Otherwise the result is `RebuildRequired(earliest later entry, affectedFromSequence = the incoming ledgerSequence)`: a late first delivery, a late binding or a correction placed before already-applied effects cannot be applied in place. Neutral results and markers move no Node and are never affected.
+- **Cost peer dependencies.** A derived reward whose recorded peer claim contradicts the ledger (the same peer revision at another ledger sequence) is rejected with `IllegalArgumentException`, because a rebuild containing both claims would reject them. A derived reward that looked at a revision of its cost peer that the ledger already superseded is not applied: `StalePeerDependency`. Conversely, any result that would be `Apply`, `RecordOnly` or `RebuildRequired` for a sample becomes `RebuildRequired(dependent entry, its ledgerSequence)` when an entry was cost-refined against an **older revision of this very sample**, even if the peer has no ledger entry of its own; an existing rebuild starts at the earliest such dependent entry. Invalidating a bonus wins over a `CapacityExhausted` report. A cost peer is another sample reference, never an older revision of the rewarded one.
+
+`affectedFromSequence` is the smaller of the superseded entry's `ledgerSequence` and the observation's `supersedesSequence` when
+known; a checkpoint is a valid starting point only if its `processedCutoff` is strictly below it (Section 7). Node adaptation is not
+exactly invertible, so a superseded reward is never subtracted: the caller resets the partition's Nodes to the baseline and replays
+`RebuildOrder.order(observations)`, which keeps the latest revision of each sample reference and sorts by `(ledgerSequence, experienceRef by
+code point)`. It rejects more than 4,096 observations, a higher revision of a sample at a ledger position that is not strictly later than the lower one, and two different observations claiming the same sample revision (checked for every revision before older ones are discarded, so the result never depends on input order). Observations of the same sample revision that differ only in the export cutoff are one claim read at two snapshots: the one with the later cutoff is kept; an identical repeat collapses. The caller derives each observation with the policy and applies the results in that order. A rebuild is staged and swapped by the caller as Section 7 requires.
+
+**The invariant, and how it is tested.** After any sequence of deliveries, the state kept by following this advice equals a rebuild from scratch from the latest known revision of every sample, in applied order, both in the Node state and in the ledger (`LedgerRebuildEquivalenceTest`: 3,000 seeded delivery sequences of 20 deliveries each over four samples on three routes, with out-of-order and duplicate deliveries, corrections, pending, unknown, failing and chain-only outcomes, an unbound route, derivations against out-of-date views of the cost peer, and with and without the cost refinement). Mutating the reconciler (no order rule, markers not recorded, no stale-peer check) makes that test fail.
+
+**Limits of the invariant.** It assumes that the caller derives each delivery from its current knowledge: a cost peer that is left out, as opposed to a superseded revision of it, cannot be detected by the reconciler, which only sees the peer revision a derivation recorded. The bonus also depends on which `CostReference` the host supplies; a rebuild must supply the same selection rule, which is the host's, not Neuron's.
+
+### 21.4 Limits, complexity and footprint
+
+| Limit | Value | Overflow behavior |
+| --- | --- | --- |
+| Entries per `RoutingFeedback` | 0 or 1 here (bound 64) | Rejected at construction |
+| Bindings per `TargetBindings` | 256 | Rejected at construction |
+| Ledger entries | 4,096 | `CapacityExhausted` |
+| Observations per `RebuildOrder` call | 4,096 | `IllegalArgumentException`; the caller pages |
+
+Let `O <= 32` observations, `D <= 6` dimensions, `P <= 32` judged revisions, `C <= 256` bindings, `L <= 4,096` ledger entries
+and `N <= 4,096` replayed observations. `derive` is `O(O + D + P*O + log C)` time and `O(O + D)` extra space (the cost refinement adds one
+`assess`); bindings are a sorted array with an allocation-free binary search, because they are point-queried and a map would add
+per-entry objects without benefit at `C <= 256`. `reconcile` is `O(L)` time with one hash map of `L` entries per call (it
+also checks that sample references are unique) and at most two linear scans over it, one for a later Node change and one for dependent rewards; both scans use total-order tie-breaks, so the iteration order of the map cannot influence a result. That is cheaper than an index the caller would have to maintain. `RebuildOrder` is `O(N log N)` time and `O(N)` space. No cache, parallelism, SIMD or GPU.
+
+**Measured** (JDK 27, `ThreadMXBean.getThreadAllocatedBytes`, 20,000 warm-up calls, one `derive`, two mandatory dimensions, no cost reference):
+6,672 bytes in the recorded run; the figure varies slightly with JIT state. The test publishes it through the JUnit report and asserts only a
+16 KiB regression ceiling. Latency is not measured and no performance claim is made. **Modeled, not measured**: a `RoutingFeedback` retains the order
+of a few hundred bytes plus its small evidence lists, and an `AppliedRevision` about 400 bytes including its identity, `EntryBasis` (cohort key or binding, reasons and proven failures), the optional Node and peer, so a full 4,096-entry
+ledger is on the order of 1.6 MiB. That supersedes the 64-bytes-per-entry (256 KiB) estimate of Section 7, which predates the identity record.
+
+### 21.5 Verification and evidence gaps
+
+```bash
+./gradlew test
+./gradlew consumerSmokeTest
+```
+
+Hand-calculated fixtures use reward 0.8, penalty -0.4 and cost bonus 0.2 with an `AdaptationConfig` of learning rate 0.5 and energy step 2.0: a
+reward moves a Node from amplitude 4.0 / energy 10.0 to 5.6 / 10.8, a penalty to 3.2 / 9.6, and the Section 9.5 rebuild gives 4.48 / 10.4 against
+7.84 / 11.6 for the uncorrected incremental path. Tests cover credit to the executed route only, unexecuted, foreign-scope, wrong-partition and missing
+bindings, every neutral and no-update rule above, cheap failing work, incomplete and non-comparable cost data, stage-local versus chain-only repairs,
+determinism under permuted evidence, immutable target state, every reconciliation result, ledger capacity, and rebuild equality from any input order.
+
+Evidence gaps: the evaluator trusts the host's judgments, attribution basis and mandatory set; `RoutingOutcome` carries no `stageKind`, so the stage kind is bound to the decision's recorded `Provenance.stageKind` (a decision that never recorded it derives no update, and the cost peer is checked the same way); usage counters are stage-level and carry no unit, so cost refinement compares counters only; the Node baseline,
+identity and `AdaptationConfig` are #66; the real ledger, checkpoints and snapshots are #66; replay evaluation and any effectiveness claim are #67; and
+no latency or retained-memory measurement exists.

@@ -41,6 +41,9 @@ follow-up. A rule change would have to be applied four times, and the copies cou
 - One additional public type in the published jar. No compatibility is promised for it: a host that imports it does
   so at its own risk, and it may change in any release.
 - Two allocation tests that asserted tracking support now skip instead of failing when it is unsupported.
+- Issue #65 added a second shared helper to the same package, `CanonicalLists.canonical` (sorted, bounded, duplicate-free
+  immutable copies), moved verbatim from `routing.outcome.Ordering`, which now delegates to it; the same no-compatibility
+  caveat applies, and it removed the fifth copy the new `routing.feedback` package would have needed.
 
 ## Follow-Up
 

@@ -162,7 +162,9 @@ class RoutingDecisionValidatorTest {
                 new Case(new Provenance(ref, "cat-demo-7", "other-policy", "1", request.cutoff(), state, compatible,
                         PARAMETERS), "other-policy"),
                 new Case(new Provenance(ref, "cat-demo-7", "route-lex", "2", request.cutoff(), state, compatible,
-                        PARAMETERS), "route-lex/2"))) {
+                        PARAMETERS), "route-lex/2"),
+                new Case(new Provenance(ref, "cat-demo-7", "route-lex", "1", request.cutoff(), state, compatible,
+                        PARAMETERS, Optional.of("review")), "stage kind review"))) {
             var decision = selected(c.provenance(), SUB_A, "sandboxed", false, inOrder(SUB_A, SUB_B), excluded);
             assertTrue(rejected(decision, input).contains(c.message()), c.toString());
         }

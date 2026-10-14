@@ -55,6 +55,10 @@ final class RoutingDecisionValidator {
             throw new IllegalStateException("policy decision records cutoff " + provenance.cutoff()
                     + " but the request cutoff is " + input.request().cutoff());
         }
+        if (provenance.stageKind().isPresent() && !provenance.stageKind().get().equals(input.request().stageKind())) {
+            throw new IllegalStateException("policy decision records stage kind " + provenance.stageKind().get()
+                    + " but the request is for " + input.request().stageKind());
+        }
         if (!provenance.state().equals(input.preference().binding())) {
             throw new IllegalStateException("policy decision records another preference snapshot: "
                     + provenance.state());
