@@ -1537,8 +1537,10 @@ Node identity is the name-based UUID of Section 7 (tag `forge-routing/1/node`, l
   kept, never published, still counted toward the bound, and published again intact when the identical route returns.
   `unbindDormant` is the only way a cohort leaves the state and refuses an active cohort. Its applied ledger entries stay
   until the next rebuild, and until then `bind` refuses the same key with `RebuildRequired`: a baseline Node under entries
-  recorded as applied would never regain their effect, because redelivery is a duplicate. The rebuild records those samples
-  as `NO_TARGET_BINDING` markers; after binding again, redelivering them applies them as first applications.
+  recorded as applied would never regain their effect, because redelivery is a duplicate. Recovery is **rebuild, bind,
+  rebuild**: the first rebuild records those samples as `NO_TARGET_BINDING` markers so the key can be bound; the second,
+  derived against the bindings that now include it, replays them in applied order. Redelivering one of them instead
+  returns `RebuildRequired` whenever a later effect on another cohort is already applied (the order rule of Section 21.3).
 - **Fallback** is the #62 policy's, unchanged: a cold or partial snapshot, an unbound route or support below
   `minSupportingObservations` for any eligible route gives exactly the baseline decision; a snapshot of another mapping,
   scope, schema or evaluation policy, or with a watermark beyond the request cutoff, gives `Abstain(STATE_INCOMPATIBLE)`.
@@ -1600,7 +1602,8 @@ preference, saturation at both bounds and recovery from the floor, neutral feedb
 scope isolation, mapping-version mismatch (foreign consumption and incompatible snapshot), cohort and ledger capacity with
 the state unchanged, dormant cohorts and the watermark. `StateRebuildTest` covers rebuild equality with a from-scratch state
 after a correction, independence of input order, a failed rebuild leaving the live state unchanged, dormant replay, and a
-removed cohort that must be rebuilt before it is bound again and then regains exactly its learned state on redelivery.
+removed cohort with a later effect on another cohort: it is refused by `bind` until a rebuild, redelivery after binding
+returns `RebuildRequired`, and the second rebuild restores exactly the from-scratch state.
 `AdaptiveStateDeterminismTest` is the long deterministic fixture: 4,000 seeded deliveries per scope over 3 stages, 4 buckets
 and 3 routes (36 cohorts) in two scopes, with corrections and staged rebuilds; two independent runs give identical cohorts,
 ledgers, watermarks and decisions, scope B's samples offered to scope A are never examined there and leave A identical to a

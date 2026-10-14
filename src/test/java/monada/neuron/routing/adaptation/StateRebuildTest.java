@@ -168,32 +168,45 @@ class StateRebuildTest {
     }
 
     @Test
-    void aRemovedCohortTheLedgerStillCreditsIsRebuiltBeforeItCanBeBoundAgain() {
+    void aRemovedCohortIsRestoredByRebuildBindRebuildEvenWithALaterEffectElsewhere() {
         var live = bound();
         List<RoutingObservation> observations = new ArrayList<>();
         for (int i = 0; i < 3; i++) {
-            var observation = sample("exp-b-" + i, "sub-b", 0, 20 + i, Feature.unknown(), Kind.PASS);
+            var observation = sample("exp-b-" + i, "sub-b", 0, 10 + i, Feature.unknown(), Kind.PASS);
             observations.add(observation);
             assertInstanceOf(StateUpdate.Applied.class, deliverTo(live, observation));
         }
-        var learned = live.cohorts(demo()).getLast();
+        // a later Node change on another, still-bound cohort
+        var laterA = sample("exp-a", "sub-a", 0, 20, Feature.unknown(), Kind.PASS);
+        observations.add(laterA);
+        assertInstanceOf(StateUpdate.Applied.class, deliverTo(live, laterA));
+        var scratch = bound();
+        observations.forEach(observation -> deliverTo(scratch, observation));
+        scratch.advanceCutoff(30);
+
         var onlyA = AdaptationFixtures.only("sub-a");
         assertEquals(true, live.unbindDormant(KEY_B, onlyA));
-
         // rebinding before a rebuild would put a baseline Node under entries the ledger records as applied
         assertEquals(new BindResult.RebuildRequired(List.of(KEY_B)), live.bind(List.of(KEY_B)));
         assertEquals(1, live.cohortCount());
 
-        var rebuilt = assertInstanceOf(RebuildResult.Rebuilt.class, rebuild(live, observations, 30)).store();
-        for (var entry : rebuilt.ledger()) {
-            assertEquals(NoUpdateReason.NO_TARGET_BINDING,
-                    ((EntryBasis.NoUpdateMarker) entry.basis()).reason());
+        var cleared = assertInstanceOf(RebuildResult.Rebuilt.class, rebuild(live, observations, 30)).store();
+        for (var entry : cleared.ledger()) {
+            if (!entry.experienceRef().equals("exp-a")) {
+                assertEquals(NoUpdateReason.NO_TARGET_BINDING, ((EntryBasis.NoUpdateMarker) entry.basis()).reason());
+            }
         }
-        assertEquals(new BindResult.Bound(List.of(KEY_B)), rebuilt.bind(List.of(KEY_B)));
-        for (var observation : observations) {
-            assertInstanceOf(StateUpdate.Applied.class, deliverTo(rebuilt, observation));
-        }
-        assertEquals(learned, rebuilt.cohorts(demo()).getLast());
+        assertEquals(new BindResult.Bound(List.of(KEY_B)), cleared.bind(List.of(KEY_B)));
+
+        // redelivering the older sample cannot be applied in place: the later effect on sub-a is already applied
+        var before = cleared.cohorts(demo());
+        assertInstanceOf(StateUpdate.RebuildRequired.class, deliverTo(cleared, observations.getFirst()));
+        assertEquals(before, cleared.cohorts(demo()));
+
+        var restored = assertInstanceOf(RebuildResult.Rebuilt.class, rebuild(cleared, observations, 30)).store();
+        assertEquals(scratch.cohorts(demo()), restored.cohorts(demo()));
+        assertEquals(scratch.ledger(), restored.ledger());
+        assertEquals(scratch.snapshot(policy(), demo()), restored.snapshot(policy(), demo()));
     }
 
     @Test

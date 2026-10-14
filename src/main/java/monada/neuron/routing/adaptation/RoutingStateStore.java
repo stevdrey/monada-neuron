@@ -120,9 +120,11 @@ public final class RoutingStateStore {
      * @param keys cohorts to bind
      * <p>A new key that the ledger still credits (a cohort removed by {@link #unbindDormant} whose applied effects were
      * not yet replayed away) is refused with {@code RebuildRequired}: a baseline Node under a ledger that records those
-     * effects as applied would never get them back, because their redelivery is a duplicate. After a {@link #rebuild},
-     * those entries are {@code NO_TARGET_BINDING} markers, the key can be bound, and redelivering the samples applies
-     * them as first applications.
+     * effects as applied would never get them back, because their redelivery is a duplicate. Recovery is
+     * {@code rebuild -> bind -> rebuild}: the first {@link #rebuild} turns those entries into {@code NO_TARGET_BINDING}
+     * markers so the key can be bound, and the second, deriving against the bindings that now include it, replays its
+     * samples in applied order. Redelivering a sample instead may return {@code RebuildRequired}, because a later effect
+     * on another cohort may already be applied.
      *
      * @return {@code Bound} with the new keys, or {@code CapacityExhausted} or {@code RebuildRequired} with nothing bound
      * @throws IllegalArgumentException if a key belongs to another scope
@@ -172,17 +174,18 @@ public final class RoutingStateStore {
      * @param key the cohort
      * @param catalog the catalog the route must be absent from
      * @return true when a cohort was removed, false when none was bound
-     * @throws IllegalArgumentException if the route is in the catalog, so the cohort is active
+     * @throws IllegalArgumentException if the cohort is bound and its route is in the catalog, so it is active
      */
     public boolean unbindDormant(CohortKey key, RouteCatalog catalog) {
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(catalog, "catalog must not be null");
+        if (!cohorts.containsKey(key)) {
+            return false;
+        }
         if (inCatalog(key.route(), catalog)) {
             throw new IllegalArgumentException("cohort " + key + " is active in catalog " + catalog.catalogVersion());
         }
-        if (cohorts.remove(key) == null) {
-            return false;
-        }
+        cohorts.remove(key);
         bindings = buildBindings();
         return true;
     }

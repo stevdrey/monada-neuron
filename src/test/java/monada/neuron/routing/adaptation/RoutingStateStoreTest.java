@@ -377,6 +377,8 @@ class RoutingStateStoreTest {
         assertTrue(thrown.getMessage().endsWith("is active in catalog cat-demo-7"), thrown.getMessage());
         assertTrue(store.unbindDormant(KEY_B, onlyA));
         assertFalse(store.unbindDormant(KEY_B, onlyA));
+        // an absent cohort is not removable, whatever the catalog says: cleanup stays idempotent
+        assertFalse(store.unbindDormant(KEY_B, demo()));
         assertEquals(1, store.cohortCount());
         assertTrue(store.bindings().find(KEY_B).isEmpty());
     }
