@@ -54,7 +54,7 @@ public final class RevisionReconciler {
         Objects.requireNonNull(observation, "observation must not be null");
         Objects.requireNonNull(derivation, "derivation must not be null");
         requireLedger(ledger);
-        if (derivation instanceof FeedbackDerivation.NoUpdate none && isForeignPartition(none.reason())) {
+        if (derivation instanceof FeedbackDerivation.NoUpdate none && none.reason().foreignPartition()) {
             return new Reconciliation.OutOfPartition(none.reason());
         }
         AppliedRevision incoming;
@@ -106,11 +106,6 @@ public final class RevisionReconciler {
         return derived
                 ? new Reconciliation.Apply(Optional.of(existing))
                 : new Reconciliation.RecordOnly(incoming, Optional.of(existing));
-    }
-
-    private boolean isForeignPartition(NoUpdateReason reason) {
-        return reason == NoUpdateReason.MAPPING_MISMATCH || reason == NoUpdateReason.BINDING_SCOPE_MISMATCH
-                || reason == NoUpdateReason.BINDING_PARTITION_MISMATCH;
     }
 
     /** A newer revision sits at a strictly later ledger position and an older one at a strictly earlier one. */

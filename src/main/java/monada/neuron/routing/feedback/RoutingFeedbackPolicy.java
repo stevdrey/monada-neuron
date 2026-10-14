@@ -103,6 +103,9 @@ public final class RoutingFeedbackPolicy {
         if (!definition.mappingVersion().equals(decision.cohortBinding().mappingVersion())) {
             return noUpdate(NoUpdateReason.MAPPING_MISMATCH, null);
         }
+        if (!definition.cohortMapping().featureSchemaVersion().equals(decision.cohortBinding().featureSchemaVersion())) {
+            return noUpdate(NoUpdateReason.FEATURE_SCHEMA_MISMATCH, null);
+        }
         if (!producedBy(request, decision)) {
             // the request is not the one whose features produced the decision, so its stage kind cannot be trusted
             return new FeedbackDerivation.NoUpdate(NoUpdateReason.PROVENANCE_MISMATCH,
@@ -159,7 +162,8 @@ public final class RoutingFeedbackPolicy {
         }
         if (!bindings.evaluationPolicyId().equals(outcome.evaluationPolicyId())
                 || !bindings.evaluationPolicyVersion().equals(outcome.evaluationPolicyVersion())
-                || !bindings.mappingVersion().equals(definition.mappingVersion())) {
+                || !bindings.mappingVersion().equals(definition.mappingVersion())
+                || !bindings.featureSchemaVersion().equals(definition.cohortMapping().featureSchemaVersion())) {
             return noUpdate(NoUpdateReason.BINDING_PARTITION_MISMATCH, null);
         }
         CohortKey key = cohortKey(decision, request, outcome);
@@ -255,6 +259,10 @@ public final class RoutingFeedbackPolicy {
         RoutingOutcome self = observation.outcome();
         RoutingOutcome peer = reference.peer().outcome();
         RoutingRequest peerRequest = reference.peerRequest();
+        if (peer.cutoff() > self.cutoff()) {
+            // a later peer would let future acceptance and usage influence feedback as of an earlier cutoff
+            return false;
+        }
         if (!self.decisionRef().scopeId().equals(peer.decisionRef().scopeId())
                 || !self.decisionRef().taskId().equals(peer.decisionRef().taskId())
                 || !request.stageKind().equals(peerRequest.stageKind())

@@ -1364,10 +1364,10 @@ clock, randomness, background task or Node access. The caller-owned mutable stat
 | Type | Role |
 | --- | --- |
 | `RoutingFeedbackPolicy(RoutingStateDefinition, RoutingFeedbackConfig, EvidencePolicy)` | `derive(observation, selectedDecision, request, bindings[, Optional<CostReference>]) -> FeedbackDerivation`. Pure and stateless. Runs `OutcomeEvaluator.assess`, which stays the single owner of the verdict rule, and only maps the assessment. |
-| `FeedbackDerivation` | Sealed: `Derived(RoutingFeedback)` or `NoUpdate(NoUpdateReason, reasons, mismatches)`. |
+| `FeedbackDerivation` | Sealed: `Derived(RoutingFeedback)` or `NoUpdate(NoUpdateReason, reasons, mismatches)`, where the `PROVENANCE_MISMATCH` reason is present exactly when mismatches are listed. |
 | `RoutingFeedback` | Contract version, `FeedbackIdentity`, `supersedesSequence`, `CohortKey`, routing policy id/version, catalog version, cutoff, `DerivedAcceptance`, `ScoreRule`, `FeedbackDisposition`, 0 or 1 `FeedbackEntry`, assessment reasons, effective evidence and proven failures. Validates rule, disposition, entries and evidence against each other (a corrected revision carries the `supersedesSequence` it replaces and an initial revision carries none, as in `RoutingObservation`): entries are score-only (no target Signal), `provenFailures` equal the effective `FAIL` dimensions, a `REINFORCE` has non-empty effective evidence that is all `PASS` or `NOT_APPLICABLE`, a `PENALIZE` follows `NOT_ACCEPTED` or `ACCEPTED_UNVALIDATED` and carries no blocking reason and no `IMPORTED_CLAIM`, `NO_STAGE_ATTRIBUTION` or `NO_ATTRIBUTABLE_FAILURE` (the policy derives neutral or nothing for those), and every effective evidence position is at or before the sample position, which is at or before the cutoff. `toFeedbackInputs()` is the explicit adapter to `FeedbackInput`/`AdaptationPolicy`: it manufactures no `ActionStatus` and no `OutcomeFeedback`, and is empty for `NEUTRAL`. |
 | `FeedbackIdentity` | Exact `experienceRef`, `revision`, `ledgerSequence`, `DecisionRef`, executed `RouteKey`, `mappingVersion` and evaluation policy. Compared by equality, never hashed or generated. |
-| `CohortKey`, `TargetBinding`, `TargetBindings` | `(scopeId, stageKind, cohortBucket, RouteKey)`, the caller's binding of a cohort to a Node `UUID`, and an immutable, canonical-order set of at most 256 bindings of one `(scopeId, evaluationPolicy, mappingVersion)` partition with unique keys and unique Nodes. Only identifiers are carried, so derivation cannot mutate a target. |
+| `CohortKey`, `TargetBinding`, `TargetBindings` | `(scopeId, stageKind, cohortBucket, RouteKey)`, the caller's binding of a cohort to a Node `UUID`, and an immutable, canonical-order set of at most 256 bindings of one `(scopeId, evaluationPolicy, mappingVersion, featureSchemaVersion)` partition with unique keys and unique Nodes. Only identifiers are carried, so derivation cannot mutate a target. |
 | `RoutingFeedbackConfig`, `CostObjective`, `CostReference` | Scoring rules (below) and the optional cost refinement. |
 | `AppliedRevision`, `Reconciliation`, `RevisionReconciler`, `RebuildOrder` | The caller-owned applied-revision record and the pure functions that relate a new revision to the caller's ledger and order a rebuild (Section 21.3). |
 
@@ -1378,6 +1378,7 @@ Evaluated in this order; the first match decides.
 | Condition | Result |
 | --- | --- |
 | The policy's `mappingVersion` differs from the decision's cohort binding | `NoUpdate(MAPPING_MISMATCH)` |
+| The decision was made under another feature schema than the state definition's cohort mapping (an ADR 0026 admission key) | `NoUpdate(FEATURE_SCHEMA_MISMATCH)` |
 | The state definition's cohort mapping, applied to the request's features, does not give the decision's recorded bucket (the request did not produce the decision) | `NoUpdate(PROVENANCE_MISMATCH)` with `COHORT_BINDING` |
 | `PROVENANCE_MISMATCH` (including executing a route other than the advised one, any other scope, stage, catalog, policy, fingerprints or evaluation policy) | `NoUpdate(PROVENANCE_MISMATCH)` with the differing fields; a selected-but-unexecuted candidate never earns credit |
 | `STALE_ARTIFACT_REVISION`, `CONTRADICTORY_EVIDENCE` | `NoUpdate` with that reason |
@@ -1388,7 +1389,7 @@ Evaluated in this order; the first match decides.
 | Otherwise | `NEUTRAL`: `NEUTRAL_NO_ATTRIBUTABLE_FAILURE` (rejection without a proven failure), else `NEUTRAL_INCOMPLETE_EVIDENCE` (missing, unknown or foreign-policy evidence), else `NEUTRAL_UNVALIDATED_ACCEPTANCE` |
 
 A `REINFORCE` or `PENALIZE` additionally needs the Node: the bindings must belong to the observation's scope
-(`BINDING_SCOPE_MISMATCH`), to the outcome's evaluation policy and the policy's `mappingVersion` (`BINDING_PARTITION_MISMATCH`)
+(`BINDING_SCOPE_MISMATCH`), to the outcome's evaluation policy, the policy's `mappingVersion` and its feature schema (`BINDING_PARTITION_MISMATCH`)
 and must contain the exact `CohortKey` of the executed route (`NO_TARGET_BINDING`); otherwise nothing is derived. A `NEUTRAL`
 needs no binding because it changes no Node. Foreign-scope and missing bindings therefore mutate nothing.
 
@@ -1400,7 +1401,7 @@ what is learned, so the host must give the state definition a new `mappingVersio
 
 **Cost refinement (optional, reward-only).** `reinforceScore + costBonus` is granted only when a `CostReference` is supplied, the config
 declares a `CostObjective(UsageKind, MINIMIZE|MAXIMIZE)`, and all of the following hold: the peer (assessed by the policy itself with
-its own decision and request, not by a caller-supplied assessment) is a `POSITIVE_CANDIDATE` of **another** route under a different `DecisionRef` (two accounts of one decision are not two executions) whose request reproduces its decision's recorded bucket; scope, task,
+its own decision and request, not by a caller-supplied assessment) is a `POSITIVE_CANDIDATE` of **another** route under a different `DecisionRef` (two accounts of one decision are not two executions) whose request reproduces its decision's recorded bucket and whose cutoff is not after the feedback's (a later peer would let future data influence historical feedback); scope, task,
 `stageKind`, the three fingerprints and the evaluation policy are equal (Section 6, directly comparable pair); both outcomes have
 `MEASURED` usage with a `Known` counter of the declared kind and equal provenance (`REPORTED` or `ESTIMATED`); and the executed
 value is strictly better. Unknown, not-measured, absent and `NO_BILLABLE_USAGE` data, equal values and non-comparable pairs yield
@@ -1417,8 +1418,8 @@ latest examined revision**, at most 4,096 entries (neutral feedback is recorded 
 | Relation of the observation to the entry of the same sample reference | Result |
 | --- | --- |
 | No entry, a feedback derived | `Apply`; `CapacityExhausted` when 4,096 entries exist (nothing evicted, nothing applied) |
-| No entry, nothing derived | `RecordOnly(marker)`; `CapacityExhausted` when full |
-| Nothing derived because the observation belongs to another state partition (`MAPPING_MISMATCH`, `BINDING_SCOPE_MISMATCH`, `BINDING_PARTITION_MISMATCH`) | `OutOfPartition`: nothing recorded, nothing applied, no capacity used (checked first) |
+| No entry, nothing derived | `RecordOnly(marker)`, which only accepts the neutral, cohort-less, Node-less form `AppliedRevision.ofNoUpdate` builds; `CapacityExhausted` when full |
+| Nothing derived because the observation belongs to another state partition (`MAPPING_MISMATCH`, `FEATURE_SCHEMA_MISMATCH`, `BINDING_SCOPE_MISMATCH`, `BINDING_PARTITION_MISMATCH`; `NoUpdateReason.foreignPartition()`) | `OutOfPartition`: nothing recorded, nothing applied, no capacity used (checked first) |
 | Same revision, equal entry (duplicate delivery; a marker equals a marker) | `AlreadyApplied` |
 | Same revision, any difference in identity or score, or now deriving nothing (conflicting revision) | `ConflictingRevision` |
 | Older revision | `StaleRevision` |
@@ -1431,7 +1432,7 @@ A newer revision must sit at a strictly later ledger position than the entry it 
 known; a checkpoint is a valid starting point only if its `processedCutoff` is strictly below it (Section 7). Node adaptation is not
 exactly invertible, so a superseded reward is never subtracted: the caller resets the partition's Nodes to the baseline and replays
 `RebuildOrder.order(observations)`, which keeps the latest revision of each sample reference and sorts by `(ledgerSequence, experienceRef by
-code point)`. It rejects more than 4,096 observations and two different observations claiming the same sample revision (checked for every revision before older ones are discarded, so the result never depends on input order), and collapses
+code point)`. It rejects more than 4,096 observations, a higher revision of a sample at a ledger position that is not strictly later than the lower one, and two different observations claiming the same sample revision (checked for every revision before older ones are discarded, so the result never depends on input order), and collapses
 an identical repeat. The caller derives each observation with the policy and applies the results in that order; the replay
 equals a build from scratch from the same corrected export because the order and the derivation are pure functions of it
 (tested, including the Section 9.5 scenario). A rebuild is staged and swapped by the caller as Section 7 requires.

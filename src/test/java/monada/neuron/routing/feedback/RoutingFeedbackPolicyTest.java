@@ -6,16 +6,24 @@ import monada.neuron.evolution.FeedbackDisposition;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
+import monada.neuron.routing.CohortMapping;
+import monada.neuron.routing.RoutingStateDefinition;
 import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.catalog.RouteKey;
+import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
+import monada.neuron.routing.features.TaskFeatures;
 import monada.neuron.routing.outcome.AttemptStatus;
+import monada.neuron.routing.outcome.DerivedAcceptance;
+import monada.neuron.routing.outcome.EvidenceRef;
+import monada.neuron.routing.outcome.EvidenceRevision;
 import monada.neuron.routing.outcome.IneligibilityReason;
 import monada.neuron.routing.outcome.InvocationStatus;
 import monada.neuron.routing.outcome.OutcomeOrigin;
 import monada.neuron.routing.outcome.OutcomeStatus;
 import monada.neuron.routing.outcome.ProvenanceField;
 import monada.neuron.routing.outcome.QualityDimension;
+import monada.neuron.routing.outcome.QualityObservation;
 import monada.neuron.routing.outcome.QualityState;
 import monada.neuron.routing.outcome.ResourceSummary;
 import monada.neuron.routing.outcome.StageAttribution;
@@ -91,7 +99,7 @@ class RoutingFeedbackPolicyTest {
         spec.passing().with(obs("ev-tests-late", 0, QualityDimension.TESTS, QualityState.FAIL, "att-1", 8));
         var f = feedback(derive(spec));
         assertEquals(FeedbackDisposition.PENALIZE, f.disposition());
-        assertEquals(monada.neuron.routing.outcome.DerivedAcceptance.ACCEPTED_UNVALIDATED, f.derivedAcceptance());
+        assertEquals(DerivedAcceptance.ACCEPTED_UNVALIDATED, f.derivedAcceptance());
     }
 
     @Test
@@ -112,38 +120,85 @@ class RoutingFeedbackPolicyTest {
     void foreignScopeBindingsAndMissingBindingsMutateNothing() {
         spec.passing();
         var key = FeedbackFixtures.keyOf(spec.decision, spec.request);
-        var foreignScope = new TargetBindings("scope-other", "forge-gates", "1", DEFINITION.mappingVersion(),
+        var foreignScope = new TargetBindings("scope-other", "forge-gates", "1", DEFINITION.mappingVersion(), FeedbackFixtures.SCHEMA,
                 List.of(new TargetBinding(
                         new CohortKey("scope-other", key.stageKind(), key.cohortBucket(), key.route()), NODE_A)));
         assertEquals(NoUpdateReason.BINDING_SCOPE_MISMATCH,
                 noUpdate(policy().derive(spec.observation(), spec.decision, spec.request, foreignScope)).reason());
 
-        var otherPolicy = new TargetBindings("scope-demo", "forge-gates", "2", DEFINITION.mappingVersion(),
+        var otherPolicy = new TargetBindings("scope-demo", "forge-gates", "2", DEFINITION.mappingVersion(), FeedbackFixtures.SCHEMA,
                 List.of(new TargetBinding(key, NODE_A)));
         assertEquals(NoUpdateReason.BINDING_PARTITION_MISMATCH,
                 noUpdate(policy().derive(spec.observation(), spec.decision, spec.request, otherPolicy)).reason());
-        var otherMapping = new TargetBindings("scope-demo", "forge-gates", "1", "routing-state/other",
+        var otherMapping = new TargetBindings("scope-demo", "forge-gates", "1", "routing-state/other", FeedbackFixtures.SCHEMA,
                 List.of(new TargetBinding(key, NODE_A)));
         assertEquals(NoUpdateReason.BINDING_PARTITION_MISMATCH,
                 noUpdate(policy().derive(spec.observation(), spec.decision, spec.request, otherMapping)).reason());
 
-        var otherRoute = new TargetBindings("scope-demo", "forge-gates", "1", DEFINITION.mappingVersion(),
+        var otherRoute = new TargetBindings("scope-demo", "forge-gates", "1", DEFINITION.mappingVersion(), FeedbackFixtures.SCHEMA,
                 List.of(new TargetBinding(
                         new CohortKey("scope-demo", key.stageKind(), key.cohortBucket(), new RouteKey("sub-b", 1)),
                         NODE_B)));
         assertEquals(NoUpdateReason.NO_TARGET_BINDING,
                 noUpdate(policy().derive(spec.observation(), spec.decision, spec.request, otherRoute)).reason());
-        var empty = new TargetBindings("scope-demo", "forge-gates", "1", DEFINITION.mappingVersion(), List.of());
+        var empty = new TargetBindings("scope-demo", "forge-gates", "1", DEFINITION.mappingVersion(), FeedbackFixtures.SCHEMA, List.of());
         assertEquals(NoUpdateReason.NO_TARGET_BINDING,
                 noUpdate(policy().derive(spec.observation(), spec.decision, spec.request, empty)).reason());
     }
 
     @Test
+    void aDecisionOrBindingsOfAnotherFeatureSchemaDeriveNothing() {
+        spec.passing();
+        var otherSchema = new CohortMapping() {
+            @Override
+            public String bucketMappingVersion() {
+                return DEFINITION.cohortMapping().bucketMappingVersion();
+            }
+
+            @Override
+            public String featureSchemaVersion() {
+                return "task-features/other";
+            }
+
+            @Override
+            public String bucketOf(TaskFeatures features) {
+                return DEFINITION.cohortMapping().bucketOf(features);
+            }
+        };
+        var definition = new RoutingStateDefinition(DEFINITION.mappingVersion(), otherSchema);
+        var policy = new RoutingFeedbackPolicy(definition, CONFIG, GATES);
+        var bindings = new TargetBindings("scope-demo", "forge-gates", "1", DEFINITION.mappingVersion(),
+                "task-features/other", List.of());
+        assertEquals(NoUpdateReason.FEATURE_SCHEMA_MISMATCH,
+                noUpdate(policy.derive(spec.observation(), spec.decision, spec.request, bindings)).reason());
+        assertTrue(NoUpdateReason.FEATURE_SCHEMA_MISMATCH.foreignPartition());
+
+        // bindings built for another schema are a foreign partition too
+        var key = FeedbackFixtures.keyOf(spec.decision, spec.request);
+        var foreignBindings = new TargetBindings("scope-demo", "forge-gates", "1", DEFINITION.mappingVersion(),
+                "task-features/other", List.of(new TargetBinding(key, NODE_A)));
+        assertEquals(NoUpdateReason.BINDING_PARTITION_MISMATCH,
+                noUpdate(policy().derive(spec.observation(), spec.decision, spec.request, foreignBindings)).reason());
+    }
+
+    @Test
+    void aPeerFromAfterTheFeedbackCutoffCannotInfluenceIt() {
+        var self = new FeedbackFixtures.Spec().passing();
+        self.resources = tokens(400, ResourceValue.Provenance.REPORTED);
+        var later = peer("task-17", tokens(900, ResourceValue.Provenance.REPORTED), true);
+        later.cutoff = self.cutoff + 1;
+        assertEquals(ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL, withCost(policy(), self, later).rule());
+        // a peer evaluated as of the same cutoff still counts
+        var same = peer("task-17", tokens(900, ResourceValue.Provenance.REPORTED), true);
+        assertEquals(ScoreRule.REINFORCE_COST_REFINED, withCost(policy(), self, same).rule());
+    }
+
+    @Test
     void aDecisionFromAnotherStateDefinitionDerivesNothing() {
         spec.passing();
-        var other = new monada.neuron.routing.RoutingStateDefinition("routing-state/2", DEFINITION.cohortMapping());
+        var other = new RoutingStateDefinition("routing-state/2", DEFINITION.cohortMapping());
         var policy = new RoutingFeedbackPolicy(other, CONFIG, GATES);
-        var bindings = new TargetBindings("scope-demo", "forge-gates", "1", "routing-state/2", List.of());
+        var bindings = new TargetBindings("scope-demo", "forge-gates", "1", "routing-state/2", FeedbackFixtures.SCHEMA, List.of());
         assertEquals(NoUpdateReason.MAPPING_MISMATCH,
                 noUpdate(policy.derive(spec.observation(), spec.decision, spec.request, bindings)).reason());
     }
@@ -151,12 +206,12 @@ class RoutingFeedbackPolicyTest {
     @Test
     void aRequestThatDidNotProduceTheDecisionIsRejectedBeforeAnyLookup() {
         spec.passing();
-        var other = new monada.neuron.routing.catalog.RoutingRequest(spec.request.contractVersion(),
+        var other = new RoutingRequest(spec.request.contractVersion(),
                 spec.request.scopeId(), spec.request.taskId(), spec.request.executionId(), spec.request.attemptId(),
                 spec.request.stageId(), "review", spec.request.requestOrdinal(), spec.request.sourceFingerprint(),
                 spec.request.contextFingerprint(), spec.request.constraintsFingerprint(),
                 spec.request.evaluationPolicyId(), spec.request.evaluationPolicyVersion(),
-                monada.neuron.routing.features.TaskFeatures.builder().stageKind("review").changeSize(100_000L).build(),
+                TaskFeatures.builder().stageKind("review").changeSize(100_000L).build(),
                 spec.request.requirements(), false, spec.request.cutoff());
         var none = noUpdate(policy().derive(spec.observation(), spec.decision, other,
                 bindings(spec.decision, other, NODE_A)));
@@ -222,7 +277,7 @@ class RoutingFeedbackPolicyTest {
 
         var foreign = new FeedbackFixtures.Spec().passing();
         foreign.observations.replaceAll(o -> o.dimension() == QualityDimension.TESTS
-                ? new monada.neuron.routing.outcome.QualityObservation(o.eventRef(), o.revision(), o.dimension(),
+                ? new QualityObservation(o.eventRef(), o.revision(), o.dimension(),
                         o.state(), o.justification(), o.evaluatorId(), o.evaluatorVersion(), o.policyId(), "9",
                         o.source(), o.attemptId(), o.ledgerSequence(), o.evidenceRefs())
                 : o);
@@ -246,7 +301,7 @@ class RoutingFeedbackPolicyTest {
                 .with(obs("ev-sec", 0, QualityDimension.SECURITY, QualityState.PASS, "att-2", 6));
         var f = feedback(derive(s));
         assertEquals(ScoreRule.NEUTRAL_UNVALIDATED_ACCEPTANCE, f.rule());
-        assertEquals(monada.neuron.routing.outcome.DerivedAcceptance.ACCEPTED_UNVALIDATED, f.derivedAcceptance());
+        assertEquals(DerivedAcceptance.ACCEPTED_UNVALIDATED, f.derivedAcceptance());
     }
 
     @Test
@@ -271,9 +326,9 @@ class RoutingFeedbackPolicyTest {
         s.with(obs("ev-tests", 0, QualityDimension.TESTS, QualityState.PASS, "att-2", 5))
                 .with(obs("ev-sec", 0, QualityDimension.SECURITY, QualityState.PASS, "att-2", 6));
         s.attribution = new StageAttribution(StageAttribution.Basis.STAGE_LOCAL, 2,
-                List.of(new monada.neuron.routing.outcome.EvidenceRef("log", "ref-stage", Feature.unknown())));
+                List.of(new EvidenceRef("log", "ref-stage", Feature.unknown())));
         var key = FeedbackFixtures.keyOf(s.decision, s.request);
-        var both = new TargetBindings("scope-demo", "forge-gates", "1", DEFINITION.mappingVersion(),
+        var both = new TargetBindings("scope-demo", "forge-gates", "1", DEFINITION.mappingVersion(), FeedbackFixtures.SCHEMA,
                 List.of(new TargetBinding(key, NODE_A), new TargetBinding(
                         new CohortKey("scope-demo", key.stageKind(), key.cohortBucket(), new RouteKey("sub-b", 1)),
                         NODE_B)));
@@ -285,7 +340,7 @@ class RoutingFeedbackPolicyTest {
     void replacedEvidenceRevisionsAndContradictoryEvidenceAreRejected() {
         var stale = new FeedbackFixtures.Spec().passing()
                 .with(obs("ev-tests", 1, QualityDimension.TESTS, QualityState.PASS, "att-1", 7));
-        stale.judged.add(new monada.neuron.routing.outcome.EvidenceRevision("ev-tests", 0));
+        stale.judged.add(new EvidenceRevision("ev-tests", 0));
         stale.ledgerSequence = 12L;
         assertEquals(NoUpdateReason.STALE_ARTIFACT_REVISION, noUpdate(derive(stale)).reason());
 
@@ -351,13 +406,13 @@ class RoutingFeedbackPolicyTest {
         var self = new FeedbackFixtures.Spec().passing();
         self.resources = tokens(400, ResourceValue.Provenance.REPORTED);
         var peer = peer("task-17", tokens(900, ResourceValue.Provenance.REPORTED), true);
-        var forged = new monada.neuron.routing.catalog.RoutingRequest(peer.request.contractVersion(),
+        var forged = new RoutingRequest(peer.request.contractVersion(),
                 peer.request.scopeId(), peer.request.taskId(), peer.request.executionId(), peer.request.attemptId(),
                 peer.request.stageId(), peer.request.stageKind(), peer.request.requestOrdinal(),
                 peer.request.sourceFingerprint(), peer.request.contextFingerprint(),
                 peer.request.constraintsFingerprint(), peer.request.evaluationPolicyId(),
                 peer.request.evaluationPolicyVersion(),
-                monada.neuron.routing.features.TaskFeatures.builder().stageKind("implement").changeSize(100_000L)
+                TaskFeatures.builder().stageKind("implement").changeSize(100_000L)
                         .build(),
                 peer.request.requirements(), false, peer.request.cutoff());
         var reference = new CostReference(peer.observation(), peer.decision, forged);

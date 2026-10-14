@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 
 /**
  * The deterministic replay order for a reset-and-rebuild (contract section 7).
@@ -39,7 +40,8 @@ public final class RebuildOrder {
      *         revisions of one sample
      * @return the highest revision of each sample in applied order
      * @throws IllegalArgumentException if more than {@value #MAX_OBSERVATIONS} are given, or two different
-     *         observations claim the same sample revision; an identical repeat is collapsed
+     *         observations claim the same sample revision (an identical repeat is collapsed), or a higher revision of a
+     *         sample is not at a strictly later ledger position than the lower one
      */
     public List<RoutingObservation> order(Collection<RoutingObservation> observations) {
         Objects.requireNonNull(observations, "observations must not be null");
@@ -48,22 +50,29 @@ public final class RebuildOrder {
                     + " observations, got: " + observations.size());
         }
         // Every claim is checked before an older revision is discarded, so validation never depends on input order.
-        record Claim(String experienceRef, long revision) {
-        }
-        Map<Claim, RoutingObservation> claims = new HashMap<>(observations.size() * 2);
-        Map<String, RoutingObservation> latest = new HashMap<>(observations.size() * 2);
+        Map<String, TreeMap<Long, RoutingObservation>> bySample = new HashMap<>(observations.size() * 2);
         for (RoutingObservation observation : observations) {
             Objects.requireNonNull(observation, "observations must not contain null");
-            var claim = new Claim(observation.experienceRef(), observation.revision());
-            RoutingObservation claimed = claims.putIfAbsent(claim, observation);
+            TreeMap<Long, RoutingObservation> revisions =
+                    bySample.computeIfAbsent(observation.experienceRef(), ref -> new TreeMap<>());
+            RoutingObservation claimed = revisions.putIfAbsent(observation.revision(), observation);
             if (claimed != null && !claimed.equals(observation)) {
                 throw new IllegalArgumentException("two different observations claim " + observation.experienceRef()
                         + "@" + observation.revision());
             }
-            RoutingObservation known = latest.get(observation.experienceRef());
-            if (known == null || observation.revision() > known.revision()) {
-                latest.put(observation.experienceRef(), observation);
+        }
+        Map<String, RoutingObservation> latest = new HashMap<>(bySample.size() * 2);
+        for (Map.Entry<String, TreeMap<Long, RoutingObservation>> sample : bySample.entrySet()) {
+            RoutingObservation previous = null;
+            for (RoutingObservation revision : sample.getValue().values()) {
+                if (previous != null && revision.ledgerSequence() <= previous.ledgerSequence()) {
+                    throw new IllegalArgumentException("revision " + revision.revision() + " of " + sample.getKey()
+                            + " at sequence " + revision.ledgerSequence() + " must come after revision "
+                            + previous.revision() + " at sequence " + previous.ledgerSequence());
+                }
+                previous = revision;
             }
+            latest.put(sample.getKey(), previous);
         }
         List<RoutingObservation> ordered = new ArrayList<>(latest.values());
         ordered.sort(APPLIED_ORDER);

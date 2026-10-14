@@ -44,10 +44,12 @@ public sealed interface FeedbackDerivation permits FeedbackDerivation.Derived, F
             if (reason != NoUpdateReason.PROVENANCE_MISMATCH && !mismatches.isEmpty()) {
                 throw new IllegalArgumentException("only PROVENANCE_MISMATCH lists mismatches");
             }
-            if (reason == NoUpdateReason.PROVENANCE_MISMATCH
-                    && (mismatches.isEmpty() || !reasons.contains(IneligibilityReason.PROVENANCE_MISMATCH))) {
+            if (reasons.contains(IneligibilityReason.PROVENANCE_MISMATCH) != !mismatches.isEmpty()) {
                 throw new IllegalArgumentException(
-                        "PROVENANCE_MISMATCH needs the differing fields and the matching ineligibility reason");
+                        "mismatches must be listed exactly when the PROVENANCE_MISMATCH reason is");
+            }
+            if (reason == NoUpdateReason.PROVENANCE_MISMATCH && mismatches.isEmpty()) {
+                throw new IllegalArgumentException("PROVENANCE_MISMATCH needs the differing fields");
             }
         }
     }

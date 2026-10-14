@@ -2,19 +2,26 @@ package monada.neuron.routing.feedback;
 
 import monada.neuron.evolution.FeedbackDisposition;
 import monada.neuron.evolution.FeedbackEntry;
+import monada.neuron.model.FrequencyState;
+import monada.neuron.routing.ResourceObjective;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.outcome.DerivedAcceptance;
 import monada.neuron.routing.outcome.IneligibilityReason;
+import monada.neuron.routing.outcome.LearningAssessment;
 import monada.neuron.routing.outcome.ProvenanceField;
+import monada.neuron.routing.outcome.QualityDimension;
+import monada.neuron.routing.outcome.QualityState;
 import monada.neuron.routing.outcome.UsageKind;
-import monada.neuron.routing.ResourceObjective;
+import monada.neuron.signal.Signal;
+import monada.neuron.signal.SignalKind;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.BiFunction;
 
 import static monada.neuron.routing.feedback.FeedbackFixtures.NODE_A;
 import static monada.neuron.routing.feedback.FeedbackFixtures.NODE_B;
@@ -67,19 +74,19 @@ class RoutingFeedbackValueTypesTest {
 
     @Test
     void bindingsAreCanonicalPointQueriedAndRejectInconsistentInput() {
-        var b = new TargetBindings("s", "p", "1", "m", List.of(new TargetBinding(key("s", "b", "r", 2), NODE_B),
+        var b = new TargetBindings("s", "p", "1", "m", FeedbackFixtures.SCHEMA, List.of(new TargetBinding(key("s", "b", "r", 2), NODE_B),
                 new TargetBinding(key("s", "a", "r", 1), NODE_A)));
         assertEquals(key("s", "a", "r", 1), b.bindings().getFirst().key());
         assertEquals(Optional.of(NODE_B), b.find(key("s", "b", "r", 2)));
         assertEquals(Optional.empty(), b.find(key("s", "b", "r", 3)));
         assertEquals(Optional.empty(), b.find(key("s", "c", "r", 1)));
 
-        assertThrows(IllegalArgumentException.class, () -> new TargetBindings("s", "p", "1", "m",
+        assertThrows(IllegalArgumentException.class, () -> new TargetBindings("s", "p", "1", "m", FeedbackFixtures.SCHEMA,
                 List.of(new TargetBinding(key("other", "a", "r", 1), NODE_A))));
-        assertThrows(IllegalArgumentException.class, () -> new TargetBindings("s", "p", "1", "m",
+        assertThrows(IllegalArgumentException.class, () -> new TargetBindings("s", "p", "1", "m", FeedbackFixtures.SCHEMA,
                 List.of(new TargetBinding(key("s", "a", "r", 1), NODE_A),
                         new TargetBinding(key("s", "a", "r", 1), NODE_B))));
-        assertThrows(IllegalArgumentException.class, () -> new TargetBindings("s", "p", "1", "m",
+        assertThrows(IllegalArgumentException.class, () -> new TargetBindings("s", "p", "1", "m", FeedbackFixtures.SCHEMA,
                 List.of(new TargetBinding(key("s", "a", "r", 1), NODE_A),
                         new TargetBinding(key("s", "a", "r", 2), NODE_A))));
     }
@@ -90,11 +97,11 @@ class RoutingFeedbackValueTypesTest {
         for (int i = 0; i < TargetBindings.MAX_BINDINGS; i++) {
             full.add(new TargetBinding(key("s", "b", "r", i + 1), new UUID(1L, i)));
         }
-        var ok = new TargetBindings("s", "p", "1", "m", full);
+        var ok = new TargetBindings("s", "p", "1", "m", FeedbackFixtures.SCHEMA, full);
         assertEquals(TargetBindings.MAX_BINDINGS, ok.bindings().size());
         assertEquals(Optional.of(new UUID(1L, 255)), ok.find(key("s", "b", "r", 256)));
         full.add(new TargetBinding(key("s", "b", "r", 999), new UUID(1L, 999)));
-        assertThrows(IllegalArgumentException.class, () -> new TargetBindings("s", "p", "1", "m", full));
+        assertThrows(IllegalArgumentException.class, () -> new TargetBindings("s", "p", "1", "m", FeedbackFixtures.SCHEMA, full));
     }
 
     // ---- feedback invariants (built from a valid derived feedback) ----
@@ -152,7 +159,7 @@ class RoutingFeedbackValueTypesTest {
     }
 
     private static RoutingFeedback penaltyWith(RoutingFeedback f, DerivedAcceptance acceptance,
-            List<IneligibilityReason> reasons, List<monada.neuron.routing.outcome.QualityDimension> failures,
+            List<IneligibilityReason> reasons, List<QualityDimension> failures,
             List<FeedbackEntry> entries) {
         return new RoutingFeedback(f.contractVersion(), f.identity(), f.supersedesSequence(), f.cohortKey(),
                 f.routingPolicyId(), f.routingPolicyVersion(), f.catalogVersion(), f.cutoff(), acceptance,
@@ -163,8 +170,8 @@ class RoutingFeedbackValueTypesTest {
     @Test
     void routingEntriesAreScoreOnly() {
         var f = reward();
-        var signal = new monada.neuron.signal.Signal(monada.neuron.signal.SignalKind.FEEDBACK,
-                new monada.neuron.model.FrequencyState(1.0, 1.0, 0.0));
+        var signal = new Signal(SignalKind.FEEDBACK,
+                new FrequencyState(1.0, 1.0, 0.0));
         assertThrows(IllegalArgumentException.class, () -> rebuilt(f, ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL,
                 FeedbackDisposition.REINFORCE, List.of(new FeedbackEntry(NODE_A, signal, 0.8)),
                 DerivedAcceptance.VALIDATED_ACCEPTED, Feature.unknown()));
@@ -184,8 +191,8 @@ class RoutingFeedbackValueTypesTest {
                 List.of(IneligibilityReason.PENDING), p.provenFailures(), minus));
         // failures must be the effective FAIL dimensions: fabricated, and dropped
         assertThrows(IllegalArgumentException.class, () -> penaltyWith(p, p.derivedAcceptance(), p.reasons(),
-                List.of(monada.neuron.routing.outcome.QualityDimension.TESTS,
-                        monada.neuron.routing.outcome.QualityDimension.SECURITY), minus));
+                List.of(QualityDimension.TESTS,
+                        QualityDimension.SECURITY), minus));
         assertThrows(IllegalArgumentException.class, () -> penaltyWith(p, p.derivedAcceptance(), p.reasons(),
                 List.of(), minus));
         // a penalty cannot follow validated or pending acceptance
@@ -207,7 +214,7 @@ class RoutingFeedbackValueTypesTest {
     }
 
     private static RoutingFeedback rewardWith(RoutingFeedback f, long cutoff, long ledgerSequence,
-            List<monada.neuron.routing.outcome.LearningAssessment.EffectiveEvidence> evidence) {
+            List<LearningAssessment.EffectiveEvidence> evidence) {
         var id = f.identity();
         return new RoutingFeedback(f.contractVersion(),
                 new FeedbackIdentity(id.experienceRef(), id.revision(), ledgerSequence, id.decisionRef(), id.route(),
@@ -224,9 +231,9 @@ class RoutingFeedbackValueTypesTest {
         rewardWith(f, f.cutoff(), f.identity().ledgerSequence(), passing);
         assertThrows(IllegalArgumentException.class,
                 () -> rewardWith(f, f.cutoff(), f.identity().ledgerSequence(), List.of()));
-        var unknown = new monada.neuron.routing.outcome.LearningAssessment.EffectiveEvidence(
-                monada.neuron.routing.outcome.QualityDimension.TESTS,
-                monada.neuron.routing.outcome.QualityState.UNKNOWN, 5L);
+        var unknown = new LearningAssessment.EffectiveEvidence(
+                QualityDimension.TESTS,
+                QualityState.UNKNOWN, 5L);
         assertThrows(IllegalArgumentException.class,
                 () -> rewardWith(f, f.cutoff(), f.identity().ledgerSequence(), List.of(unknown)));
     }
@@ -235,9 +242,9 @@ class RoutingFeedbackValueTypesTest {
     void evidenceCannotBeLaterThanTheSampleThatUsesIt() {
         var f = reward();
         long sequence = f.identity().ledgerSequence();
-        var future = new monada.neuron.routing.outcome.LearningAssessment.EffectiveEvidence(
-                monada.neuron.routing.outcome.QualityDimension.TESTS,
-                monada.neuron.routing.outcome.QualityState.PASS, sequence + 1);
+        var future = new LearningAssessment.EffectiveEvidence(
+                QualityDimension.TESTS,
+                QualityState.PASS, sequence + 1);
         // still within the cutoff, but after the sample's own position
         assertThrows(IllegalArgumentException.class,
                 () -> rewardWith(f, sequence + 10, sequence, List.of(future)));
@@ -248,7 +255,7 @@ class RoutingFeedbackValueTypesTest {
         var f = reward();
         var id = f.identity();
         var plus = List.of(FeedbackEntry.of(NODE_A, 0.8));
-        java.util.function.BiFunction<Long, Feature<Long>, RoutingFeedback> make = (revision, supersedes) ->
+        BiFunction<Long, Feature<Long>, RoutingFeedback> make = (revision, supersedes) ->
                 new RoutingFeedback(f.contractVersion(),
                         new FeedbackIdentity(id.experienceRef(), revision, 30L, id.decisionRef(), id.route(),
                                 id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()),
@@ -266,10 +273,39 @@ class RoutingFeedbackValueTypesTest {
         var f = reward();
         long sequence = f.identity().ledgerSequence();
         assertThrows(IllegalArgumentException.class, () -> rewardWith(f, sequence - 1, sequence, f.effectiveEvidence()));
-        var late = new monada.neuron.routing.outcome.LearningAssessment.EffectiveEvidence(
-                monada.neuron.routing.outcome.QualityDimension.TESTS,
-                monada.neuron.routing.outcome.QualityState.PASS, f.cutoff() + 1);
+        var late = new LearningAssessment.EffectiveEvidence(
+                QualityDimension.TESTS,
+                QualityState.PASS, f.cutoff() + 1);
         assertThrows(IllegalArgumentException.class, () -> rewardWith(f, f.cutoff(), sequence, List.of(late)));
+    }
+
+    @Test
+    void provenanceReasonAndMismatchesAreEquivalentInBothDirections() {
+        assertThrows(IllegalArgumentException.class, () -> new FeedbackDerivation.NoUpdate(
+                NoUpdateReason.MAPPING_MISMATCH, List.of(IneligibilityReason.PROVENANCE_MISMATCH), List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new FeedbackDerivation.NoUpdate(
+                NoUpdateReason.PROVENANCE_MISMATCH, List.of(), List.of()));
+        new FeedbackDerivation.NoUpdate(NoUpdateReason.MAPPING_MISMATCH, List.of(IneligibilityReason.PENDING),
+                List.of());
+        new FeedbackDerivation.NoUpdate(NoUpdateReason.PROVENANCE_MISMATCH,
+                List.of(IneligibilityReason.PROVENANCE_MISMATCH), List.of(ProvenanceField.CUTOFF));
+    }
+
+    @Test
+    void recordOnlyAcceptsOnlyTheNeutralCohortLessMarker() {
+        var f = reward();
+        var marker = AppliedRevision.ofNoUpdate(new FeedbackFixtures.Spec().passing().observation());
+        new Reconciliation.RecordOnly(marker, Optional.empty());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Reconciliation.RecordOnly(AppliedRevision.of(f), Optional.empty()));
+        var neutralWithCohort = AppliedRevision.of(
+                ((FeedbackDerivation.Derived) FeedbackFixtures.policy().derive(
+                        new FeedbackFixtures.Spec().observation(), new FeedbackFixtures.Spec().decision,
+                        new FeedbackFixtures.Spec().request,
+                        FeedbackFixtures.bindings(new FeedbackFixtures.Spec().decision,
+                                new FeedbackFixtures.Spec().request, NODE_A))).feedback());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Reconciliation.RecordOnly(neutralWithCohort, Optional.empty()));
     }
 
     @Test

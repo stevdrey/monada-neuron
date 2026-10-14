@@ -60,6 +60,19 @@ class RebuildOrderTest {
     }
 
     @Test
+    void aHigherRevisionAtAnEarlierPositionIsRejectedInEveryInputOrder() {
+        var original = observation("a", 0, 20);
+        var correction = observation("a", 1, 10);
+        assertThrows(IllegalArgumentException.class, () -> order.order(List.of(original, correction)));
+        assertThrows(IllegalArgumentException.class, () -> order.order(List.of(correction, original)));
+        var samePosition = observation("a", 1, 20);
+        assertThrows(IllegalArgumentException.class, () -> order.order(List.of(original, samePosition)));
+        // a well-ordered chain is fine
+        assertEquals(List.of(observation("a", 2, 30)),
+                order.order(List.of(observation("a", 2, 30), original, observation("a", 1, 25))));
+    }
+
+    @Test
     void anyInputPermutationGivesTheSameOrder() {
         var input = new ArrayList<>(List.of(observation("a", 0, 12), observation("b", 1, 40), observation("b", 0, 20),
                 observation("c", 0, 12), observation("d", 0, 33)));

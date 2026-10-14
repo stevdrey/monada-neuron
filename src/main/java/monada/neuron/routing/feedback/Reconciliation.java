@@ -41,6 +41,10 @@ public sealed interface Reconciliation {
             if (replaces.isPresent() && replaces.get().changedState()) {
                 throw new IllegalArgumentException("only a neutral entry can be replaced without a rebuild");
             }
+            if (marker.changedState() || marker.cohortKey().isPresent() || marker.targetNodeId().isPresent()) {
+                throw new IllegalArgumentException("a record-only marker is neutral and names no cohort or Node, "
+                        + "as AppliedRevision.ofNoUpdate builds it");
+            }
         }
     }
 
@@ -104,8 +108,7 @@ public sealed interface Reconciliation {
         /** Requires a partition reason. */
         public OutOfPartition {
             Objects.requireNonNull(reason, "reason must not be null");
-            if (reason != NoUpdateReason.MAPPING_MISMATCH && reason != NoUpdateReason.BINDING_SCOPE_MISMATCH
-                    && reason != NoUpdateReason.BINDING_PARTITION_MISMATCH) {
+            if (!reason.foreignPartition()) {
                 throw new IllegalArgumentException(reason + " is not a partition mismatch");
             }
         }

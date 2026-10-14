@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
 
 import static monada.neuron.routing.feedback.FeedbackFixtures.NODE_A;
 import static monada.neuron.routing.feedback.FeedbackFixtures.obs;
@@ -127,6 +128,7 @@ class RevisionReconcilerTest {
         var key = FeedbackFixtures.keyOf(spec.decision, spec.request);
         var otherBinding = new TargetBindings("scope-demo", "forge-gates", "1",
                 FeedbackFixtures.DEFINITION.mappingVersion(),
+                FeedbackFixtures.SCHEMA,
                 List.of(new TargetBinding(key, FeedbackFixtures.NODE_B)));
         var ledger = List.of(applied(derive(policy(), spec)));
         assertEquals(Optional.of(NODE_A), ledger.getFirst().targetNodeId());
@@ -152,6 +154,13 @@ class RevisionReconcilerTest {
         assertInstanceOf(Reconciliation.RecordOnly.class, reconciler.reconcile(List.of(), r2.observation(), unbound));
         assertThrows(IllegalArgumentException.class,
                 () -> new Reconciliation.OutOfPartition(NoUpdateReason.NO_TARGET_BINDING));
+    }
+
+    @Test
+    void aForeignSchemaObservationIsNeverRecorded() {
+        var none = new FeedbackDerivation.NoUpdate(NoUpdateReason.FEATURE_SCHEMA_MISMATCH, List.of(), List.of());
+        assertEquals(new Reconciliation.OutOfPartition(NoUpdateReason.FEATURE_SCHEMA_MISMATCH),
+                reconciler.reconcile(ledgerOf(RevisionReconciler.MAX_LEDGER), spec.passing().observation(), none));
     }
 
     @Test
@@ -355,7 +364,7 @@ class RevisionReconcilerTest {
             new AdaptationConfig(0.5, 0.5, 100.0, 0.0, 1000.0, 0.0, 10000.0, 2.0));
 
     /** Derives and applies the observations in the given order to a fresh baseline Node. */
-    private Node replay(List<RoutingObservation> ordered, java.util.function.Function<RoutingObservation,
+    private Node replay(List<RoutingObservation> ordered, Function<RoutingObservation,
             FeedbackFixtures.Spec> specs) {
         var node = baselineNode();
         for (var observation : ordered) {
@@ -382,7 +391,7 @@ class RevisionReconcilerTest {
                 .with(obs("ev-tests-late", 0, QualityDimension.TESTS, QualityState.FAIL, "att-1", 50));
         x1r1.status = OutcomeStatus.ACCEPTED;
 
-        java.util.function.Function<RoutingObservation, FeedbackFixtures.Spec> specs = o ->
+        Function<RoutingObservation, FeedbackFixtures.Spec> specs = o ->
                 o.experienceRef().equals("x2") ? x2 : (o.revision() == 0 ? x1r0 : x1r1);
 
         // the incremental path before the correction: X1 reward, then X2 reward

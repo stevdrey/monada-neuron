@@ -11,7 +11,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Immutable set of Node bindings of one state partition {@code (scopeId, evaluationPolicy, mappingVersion)}, kept in
+ * Immutable set of Node bindings of one state partition {@code (scopeId, evaluationPolicy, mappingVersion, featureSchemaVersion)}, kept in
  * canonical {@link CohortKey} order so a lookup is an allocation-free binary search (no map is needed for at most
  * {@value #MAX_BINDINGS} entries that are only point-queried).
  *
@@ -22,6 +22,7 @@ import java.util.UUID;
  * @param evaluationPolicyId evaluation policy id the partition is built under
  * @param evaluationPolicyVersion evaluation policy version
  * @param mappingVersion composite state-definition version
+ * @param featureSchemaVersion feature schema the partition's cohort mapping was built for (an admission key)
  * @param bindings bindings, at most {@value #MAX_BINDINGS}
  */
 public record TargetBindings(
@@ -29,6 +30,7 @@ public record TargetBindings(
         String evaluationPolicyId,
         String evaluationPolicyVersion,
         String mappingVersion,
+        String featureSchemaVersion,
         List<TargetBinding> bindings) {
 
     /** Maximum bindings, equal to the maximum cohorts of a state (contract section 4). */
@@ -42,6 +44,7 @@ public record TargetBindings(
         OpaqueTokens.require(evaluationPolicyId, "evaluationPolicyId");
         OpaqueTokens.require(evaluationPolicyVersion, "evaluationPolicyVersion");
         OpaqueTokens.require(mappingVersion, "mappingVersion");
+        OpaqueTokens.require(featureSchemaVersion, "featureSchemaVersion");
         bindings = Canonical.sortedUnique(Objects.requireNonNull(bindings, "bindings must not be null"), ORDER,
                 MAX_BINDINGS, "bindings");
         Set<UUID> nodes = new HashSet<>(bindings.size() * 2);

@@ -51,6 +51,7 @@ final class FeedbackFixtures {
     static final EvidencePolicy GATES =
             new EvidencePolicy("forge-gates", "1", Set.of(QualityDimension.TESTS, QualityDimension.SECURITY));
     static final RoutingStateDefinition DEFINITION = LexicographicRoutingPolicy.reference().definition();
+    static final String SCHEMA = DEFINITION.cohortMapping().featureSchemaVersion();
 
     static final UUID NODE_A = new UUID(0L, 1L);
     static final UUID NODE_B = new UUID(0L, 2L);
@@ -91,7 +92,8 @@ final class FeedbackFixtures {
 
     static TargetBindings bindings(RoutingDecision.Selected decision, RoutingRequest request, UUID node) {
         return new TargetBindings(request.scopeId(), request.evaluationPolicyId(), request.evaluationPolicyVersion(),
-                DEFINITION.mappingVersion(), List.of(new TargetBinding(keyOf(decision, request), node)));
+                DEFINITION.mappingVersion(),
+                FeedbackFixtures.SCHEMA, List.of(new TargetBinding(keyOf(decision, request), node)));
     }
 
     static QualityObservation obs(String event, long revision, QualityDimension dimension, QualityState state,
