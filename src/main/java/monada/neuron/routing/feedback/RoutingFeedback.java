@@ -41,7 +41,9 @@ import java.util.Optional;
  * @param reasons assessment reasons, declaration order
  * @param effectiveEvidence effective state per mandatory dimension
  * @param provenFailures mandatory dimensions whose effective state is {@code FAIL}
- * @param costPeer peer revision a cost-refined reward depended on; present exactly for {@code REINFORCE_COST_REFINED}
+ * @param costPeer peer revision a reward was compared against (the derivation's view of the peer, so a superseded
+ *         view is detected); always present for {@code REINFORCE_COST_REFINED}, whose peer must precede the reward in
+ *         applied order, and absent unless the feedback is a reward
  */
 public record RoutingFeedback(
         String contractVersion,
@@ -88,12 +90,17 @@ public record RoutingFeedback(
         Objects.requireNonNull(derivedAcceptance, "derivedAcceptance must not be null");
         Objects.requireNonNull(rule, "rule must not be null");
         Objects.requireNonNull(costPeer, "costPeer must not be null");
-        if (costPeer.isPresent() != (rule == ScoreRule.REINFORCE_COST_REFINED)) {
-            throw new IllegalArgumentException("a cost peer is recorded exactly for REINFORCE_COST_REFINED");
+        if (rule == ScoreRule.REINFORCE_COST_REFINED && costPeer.isEmpty()) {
+            throw new IllegalArgumentException("REINFORCE_COST_REFINED records the cost peer it compared against");
         }
-        if (costPeer.isPresent() && costPeer.get().ledgerSequence() > cutoff) {
-            throw new IllegalArgumentException("the cost peer at sequence " + costPeer.get().ledgerSequence()
-                    + " lies beyond the cutoff " + cutoff);
+        if (costPeer.isPresent() && rule.disposition() != FeedbackDisposition.REINFORCE) {
+            throw new IllegalArgumentException("only a reward considers a cost peer");
+        }
+        if (rule == ScoreRule.REINFORCE_COST_REFINED
+                && !costPeer.get().precedes(identity.ledgerSequence(), identity.experienceRef())) {
+            throw new IllegalArgumentException("the cost peer " + costPeer.get().experienceRef() + " at sequence "
+                    + costPeer.get().ledgerSequence() + " does not precede the reward at " + identity.ledgerSequence()
+                    + " in applied order");
         }
         Objects.requireNonNull(disposition, "disposition must not be null");
         if (rule.disposition() != disposition) {

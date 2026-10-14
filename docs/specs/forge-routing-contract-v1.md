@@ -1403,7 +1403,7 @@ what is learned, so the host must give the state definition a new `mappingVersio
 
 **Cost refinement (optional, reward-only).** `reinforceScore + costBonus` is granted only when a `CostReference` is supplied, the config
 declares a `CostObjective(UsageKind, MINIMIZE|MAXIMIZE)`, and all of the following hold: the peer (assessed by the policy itself with
-its own decision and request, not by a caller-supplied assessment) is a `POSITIVE_CANDIDATE` of **another** route under a different `DecisionRef` (two accounts of one decision are not two executions) whose decision and outcome belong to the same partition (mapping, bucket mapping and schema), whose request reproduces its decision's recorded bucket and whose cutoff is not after the feedback's (a later peer would let future data influence historical feedback); scope, task,
+its own decision and request, not by a caller-supplied assessment) is a `POSITIVE_CANDIDATE` of **another** route under a different `DecisionRef` (two accounts of one decision are not two executions) whose decision and outcome belong to the same partition (mapping, bucket mapping and schema), whose request reproduces its decision's recorded bucket, whose cutoff is not after the feedback's, which comes strictly before the reward in applied order `(ledgerSequence, experienceRef)` and whose own cohort is bound in this state (so a replay always applies the peer first, and its arrival or correction is always a Node change the ledger sees); scope, task,
 `stageKind`, the three fingerprints and the evaluation policy are equal (Section 6, directly comparable pair); both outcomes have
 `MEASURED` usage with a `Known` counter of the declared kind and equal provenance (`REPORTED` or `ESTIMATED`); and the executed
 value is strictly better. Unknown, not-measured, absent and `NO_BILLABLE_USAGE` data, equal values and non-comparable pairs yield
@@ -1413,33 +1413,45 @@ cost and actual billing are carried by the outcome but are not read.
 
 ### 21.3 Caller-owned applied-revision bookkeeping and rebuild
 
-The caller keeps a ledger of `AppliedRevision(identity, routingPolicyId, routingPolicyVersion, supersedesSequence, Optional<cohortKey>, Optional<targetNodeId>, Optional<costPeer>, Optional<markerProvenance>, disposition, score)` (the producing routing policy is retained as audit provenance, so the same revision delivered under another routing policy, with different correction ancestry or crediting another Node is a conflict, not a duplicate; the target Node is recorded exactly when the entry moved a Node, a no-update marker keeps its outcome provenance (`ObservationProvenance`: catalog version, cutoff and cohort binding) so two different claims of one sample revision never compare equal, and a cost-refined reward records the exact peer revision it depended on as `PeerRevision`, at or before the feedback's cutoff; only a reinforcing entry can carry one): **one entry per sample reference, the
-latest examined revision**, at most 4,096 entries (neutral feedback is recorded too, with score `0.0`, and so is a revision that derived nothing, as a marker from `AppliedRevision.ofNoUpdate(observation)` with no cohort, so a delayed older revision of the same sample stays stale). Neuron holds no ledger.
-`RevisionReconciler.reconcile(ledger, observation, derivation)` first requires that a derived feedback answers the exact observation (reference, revision, ledger sequence, `supersedesSequence`, decision, executed route, routing policy, catalog, cutoff, evaluation policy, `mappingVersion` and cohort bucket), else `IllegalArgumentException`; it then returns advice and modifies nothing:
+The caller keeps a ledger of `AppliedRevision(identity, routingPolicyId, routingPolicyVersion, supersedesSequence, catalogVersion, cutoff, Optional<targetNodeId>, Optional<costPeer>, EntryBasis, disposition, score)`: **one entry per sample reference, the latest examined revision**, at most 4,096 entries. Neuron holds no ledger. Two entries compare equal only when everything the contract validates about the claim is equal, apart from the bulky evidence lists:
 
-| Relation of the observation to the entry of the same sample reference | Result |
+- the producing routing policy, the correction ancestry, the catalog version and the cutoff;
+- the credited Node, recorded exactly when the entry moved a Node;
+- `EntryBasis`, either `Derived(cohortKey, rule, acceptance, reasons)` for a derived feedback (neutral feedback is recorded too, with score `0.0`) or `NoUpdateMarker(reason, cohortBinding)` for a revision that derived nothing, built by `AppliedRevision.ofNoUpdate(observation, reason)`, so a delayed older revision of the same sample stays stale;
+- the exact `PeerRevision` of the cost peer, recorded exactly for a cost-refined reward.
+
+`RevisionReconciler.reconcile(ledger, observation, derivation)` first requires that a derived feedback answers the exact observation (reference, revision, ledger sequence, `supersedesSequence`, decision, executed route, routing policy, catalog, cutoff, evaluation policy, `mappingVersion` and cohort bucket), else `IllegalArgumentException`; it then returns advice and modifies nothing. The rules, in the order they are checked:
+
+| Relation of the observation to the ledger | Result |
 | --- | --- |
-| No entry, a feedback derived | `Apply`; `CapacityExhausted` when 4,096 entries exist (nothing evicted, nothing applied) |
-| No entry, nothing derived | `RecordOnly(marker)`, which only accepts the neutral, cohort-less, Node-less form `AppliedRevision.ofNoUpdate` builds; `CapacityExhausted` when full |
-| A derived reward refined against a revision of its cost peer that the ledger already superseded | `StalePeerDependency(peer entry)`: nothing applied, the caller derives it again against the latest peer revision |
-| Nothing derived because the observation belongs to another state partition (`MAPPING_MISMATCH`, `FEATURE_SCHEMA_MISMATCH`, `BINDING_SCOPE_MISMATCH`, `BINDING_PARTITION_MISMATCH`; `NoUpdateReason.foreignPartition()`) | `OutOfPartition`: nothing recorded, nothing applied, no capacity used (checked first) |
-| Same revision, equal entry (duplicate delivery; a marker equals a marker) | `AlreadyApplied` |
-| Same revision, any difference in identity or score, or now deriving nothing (conflicting revision) | `ConflictingRevision` |
+| Nothing derived because the observation belongs to another state partition (`MAPPING_MISMATCH`, `FEATURE_SCHEMA_MISMATCH`, `BINDING_SCOPE_MISMATCH`, `BINDING_PARTITION_MISMATCH`) or is wrongly paired with its decision (`PROVENANCE_MISMATCH`); `NoUpdateReason.recordable()` is false for these | `NotRecorded`: nothing recorded, nothing applied, no capacity used; once the caller fixes the pairing the same revision can still be derived and applied |
+| A newer revision at a ledger position that is not strictly later than the entry it replaces, or an older one that is not strictly earlier | `IllegalArgumentException` (inconsistent caller data) |
+| No entry, 4,096 entries exist | `CapacityExhausted` (nothing evicted, nothing applied) |
+| No entry, a feedback derived | `Apply`, subject to the order rule below |
+| No entry, nothing derived | `RecordOnly(marker)`, which only accepts the `NoUpdateMarker` form |
+| Same revision, equal entry (duplicate delivery) | `AlreadyApplied` |
+| Same revision, the entry is a marker for a missing Node binding (`NO_TARGET_BINDING`) and a feedback is now derived with the same claim | A first application, subject to the order rule (`Apply` replacing the marker, or `RebuildRequired`) |
+| Same revision, two rewards equal except for the cost refinement (rule or peer) | `StalePeerDependency(entry)`: nothing applied; the derivation looked at another view of the peer, so the caller derives again against the latest one |
+| Same revision, any other difference (score under another configuration, assessment, catalog, cutoff, Node, policy, ancestry) | `ConflictingRevision` |
 | Older revision | `StaleRevision` |
-| Newer revision, entry was neutral | `Apply` or, when nothing is derived, `RecordOnly` (either replaces the entry) |
 | Newer revision, entry was a reward or penalty, **whatever the new revision derives, including nothing** | `RebuildRequired(superseded, affectedFromSequence)` |
-| Any result that would be `Apply` or `RecordOnly`, while an applied entry was cost-refined against an **older revision of this very sample** (the peer needs no ledger entry of its own) | `RebuildRequired(dependent entry, its ledgerSequence)`; when the result is already a `RebuildRequired`, its `affectedFromSequence` is lowered to the earliest such dependent entry so a checkpoint that already contains the obsolete bonus is not trusted |
+| Newer revision, entry was neutral or a marker | `Apply` or, when nothing is derived, `RecordOnly` (either replaces the entry), subject to the order rule |
 
-A newer revision must sit at a strictly later ledger position than the entry it replaces, and an older one at a strictly earlier position; otherwise the pairing is inconsistent caller data and `IllegalArgumentException` is thrown.
+Two further rules apply on top of the table:
+
+- **Order rule.** Adaptation is clamped and order dependent, so an application that moves a Node is incremental only if its applied position `(ledgerSequence, experienceRef by code point)` is after the position of every ledger entry that moved a Node. Otherwise the result is `RebuildRequired(earliest later entry, affectedFromSequence = the incoming ledgerSequence)`: a late first delivery, a late binding or a correction placed before already-applied effects cannot be applied in place. Neutral results and markers move no Node and are never affected.
+- **Cost peer dependencies.** A derived reward that looked at a revision of its cost peer that the ledger already superseded is not applied: `StalePeerDependency`. Conversely, any result that would be `Apply`, `RecordOnly` or `RebuildRequired` for a sample becomes `RebuildRequired(dependent entry, its ledgerSequence)` when an entry was cost-refined against an **older revision of this very sample**, even if the peer has no ledger entry of its own; an existing rebuild starts at the earliest such dependent entry.
 
 `affectedFromSequence` is the smaller of the superseded entry's `ledgerSequence` and the observation's `supersedesSequence` when
 known; a checkpoint is a valid starting point only if its `processedCutoff` is strictly below it (Section 7). Node adaptation is not
 exactly invertible, so a superseded reward is never subtracted: the caller resets the partition's Nodes to the baseline and replays
 `RebuildOrder.order(observations)`, which keeps the latest revision of each sample reference and sorts by `(ledgerSequence, experienceRef by
 code point)`. It rejects more than 4,096 observations, a higher revision of a sample at a ledger position that is not strictly later than the lower one, and two different observations claiming the same sample revision (checked for every revision before older ones are discarded, so the result never depends on input order), and collapses
-an identical repeat. The caller derives each observation with the policy and applies the results in that order; the replay
-equals a build from scratch from the same corrected export because the order and the derivation are pure functions of it
-(tested, including the Section 9.5 scenario). A rebuild is staged and swapped by the caller as Section 7 requires.
+an identical repeat. The caller derives each observation with the policy and applies the results in that order. A rebuild is staged and swapped by the caller as Section 7 requires.
+
+**The invariant, and how it is tested.** After any sequence of deliveries, the state kept by following this advice equals a rebuild from scratch from the latest known revision of every sample, in applied order, both in the Node state and in the ledger (`LedgerRebuildEquivalenceTest`: 3,000 seeded delivery sequences of 20 deliveries each over four samples on three routes, with out-of-order and duplicate deliveries, corrections, pending, unknown, failing and chain-only outcomes, an unbound route, derivations against out-of-date views of the cost peer, and with and without the cost refinement). Mutating the reconciler (no order rule, markers not recorded, no stale-peer check) makes that test fail.
+
+**Limits of the invariant.** It assumes that the caller derives each delivery from its current knowledge: a cost peer that is left out, as opposed to a superseded revision of it, cannot be detected by the reconciler, which only sees the peer revision a derivation recorded. The bonus also depends on which `CostReference` the host supplies; a rebuild must supply the same selection rule, which is the host's, not Neuron's.
 
 ### 21.4 Limits, complexity and footprint
 

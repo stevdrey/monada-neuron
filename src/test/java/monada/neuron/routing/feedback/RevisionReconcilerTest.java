@@ -9,7 +9,9 @@ import monada.neuron.model.NodeType;
 import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.features.Feature;
+import monada.neuron.routing.outcome.IneligibilityReason;
 import monada.neuron.routing.outcome.OutcomeStatus;
+import monada.neuron.routing.outcome.ProvenanceField;
 import monada.neuron.routing.outcome.QualityDimension;
 import monada.neuron.routing.outcome.QualityState;
 import monada.neuron.routing.outcome.RoutingObservation;
@@ -28,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RevisionReconcilerTest {
 
@@ -84,8 +87,7 @@ class RevisionReconcilerTest {
         var entry = AppliedRevision.of(derived.feedback());
         assertEquals(derived.feedback().routingPolicyId(), entry.routingPolicyId());
         assertEquals(derived.feedback().routingPolicyVersion(), entry.routingPolicyVersion());
-        var otherPolicy = new AppliedRevision(entry.identity(), entry.routingPolicyId(), "other-version",
-                entry.supersedesSequence(), entry.cohortKey(), entry.targetNodeId(), entry.costPeer(), Optional.empty(), entry.disposition(), entry.score());
+        var otherPolicy = FeedbackFixtures.withPolicyVersion(entry, "other-version");
         assertEquals(new Reconciliation.ConflictingRevision(otherPolicy),
                 reconciler.reconcile(List.of(otherPolicy), spec.observation(), derived));
     }
@@ -144,17 +146,17 @@ class RevisionReconcilerTest {
         for (var reason : List.of(NoUpdateReason.MAPPING_MISMATCH, NoUpdateReason.BINDING_SCOPE_MISMATCH,
                 NoUpdateReason.BINDING_PARTITION_MISMATCH)) {
             var none = new FeedbackDerivation.NoUpdate(reason, List.of(), List.of());
-            assertEquals(new Reconciliation.OutOfPartition(reason),
+            assertEquals(new Reconciliation.NotRecorded(reason),
                     reconciler.reconcile(List.of(), r2.observation(), none));
             // a full ledger neither overflows nor is touched
-            assertEquals(new Reconciliation.OutOfPartition(reason),
+            assertEquals(new Reconciliation.NotRecorded(reason),
                     reconciler.reconcile(ledgerOf(RevisionReconciler.MAX_LEDGER), r2.observation(), none));
         }
         // an unbound cohort of this partition is still recorded
         var unbound = new FeedbackDerivation.NoUpdate(NoUpdateReason.NO_TARGET_BINDING, List.of(), List.of());
         assertInstanceOf(Reconciliation.RecordOnly.class, reconciler.reconcile(List.of(), r2.observation(), unbound));
         assertThrows(IllegalArgumentException.class,
-                () -> new Reconciliation.OutOfPartition(NoUpdateReason.NO_TARGET_BINDING));
+                () -> new Reconciliation.NotRecorded(NoUpdateReason.NO_TARGET_BINDING));
     }
 
     @Test
@@ -164,13 +166,14 @@ class RevisionReconcilerTest {
         var request = FeedbackFixtures.request("scope-demo", "task-17", "exec-2", "att-1", "s-impl-2", 102L);
         var peer = new FeedbackFixtures.Spec(request, FeedbackFixtures.decide(request, "sub-b")).passing();
         peer.experienceRef = "exp-2";
+        peer.ledgerSequence = 10L;
         peer.resources = FeedbackFixtures.tokens(900, ResourceValue.Provenance.REPORTED);
         var refined = (FeedbackDerivation.Derived) policy().derive(self.observation(), self.decision, self.request,
                 FeedbackFixtures.bindings(self.decision, self.request, NODE_A),
                 Optional.of(new CostReference(peer.observation(), peer.decision, peer.request)));
         assertEquals(ScoreRule.REINFORCE_COST_REFINED, refined.feedback().rule());
         var ledger = List.of(AppliedRevision.of(refined.feedback()));
-        assertEquals(Optional.of(new PeerRevision("exp-2", 0, 12L)), ledger.getFirst().costPeer());
+        assertEquals(Optional.of(new PeerRevision("exp-2", 0, 10L)), ledger.getFirst().costPeer());
 
         // the peer was never processed itself (no ledger entry); a corrected revision of it still forces a rebuild
         var correction = corrected(peer, 1, 40L).failing();
@@ -181,25 +184,26 @@ class RevisionReconcilerTest {
         var none = new FeedbackDerivation.NoUpdate(NoUpdateReason.NO_TARGET_BINDING, List.of(), List.of());
         assertInstanceOf(Reconciliation.RebuildRequired.class,
                 reconciler.reconcile(ledger, correction.observation(), none));
-        // an unrelated sample, or the same peer revision again, does not
+        // an unrelated sample does not
         var other = new FeedbackFixtures.Spec().passing();
         other.experienceRef = "exp-other";
         assertEquals(new Reconciliation.Apply(Optional.empty()),
                 reconciler.reconcile(ledger, other.observation(), derive(policy(), other)));
-        assertInstanceOf(Reconciliation.Apply.class,
+        // a peer delivered only after its dependent reward cannot be applied in place: the reward must follow it
+        assertInstanceOf(Reconciliation.RebuildRequired.class,
                 reconciler.reconcile(ledger, peer.observation(), derive(policy(), peer)));
     }
 
     @Test
-    void aPeerRebuildStartsAtTheEarliestDependentRewardEvenWhenThePeerHasItsOwnEntry() {
-        // reward A at sequence 10 was refined against peer exp-2@0 (sequence 20); the peer itself was rewarded at 20
+    void aPeerCorrectionRebuildStartsAtThePeerBecauseTheDependentAlwaysFollowsIt() {
+        // reward A at sequence 20 was refined against peer exp-2@0, which was itself rewarded at sequence 10
         var self = new FeedbackFixtures.Spec().passing();
-        self.ledgerSequence = 10L;
+        self.ledgerSequence = 20L;
         self.resources = FeedbackFixtures.tokens(400, ResourceValue.Provenance.REPORTED);
         var request = FeedbackFixtures.request("scope-demo", "task-17", "exec-2", "att-1", "s-impl-2", 102L);
         var peer = new FeedbackFixtures.Spec(request, FeedbackFixtures.decide(request, "sub-b")).passing();
         peer.experienceRef = "exp-2";
-        peer.ledgerSequence = 20L;
+        peer.ledgerSequence = 10L;
         peer.resources = FeedbackFixtures.tokens(900, ResourceValue.Provenance.REPORTED);
         var refined = (FeedbackDerivation.Derived) policy().derive(self.observation(), self.decision, self.request,
                 FeedbackFixtures.bindings(self.decision, self.request, NODE_A),
@@ -210,9 +214,10 @@ class RevisionReconcilerTest {
         var correction = corrected(peer, 1, 40L).failing();
         var rebuild = assertInstanceOf(Reconciliation.RebuildRequired.class,
                 reconciler.reconcile(ledger, correction.observation(), derive(policy(), correction)));
-        // without the dependency the rebuild would start at 20, and a checkpoint at 15 would keep A's stale bonus
+        // the rebuild starts at the peer's own position, which already covers the later dependent reward
         assertEquals(10L, rebuild.affectedFromSequence());
         assertEquals(ledger.get(1), rebuild.superseded());
+        assertTrue(rebuild.affectedFromSequence() < ledger.getFirst().ledgerSequence());
     }
 
     @Test
@@ -220,27 +225,113 @@ class RevisionReconcilerTest {
         var request = FeedbackFixtures.request("scope-demo", "task-17", "exec-2", "att-1", "s-impl-2", 102L);
         var peer = new FeedbackFixtures.Spec(request, FeedbackFixtures.decide(request, "sub-b")).passing();
         peer.experienceRef = "exp-2";
+        peer.ledgerSequence = 10L;
         peer.resources = FeedbackFixtures.tokens(900, ResourceValue.Provenance.REPORTED);
         var self = new FeedbackFixtures.Spec().passing();
         self.resources = FeedbackFixtures.tokens(400, ResourceValue.Provenance.REPORTED);
         var refined = policy().derive(self.observation(), self.decision, self.request,
                 FeedbackFixtures.bindings(self.decision, self.request, NODE_A),
                 Optional.of(new CostReference(peer.observation(), peer.decision, peer.request)));
-        // the peer's correction (revision 1) was already processed before the stale-derived reward arrives
-        var correction = corrected(peer, 1, 40L).failing();
-        var ledger = List.of(applied(derive(policy(), correction)));
+        // the peer's correction (revision 1) was already processed, as a neutral entry, before the stale reward arrives
+        var unknown = corrected(peer, 1, 40L).passing()
+                .with(obs("ev-tests-late", 0, QualityDimension.TESTS, QualityState.UNKNOWN, "att-1", 8));
+        var ledger = List.of(applied(derive(policy(), unknown)));
         var stale = assertInstanceOf(Reconciliation.StalePeerDependency.class,
                 reconciler.reconcile(ledger, self.observation(), refined));
-        assertEquals(ledger.getFirst(), stale.peerEntry());
+        assertEquals(ledger.getFirst(), stale.ledgerEntry());
         // against the latest peer revision (or no peer) the reward applies
         assertEquals(new Reconciliation.Apply(Optional.empty()),
                 reconciler.reconcile(ledger, self.observation(), derive(policy(), self)));
+        // a peer correction that moved a Node is later than the reward, so the late reward needs a rebuild instead
+        var failing = corrected(peer, 1, 40L).failing();
+        assertInstanceOf(Reconciliation.RebuildRequired.class, reconciler.reconcile(
+                List.of(applied(derive(policy(), failing))), self.observation(), refined));
+    }
+
+    @Test
+    void neutralEntriesWithDifferentAssessmentsAreNotDuplicates() {
+        var pending = new FeedbackFixtures.Spec();
+        pending.status = OutcomeStatus.PENDING;
+        var cancelled = new FeedbackFixtures.Spec();
+        cancelled.status = OutcomeStatus.CANCELLED;
+        var ledger = List.of(applied(derive(policy(), pending)));
+        assertInstanceOf(Reconciliation.ConflictingRevision.class,
+                reconciler.reconcile(ledger, cancelled.observation(), derive(policy(), cancelled)));
+        assertInstanceOf(Reconciliation.AlreadyApplied.class,
+                reconciler.reconcile(ledger, pending.observation(), derive(policy(), pending)));
+    }
+
+    @Test
+    void aFirstDeliveryBeforeAnAlreadyAppliedNodeChangeNeedsARebuild() {
+        var later = new FeedbackFixtures.Spec().passing();
+        later.experienceRef = "b";
+        later.ledgerSequence = 50L;
+        var earlier = new FeedbackFixtures.Spec().passing();
+        earlier.experienceRef = "a";
+        earlier.ledgerSequence = 30L;
+        var ledger = List.of(applied(derive(policy(), later)));
+        var rebuild = assertInstanceOf(Reconciliation.RebuildRequired.class,
+                reconciler.reconcile(ledger, earlier.observation(), derive(policy(), earlier)));
+        assertEquals(ledger.getFirst(), rebuild.superseded());
+        assertEquals(30L, rebuild.affectedFromSequence());
+        // after the applied entries, or at the same sequence with a later reference, it applies in place
+        var after = new FeedbackFixtures.Spec().passing();
+        after.experienceRef = "c";
+        after.ledgerSequence = 50L;
+        assertEquals(new Reconciliation.Apply(Optional.empty()),
+                reconciler.reconcile(ledger, after.observation(), derive(policy(), after)));
+        // a neutral result never moves a Node, so its position does not matter
+        var neutral = new FeedbackFixtures.Spec();
+        neutral.experienceRef = "a";
+        neutral.ledgerSequence = 30L;
+        assertEquals(new Reconciliation.Apply(Optional.empty()),
+                reconciler.reconcile(ledger, neutral.observation(), derive(policy(), neutral)));
+        // the order check also covers a correction that replaces a neutral entry
+        var first = new FeedbackFixtures.Spec();
+        first.experienceRef = "a";
+        first.ledgerSequence = 30L;
+        var withNeutral = List.of(ledger.getFirst(), applied(derive(policy(), first)));
+        var correction = corrected(first, 1, 31L).passing();
+        assertInstanceOf(Reconciliation.RebuildRequired.class,
+                reconciler.reconcile(withNeutral, correction.observation(), derive(policy(), correction)));
+    }
+
+    @Test
+    void bindingTheNodeLaterIsAFirstApplicationNotAConflict() {
+        var s = new FeedbackFixtures.Spec().passing();
+        var empty = new TargetBindings("scope-demo", "forge-gates", "1", FeedbackFixtures.DEFINITION.mappingVersion(),
+                FeedbackFixtures.SCHEMA, List.of());
+        var unbound = policy().derive(s.observation(), s.decision, s.request, empty);
+        var marker = assertInstanceOf(Reconciliation.RecordOnly.class,
+                reconciler.reconcile(List.of(), s.observation(), unbound)).marker();
+        assertTrue(marker.unbound());
+        // still unbound: a duplicate
+        assertEquals(new Reconciliation.AlreadyApplied(marker),
+                reconciler.reconcile(List.of(marker), s.observation(), unbound));
+        // now bound: applied in place, replacing the marker
+        assertEquals(new Reconciliation.Apply(Optional.of(marker)),
+                reconciler.reconcile(List.of(marker), s.observation(), derive(policy(), s)));
+        // but not in place when a later entry already moved a Node
+        var later = new FeedbackFixtures.Spec().passing();
+        later.experienceRef = "z";
+        later.ledgerSequence = 50L;
+        assertInstanceOf(Reconciliation.RebuildRequired.class, reconciler.reconcile(
+                List.of(marker, applied(derive(policy(), later))), s.observation(), derive(policy(), s)));
+    }
+
+    @Test
+    void aWrongPairingIsNotRecorded() {
+        var none = new FeedbackDerivation.NoUpdate(NoUpdateReason.PROVENANCE_MISMATCH,
+                List.of(IneligibilityReason.PROVENANCE_MISMATCH),
+                List.of(ProvenanceField.CUTOFF));
+        assertEquals(new Reconciliation.NotRecorded(NoUpdateReason.PROVENANCE_MISMATCH),
+                reconciler.reconcile(List.of(), spec.passing().observation(), none));
     }
 
     @Test
     void aForeignSchemaObservationIsNeverRecorded() {
         var none = new FeedbackDerivation.NoUpdate(NoUpdateReason.FEATURE_SCHEMA_MISMATCH, List.of(), List.of());
-        assertEquals(new Reconciliation.OutOfPartition(NoUpdateReason.FEATURE_SCHEMA_MISMATCH),
+        assertEquals(new Reconciliation.NotRecorded(NoUpdateReason.FEATURE_SCHEMA_MISMATCH),
                 reconciler.reconcile(ledgerOf(RevisionReconciler.MAX_LEDGER), spec.passing().observation(), none));
     }
 
@@ -298,7 +389,7 @@ class RevisionReconcilerTest {
                 reconciler.reconcile(ledger, next.observation(), derive(policy(), next)));
         // a corrected revision that derives nothing replaces a neutral entry with a marker
         var none = new FeedbackDerivation.NoUpdate(NoUpdateReason.CONTRADICTORY_EVIDENCE, List.of(), List.of());
-        assertEquals(new Reconciliation.RecordOnly(AppliedRevision.ofNoUpdate(next.observation()),
+        assertEquals(new Reconciliation.RecordOnly(AppliedRevision.ofNoUpdate(next.observation(), NoUpdateReason.CONTRADICTORY_EVIDENCE),
                 Optional.of(ledger.getFirst())), reconciler.reconcile(ledger, next.observation(), none));
     }
 
@@ -353,7 +444,7 @@ class RevisionReconcilerTest {
         var r2 = corrected(spec.passing(), 2, 40L).passing();
         var result = assertInstanceOf(Reconciliation.RecordOnly.class,
                 reconciler.reconcile(List.of(), r2.observation(), none));
-        assertEquals(AppliedRevision.ofNoUpdate(r2.observation()), result.marker());
+        assertEquals(AppliedRevision.ofNoUpdate(r2.observation(), NoUpdateReason.NO_STAGE_ATTRIBUTION), result.marker());
         assertEquals(Optional.empty(), result.marker().cohortKey());
         assertEquals(FeedbackDisposition.NEUTRAL, result.marker().disposition());
         // a delayed older revision of the same sample is now stale instead of a fresh Apply
@@ -393,11 +484,7 @@ class RevisionReconcilerTest {
         var base = ((FeedbackDerivation.Derived) derive(policy(), new FeedbackFixtures.Spec().passing())).feedback();
         var ledger = new ArrayList<AppliedRevision>();
         for (int i = 0; i < size; i++) {
-            var id = base.identity();
-            ledger.add(new AppliedRevision(new FeedbackIdentity("ref-" + i, 0, 12L, id.decisionRef(), id.route(),
-                    id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()),
-                    base.routingPolicyId(), base.routingPolicyVersion(), base.supersedesSequence(), Optional.of(base.cohortKey()), Optional.of(NODE_A),
-                    Optional.empty(), Optional.empty(), FeedbackDisposition.REINFORCE, 0.8));
+            ledger.add(AppliedRevision.of(FeedbackFixtures.withExperienceRef(base, "a-ref-" + i)));
         }
         return ledger;
     }
@@ -410,7 +497,7 @@ class RevisionReconcilerTest {
                 reconciler.reconcile(ledger, spec.observation(), derive(policy(), spec)));
         // a sample that is already in the ledger needs no new slot: this exact revision is a duplicate delivery
         var known = new FeedbackFixtures.Spec().passing();
-        known.experienceRef = "ref-7";
+        known.experienceRef = "a-ref-7";
         assertInstanceOf(Reconciliation.AlreadyApplied.class,
                 reconciler.reconcile(ledger, known.observation(), derive(policy(), known)));
         // one below the bound still has room

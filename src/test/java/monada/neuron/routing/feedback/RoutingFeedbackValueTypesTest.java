@@ -251,13 +251,20 @@ class RoutingFeedbackValueTypesTest {
     }
 
     @Test
-    void aCostPeerIsRecordedExactlyForACostRefinedReward() {
+    void aCostPeerViewIsRecordedForARewardAndAlwaysForACostRefinedOne() {
         var f = reward();
-        var peer = Optional.of(new PeerRevision("exp-2", 0, 12L));
-        assertThrows(IllegalArgumentException.class, () -> new RoutingFeedback(f.contractVersion(), f.identity(),
-                f.supersedesSequence(), f.cohortKey(), f.routingPolicyId(), f.routingPolicyVersion(),
-                f.catalogVersion(), f.cutoff(), f.derivedAcceptance(), f.rule(), f.disposition(), f.entries(),
-                f.reasons(), f.effectiveEvidence(), f.provenFailures(), peer));
+        // a reward that consulted a peer but earned no bonus still records the view of it, wherever the peer sits
+        var consulted = Optional.of(new PeerRevision("exp-2", 0, 99L));
+        new RoutingFeedback(f.contractVersion(), f.identity(), f.supersedesSequence(), f.cohortKey(),
+                f.routingPolicyId(), f.routingPolicyVersion(), f.catalogVersion(), f.cutoff(), f.derivedAcceptance(),
+                f.rule(), f.disposition(), f.entries(), f.reasons(), f.effectiveEvidence(), f.provenFailures(),
+                consulted);
+        // only a reward consults one
+        var p = penalty();
+        assertThrows(IllegalArgumentException.class, () -> new RoutingFeedback(p.contractVersion(), p.identity(),
+                p.supersedesSequence(), p.cohortKey(), p.routingPolicyId(), p.routingPolicyVersion(),
+                p.catalogVersion(), p.cutoff(), p.derivedAcceptance(), p.rule(), p.disposition(), p.entries(),
+                p.reasons(), p.effectiveEvidence(), p.provenFailures(), consulted));
         assertThrows(IllegalArgumentException.class, () -> new RoutingFeedback(f.contractVersion(), f.identity(),
                 f.supersedesSequence(), f.cohortKey(), f.routingPolicyId(), f.routingPolicyVersion(),
                 f.catalogVersion(), f.cutoff(), f.derivedAcceptance(), ScoreRule.REINFORCE_COST_REFINED,
@@ -321,36 +328,51 @@ class RoutingFeedbackValueTypesTest {
         var base = new FeedbackFixtures.Spec().passing();
         var other = new FeedbackFixtures.Spec().passing();
         other.cutoff = 200L;
-        assertEquals(AppliedRevision.ofNoUpdate(base.observation()), AppliedRevision.ofNoUpdate(base.observation()));
-        assertNotEquals(AppliedRevision.ofNoUpdate(base.observation()),
-                AppliedRevision.ofNoUpdate(other.observation()));
-        var marker = AppliedRevision.ofNoUpdate(base.observation());
-        assertEquals(base.observation().outcome().catalogVersion(), marker.markerProvenance().get().catalogVersion());
-        assertThrows(IllegalArgumentException.class, () -> new AppliedRevision(marker.identity(),
-                marker.routingPolicyId(), marker.routingPolicyVersion(), marker.supersedesSequence(), Optional.empty(),
-                Optional.empty(), Optional.empty(), Optional.empty(), FeedbackDisposition.NEUTRAL, 0.0));
+        var reason = NoUpdateReason.NO_STAGE_ATTRIBUTION;
+        assertEquals(AppliedRevision.ofNoUpdate(base.observation(), reason),
+                AppliedRevision.ofNoUpdate(base.observation(), reason));
+        assertNotEquals(AppliedRevision.ofNoUpdate(base.observation(), reason),
+                AppliedRevision.ofNoUpdate(other.observation(), reason));
+        assertNotEquals(AppliedRevision.ofNoUpdate(base.observation(), reason),
+                AppliedRevision.ofNoUpdate(base.observation(), NoUpdateReason.NO_TARGET_BINDING));
+        var marker = AppliedRevision.ofNoUpdate(base.observation(), reason);
+        assertEquals(base.observation().outcome().catalogVersion(), marker.catalogVersion());
+        // a marker is neutral and moves no Node
+        assertThrows(IllegalArgumentException.class, () -> FeedbackFixtures.variant(marker, Optional.of(NODE_A),
+                Optional.empty(), marker.basis(), FeedbackDisposition.REINFORCE, 0.5));
+        // the unrecorded no-update reasons cannot form a marker
+        assertThrows(IllegalArgumentException.class, () -> AppliedRevision.ofNoUpdate(base.observation(),
+                NoUpdateReason.PROVENANCE_MISMATCH));
     }
 
     @Test
     void aCostPeerMustNotLieBeyondTheCutoffNorAttachToANonRewardLedgerEntry() {
         var f = reward();
-        var future = Optional.of(new PeerRevision("exp-2", 0, f.cutoff() + 1));
+        long position = f.identity().ledgerSequence();
+        var future = Optional.of(new PeerRevision("exp-2", 0, position + 1));
+        var samePositionLaterRef = Optional.of(new PeerRevision("exp-2", 0, position));
         assertThrows(IllegalArgumentException.class, () -> new RoutingFeedback(f.contractVersion(), f.identity(),
                 f.supersedesSequence(), f.cohortKey(), f.routingPolicyId(), f.routingPolicyVersion(),
                 f.catalogVersion(), f.cutoff(), f.derivedAcceptance(), ScoreRule.REINFORCE_COST_REFINED,
                 f.disposition(), f.entries(), f.reasons(), f.effectiveEvidence(), f.provenFailures(), future));
-        var onTime = Optional.of(new PeerRevision("exp-2", 0, f.cutoff()));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingFeedback(f.contractVersion(), f.identity(),
+                f.supersedesSequence(), f.cohortKey(), f.routingPolicyId(), f.routingPolicyVersion(),
+                f.catalogVersion(), f.cutoff(), f.derivedAcceptance(), ScoreRule.REINFORCE_COST_REFINED,
+                f.disposition(), f.entries(), f.reasons(), f.effectiveEvidence(), f.provenFailures(),
+                samePositionLaterRef));
+        var onTime = Optional.of(new PeerRevision("exp-2", 0, position - 1));
         new RoutingFeedback(f.contractVersion(), f.identity(), f.supersedesSequence(), f.cohortKey(),
                 f.routingPolicyId(), f.routingPolicyVersion(), f.catalogVersion(), f.cutoff(), f.derivedAcceptance(),
                 ScoreRule.REINFORCE_COST_REFINED, f.disposition(), f.entries(), f.reasons(), f.effectiveEvidence(),
                 f.provenFailures(), onTime);
         // a neutral marker, or a penalty, cannot carry a cost dependency
-        assertThrows(IllegalArgumentException.class, () -> new AppliedRevision(f.identity(), f.routingPolicyId(),
-                f.routingPolicyVersion(), f.supersedesSequence(), Optional.empty(), Optional.empty(), onTime,
-                Optional.empty(), FeedbackDisposition.NEUTRAL, 0.0));
-        assertThrows(IllegalArgumentException.class, () -> new AppliedRevision(f.identity(), f.routingPolicyId(),
-                f.routingPolicyVersion(), f.supersedesSequence(), Optional.of(f.cohortKey()), Optional.of(NODE_A),
-                onTime, Optional.empty(), FeedbackDisposition.PENALIZE, -0.4));
+        var entry = AppliedRevision.of(f);
+        assertThrows(IllegalArgumentException.class, () -> FeedbackFixtures.variant(entry, Optional.empty(), onTime,
+                new EntryBasis.NoUpdateMarker(NoUpdateReason.NO_STAGE_ATTRIBUTION,
+                        new FeedbackFixtures.Spec().observation().outcome().cohortBinding()),
+                FeedbackDisposition.NEUTRAL, 0.0));
+        assertThrows(IllegalArgumentException.class, () -> FeedbackFixtures.variant(entry, Optional.of(NODE_A),
+                onTime, entry.basis(), FeedbackDisposition.PENALIZE, -0.4));
     }
 
     @Test
@@ -397,7 +419,8 @@ class RoutingFeedbackValueTypesTest {
     @Test
     void recordOnlyAcceptsOnlyTheNeutralCohortLessMarker() {
         var f = reward();
-        var marker = AppliedRevision.ofNoUpdate(new FeedbackFixtures.Spec().passing().observation());
+        var marker = AppliedRevision.ofNoUpdate(new FeedbackFixtures.Spec().passing().observation(),
+                NoUpdateReason.NO_STAGE_ATTRIBUTION);
         new Reconciliation.RecordOnly(marker, Optional.empty());
         assertThrows(IllegalArgumentException.class,
                 () -> new Reconciliation.RecordOnly(AppliedRevision.of(f), Optional.empty()));
@@ -452,21 +475,20 @@ class RoutingFeedbackValueTypesTest {
         assertEquals(12L, applied.ledgerSequence());
         assertEquals(0.8, applied.score(), 1e-12);
         assertTrue(applied.changedState());
-        assertThrows(IllegalArgumentException.class,
-                () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(), f.supersedesSequence(),
-                        Optional.of(f.cohortKey()), Optional.empty(), Optional.empty(), Optional.empty(), FeedbackDisposition.NEUTRAL, 0.5));
-        assertThrows(IllegalArgumentException.class,
-                () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(), f.supersedesSequence(),
-                        Optional.of(f.cohortKey()), Optional.of(NODE_A), Optional.empty(), Optional.empty(), FeedbackDisposition.REINFORCE, -0.5));
+        var neutralBasis = new EntryBasis.Derived(f.cohortKey(), ScoreRule.NEUTRAL_PENDING, DerivedAcceptance.PENDING,
+                List.of(IneligibilityReason.PENDING));
+        assertThrows(IllegalArgumentException.class, () -> FeedbackFixtures.variant(applied, Optional.empty(),
+                Optional.empty(), neutralBasis, FeedbackDisposition.NEUTRAL, 0.5));
+        assertThrows(IllegalArgumentException.class, () -> FeedbackFixtures.variant(applied, Optional.of(NODE_A),
+                Optional.empty(), applied.basis(), FeedbackDisposition.REINFORCE, -0.5));
         // a target Node is recorded exactly when the entry moved a Node
-        assertThrows(IllegalArgumentException.class,
-                () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(),
-                        f.supersedesSequence(), Optional.of(f.cohortKey()), Optional.empty(), Optional.empty(),
-                        Optional.empty(), FeedbackDisposition.REINFORCE, 0.5));
-        assertThrows(IllegalArgumentException.class,
-                () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(),
-                        f.supersedesSequence(), Optional.of(f.cohortKey()), Optional.of(NODE_A), Optional.empty(),
-                        Optional.empty(), FeedbackDisposition.NEUTRAL, 0.0));
+        assertThrows(IllegalArgumentException.class, () -> FeedbackFixtures.variant(applied, Optional.empty(),
+                Optional.empty(), applied.basis(), FeedbackDisposition.REINFORCE, 0.5));
+        assertThrows(IllegalArgumentException.class, () -> FeedbackFixtures.variant(applied, Optional.of(NODE_A),
+                Optional.empty(), neutralBasis, FeedbackDisposition.NEUTRAL, 0.0));
+        // the rule's disposition must agree with the entry's
+        assertThrows(IllegalArgumentException.class, () -> FeedbackFixtures.variant(applied, Optional.empty(),
+                Optional.empty(), applied.basis(), FeedbackDisposition.NEUTRAL, 0.0));
         assertThrows(IllegalArgumentException.class,
                 () -> new Reconciliation.Apply(Optional.of(applied)));
     }

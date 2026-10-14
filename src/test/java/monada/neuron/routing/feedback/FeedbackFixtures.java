@@ -1,5 +1,6 @@
 package monada.neuron.routing.feedback;
 
+import monada.neuron.evolution.FeedbackDisposition;
 import monada.neuron.routing.DecisionRef;
 import monada.neuron.routing.LexicographicRoutingPolicy;
 import monada.neuron.routing.ResourceObjective;
@@ -59,6 +60,32 @@ final class FeedbackFixtures {
     private FeedbackFixtures() {
     }
 
+    /** The entry with a different shape, built through the canonical constructor so invalid combinations can be tried. */
+    static AppliedRevision variant(AppliedRevision base, Optional<UUID> target, Optional<PeerRevision> peer,
+            EntryBasis basis, FeedbackDisposition disposition, double score) {
+        return new AppliedRevision(base.identity(), base.routingPolicyId(), base.routingPolicyVersion(),
+                base.supersedesSequence(), base.catalogVersion(), base.cutoff(), target, peer, basis, disposition,
+                score);
+    }
+
+    /** The entry as produced by another version of the routing policy. */
+    static AppliedRevision withPolicyVersion(AppliedRevision base, String version) {
+        return new AppliedRevision(base.identity(), base.routingPolicyId(), version, base.supersedesSequence(),
+                base.catalogVersion(), base.cutoff(), base.targetNodeId(), base.costPeer(), base.basis(),
+                base.disposition(), base.score());
+    }
+
+    /** The same feedback for another sample reference. */
+    static RoutingFeedback withExperienceRef(RoutingFeedback f, String ref) {
+        var id = f.identity();
+        return new RoutingFeedback(f.contractVersion(),
+                new FeedbackIdentity(ref, id.revision(), id.ledgerSequence(), id.decisionRef(), id.route(),
+                        id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()),
+                f.supersedesSequence(), f.cohortKey(), f.routingPolicyId(), f.routingPolicyVersion(),
+                f.catalogVersion(), f.cutoff(), f.derivedAcceptance(), f.rule(), f.disposition(), f.entries(),
+                f.reasons(), f.effectiveEvidence(), f.provenFailures(), f.costPeer());
+    }
+
     static RoutingFeedbackPolicy policy() {
         return new RoutingFeedbackPolicy(DEFINITION, CONFIG, GATES);
     }
@@ -90,10 +117,17 @@ final class FeedbackFixtures {
                 decision.route());
     }
 
+    /** A Node for the other fixture route, so a comparison execution of that route is credited in this state too. */
+    static final UUID NODE_PEER = new UUID(0L, 3L);
+
+    /** Binds the decision's route to {@code node} and the other fixture route to {@link #NODE_PEER}. */
     static TargetBindings bindings(RoutingDecision.Selected decision, RoutingRequest request, UUID node) {
+        var key = keyOf(decision, request);
+        var otherRoute = key.route().routeId().equals("sub-a") ? "sub-b" : "sub-a";
+        var other = new CohortKey(key.scopeId(), key.stageKind(), key.cohortBucket(), new RouteKey(otherRoute, 1));
         return new TargetBindings(request.scopeId(), request.evaluationPolicyId(), request.evaluationPolicyVersion(),
-                DEFINITION.mappingVersion(),
-                FeedbackFixtures.SCHEMA, List.of(new TargetBinding(keyOf(decision, request), node)));
+                DEFINITION.mappingVersion(), FeedbackFixtures.SCHEMA,
+                List.of(new TargetBinding(key, node), new TargetBinding(other, NODE_PEER)));
     }
 
     static QualityObservation obs(String event, long revision, QualityDimension dimension, QualityState state,

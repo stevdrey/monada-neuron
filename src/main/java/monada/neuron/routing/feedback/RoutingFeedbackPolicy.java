@@ -203,11 +203,14 @@ public final class RoutingFeedbackPolicy {
         Optional<PeerRevision> peer = Optional.empty();
         if (assessment.verdict() == EligibilityVerdict.POSITIVE_CANDIDATE) {
             boolean refined = cost.isPresent() && config.costObjective().isPresent()
-                    && strictlyBetter(observation, request, cost.get(), config.costObjective().get());
+                    && strictlyBetter(observation, request, bindings, cost.get(), config.costObjective().get());
             rule = refined ? ScoreRule.REINFORCE_COST_REFINED : ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL;
             score = refined ? config.refinedReinforceScore() : config.reinforceScore();
-            peer = refined ? Optional.of(new PeerRevision(cost.get().peer().experienceRef(),
-                    cost.get().peer().revision(), cost.get().peer().ledgerSequence())) : Optional.empty();
+            // the view of the peer is recorded whenever it was consulted, so a superseded view is detectable
+            peer = cost.isPresent() && config.costObjective().isPresent()
+                    ? Optional.of(new PeerRevision(cost.get().peer().experienceRef(), cost.get().peer().revision(),
+                            cost.get().peer().ledgerSequence()))
+                    : Optional.empty();
         } else {
             rule = ScoreRule.PENALIZE_PROVEN_MANDATORY_FAILURE;
             score = config.penalizeScore();
@@ -286,15 +289,22 @@ public final class RoutingFeedbackPolicy {
     /**
      * True only for a pairwise statement the contract allows: the peer is another route's execution of the same
      * task and stage kind on the same source, context, constraints and evaluation policy, it was itself validated
-     * and attributable, and both measure the declared counter completely with the same provenance.
+     * and attributable, and both measure the declared counter completely with the same provenance. The peer must also be credited in
+     * this state (its cohort is bound), so that its arrival or correction is always a Node change the ledger sees.
      */
     private boolean strictlyBetter(
-            RoutingObservation observation, RoutingRequest request, CostReference reference, CostObjective objective) {
+            RoutingObservation observation, RoutingRequest request, TargetBindings bindings, CostReference reference,
+            CostObjective objective) {
         RoutingOutcome self = observation.outcome();
         RoutingOutcome peer = reference.peer().outcome();
         RoutingRequest peerRequest = reference.peerRequest();
         if (peer.cutoff() > self.cutoff()) {
             // a later peer would let future acceptance and usage influence feedback as of an earlier cutoff
+            return false;
+        }
+        if (!new PeerRevision(reference.peer().experienceRef(), reference.peer().revision(),
+                reference.peer().ledgerSequence()).precedes(observation.ledgerSequence(), observation.experienceRef())) {
+            // the peer must come first in applied order, or a replay would let the reward depend on later data
             return false;
         }
         if (!self.decisionRef().scopeId().equals(peer.decisionRef().scopeId())
@@ -316,6 +326,11 @@ public final class RoutingFeedbackPolicy {
         LearningAssessment peerAssessment =
                 evaluator.assess(reference.peer(), reference.peerDecision(), peerRequest, evidencePolicy);
         if (peerAssessment.verdict() != EligibilityVerdict.POSITIVE_CANDIDATE) {
+            return false;
+        }
+        if (bindings.lookup(cohortKey(reference.peerDecision(), peerRequest, peer)) == null) {
+            // a peer that could not be credited itself would change this reward without ever being a state change, so
+            // its late arrival would not force a rebuild; only a rewarded peer is a comparison execution
             return false;
         }
         ResourceValue.Known own = known(self.resources(), objective);

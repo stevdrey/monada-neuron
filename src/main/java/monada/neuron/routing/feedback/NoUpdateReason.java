@@ -22,14 +22,17 @@ public enum NoUpdateReason {
     NO_TARGET_BINDING;
 
     /**
-     * True when the observation belongs to another state partition (mapping version, feature schema, scope or
-     * evaluation policy than the policy and bindings describe), so nothing about it may enter this state's ledger.
+     * True when a no-update of this kind is recorded in the ledger as a marker. It is not recorded when the
+     * observation belongs to another state partition (mapping version, feature schema, scope or evaluation policy than
+     * the policy and bindings describe) or when the pairing itself is wrong ({@code PROVENANCE_MISMATCH}): such a result
+     * says nothing about the sample in this state, so recording it would pollute the ledger or block the correct
+     * derivation of the same revision once the caller fixes the pairing.
      */
-    public boolean foreignPartition() {
+    public boolean recordable() {
         return switch (this) {
-            case MAPPING_MISMATCH, FEATURE_SCHEMA_MISMATCH, BINDING_SCOPE_MISMATCH, BINDING_PARTITION_MISMATCH -> true;
-            case PROVENANCE_MISMATCH, STALE_ARTIFACT_REVISION, CONTRADICTORY_EVIDENCE, NO_STAGE_ATTRIBUTION,
-                    NO_TARGET_BINDING -> false;
+            case STALE_ARTIFACT_REVISION, CONTRADICTORY_EVIDENCE, NO_STAGE_ATTRIBUTION, NO_TARGET_BINDING -> true;
+            case PROVENANCE_MISMATCH, MAPPING_MISMATCH, FEATURE_SCHEMA_MISMATCH, BINDING_SCOPE_MISMATCH,
+                    BINDING_PARTITION_MISMATCH -> false;
         };
     }
 }

@@ -41,8 +41,7 @@ public sealed interface Reconciliation {
             if (replaces.isPresent() && replaces.get().changedState()) {
                 throw new IllegalArgumentException("only a neutral entry can be replaced without a rebuild");
             }
-            if (marker.changedState() || marker.cohortKey().isPresent() || marker.targetNodeId().isPresent()
-                    || marker.markerProvenance().isEmpty()) {
+            if (!(marker.basis() instanceof EntryBasis.NoUpdateMarker)) {
                 throw new IllegalArgumentException("a record-only marker is neutral and names no cohort or Node, "
                         + "as AppliedRevision.ofNoUpdate builds it");
             }
@@ -98,35 +97,38 @@ public sealed interface Reconciliation {
     }
 
     /**
-     * The observation belongs to another state partition (another mapping version, scope or evaluation policy than the
-     * one the policy and bindings describe). Nothing is applied and nothing is recorded, so a foreign partition can
-     * neither pollute this ledger nor consume its capacity.
+     * The derivation found the observation foreign to this state (another mapping version, feature schema, scope or
+     * evaluation policy) or wrongly paired with its decision. Nothing is applied and nothing is recorded, so it can
+     * neither pollute this ledger, consume its capacity nor block the correct derivation of the same revision once
+     * the caller fixes the pairing.
      *
-     * @param reason why the derivation found the observation foreign
+     * @param reason why the derivation is not recorded
      */
-    record OutOfPartition(NoUpdateReason reason) implements Reconciliation {
+    record NotRecorded(NoUpdateReason reason) implements Reconciliation {
 
-        /** Requires a partition reason. */
-        public OutOfPartition {
+        /** Requires a reason that is not recorded. */
+        public NotRecorded {
             Objects.requireNonNull(reason, "reason must not be null");
-            if (!reason.foreignPartition()) {
-                throw new IllegalArgumentException(reason + " is not a partition mismatch");
+            if (reason.recordable()) {
+                throw new IllegalArgumentException(reason + " is recorded as a marker");
             }
         }
     }
 
     /**
-     * The incoming reward was refined against a revision of its cost peer that the ledger has already superseded.
-     * Nothing is applied: the caller derives the sample again against the latest peer observation, so the incremental
-     * state equals a rebuild from the latest observations.
+     * The incoming derivation looked at an out-of-date view of the cost peer: it was refined against a revision of
+     * the peer that the ledger has already superseded, or it is the same revision as a ledger entry and differs from
+     * it only in the cost refinement (score, rule or peer). Nothing is applied: the caller derives the sample again
+     * against the latest peer observation, so the incremental state equals a rebuild from the latest observations.
      *
-     * @param peerEntry the ledger entry that holds a newer revision of the peer
+     * @param ledgerEntry the ledger entry that shows the view is out of date: the newer peer revision, or the
+     *         sample's own entry derived against another peer view
      */
-    record StalePeerDependency(AppliedRevision peerEntry) implements Reconciliation {
+    record StalePeerDependency(AppliedRevision ledgerEntry) implements Reconciliation {
 
         /** Requires the entry. */
         public StalePeerDependency {
-            Objects.requireNonNull(peerEntry, "peerEntry must not be null");
+            Objects.requireNonNull(ledgerEntry, "ledgerEntry must not be null");
         }
     }
 

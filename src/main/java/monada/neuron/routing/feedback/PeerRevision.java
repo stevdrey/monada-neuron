@@ -23,4 +23,15 @@ public record PeerRevision(String experienceRef, long revision, long ledgerSeque
             throw new IllegalArgumentException("ledgerSequence must be non-negative, got: " + ledgerSequence);
         }
     }
+
+    /**
+     * True when this peer revision comes strictly before the given position in applied order
+     * {@code (ledgerSequence, experienceRef by code point)}, so a replay always applies the peer first and the reward
+     * never depends on data recorded after it.
+     */
+    public boolean precedes(long otherLedgerSequence, String otherExperienceRef) {
+        return ledgerSequence != otherLedgerSequence
+                ? ledgerSequence < otherLedgerSequence
+                : OpaqueTokens.compareCodePoints(experienceRef, otherExperienceRef) < 0;
+    }
 }

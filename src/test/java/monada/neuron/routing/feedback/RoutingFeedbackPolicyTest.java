@@ -51,6 +51,7 @@ import static monada.neuron.routing.feedback.FeedbackFixtures.policy;
 import static monada.neuron.routing.feedback.FeedbackFixtures.request;
 import static monada.neuron.routing.feedback.FeedbackFixtures.tokens;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -174,7 +175,7 @@ class RoutingFeedbackPolicyTest {
                 "task-features/other", List.of());
         assertEquals(NoUpdateReason.FEATURE_SCHEMA_MISMATCH,
                 noUpdate(policy.derive(spec.observation(), spec.decision, spec.request, bindings)).reason());
-        assertTrue(NoUpdateReason.FEATURE_SCHEMA_MISMATCH.foreignPartition());
+        assertFalse(NoUpdateReason.FEATURE_SCHEMA_MISMATCH.recordable());
 
         // bindings built for another schema are a foreign partition too
         var key = FeedbackFixtures.keyOf(spec.decision, spec.request);
@@ -207,7 +208,7 @@ class RoutingFeedbackPolicyTest {
                     observation.supersedesSequence());
             var none = noUpdate(policy().derive(mispaired, spec.decision, spec.request,
                     bindings(spec.decision, spec.request, NODE_A)));
-            assertTrue(none.reason().foreignPartition(), none.reason().toString());
+            assertFalse(none.reason().recordable(), none.reason().toString());
         }
     }
 
@@ -319,7 +320,7 @@ class RoutingFeedbackPolicyTest {
         self.resources = tokens(400, ResourceValue.Provenance.REPORTED);
         var peer = peer("task-17", tokens(900, ResourceValue.Provenance.REPORTED), true);
         var f = withCost(policy(), self, peer);
-        assertEquals(Optional.of(new PeerRevision("exp-2", 0, 12L)), f.costPeer());
+        assertEquals(Optional.of(new PeerRevision("exp-2", 0, 11L)), f.costPeer());
         assertEquals(Optional.empty(), feedback(derive(new FeedbackFixtures.Spec().passing())).costPeer());
     }
 
@@ -497,6 +498,7 @@ class RoutingFeedbackPolicyTest {
         var request = request("scope-demo", task, "exec-2", "att-1", "s-impl-2", 102L);
         var peer = new FeedbackFixtures.Spec(request, decide(request, "sub-b"));
         peer.experienceRef = "exp-2";
+        peer.ledgerSequence = 11L;
         peer.resources = resources;
         return passing ? peer.passing() : peer.failing();
     }
