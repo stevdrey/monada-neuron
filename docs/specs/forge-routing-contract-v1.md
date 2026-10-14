@@ -1,6 +1,6 @@
 # Forge Routing Contract v1
 
-Status: **proposed contract; implemented so far: `TaskFeatures` and its signal encoder (#60, Section 15), the route catalog and eligibility filter (#61, Section 16), the routing policy, decisions and composition seam (#62, Section 17), outcome evidence with learning eligibility (#63, Section 19), Store export translation (#64, Section 20), and routing feedback with executed-route credit assignment (#65, Section 21).** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
+Status: **proposed contract; implemented so far: `TaskFeatures` and its signal encoder (#60, Section 15), the route catalog and eligibility filter (#61, Section 16), the routing policy, decisions and composition seam (#62, Section 17), outcome evidence with learning eligibility (#63, Section 19), Store export translation (#64, Section 20), routing feedback with executed-route credit assignment (#65, Section 21), and the bounded caller-owned adaptive state (#66, Section 22).** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
 Issue: [#59](https://github.com/stevdrey/monada-neuron/issues/59) (Forge Routing 1/10).
 
 This document is the normative v1 contract that issues #60–#68 implement. Later issues may refine exact Java
@@ -9,7 +9,7 @@ signatures, but must not change the semantics defined here without updating this
 Normative words: **must**, **must not**, **should** and **may** carry their usual specification meaning.
 
 Every type and package name below (`monada.neuron.routing`, `TaskFeatures`, `RouteCatalog`, `RoutingDecision`, ...) is a
-**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them existed; since #60, `TaskFeatures` and the other types of `monada.neuron.routing.features` (Section 15), and since #61 the types of `monada.neuron.routing.catalog` (Section 16), and since #62 the policy, decision, preference and composition types of `monada.neuron.routing` (Section 17), and since #63 the outcome evidence and learning-eligibility types of `monada.neuron.routing.outcome` (Section 19), and since #65 the routing feedback, target-binding and applied-revision types of `monada.neuron.routing.feedback` (Section 21), are implemented. Types that do exist are named with
+**proposed name**. At the inspected baseline (`main` at `d1dd569`) none of them existed; since #60, `TaskFeatures` and the other types of `monada.neuron.routing.features` (Section 15), and since #61 the types of `monada.neuron.routing.catalog` (Section 16), and since #62 the policy, decision, preference and composition types of `monada.neuron.routing` (Section 17), and since #63 the outcome evidence and learning-eligibility types of `monada.neuron.routing.outcome` (Section 19), and since #65 the routing feedback, target-binding and applied-revision types of `monada.neuron.routing.feedback` (Section 21), and since #66 the caller-owned adaptive state of `monada.neuron.routing.adaptation` (Section 22), are implemented. Types that do exist are named with
 their current package and are described only as they exist today.
 
 ## Background
@@ -33,7 +33,7 @@ Inspected `main` at `d1dd569` (Java 27). Already implemented and **reused unchan
 - `RuntimeBackendSelector`, which selects *internal computational backends* (SCALAR/VECTOR_API, object/CSR graph, ...). It
   never selects external workers or models.
 
-At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 20 describe what has been added since. Still absent: the caller-owned preference state store (#66 to #68). `ActionRequest` carries Signals and an
+At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 22 describe what has been added since. Still absent: `RoutingStateCheckpoint` and ledger compaction, the replay evaluation (#67) and the published consumer loop (#68). `ActionRequest` carries Signals and an
 opaque host context, not a route. `Signal` carries no identity (ADR 0005).
 
 ## Goal
@@ -163,7 +163,7 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 | `RoutingObservation` | #63 (implemented, Section 19) | Neutral, Store-independent record of one effective execution sample, defined with `RoutingOutcome` so feedback derivation needs only #63. #64 only *produces* it from Store exports. |
 | `RoutingFeedback` | #65 (implemented, Section 21) | Bounded artifact derived from an observation; separate from `OutcomeFeedback`. |
 | `RoutingPreference`, `CohortMapping`, `RoutingStateDefinition` | #62 (implemented, Section 17) | `CohortMapping` is the pure, versioned `TaskFeatures -> cohortBucket` function with its `bucketMappingVersion`. `RoutingStateDefinition` groups the `CohortMapping`, `initialNodeState`, `AdaptationConfig` and feedback scoring and eligibility rules under one composite `mappingVersion` that changes when any part changes. `RoutingPreference` is the **immutable value snapshot** of `scopeId`, `featureSchemaVersion`, `evaluationPolicy`, `mappingVersion`, cohort preference values, supporting counts and `processedCutoff`, taken from the caller's mutable state and passed to `decide`. #62 defines the value type, its valid empty cold-start form (`EMPTY` for a scope, feature schema, evaluation policy and mapping version) and its admission validation, so `decide` needs no later type; #66 only builds non-empty snapshots from the caller's state. |
-| `RoutingStateStore` (caller-owned, mutable) | #66 | The caller's `Node` bindings, applied-revision ledger and `RoutingStateCheckpoint`; it produces the `RoutingPreference` snapshots. It is never passed to `decide`. |
+| `RoutingStateStore` (caller-owned, mutable) | #66 (implemented, Section 22) | The caller's `Node` bindings, applied-revision ledger and watermark; it produces the `RoutingPreference` snapshots. It is never passed to `decide`. The composite definition is the additive `AdaptiveStateDefinition`; `RoutingStateCheckpoint` is deferred (Section 22.6). |
 | `RoutingCognitiveStageResult` | #62 (implemented, Section 17) | Level B stage result that retains the full `RoutingDecision` together with the hypothesis hand-off (Section 3.5). |
 
 ### 3.1 Request, catalog and policy inputs
@@ -817,7 +817,7 @@ file.
 
 ## 14. Documentation Updates
 
-- `docs/specs/forge-routing-contract-v1.md` (this file, new; Section 15 added by #60, Section 16 by #61, Section 17 by #62, Section 21 by #65).
+- `docs/specs/forge-routing-contract-v1.md` (this file, new; Section 15 added by #60, Section 16 by #61, Section 17 by #62, Section 21 by #65, Section 22 by #66).
 - `docs/adr/0026-forge-routing-ownership.md` (new).
 - `docs/architecture.md`: "Forge Routing Extension (proposed)" section.
 - `README.md`: pointer under the host-embedding section.
@@ -1023,7 +1023,7 @@ The tests publish the figures and assert only upper bounds (24 KiB for `decide`,
 
 The tests cover the Section 9 fixtures (cold start, no eligible route then explicit overflow, subscription-first, learned promotion that cannot cross a tier), ties and numeric version order, unknown and incomparable resource metrics, both abstention reasons, every admission mismatch, input permutations (catalog entries, estimates and cohorts) giving equal decisions, injected cheap invalid candidates, bounds and truncation, and the cycle composition with a minimum positive budget (`maxSteps >= 1`, `maxSignals >= 1`): full result preserved by normalization, typed hand-off to `EVALUATION`, `NO_SIGNALS` for a following stage without typed-only support, rejection of initial Signals.
 
-Evidence gaps: no claim that the ordering improves quality, acceptance or cost; the default cohort thresholds are unvalidated; learned preference values can only be produced by #63 to #66, so non-empty snapshots are test fixtures here; latency is unmeasured; `RoutingEnvelope` transport (#64) and feedback (#65) are not implemented; outcome evidence and learning eligibility are (Section 19).
+Evidence gaps: no claim that the ordering improves quality, acceptance or cost; the default cohort thresholds are unvalidated; learned preference values are produced by the #66 state store (Section 22), so non-empty snapshots were test fixtures in #62; latency is unmeasured; `RoutingEnvelope` transport (#64) and feedback (#65) are not implemented; outcome evidence and learning eligibility are (Section 19).
 
 ### 17.5 Verification responsibilities (#76)
 
@@ -1489,5 +1489,143 @@ bindings, every neutral and no-update rule above, cheap failing work, incomplete
 determinism under permuted evidence, immutable target state, every reconciliation result, ledger capacity, and rebuild equality from any input order.
 
 Evidence gaps: the evaluator trusts the host's judgments, attribution basis and mandatory set; `RoutingOutcome` carries no `stageKind`, so the stage kind is bound to the decision's recorded `Provenance.stageKind` (a decision that never recorded it derives no update, and the cost peer is checked the same way); usage counters are stage-level and carry no unit, so cost refinement compares counters only; the Node baseline,
-identity and `AdaptationConfig` are #66; the real ledger, checkpoints and snapshots are #66; replay evaluation and any effectiveness claim are #67; and
+identity, `AdaptationConfig`, ledger and snapshots are implemented by #66 (Section 22) and checkpoints are deferred; replay evaluation and any effectiveness claim are #67; and
 no latency or retained-memory measurement exists.
+
+## 22. Implemented: Bounded Caller-Owned Adaptive State (#66)
+
+Package `monada.neuron.routing.adaptation`. This section describes **implemented behavior** and refines Section 7; it does not
+change its semantics. Everything is additive and opt-in: no existing public signature, default or routing behavior changes,
+`LexicographicRoutingPolicy` is untouched (its cold-start, insufficient-evidence and unknown-route fallback and its
+`Abstain(STATE_INCOMPATIBLE)` were already implemented by #62), and nothing is wired into a cycle. There is no persistence,
+registry, session, singleton, clock, randomness, background task or exploration. Decision record:
+[ADR 0030](../adr/0030-caller-owned-adaptive-routing-state.md).
+
+### 22.1 Types
+
+| Type | Role |
+| --- | --- |
+| `InitialNodeState(baselineAmplitude, frequency, phase, energy, NodeType)` | The full state every cohort Node starts from and returns to on a reset. `baselineAmplitude > 0`; history is always disabled (`HISTORY_LIMIT = 0`). |
+| `AdaptiveStateDefinition(RoutingStateDefinition, InitialNodeState, AdaptationConfig, RoutingFeedbackConfig)` | The composite definition of Section 7 under the one `mappingVersion` of its `RoutingStateDefinition`, added as a new type so `RoutingStateDefinition` keeps its signature. Rejects `minAmplitude <= 0`, a baseline outside `(minAmplitude, maxAmplitude]`, and an initial energy or frequency outside the adaptation bounds. `feedbackPolicy(EvidencePolicy)` builds the `RoutingFeedbackPolicy` of exactly this mapping and scores. `reference()` is `adaptive-routing-state/1` (Section 22.3). |
+| `StatePartition(scopeId, evaluationPolicyId, evaluationPolicyVersion)` | One store learns for one scope under one evaluation policy; the feature schema and mapping come from the definition. |
+| `RoutingStateStore` | Caller-owned, mutable, **not thread-safe**. Cohort Nodes with their support counts, the applied-revision ledger and the `processedCutoff` watermark. `bind`, `unbindDormant`, `bindings`, `consume`, `advanceCutoff`, `snapshot`, `cohorts`, `resetCopy`, `rebuild`. |
+| `BindResult` | Sealed: `Bound(added)`, `CapacityExhausted(requested, available)` or `RebuildRequired(credited)`; binding is all-or-nothing. |
+| `StateUpdate` | Sealed result of `consume`: `Applied`, `Recorded`, `Unchanged` (`AlreadyApplied`, `StaleRevision`, `NotRecorded`), `RebuildRequired`, `Blocked` (`ConflictingRevision`, `StalePeerDependency`, `CapacityExhausted`) and `ForeignPartition(fields)`. `examined()` says whether the watermark advanced. |
+| `RebuildResult` | Sealed: `Rebuilt(store)` or `Failed(observation, update)`. |
+| `CohortState`, `CohortStatus`, `PartitionField` | Read-only diagnostic view of a cohort (`ACTIVE` or `DORMANT` for a given catalog) and the parts of an observation that make it foreign. |
+
+Node identity is the name-based UUID of Section 7 (tag `forge-routing/1/node`, length-prefixed UTF-8 parts, big-endian
+`RouteVersion`), so a reset copy, a rebuild and a fresh store bind every cohort to the same Node id and the same
+`TargetBindings`.
+
+### 22.2 Update, snapshot and fallback rules
+
+- **Derivation is not consumption.** `RoutingFeedbackPolicy.derive` reads only the immutable `bindings()`; a derivation that
+  is never passed to `consume` leaves the cohorts, counts, ledger and watermark bit-identical.
+- **Consumption** checks, in order: a non-recordable `NoUpdate` is `Unchanged(NotRecorded)`; an observation of another scope,
+  evaluation policy, `mappingVersion`, feature schema or bucket mapping is `ForeignPartition`; a feedback that credits a Node
+  this store does not bind to its cohort is rejected (`IllegalArgumentException`, inconsistent caller data). Otherwise the
+  `RevisionReconciler` advice is followed exactly: `Apply` adapts the one bound Node of a reward or penalty through
+  `DeterministicBaselineAdaptationPolicy`, increments its support count and records the entry (a neutral feedback moves
+  nothing); `RecordOnly` records the marker. Those, and a duplicate or stale delivery, advance `processedCutoff` to the
+  observation's ledger sequence. `RebuildRequired`, a conflict, a stale cost peer and a full ledger change **nothing**,
+  including the watermark, so a retry applies the revision exactly once.
+- **Support** counts applied observations that moved the Node, never amplitude.
+- **Snapshot.** `snapshot(policy, catalog)` publishes, in canonical order, every cohort whose `RouteKey` is in the catalog,
+  with `preferenceValue = amplitude - baselineAmplitude`, the support count, the partition, the definition's
+  `mappingVersion` and feature schema, the producing policy and the watermark. A cohort whose route is absent is `DORMANT`:
+  kept, never published, still counted toward the bound, and published again intact when the identical route returns.
+  `unbindDormant` is the only way a cohort leaves the state and refuses an active cohort. Its applied ledger entries stay
+  until the next rebuild, and until then `bind` refuses the same key with `RebuildRequired`: a baseline Node under entries
+  recorded as applied would never regain their effect, because redelivery is a duplicate (and, with a later effect on
+  another cohort, the order rule of Section 21.3 forbids an in-place application anyway). The cohort is restored by **one
+  staged rebuild whose cohort set includes the key**; likewise a rebuild whose cohort set omits a bound key drops it and
+  records its samples as `NO_TARGET_BINDING` markers in the same replay. A duplicate or stale delivery for a removed
+  cohort is still answered by the ledger (`AlreadyApplied`, `StaleRevision`); only an application needs the Node.
+- **Fallback** is the #62 policy's, unchanged: a cold or partial snapshot, an unbound route or support below
+  `minSupportingObservations` for any eligible route gives exactly the baseline decision; a snapshot of another mapping,
+  scope, schema or evaluation policy, or with a watermark beyond the request cutoff, gives `Abstain(STATE_INCOMPATIBLE)`.
+  Preference only reorders eligible routes.
+- **Rebuild.** `rebuild(observations, exportCutoff, cohortKeys, derive)` replays `RebuildOrder.order(observations)` on a
+  new staged store bound to exactly `cohortKeys` (deterministic identities, baseline Nodes, empty ledger), passing its
+  bindings to `derive`, and returns it only if every replayed observation is applied, recorded or not recorded; otherwise
+  `Failed` and the staged copy is discarded. `rebuild(observations, exportCutoff, derive)` is the same over the current
+  cohorts. The live store is never modified, so no partial state is observable; the caller swaps the rebuilt store in.
+  Dormant routes are replayed by their own key. An `exportCutoff` below the live watermark is rejected, because the
+  rebuilt state would silently forget observations the live state examined.
+
+### 22.3 Reference values
+
+`AdaptiveStateDefinition.reference()`: baseline amplitude `1.0` in `[0.125, 8.0]`, learning rate `0.1`, energy `10.0` in
+`[0, 1000]` with step `1.0`, frequency and phase `0`, `NodeType.MEMORY` (Neuron-local adaptive state; long-term memory stays
+in the Store), and `RoutingFeedbackConfig.DEFAULT` (reward `1.0`, penalty `-0.5`). A reward multiplies the amplitude by `1.1`
+and a penalty by `0.95`, so at least 22 consecutive rewards reach the ceiling and at least 41 consecutive penalties the floor,
+and a floored route can still recover. These are conservative illustrative values chosen for bounded, slow, recoverable
+movement; they are **not tuned or calibrated**, and amplitudes are preference ordinals, not success probabilities.
+
+### 22.4 Limits, complexity and footprint
+
+| Limit | Value | Overflow behavior |
+| --- | --- | --- |
+| Cohorts per store, active and dormant | 256 (`MAX_COHORTS`) | `BindResult.CapacityExhausted`, nothing bound |
+| Ledger entries per store | 4,096 (`MAX_LEDGER`) | `StateUpdate.Blocked(CapacityExhausted)`, nothing changed |
+| Observations per rebuild | 4,096 | `IllegalArgumentException` from `RebuildOrder`; live store unchanged |
+| Node history | 0 | Disabled |
+
+Let `C <= 256` cohorts, `L <= 4,096` ledger entries, `R <= 32` routes and `N <= 4,096` replayed observations. Cohorts are a
+`TreeMap` keyed by `CohortKey` (point lookup on every consumption, canonical iteration for snapshots, rare insertion), the
+ledger a `TreeMap` keyed by sample reference in code-point order; neither order depends on hashing or insertion.
+Binding is rare (setup, catalog changes, recovery), so the ledger scan in `bind` is accepted rather than maintaining a
+credited-cohort index on every consumption.
+
+| Operation | Time | Extra space |
+| --- | --- | --- |
+| `bind` of `k` keys | `O(k log k + k log C + L log k + C log C)`: dedup and lookup of the keys, a scan of the ledger for credited keys (only when a key is new) and the canonical rebuild of the bindings | `O(k + C)` |
+| `unbindDormant` | `O(log C + R + C log C)` (bindings rebuilt) | `O(C)` |
+| `consume` | `O(L + log C)`: the reconciler's `O(L)` index of a read-only ledger view dominates (no ledger copy) | `O(L)` transient |
+| `snapshot` / `cohorts` | `O(C log R)`: binary search over the canonical catalog | `O(C)` |
+| `rebuild` | `O(N log N + N·L + C log C)` | `O(N + C + L)` staged |
+
+**Measured** (JDK 27, `ThreadMXBean.getThreadAllocatedBytes` via `AllocationProbe`, 20,000 warm-up calls, 36 cohorts):
+a duplicate `consume` with one ledger entry allocated 1,584 bytes and a `snapshot` 18,760 bytes in the recorded run; the
+figures vary with JIT state, the test publishes them through the JUnit report and asserts only 16 KiB and 32 KiB regression
+ceilings. Latency is not measured. **Modeled, not measured**: a cohort retains its Node with four numeric channels and no
+history plus a map entry (order of 150 bytes, about 40 KiB at 256 cohorts); the ledger model of Section 21.4 (about 400 bytes
+per entry, about 1.6 MiB at 4,096) dominates.
+
+### 22.5 Verification
+
+```bash
+./gradlew test
+./gradlew consumerSmokeTest
+./gradlew test --tests 'monada.neuron.routing.adaptation.*'
+```
+
+`AdaptiveStateDefinitionTest` covers the Section 7 configuration rules and the Node identity encoding (golden bytes, no
+concatenation collision). `RoutingStateStoreTest` covers hand-calculated reward and penalty (4.0 / 10.0 to 5.6 / 10.8 and
+3.2 / 9.6 with learning rate 0.5 and energy step 2), derived-not-consumed equal to the no-op control, a consumed sequence that
+changes a later eligible route only once support reaches the minimum, an ineligible route never selected despite a strong
+preference, saturation at both bounds and recovery from the floor, neutral feedback, duplicate delivery, unbound routes,
+scope isolation, mapping-version mismatch (foreign consumption and incompatible snapshot), cohort and ledger capacity with
+the state unchanged, dormant cohorts and the watermark. `StateRebuildTest` covers rebuild equality with a from-scratch state
+after a correction, independence of input order, a failed rebuild leaving the live state unchanged, dormant replay, a
+removed cohort with a later effect on another cohort that `bind` refuses and one rebuild including it restores exactly to
+the from-scratch state, a rebuild that omits a cohort, the watermark and cohort-set errors. `RoutingStateStoreTest` also
+covers every `ForeignPartition` field and a retried reward of a removed cohort answered by the ledger.
+`AdaptiveStateDeterminismTest` is the long deterministic fixture: 4,000 seeded deliveries per scope over 3 stages, 4 buckets
+and 3 routes (36 cohorts) in two scopes, with corrections and staged rebuilds; two independent runs give identical cohorts,
+ledgers, watermarks and decisions, scope B's samples offered to scope A are never examined there and leave A identical to a
+run without B, every cohort stays within its amplitude and energy bounds, and the ledger reports `CapacityExhausted` at 4,096
+with the state unchanged. The consumer fixture builds a store from `AdaptiveStateDefinition.reference()` and routes from its
+snapshot through the published artifact.
+
+### 22.6 Evidence gaps and follow-up
+
+- `RoutingStateCheckpoint`, its ledger digest and ledger compaction (Section 7) are **not implemented**: a store whose ledger
+  is full reports `CapacityExhausted` and the caller rebuilds into a new scope or waits for #67, which also verifies
+  checkpoint-versus-scratch equivalence.
+- No effectiveness, accuracy or cost claim: the reference values are illustrative, and replay evaluation with controls is #67.
+- Latency and retained memory are unmeasured; the allocation figures above are regression guards, not benchmarks.
+- A removed dormant cohort leaves its ledger entries until the next rebuild, which records them as `NO_TARGET_BINDING`
+  markers; the caller decides when to rebuild, and the key cannot be bound again before it.
+- `RoutingStateStore` is single-threaded, like `NeuronRuntime`; the host publishes snapshots to concurrent readers.

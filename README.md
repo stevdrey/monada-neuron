@@ -291,7 +291,7 @@ versioned contract is defined in [Forge Routing Contract v1](docs/specs/forge-ro
 mandatory validator and a policy-specific verifier (issue #76) and a host-configured `RoutingDecisionVerifier` and
 `TrustedRoutingProfile` (issue #78, [ADR 0027](docs/adr/0027-trusted-routing-decision-verification.md)), and the
 provenance-preserving `RoutingOutcome` / `RoutingObservation` with the quality-gated `OutcomeEvaluator` (`monada.neuron.routing.outcome`, issue #63), and the neutral translation of bounded Resonance Store experience exports into `RoutingObservation` (`monada-neuron-resonance-adapter`, issue #64), and the separate `RoutingFeedback` with executed-route credit assignment and caller-owned applied-revision rules (`monada.neuron.routing.feedback`, issue #65, [ADR 0029](docs/adr/0029-routing-feedback-credit-assignment.md)),
-are implemented, while the other routing types it names are proposals that issues #66 to #68 implement, all additive and opt-in, and the Monada Resonance Store execution-memory capabilities it depends on (Store issues #94 to #101) are implemented on the Store's `main`. A routing decision is advice. Forge keeps authorization, execution and evidence judgment, and Monada Resonance Store
+are implemented, as is the bounded caller-owned adaptive routing state of issue #66 (`monada.neuron.routing.adaptation`), while the other routing types it names are proposals that issues #67 and #68 implement, all additive and opt-in, and the Monada Resonance Store execution-memory capabilities it depends on (Store issues #94 to #101) are implemented on the Store's `main`. A routing decision is advice. Forge keeps authorization, execution and evidence judgment, and Monada Resonance Store
 keeps persistent experience.
 
 ## Design Principles

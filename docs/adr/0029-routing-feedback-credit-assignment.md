@@ -67,6 +67,6 @@ Add a separate, opt-in package `monada.neuron.routing.feedback` (Contract Sectio
 
 ## Follow-Up Work
 
-- #66: caller-owned state store, Node baseline and identity, checkpoints and snapshots, and the composite state definition.
+- #66 (implemented, [ADR 0030](0030-caller-owned-adaptive-routing-state.md)): caller-owned state store, Node baseline and identity, snapshots and the composite state definition; checkpoints and ledger compaction are deferred to #67.
 - #67: temporal replay evaluation and measurements.
 - Cost refinement over hypothetical API cost or actual billing once outcomes carry directly comparable amounts.

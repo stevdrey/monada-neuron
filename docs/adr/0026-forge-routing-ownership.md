@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (contract; implemented so far: `TaskFeatures` and its signal encoder, issue #60, the route catalog and eligibility filter, issue #61, and the routing policy, decision types and composition seam, issue #62, with its decision verification split into focused validators by issue #76 and host-trusted extensible verification added by issue #78; outcome evidence and quality-gated learning eligibility added by issue #63; Store experience export translation by issue #64; routing feedback with executed-route credit assignment and caller-owned applied-revision rules by issue #65; the rest is pending issues #66 to #68)
+Accepted (contract; implemented so far: `TaskFeatures` and its signal encoder, issue #60, the route catalog and eligibility filter, issue #61, and the routing policy, decision types and composition seam, issue #62, with its decision verification split into focused validators by issue #76 and host-trusted extensible verification added by issue #78; outcome evidence and quality-gated learning eligibility added by issue #63; Store experience export translation by issue #64; routing feedback with executed-route credit assignment and caller-owned applied-revision rules by issue #65; the bounded caller-owned adaptive state by issue #66, [ADR 0030](0030-caller-owned-adaptive-routing-state.md); the rest is pending issues #67 and #68)
 
 ## Context
 
