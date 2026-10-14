@@ -1,5 +1,6 @@
 package monada.neuron.routing.adaptation;
 
+import monada.neuron.routing.Basis;
 import monada.neuron.routing.RoutingDecision;
 import monada.neuron.routing.catalog.Availability;
 import monada.neuron.routing.catalog.CatalogEntry;
@@ -28,6 +29,7 @@ import static monada.neuron.routing.adaptation.AdaptationFixtures.observation;
 import static monada.neuron.routing.adaptation.AdaptationFixtures.policy;
 import static monada.neuron.routing.adaptation.AdaptationFixtures.request;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -149,7 +151,7 @@ class AdaptiveStateDeterminismTest {
                     var foreign = a.consume(delivered.observation(),
                             derive(a, delivered.observation(), delivered.cell().decision(), delivered.cell().request()));
                     assertInstanceOf(StateUpdate.Unchanged.class, foreign);
-                    assertTrue(!foreign.examined());
+                    assertFalse(foreign.examined());
                 }
             }
         }
@@ -182,7 +184,7 @@ class AdaptiveStateDeterminismTest {
         assertEquals(36, a.cohorts().size());
         assertTrue(a.rebuilds() > 0, "the fixture must exercise corrections");
         long learned = a.decisions().stream().filter(d -> d instanceof RoutingDecision.Selected s
-                && s.basis() == monada.neuron.routing.Basis.LEARNED_PREFERENCE).count();
+                && s.basis() == Basis.LEARNED_PREFERENCE).count();
         assertTrue(learned > 0, "learned preference never changed a decision");
         for (var cohort : a.cohorts()) {
             assertTrue(cohort.amplitude() >= 0.5 && cohort.amplitude() <= 6.0, cohort.toString());

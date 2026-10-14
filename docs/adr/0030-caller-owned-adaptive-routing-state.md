@@ -26,7 +26,9 @@ scores join the cohort mapping under one composite `mappingVersion`.
   ledger decision; the store only follows their advice. No second learning engine.
 - Report every expected outcome as a value (`BindResult`, `StateUpdate`, `RebuildResult`); throw only for inconsistent caller
   data. Anything other than an application or a record changes nothing, including the watermark.
-- Rebuild on a staged reset copy and return it; the live store is never modified, the caller swaps.
+- Rebuild on a staged store bound to an explicit cohort set and return it; the live store is never modified, the caller
+  swaps. The cohort set is how a cohort enters or leaves with its history consistent, so `bind` refuses a key the ledger
+  still credits, and a rebuild never accepts an export cutoff below the live watermark.
 - Cohorts and ledger are `TreeMap`s in canonical order: point lookups, deterministic iteration, no hash-order dependence;
   `C <= 256` and `L <= 4,096` do not justify a primitive layout.
 - Provide `AdaptiveStateDefinition.reference()` (`adaptive-routing-state/1`) with documented, illustrative, untuned values.

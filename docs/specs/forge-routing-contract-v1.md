@@ -1537,18 +1537,22 @@ Node identity is the name-based UUID of Section 7 (tag `forge-routing/1/node`, l
   kept, never published, still counted toward the bound, and published again intact when the identical route returns.
   `unbindDormant` is the only way a cohort leaves the state and refuses an active cohort. Its applied ledger entries stay
   until the next rebuild, and until then `bind` refuses the same key with `RebuildRequired`: a baseline Node under entries
-  recorded as applied would never regain their effect, because redelivery is a duplicate. Recovery is **rebuild, bind,
-  rebuild**: the first rebuild records those samples as `NO_TARGET_BINDING` markers so the key can be bound; the second,
-  derived against the bindings that now include it, replays them in applied order. Redelivering one of them instead
-  returns `RebuildRequired` whenever a later effect on another cohort is already applied (the order rule of Section 21.3).
+  recorded as applied would never regain their effect, because redelivery is a duplicate (and, with a later effect on
+  another cohort, the order rule of Section 21.3 forbids an in-place application anyway). The cohort is restored by **one
+  staged rebuild whose cohort set includes the key**; likewise a rebuild whose cohort set omits a bound key drops it and
+  records its samples as `NO_TARGET_BINDING` markers in the same replay. A duplicate or stale delivery for a removed
+  cohort is still answered by the ledger (`AlreadyApplied`, `StaleRevision`); only an application needs the Node.
 - **Fallback** is the #62 policy's, unchanged: a cold or partial snapshot, an unbound route or support below
   `minSupportingObservations` for any eligible route gives exactly the baseline decision; a snapshot of another mapping,
   scope, schema or evaluation policy, or with a watermark beyond the request cutoff, gives `Abstain(STATE_INCOMPATIBLE)`.
   Preference only reorders eligible routes.
-- **Rebuild.** `rebuild(observations, exportCutoff, derive)` replays `RebuildOrder.order(observations)` on a `resetCopy()`
-  (same cohorts and identities, baseline Nodes, empty ledger) and returns it only if every replayed observation is applied,
-  recorded or not recorded; otherwise `Failed` and the staged copy is discarded. The live store is never modified, so no
-  partial state is observable; the caller swaps the rebuilt store in. Dormant routes are replayed by their own key.
+- **Rebuild.** `rebuild(observations, exportCutoff, cohortKeys, derive)` replays `RebuildOrder.order(observations)` on a
+  new staged store bound to exactly `cohortKeys` (deterministic identities, baseline Nodes, empty ledger), passing its
+  bindings to `derive`, and returns it only if every replayed observation is applied, recorded or not recorded; otherwise
+  `Failed` and the staged copy is discarded. `rebuild(observations, exportCutoff, derive)` is the same over the current
+  cohorts. The live store is never modified, so no partial state is observable; the caller swaps the rebuilt store in.
+  Dormant routes are replayed by their own key. An `exportCutoff` below the live watermark is rejected, because the
+  rebuilt state would silently forget observations the live state examined.
 
 ### 22.3 Reference values
 
@@ -1578,12 +1582,12 @@ credited-cohort index on every consumption.
 | --- | --- | --- |
 | `bind` of `k` keys | `O(k log k + k log C + L log k + C log C)`: dedup and lookup of the keys, a scan of the ledger for credited keys (only when a key is new) and the canonical rebuild of the bindings | `O(k + C)` |
 | `unbindDormant` | `O(log C + R + C log C)` (bindings rebuilt) | `O(C)` |
-| `consume` | `O(L + log C)`: a ledger copy and the reconciler's `O(L)` scan dominate | `O(L)` transient |
-| `snapshot` / `cohorts` | `O(C·R)` | `O(C)` |
-| `rebuild` | `O(N log N + N·L)` | `O(N + C + L)` staged |
+| `consume` | `O(L + log C)`: the reconciler's `O(L)` index of a read-only ledger view dominates (no ledger copy) | `O(L)` transient |
+| `snapshot` / `cohorts` | `O(C log R)`: binary search over the canonical catalog | `O(C)` |
+| `rebuild` | `O(N log N + N·L + C log C)` | `O(N + C + L)` staged |
 
 **Measured** (JDK 27, `ThreadMXBean.getThreadAllocatedBytes` via `AllocationProbe`, 20,000 warm-up calls, 36 cohorts):
-a duplicate `consume` with one ledger entry allocated 1,368 bytes and a `snapshot` 13,552 bytes in the recorded run; the
+a duplicate `consume` with one ledger entry allocated 1,584 bytes and a `snapshot` 18,760 bytes in the recorded run; the
 figures vary with JIT state, the test publishes them through the JUnit report and asserts only 16 KiB and 32 KiB regression
 ceilings. Latency is not measured. **Modeled, not measured**: a cohort retains its Node with four numeric channels and no
 history plus a map entry (order of 150 bytes, about 40 KiB at 256 cohorts); the ledger model of Section 21.4 (about 400 bytes
@@ -1604,9 +1608,10 @@ changes a later eligible route only once support reaches the minimum, an ineligi
 preference, saturation at both bounds and recovery from the floor, neutral feedback, duplicate delivery, unbound routes,
 scope isolation, mapping-version mismatch (foreign consumption and incompatible snapshot), cohort and ledger capacity with
 the state unchanged, dormant cohorts and the watermark. `StateRebuildTest` covers rebuild equality with a from-scratch state
-after a correction, independence of input order, a failed rebuild leaving the live state unchanged, dormant replay, and a
-removed cohort with a later effect on another cohort: it is refused by `bind` until a rebuild, redelivery after binding
-returns `RebuildRequired`, and the second rebuild restores exactly the from-scratch state.
+after a correction, independence of input order, a failed rebuild leaving the live state unchanged, dormant replay, a
+removed cohort with a later effect on another cohort that `bind` refuses and one rebuild including it restores exactly to
+the from-scratch state, a rebuild that omits a cohort, the watermark and cohort-set errors. `RoutingStateStoreTest` also
+covers every `ForeignPartition` field and a retried reward of a removed cohort answered by the ledger.
 `AdaptiveStateDeterminismTest` is the long deterministic fixture: 4,000 seeded deliveries per scope over 3 stages, 4 buckets
 and 3 routes (36 cohorts) in two scopes, with corrections and staged rebuilds; two independent runs give identical cohorts,
 ledgers, watermarks and decisions, scope B's samples offered to scope A are never examined there and leave A identical to a

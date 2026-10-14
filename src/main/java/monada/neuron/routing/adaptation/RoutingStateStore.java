@@ -25,14 +25,18 @@ import monada.neuron.routing.outcome.RoutingObservation;
 import monada.neuron.routing.outcome.RoutingOutcome;
 import monada.neuron.routing.token.OpaqueTokens;
 
+import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 
 /**
@@ -72,6 +76,7 @@ public final class RoutingStateStore {
     private final RevisionReconciler reconciler = new RevisionReconciler();
     private final TreeMap<CohortKey, Cohort> cohorts = new TreeMap<>();
     private final TreeMap<String, AppliedRevision> ledger = new TreeMap<>(OpaqueTokens.CODE_POINT_ORDER);
+    private final List<AppliedRevision> ledgerView = new LedgerView();
     private long processedCutoff;
     private TargetBindings bindings;
 
@@ -117,18 +122,15 @@ public final class RoutingStateStore {
      * Binds cohorts of this partition's scope, all-or-nothing. A new cohort Node is built from the definition's
      * initial state with its deterministic identity; an already bound key is left as it is.
      *
-     * @param keys cohorts to bind
      * <p>A new key that the ledger still credits (a cohort removed by {@link #unbindDormant} whose applied effects were
      * not yet replayed away) is refused with {@code RebuildRequired}: a baseline Node under a ledger that records those
-     * effects as applied would never get them back, because their redelivery is a duplicate. Recovery is
-     * {@code rebuild -> bind -> rebuild}: the first {@link #rebuild} turns those entries into {@code NO_TARGET_BINDING}
-     * markers so the key can be bound, and the second, deriving against the bindings that now include it, replays its
-     * samples in applied order. Redelivering a sample instead may return {@code RebuildRequired}, because a later effect
-     * on another cohort may already be applied.
+     * effects as applied would never get them back, because their redelivery is a duplicate. The cohort is restored by
+     * one staged {@link #rebuild(Collection, long, Collection, BiFunction)} whose cohort set includes the key.
      *
      * <p>{@code O(k log k + k log C + L log k + C log C)} for {@code k} keys, {@code C} cohorts and {@code L} ledger
      * entries: the ledger is scanned only when a key is new, and binding is rare, so no credited-cohort index is kept.
      *
+     * @param keys cohorts to bind
      * @return {@code Bound} with the new keys, or {@code CapacityExhausted} or {@code RebuildRequired} with nothing bound
      * @throws IllegalArgumentException if a key belongs to another scope
      */
@@ -172,7 +174,8 @@ public final class RoutingStateStore {
     /**
      * Removes a dormant cohort: the only way a cohort leaves the state. Ledger entries that credited it stay until the
      * next rebuild, which, without the binding, records them as {@code NO_TARGET_BINDING} markers; until then the key
-     * cannot be bound again ({@link BindResult.RebuildRequired}).
+     * cannot be bound again ({@link BindResult.RebuildRequired}). A cohort whose effects should be dropped at once is
+     * instead removed by a {@link #rebuild(Collection, long, Collection, BiFunction)} whose cohort set omits it.
      *
      * @param key the cohort
      * @param catalog the catalog the route must be absent from
@@ -227,11 +230,13 @@ public final class RoutingStateStore {
         if (!foreign.isEmpty()) {
             return new StateUpdate.ForeignPartition(foreign);
         }
-        Cohort target = derivation instanceof FeedbackDerivation.Derived derived ? target(derived.feedback()) : null;
-        Reconciliation advice = reconciler.reconcile(List.copyOf(ledger.values()), observation, derivation);
+        Reconciliation advice = reconciler.reconcile(ledgerView, observation, derivation);
         return switch (advice) {
             case Reconciliation.Apply ignored -> {
                 RoutingFeedback feedback = ((FeedbackDerivation.Derived) derivation).feedback();
+                // resolved only when the Node is about to move: a duplicate or stale delivery of a removed cohort's
+                // sample is answered by the ledger, not rejected
+                Cohort target = target(feedback);
                 for (FeedbackInput input : feedback.toFeedbackInputs()) {
                     adaptation.adapt(target.node, input);
                 }
@@ -281,7 +286,7 @@ public final class RoutingStateStore {
     /**
      * Publishes an immutable snapshot of the active cohorts for a catalog: a cohort whose route is absent from the
      * catalog is dormant and omitted, so it is never consulted and never counts toward another route's support.
-     * {@code O(C·R)} time for {@code C} cohorts and {@code R} routes, {@code O(C)} space.
+     * {@code O(C log R)} time for {@code C} cohorts and {@code R} routes, {@code O(C)} space.
      *
      * @param policyId producing routing policy id (provenance only)
      * @param policyVersion producing routing policy version
@@ -335,34 +340,64 @@ public final class RoutingStateStore {
     }
 
     /**
-     * Rebuilds the state on a staged {@link #resetCopy()} by replaying observations in {@link RebuildOrder} order
-     * (latest revision per sample, by {@code (ledgerSequence, experienceRef)}), each by its own route, so dormant
-     * cohorts are replayed too. This store is never modified: on success the caller swaps in the returned store; on
-     * failure the staged copy is discarded.
-     *
-     * <p>{@code derive} must derive against {@link #bindings()} (a reset copy has equal bindings). A replayed
-     * observation that is applied, recorded or not recorded continues the replay; anything else stops it.
-     * {@code O(N log N + N·L)} time for {@code N} observations and a ledger of {@code L <= N} entries.
+     * Rebuilds the state over the current cohorts: {@link #rebuild(Collection, long, Collection, BiFunction)} with
+     * this store's cohort keys, deriving against {@link #bindings()} (the staged copy has equal bindings).
      *
      * @param observations every effective observation of the partition, at most {@value RebuildOrder#MAX_OBSERVATIONS}
      * @param exportCutoff the export's high-watermark the rebuilt state has examined
      * @param derive derives one observation; called once per replayed observation, in replay order
      * @return the rebuilt store or where the replay stopped
-     * @throws IllegalArgumentException if the observations are inconsistent or oversized, or the export cutoff is below
-     *         a replayed ledger sequence
+     * @throws IllegalArgumentException as the general form
      */
     public RebuildResult rebuild(Collection<RoutingObservation> observations, long exportCutoff,
             Function<RoutingObservation, FeedbackDerivation> derive) {
-        Objects.requireNonNull(observations, "observations must not be null");
         Objects.requireNonNull(derive, "derive must not be null");
-        if (exportCutoff < 0) {
-            throw new IllegalArgumentException("exportCutoff must be non-negative, got: " + exportCutoff);
+        return rebuild(observations, exportCutoff, cohorts.keySet(), (observation, bindings) -> derive.apply(observation));
+    }
+
+    /**
+     * Rebuilds the state on a staged store with exactly the given cohorts, every Node at the initial state, by replaying
+     * observations in {@link RebuildOrder} order (latest revision per sample, by {@code (ledgerSequence,
+     * experienceRef)}), each by its own route, so dormant cohorts are replayed too. This store is never modified: on
+     * success the caller swaps in the returned store; on failure the staged copy is discarded.
+     *
+     * <p>The cohort set is how cohorts enter or leave with their history consistent: including a key the ledger still
+     * credits restores it, and omitting a bound key drops it and turns its entries into {@code NO_TARGET_BINDING}
+     * markers, in one replay. {@code derive} receives the staged bindings and must derive against them. A replayed
+     * observation that is applied, recorded or not recorded continues the replay; anything else stops it.
+     * {@code O(N log N + N·L + C log C)} time for {@code N} observations, a ledger of {@code L <= N} entries and
+     * {@code C} cohorts.
+     *
+     * @param observations every effective observation of the partition, at most {@value RebuildOrder#MAX_OBSERVATIONS}
+     * @param exportCutoff the export's high-watermark the rebuilt state has examined, not below this store's
+     *         {@link #processedCutoff()}
+     * @param cohortKeys the cohorts of the rebuilt store, at most {@value #MAX_COHORTS}, all of this scope
+     * @param derive derives one observation against the given bindings; called once per replayed observation
+     * @return the rebuilt store or where the replay stopped
+     * @throws IllegalArgumentException if the export cutoff is below this store's watermark (the rebuilt state would
+     *         silently forget examined observations) or below a replayed ledger sequence, the cohort set is oversized or
+     *         foreign, or the observations are inconsistent or oversized
+     */
+    public RebuildResult rebuild(Collection<RoutingObservation> observations, long exportCutoff,
+            Collection<CohortKey> cohortKeys,
+            BiFunction<RoutingObservation, TargetBindings, FeedbackDerivation> derive) {
+        Objects.requireNonNull(observations, "observations must not be null");
+        Objects.requireNonNull(cohortKeys, "cohortKeys must not be null");
+        Objects.requireNonNull(derive, "derive must not be null");
+        if (exportCutoff < processedCutoff) {
+            throw new IllegalArgumentException("exportCutoff " + exportCutoff + " is below processedCutoff "
+                    + processedCutoff + ": the rebuilt state would forget examined observations");
         }
         List<RoutingObservation> ordered = new RebuildOrder().order(observations);
-        RoutingStateStore staged = resetCopy();
+        var staged = new RoutingStateStore(definition, partition);
+        if (staged.bind(cohortKeys) instanceof BindResult.CapacityExhausted full) {
+            throw new IllegalArgumentException("a rebuilt store allows at most " + MAX_COHORTS + " cohorts, got: "
+                    + full.requested());
+        }
+        TargetBindings stagedBindings = staged.bindings();
         for (RoutingObservation observation : ordered) {
-            StateUpdate update = staged.consume(observation,
-                    Objects.requireNonNull(derive.apply(observation), "derivation must not be null"));
+            StateUpdate update = staged.consume(observation, Objects.requireNonNull(
+                    derive.apply(observation, stagedBindings), "derivation must not be null"));
             boolean continues = update instanceof StateUpdate.Applied || update instanceof StateUpdate.Recorded
                     || (update instanceof StateUpdate.Unchanged unchanged
                             && unchanged.advice() instanceof Reconciliation.NotRecorded);
@@ -439,13 +474,50 @@ public final class RoutingStateStore {
                 list);
     }
 
+    /** Binary search over the catalog's canonical {@code RouteKey} order: {@code O(log R)}, allocation-free. */
     private boolean inCatalog(RouteKey route, RouteCatalog catalog) {
-        for (CatalogEntry entry : catalog.entries()) {
-            if (entry.key().equals(route)) {
+        List<CatalogEntry> entries = catalog.entries();
+        int low = 0;
+        int high = entries.size() - 1;
+        while (low <= high) {
+            int middle = (low + high) >>> 1;
+            int order = entries.get(middle).key().compareTo(route);
+            if (order < 0) {
+                low = middle + 1;
+            } else if (order > 0) {
+                high = middle - 1;
+            } else {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Read-only list view of the ledger values in code-point order, handed to the reconciler, which only reads its size
+     * and iterates it, so a consumption no longer copies the whole ledger. Positional access walks the values.
+     */
+    private final class LedgerView extends AbstractList<AppliedRevision> {
+
+        @Override
+        public int size() {
+            return ledger.size();
+        }
+
+        @Override
+        public Iterator<AppliedRevision> iterator() {
+            return Collections.unmodifiableCollection(ledger.values()).iterator();
+        }
+
+        @Override
+        public AppliedRevision get(int index) {
+            Objects.checkIndex(index, ledger.size());
+            Iterator<AppliedRevision> values = ledger.values().iterator();
+            for (int i = 0; i < index; i++) {
+                values.next();
+            }
+            return values.next();
+        }
     }
 
     /** One cohort: its Node and the number of applied observations that moved it. */

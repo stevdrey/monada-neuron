@@ -33,9 +33,9 @@ public sealed interface BindResult {
 
     /**
      * The ledger still records applied effects for these previously removed cohorts; binding a baseline Node under
-     * them would make the published preference disagree with the ledger. Nothing was bound. The caller rebuilds (the
-     * rebuilt ledger records those samples as {@code NO_TARGET_BINDING} markers), binds again and rebuilds once more
-     * against the new bindings, which replays those samples in applied order.
+     * them would make the published preference disagree with the ledger. Nothing was bound. The caller restores them with
+     * one staged {@code RoutingStateStore.rebuild} whose cohort set includes these keys, which replays their samples in
+     * applied order.
      *
      * @param credited the requested keys the ledger still credits, in canonical order
      */

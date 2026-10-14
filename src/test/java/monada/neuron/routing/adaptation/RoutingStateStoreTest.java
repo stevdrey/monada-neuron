@@ -2,8 +2,11 @@ package monada.neuron.routing.adaptation;
 
 import monada.neuron.routing.AbstainReason;
 import monada.neuron.routing.Basis;
+import monada.neuron.routing.ChangeSizeCohortMapping;
+import monada.neuron.routing.CohortMapping;
 import monada.neuron.routing.RoutingDecision;
 import monada.neuron.routing.RoutingPreference;
+import monada.neuron.routing.RoutingStateDefinition;
 import monada.neuron.routing.StateMismatch;
 import monada.neuron.routing.StateValidation;
 import monada.neuron.routing.catalog.Availability;
@@ -12,7 +15,9 @@ import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
+import monada.neuron.routing.features.TaskFeatures;
 import monada.neuron.routing.feedback.CohortKey;
+import monada.neuron.routing.feedback.EntryBasis;
 import monada.neuron.routing.feedback.FeedbackDerivation;
 import monada.neuron.routing.feedback.NoUpdateReason;
 import monada.neuron.routing.feedback.Reconciliation;
@@ -244,7 +249,7 @@ class RoutingStateStoreTest {
         var update = Sample.of("api-x", 1).deliverTo(store, "exp-x", 25, Kind.PASS);
         var recorded = assertInstanceOf(StateUpdate.Recorded.class, update);
         assertEquals(NoUpdateReason.NO_TARGET_BINDING,
-                ((monada.neuron.routing.feedback.EntryBasis.NoUpdateMarker) recorded.marker().basis()).reason());
+                ((EntryBasis.NoUpdateMarker) recorded.marker().basis()).reason());
         assertEquals(before, store.cohorts(demo()));
         assertEquals(25L, store.processedCutoff());
     }
@@ -416,5 +421,53 @@ class RoutingStateStoreTest {
         assertEquals(before, store.cohorts(demo()));
         assertEquals(20L, store.processedCutoff());
         assertNotEquals(List.of(), store.ledger());
+    }
+
+    @Test
+    void aRetriedRewardOfARemovedCohortIsAnsweredByTheLedger() {
+        var store = bound();
+        var sample = Sample.of("sub-b", 1);
+        var observation = sample.observe("exp-1", 20, Kind.PASS);
+        var derivation = derive(store, observation, sample.decision, sample.request);
+        assertInstanceOf(StateUpdate.Applied.class, store.consume(observation, derivation));
+        assertTrue(store.unbindDormant(KEY_B, AdaptationFixtures.only("sub-a")));
+        var retried = assertInstanceOf(StateUpdate.Unchanged.class, store.consume(observation, derivation));
+        assertInstanceOf(Reconciliation.AlreadyApplied.class, retried.advice());
+    }
+
+    /** A cohort mapping identical to the default one except for its versions. */
+    private record VersionedMapping(String bucketMappingVersion, String featureSchemaVersion) implements CohortMapping {
+
+        @Override
+        public String bucketOf(TaskFeatures features) {
+            return ChangeSizeCohortMapping.DEFAULT.bucketOf(features);
+        }
+    }
+
+    private static List<PartitionField> foreignTo(AdaptiveStateDefinition definition, StatePartition partition) {
+        var target = new RoutingStateStore(definition, partition);
+        var sample = Sample.of("sub-a", 1);
+        var observation = sample.observe("exp-1", 20, Kind.PASS);
+        var derivedHere = derive(bound(), observation, sample.decision, sample.request);
+        var update = assertInstanceOf(StateUpdate.ForeignPartition.class, target.consume(observation, derivedHere));
+        assertEquals(List.of(), target.ledger());
+        return update.fields();
+    }
+
+    @Test
+    void everyForeignPartitionFieldIsReported() {
+        var base = AdaptationFixtures.DEFINITION;
+        assertEquals(List.of(PartitionField.EVALUATION_POLICY),
+                foreignTo(base, new StatePartition("scope-demo", "forge-gates", "2")));
+        assertEquals(List.of(PartitionField.EVALUATION_POLICY),
+                foreignTo(base, new StatePartition("scope-demo", "other-gates", "1")));
+        var otherBuckets = new AdaptiveStateDefinition(new RoutingStateDefinition("adaptive-test/1",
+                new VersionedMapping("change-size/2", "task-features/1")), base.initial(), base.adaptation(),
+                base.feedback());
+        assertEquals(List.of(PartitionField.BUCKET_MAPPING), foreignTo(otherBuckets, PARTITION));
+        var otherSchema = new AdaptiveStateDefinition(new RoutingStateDefinition("adaptive-test/1",
+                new VersionedMapping("change-size/1", "task-features/2")), base.initial(), base.adaptation(),
+                base.feedback());
+        assertEquals(List.of(PartitionField.FEATURE_SCHEMA), foreignTo(otherSchema, PARTITION));
     }
 }

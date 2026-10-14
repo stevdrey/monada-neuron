@@ -1,6 +1,7 @@
 package monada.neuron.routing.adaptation;
 
 import monada.neuron.routing.RoutingDecision;
+import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.feedback.CohortKey;
@@ -31,6 +32,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class StateRebuildTest {
 
@@ -167,8 +170,14 @@ class StateRebuildTest {
         assertEquals(5.6, dormant.amplitude(), 1e-12);
     }
 
+    private RebuildResult rebuildWith(RoutingStateStore live, List<RoutingObservation> observations, long cutoff,
+            List<CohortKey> cohortKeys) {
+        return live.rebuild(observations, cutoff, cohortKeys, (o, bindings) -> AdaptationFixtures.feedbackPolicy()
+                .derive(o, decisions.get(o.experienceRef()), requests.get(o.experienceRef()), bindings));
+    }
+
     @Test
-    void aRemovedCohortIsRestoredByRebuildBindRebuildEvenWithALaterEffectElsewhere() {
+    void aRemovedCohortIsRestoredByOneRebuildEvenWithALaterEffectElsewhere() {
         var live = bound();
         List<RoutingObservation> observations = new ArrayList<>();
         for (int i = 0; i < 3; i++) {
@@ -184,36 +193,62 @@ class StateRebuildTest {
         observations.forEach(observation -> deliverTo(scratch, observation));
         scratch.advanceCutoff(30);
 
-        var onlyA = AdaptationFixtures.only("sub-a");
-        assertEquals(true, live.unbindDormant(KEY_B, onlyA));
-        // rebinding before a rebuild would put a baseline Node under entries the ledger records as applied
+        assertTrue(live.unbindDormant(KEY_B, AdaptationFixtures.only("sub-a")));
+        // rebinding in place would put a baseline Node under entries the ledger records as applied
         assertEquals(new BindResult.RebuildRequired(List.of(KEY_B)), live.bind(List.of(KEY_B)));
         assertEquals(1, live.cohortCount());
 
-        var cleared = assertInstanceOf(RebuildResult.Rebuilt.class, rebuild(live, observations, 30)).store();
-        for (var entry : cleared.ledger()) {
-            if (!entry.experienceRef().equals("exp-a")) {
-                assertEquals(NoUpdateReason.NO_TARGET_BINDING, ((EntryBasis.NoUpdateMarker) entry.basis()).reason());
-            }
-        }
-        assertEquals(new BindResult.Bound(List.of(KEY_B)), cleared.bind(List.of(KEY_B)));
-
-        // redelivering the older sample cannot be applied in place: the later effect on sub-a is already applied
-        var before = cleared.cohorts(demo());
-        assertInstanceOf(StateUpdate.RebuildRequired.class, deliverTo(cleared, observations.getFirst()));
-        assertEquals(before, cleared.cohorts(demo()));
-
-        var restored = assertInstanceOf(RebuildResult.Rebuilt.class, rebuild(cleared, observations, 30)).store();
+        var restored = assertInstanceOf(RebuildResult.Rebuilt.class,
+                rebuildWith(live, observations, 30, List.of(KEY_A, KEY_B))).store();
         assertEquals(scratch.cohorts(demo()), restored.cohorts(demo()));
         assertEquals(scratch.ledger(), restored.ledger());
         assertEquals(scratch.snapshot(policy(), demo()), restored.snapshot(policy(), demo()));
     }
 
     @Test
+    void aRebuildWithoutACohortDropsItsEffectsAsMarkers() {
+        var live = bound();
+        var b = sample("exp-b", "sub-b", 0, 10, Feature.unknown(), Kind.PASS);
+        var a = sample("exp-a", "sub-a", 0, 20, Feature.unknown(), Kind.PASS);
+        deliverTo(live, b);
+        deliverTo(live, a);
+        var dropped = assertInstanceOf(RebuildResult.Rebuilt.class,
+                rebuildWith(live, List.of(b, a), 20, List.of(KEY_A))).store();
+        assertEquals(List.of(KEY_A), dropped.cohorts(demo()).stream().map(CohortState::key).toList());
+        var marker = dropped.ledger().stream().filter(e -> e.experienceRef().equals("exp-b")).findFirst().orElseThrow();
+        assertEquals(NoUpdateReason.NO_TARGET_BINDING, ((EntryBasis.NoUpdateMarker) marker.basis()).reason());
+        assertEquals(live.cohorts(demo()).getFirst(), dropped.cohorts(demo()).getFirst());
+        assertEquals(new BindResult.Bound(List.of(KEY_B)), dropped.bind(List.of(KEY_B)));
+    }
+
+    @Test
+    void aRebuildNeverMovesTheWatermarkBackwards() {
+        var live = bound();
+        var first = sample("exp-1", "sub-a", 0, 20, Feature.unknown(), Kind.PASS);
+        deliverTo(live, first);
+        live.advanceCutoff(50);
+        assertEquals("exportCutoff 40 is below processedCutoff 50: the rebuilt state would forget examined observations",
+                assertThrows(IllegalArgumentException.class, () -> rebuild(live, List.of(first), 40)).getMessage());
+        var fresh = bound();
+        assertEquals("processedCutoff cannot move backwards from 20 to 10",
+                assertThrows(IllegalArgumentException.class, () -> rebuild(fresh, List.of(first), 10)).getMessage());
+    }
+
+    @Test
+    void anOversizedCohortSetIsRejected() {
+        List<CohortKey> keys = new ArrayList<>();
+        for (int i = 0; i <= RoutingStateStore.MAX_COHORTS; i++) {
+            keys.add(new CohortKey("scope-demo", "implement", "UNKNOWN", new RouteKey("route-" + i, 1)));
+        }
+        assertEquals("a rebuilt store allows at most 256 cohorts, got: 257", assertThrows(
+                IllegalArgumentException.class, () -> rebuildWith(bound(), List.of(), 0, keys)).getMessage());
+    }
+
+    @Test
     void aRemovedCohortWithoutAppliedEffectsCanBeBoundAgainDirectly() {
         var live = bound();
         deliverTo(live, sample("exp-b", "sub-b", 0, 20, Feature.unknown(), Kind.PENDING));
-        assertEquals(true, live.unbindDormant(KEY_B, AdaptationFixtures.only("sub-a")));
+        assertTrue(live.unbindDormant(KEY_B, AdaptationFixtures.only("sub-a")));
         assertEquals(new BindResult.Bound(List.of(KEY_B)), live.bind(List.of(KEY_B)));
     }
 }
