@@ -1377,8 +1377,8 @@ Evaluated in this order; the first match decides.
 
 | Condition | Result |
 | --- | --- |
-| The policy's `mappingVersion` differs from the decision's cohort binding | `NoUpdate(MAPPING_MISMATCH)` |
-| The decision was made under another feature schema than the state definition's cohort mapping (an ADR 0026 admission key) | `NoUpdate(FEATURE_SCHEMA_MISMATCH)` |
+| The policy's `mappingVersion` differs from the decision's or the outcome's cohort binding (checked before provenance, so a mispaired foreign outcome is classified as foreign and never recorded) | `NoUpdate(MAPPING_MISMATCH)` |
+| The decision was made, or the outcome recorded, under another feature schema than the state definition's cohort mapping (an ADR 0026 admission key) | `NoUpdate(FEATURE_SCHEMA_MISMATCH)` |
 | The state definition's cohort mapping, applied to the request's features, does not give the decision's recorded bucket (the request did not produce the decision) | `NoUpdate(PROVENANCE_MISMATCH)` with `COHORT_BINDING` |
 | `PROVENANCE_MISMATCH` (including executing a route other than the advised one, any other scope, stage, catalog, policy, fingerprints or evaluation policy) | `NoUpdate(PROVENANCE_MISMATCH)` with the differing fields; a selected-but-unexecuted candidate never earns credit |
 | `STALE_ARTIFACT_REVISION`, `CONTRADICTORY_EVIDENCE` | `NoUpdate` with that reason |

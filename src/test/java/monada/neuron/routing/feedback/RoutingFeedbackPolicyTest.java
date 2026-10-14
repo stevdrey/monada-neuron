@@ -6,6 +6,7 @@ import monada.neuron.evolution.FeedbackDisposition;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
+import monada.neuron.routing.CohortBinding;
 import monada.neuron.routing.CohortMapping;
 import monada.neuron.routing.RoutingStateDefinition;
 import monada.neuron.routing.catalog.ResourceValue;
@@ -26,6 +27,8 @@ import monada.neuron.routing.outcome.QualityDimension;
 import monada.neuron.routing.outcome.QualityObservation;
 import monada.neuron.routing.outcome.QualityState;
 import monada.neuron.routing.outcome.ResourceSummary;
+import monada.neuron.routing.outcome.RoutingObservation;
+import monada.neuron.routing.outcome.RoutingOutcome;
 import monada.neuron.routing.outcome.StageAttribution;
 import monada.neuron.testsupport.AllocationProbe;
 import org.junit.jupiter.api.Test;
@@ -179,6 +182,33 @@ class RoutingFeedbackPolicyTest {
                 "task-features/other", List.of(new TargetBinding(key, NODE_A)));
         assertEquals(NoUpdateReason.BINDING_PARTITION_MISMATCH,
                 noUpdate(policy().derive(spec.observation(), spec.decision, spec.request, foreignBindings)).reason());
+    }
+
+    @Test
+    void anOutcomeOfAnotherPartitionPairedWithACurrentDecisionIsClassifiedAsForeign() {
+        spec.passing();
+        var observation = spec.observation();
+        var outcome = observation.outcome();
+        var binding = outcome.cohortBinding();
+        for (var foreign : List.of(
+                new CohortBinding(binding.cohortBucket(), binding.bucketMappingVersion(), "routing-state/other",
+                        binding.featureSchemaVersion()),
+                new CohortBinding(binding.cohortBucket(), binding.bucketMappingVersion(), binding.mappingVersion(),
+                        "task-features/other"))) {
+            var mispaired = new RoutingObservation(new RoutingOutcome(outcome.contractVersion(),
+                    outcome.decisionRef(), outcome.executedRoute(), foreign, outcome.catalogVersion(),
+                    outcome.routingPolicyId(), outcome.routingPolicyVersion(), outcome.sourceFingerprint(),
+                    outcome.contextFingerprint(), outcome.constraintsFingerprint(), outcome.evaluationPolicyId(),
+                    outcome.evaluationPolicyVersion(), outcome.cutoff(), outcome.invocation(),
+                    outcome.outcomeStatus(), outcome.outcomeOrigin(), outcome.acceptedAttemptId(),
+                    outcome.acceptedAttemptStatus(), outcome.outcomeSequence(), outcome.observations(),
+                    outcome.judgedRevisions(), outcome.resources(), outcome.attribution()),
+                    observation.experienceRef(), observation.revision(), observation.ledgerSequence(),
+                    observation.supersedesSequence());
+            var none = noUpdate(policy().derive(mispaired, spec.decision, spec.request,
+                    bindings(spec.decision, spec.request, NODE_A)));
+            assertTrue(none.reason().foreignPartition(), none.reason().toString());
+        }
     }
 
     @Test

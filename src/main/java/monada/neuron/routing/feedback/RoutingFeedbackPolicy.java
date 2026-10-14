@@ -2,6 +2,7 @@ package monada.neuron.routing.feedback;
 
 import monada.neuron.evolution.FeedbackDisposition;
 import monada.neuron.evolution.FeedbackEntry;
+import monada.neuron.routing.CohortBinding;
 import monada.neuron.routing.RoutingDecision;
 import monada.neuron.routing.RoutingStateDefinition;
 import monada.neuron.routing.catalog.ResourceValue;
@@ -100,10 +101,16 @@ public final class RoutingFeedbackPolicy {
         Objects.requireNonNull(request, "request must not be null");
         Objects.requireNonNull(bindings, "bindings must not be null");
         Objects.requireNonNull(cost, "cost must not be null");
-        if (!definition.mappingVersion().equals(decision.cohortBinding().mappingVersion())) {
+        // both the decision and the outcome must belong to this state partition, or a mispaired foreign outcome
+        // would be reported as a generic provenance mismatch and recorded in this partition's ledger
+        CohortBinding recorded = observation.outcome().cohortBinding();
+        if (!definition.mappingVersion().equals(decision.cohortBinding().mappingVersion())
+                || !definition.mappingVersion().equals(recorded.mappingVersion())) {
             return noUpdate(NoUpdateReason.MAPPING_MISMATCH, null);
         }
-        if (!definition.cohortMapping().featureSchemaVersion().equals(decision.cohortBinding().featureSchemaVersion())) {
+        String schema = definition.cohortMapping().featureSchemaVersion();
+        if (!schema.equals(decision.cohortBinding().featureSchemaVersion())
+                || !schema.equals(recorded.featureSchemaVersion())) {
             return noUpdate(NoUpdateReason.FEATURE_SCHEMA_MISMATCH, null);
         }
         if (!producedBy(request, decision)) {
