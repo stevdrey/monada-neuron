@@ -17,6 +17,8 @@ import java.util.Set;
  * <p>The ledger holds one entry per sample reference: its latest applied revision. Rules, by comparing the
  * observation's revision with the entry of the same reference:
  * <ul>
+ * <li>a result that would be {@code Apply} or {@code RecordOnly} becomes {@code RebuildRequired} when an applied
+ *     entry was cost-refined against an older revision of this very sample;</li>
  * <li>a no-update caused by another state partition (mapping version, scope or evaluation policy):
  *     {@code OutOfPartition}, nothing recorded;</li>
  * <li>a newer revision at a ledger position that is not strictly later (or an older one that is not strictly
@@ -54,6 +56,22 @@ public final class RevisionReconciler {
         Objects.requireNonNull(observation, "observation must not be null");
         Objects.requireNonNull(derivation, "derivation must not be null");
         requireLedger(ledger);
+        Reconciliation result = classify(ledger, observation, derivation);
+        if (result instanceof Reconciliation.Apply || result instanceof Reconciliation.RecordOnly) {
+            // a reward that was refined by a cost peer is obsolete once that peer has a newer revision
+            for (AppliedRevision entry : ledger) {
+                if (entry.costPeer().isPresent()
+                        && entry.costPeer().get().experienceRef().equals(observation.experienceRef())
+                        && entry.costPeer().get().revision() < observation.revision()) {
+                    return new Reconciliation.RebuildRequired(entry, entry.ledgerSequence());
+                }
+            }
+        }
+        return result;
+    }
+
+    private Reconciliation classify(
+            List<AppliedRevision> ledger, RoutingObservation observation, FeedbackDerivation derivation) {
         if (derivation instanceof FeedbackDerivation.NoUpdate none && none.reason().foreignPartition()) {
             return new Reconciliation.OutOfPartition(none.reason());
         }

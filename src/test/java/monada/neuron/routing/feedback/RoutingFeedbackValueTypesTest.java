@@ -116,7 +116,7 @@ class RoutingFeedbackValueTypesTest {
             List<FeedbackEntry> entries, DerivedAcceptance acceptance, Feature<Long> supersedes) {
         return new RoutingFeedback(f.contractVersion(), f.identity(), supersedes, f.cohortKey(), f.routingPolicyId(),
                 f.routingPolicyVersion(), f.catalogVersion(), f.cutoff(), acceptance, rule, disposition, entries,
-                f.reasons(), f.effectiveEvidence(), f.provenFailures());
+                f.reasons(), f.effectiveEvidence(), f.provenFailures(), f.costPeer());
     }
 
     @Test
@@ -164,7 +164,7 @@ class RoutingFeedbackValueTypesTest {
         return new RoutingFeedback(f.contractVersion(), f.identity(), f.supersedesSequence(), f.cohortKey(),
                 f.routingPolicyId(), f.routingPolicyVersion(), f.catalogVersion(), f.cutoff(), acceptance,
                 ScoreRule.PENALIZE_PROVEN_MANDATORY_FAILURE, FeedbackDisposition.PENALIZE, entries, reasons,
-                f.effectiveEvidence(), failures);
+                f.effectiveEvidence(), failures, f.costPeer());
     }
 
     @Test
@@ -221,7 +221,7 @@ class RoutingFeedbackValueTypesTest {
                         id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()),
                 f.supersedesSequence(), f.cohortKey(), f.routingPolicyId(), f.routingPolicyVersion(),
                 f.catalogVersion(), cutoff, f.derivedAcceptance(), f.rule(), f.disposition(), f.entries(),
-                f.reasons(), evidence, f.provenFailures());
+                f.reasons(), evidence, f.provenFailures(), f.costPeer());
     }
 
     @Test
@@ -251,6 +251,22 @@ class RoutingFeedbackValueTypesTest {
     }
 
     @Test
+    void aCostPeerIsRecordedExactlyForACostRefinedReward() {
+        var f = reward();
+        var peer = Optional.of(new PeerRevision("exp-2", 0, 12L));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingFeedback(f.contractVersion(), f.identity(),
+                f.supersedesSequence(), f.cohortKey(), f.routingPolicyId(), f.routingPolicyVersion(),
+                f.catalogVersion(), f.cutoff(), f.derivedAcceptance(), f.rule(), f.disposition(), f.entries(),
+                f.reasons(), f.effectiveEvidence(), f.provenFailures(), peer));
+        assertThrows(IllegalArgumentException.class, () -> new RoutingFeedback(f.contractVersion(), f.identity(),
+                f.supersedesSequence(), f.cohortKey(), f.routingPolicyId(), f.routingPolicyVersion(),
+                f.catalogVersion(), f.cutoff(), f.derivedAcceptance(), ScoreRule.REINFORCE_COST_REFINED,
+                f.disposition(), f.entries(), f.reasons(), f.effectiveEvidence(), f.provenFailures(),
+                Optional.empty()));
+        assertThrows(IllegalArgumentException.class, () -> new PeerRevision("exp", -1, 0L));
+    }
+
+    @Test
     void correctionAncestryFollowsTheRevision() {
         var f = reward();
         var id = f.identity();
@@ -261,7 +277,7 @@ class RoutingFeedbackValueTypesTest {
                                 id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()),
                         supersedes, f.cohortKey(), f.routingPolicyId(), f.routingPolicyVersion(), f.catalogVersion(),
                         f.cutoff(), f.derivedAcceptance(), f.rule(), f.disposition(), plus, f.reasons(),
-                        f.effectiveEvidence(), f.provenFailures());
+                        f.effectiveEvidence(), f.provenFailures(), f.costPeer());
         make.apply(0L, Feature.unknown());
         make.apply(1L, Feature.known(12L));
         assertThrows(IllegalArgumentException.class, () -> make.apply(1L, Feature.unknown()));
@@ -351,18 +367,18 @@ class RoutingFeedbackValueTypesTest {
         assertTrue(applied.changedState());
         assertThrows(IllegalArgumentException.class,
                 () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(), f.supersedesSequence(),
-                        Optional.of(f.cohortKey()), Optional.empty(), FeedbackDisposition.NEUTRAL, 0.5));
+                        Optional.of(f.cohortKey()), Optional.empty(), Optional.empty(), FeedbackDisposition.NEUTRAL, 0.5));
         assertThrows(IllegalArgumentException.class,
                 () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(), f.supersedesSequence(),
-                        Optional.of(f.cohortKey()), Optional.of(NODE_A), FeedbackDisposition.REINFORCE, -0.5));
+                        Optional.of(f.cohortKey()), Optional.of(NODE_A), Optional.empty(), FeedbackDisposition.REINFORCE, -0.5));
         // a target Node is recorded exactly when the entry moved a Node
         assertThrows(IllegalArgumentException.class,
                 () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(),
-                        f.supersedesSequence(), Optional.of(f.cohortKey()), Optional.empty(),
+                        f.supersedesSequence(), Optional.of(f.cohortKey()), Optional.empty(), Optional.empty(),
                         FeedbackDisposition.REINFORCE, 0.5));
         assertThrows(IllegalArgumentException.class,
                 () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(),
-                        f.supersedesSequence(), Optional.of(f.cohortKey()), Optional.of(NODE_A),
+                        f.supersedesSequence(), Optional.of(f.cohortKey()), Optional.of(NODE_A), Optional.empty(),
                         FeedbackDisposition.NEUTRAL, 0.0));
         assertThrows(IllegalArgumentException.class,
                 () -> new Reconciliation.Apply(Optional.of(applied)));

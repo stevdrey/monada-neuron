@@ -16,6 +16,7 @@ import monada.neuron.routing.token.OpaqueTokens;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Bounded, immutable feedback derived from one {@code RoutingObservation} (contract section 6). It is separate from
@@ -40,6 +41,7 @@ import java.util.Objects;
  * @param reasons assessment reasons, declaration order
  * @param effectiveEvidence effective state per mandatory dimension
  * @param provenFailures mandatory dimensions whose effective state is {@code FAIL}
+ * @param costPeer peer revision a cost-refined reward depended on; present exactly for {@code REINFORCE_COST_REFINED}
  */
 public record RoutingFeedback(
         String contractVersion,
@@ -56,7 +58,8 @@ public record RoutingFeedback(
         List<FeedbackEntry> entries,
         List<IneligibilityReason> reasons,
         List<LearningAssessment.EffectiveEvidence> effectiveEvidence,
-        List<QualityDimension> provenFailures) {
+        List<QualityDimension> provenFailures,
+        Optional<PeerRevision> costPeer) {
 
     /** Validates consistency between the rule, the disposition, the entries and the evidence. */
     public RoutingFeedback {
@@ -79,6 +82,10 @@ public record RoutingFeedback(
         }
         Objects.requireNonNull(derivedAcceptance, "derivedAcceptance must not be null");
         Objects.requireNonNull(rule, "rule must not be null");
+        Objects.requireNonNull(costPeer, "costPeer must not be null");
+        if (costPeer.isPresent() != (rule == ScoreRule.REINFORCE_COST_REFINED)) {
+            throw new IllegalArgumentException("a cost peer is recorded exactly for REINFORCE_COST_REFINED");
+        }
         Objects.requireNonNull(disposition, "disposition must not be null");
         if (rule.disposition() != disposition) {
             throw new IllegalArgumentException("rule " + rule + " yields " + rule.disposition() + ", not " + disposition);

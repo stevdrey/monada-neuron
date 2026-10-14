@@ -101,17 +101,22 @@ public final class RoutingFeedbackPolicy {
         Objects.requireNonNull(request, "request must not be null");
         Objects.requireNonNull(bindings, "bindings must not be null");
         Objects.requireNonNull(cost, "cost must not be null");
-        // both the decision and the outcome must belong to this state partition, or a mispaired foreign outcome
-        // would be reported as a generic provenance mismatch and recorded in this partition's ledger
+        // both the decision and the outcome must belong to this state partition, and so must the bindings, before any
+        // assessment-based exit: a foreign sample would otherwise be derived (or marked) and recorded in this ledger
         CohortBinding recorded = observation.outcome().cohortBinding();
-        if (!definition.mappingVersion().equals(decision.cohortBinding().mappingVersion())
-                || !definition.mappingVersion().equals(recorded.mappingVersion())) {
-            return noUpdate(NoUpdateReason.MAPPING_MISMATCH, null);
+        Optional<NoUpdateReason> foreign = partitionMismatch(decision.cohortBinding(), recorded);
+        if (foreign.isPresent()) {
+            return noUpdate(foreign.get(), null);
         }
-        String schema = definition.cohortMapping().featureSchemaVersion();
-        if (!schema.equals(decision.cohortBinding().featureSchemaVersion())
-                || !schema.equals(recorded.featureSchemaVersion())) {
-            return noUpdate(NoUpdateReason.FEATURE_SCHEMA_MISMATCH, null);
+        RoutingOutcome outcome = observation.outcome();
+        if (!bindings.scopeId().equals(outcome.decisionRef().scopeId())) {
+            return noUpdate(NoUpdateReason.BINDING_SCOPE_MISMATCH, null);
+        }
+        if (!bindings.evaluationPolicyId().equals(outcome.evaluationPolicyId())
+                || !bindings.evaluationPolicyVersion().equals(outcome.evaluationPolicyVersion())
+                || !bindings.mappingVersion().equals(definition.mappingVersion())
+                || !bindings.featureSchemaVersion().equals(definition.cohortMapping().featureSchemaVersion())) {
+            return noUpdate(NoUpdateReason.BINDING_PARTITION_MISMATCH, null);
         }
         if (!producedBy(request, decision)) {
             // the request is not the one whose features produced the decision, so its stage kind cannot be trusted
@@ -151,6 +156,24 @@ public final class RoutingFeedbackPolicy {
         };
     }
 
+    /**
+     * Classifies a decision and outcome binding pair against the active definition: mapping version, feature schema and
+     * bucket-mapping version must all be the ones this policy's state was built under.
+     */
+    private Optional<NoUpdateReason> partitionMismatch(CohortBinding decisionBinding, CohortBinding outcomeBinding) {
+        if (!definition.mappingVersion().equals(decisionBinding.mappingVersion())
+                || !definition.mappingVersion().equals(outcomeBinding.mappingVersion())
+                || !definition.cohortMapping().bucketMappingVersion().equals(decisionBinding.bucketMappingVersion())
+                || !definition.cohortMapping().bucketMappingVersion().equals(outcomeBinding.bucketMappingVersion())) {
+            return Optional.of(NoUpdateReason.MAPPING_MISMATCH);
+        }
+        String schema = definition.cohortMapping().featureSchemaVersion();
+        if (!schema.equals(decisionBinding.featureSchemaVersion()) || !schema.equals(outcomeBinding.featureSchemaVersion())) {
+            return Optional.of(NoUpdateReason.FEATURE_SCHEMA_MISMATCH);
+        }
+        return Optional.empty();
+    }
+
     /** True when the request's features reproduce the cohort bucket the decision recorded. */
     private boolean producedBy(RoutingRequest request, RoutingDecision.Selected decision) {
         return definition.cohortMapping().bucketOf(request.features()).equals(decision.cohortBinding().cohortBucket());
@@ -164,15 +187,6 @@ public final class RoutingFeedbackPolicy {
             Optional<CostReference> cost,
             LearningAssessment assessment) {
         RoutingOutcome outcome = observation.outcome();
-        if (!bindings.scopeId().equals(outcome.decisionRef().scopeId())) {
-            return noUpdate(NoUpdateReason.BINDING_SCOPE_MISMATCH, null);
-        }
-        if (!bindings.evaluationPolicyId().equals(outcome.evaluationPolicyId())
-                || !bindings.evaluationPolicyVersion().equals(outcome.evaluationPolicyVersion())
-                || !bindings.mappingVersion().equals(definition.mappingVersion())
-                || !bindings.featureSchemaVersion().equals(definition.cohortMapping().featureSchemaVersion())) {
-            return noUpdate(NoUpdateReason.BINDING_PARTITION_MISMATCH, null);
-        }
         CohortKey key = cohortKey(decision, request, outcome);
         UUID target = bindings.lookup(key);
         if (target == null) {
@@ -180,17 +194,21 @@ public final class RoutingFeedbackPolicy {
         }
         ScoreRule rule;
         double score;
+        Optional<PeerRevision> peer = Optional.empty();
         if (assessment.verdict() == EligibilityVerdict.POSITIVE_CANDIDATE) {
             boolean refined = cost.isPresent() && config.costObjective().isPresent()
                     && strictlyBetter(observation, request, cost.get(), config.costObjective().get());
             rule = refined ? ScoreRule.REINFORCE_COST_REFINED : ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL;
             score = refined ? config.refinedReinforceScore() : config.reinforceScore();
+            peer = refined ? Optional.of(new PeerRevision(cost.get().peer().experienceRef(),
+                    cost.get().peer().revision(), cost.get().peer().ledgerSequence())) : Optional.empty();
         } else {
             rule = ScoreRule.PENALIZE_PROVEN_MANDATORY_FAILURE;
             score = config.penalizeScore();
         }
         return new FeedbackDerivation.Derived(
-                feedback(observation, decision, request, assessment, rule, List.of(FeedbackEntry.of(target, score))));
+                feedback(observation, decision, request, assessment, rule, List.of(FeedbackEntry.of(target, score)),
+                        peer));
     }
 
     private FeedbackDerivation neutral(
@@ -199,7 +217,8 @@ public final class RoutingFeedbackPolicy {
             RoutingRequest request,
             LearningAssessment assessment,
             ScoreRule rule) {
-        return new FeedbackDerivation.Derived(feedback(observation, decision, request, assessment, rule, List.of()));
+        return new FeedbackDerivation.Derived(
+                feedback(observation, decision, request, assessment, rule, List.of(), Optional.empty()));
     }
 
     private RoutingFeedback feedback(
@@ -208,7 +227,8 @@ public final class RoutingFeedbackPolicy {
             RoutingRequest request,
             LearningAssessment assessment,
             ScoreRule rule,
-            List<FeedbackEntry> entries) {
+            List<FeedbackEntry> entries,
+            Optional<PeerRevision> costPeer) {
         RoutingOutcome outcome = observation.outcome();
         FeedbackDisposition disposition = rule.disposition();
         return new RoutingFeedback(
@@ -228,7 +248,8 @@ public final class RoutingFeedbackPolicy {
                 entries,
                 assessment.reasons(),
                 assessment.effectiveEvidence(),
-                assessment.provenFailures());
+                assessment.provenFailures(),
+                costPeer);
     }
 
     private CohortKey cohortKey(
@@ -282,7 +303,8 @@ public final class RoutingFeedbackPolicy {
                 || self.decisionRef().equals(peer.decisionRef())) {
             return false;
         }
-        if (!producedBy(peerRequest, reference.peerDecision())) {
+        if (partitionMismatch(reference.peerDecision().cohortBinding(), peer.cohortBinding()).isPresent()
+                || !producedBy(peerRequest, reference.peerDecision())) {
             return false;
         }
         LearningAssessment peerAssessment =

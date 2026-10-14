@@ -212,6 +212,81 @@ class RoutingFeedbackPolicyTest {
     }
 
     @Test
+    void aForeignBucketMappingVersionOnTheDecisionOrOutcomeIsAForeignPartition() {
+        spec.passing();
+        var observation = spec.observation();
+        var outcome = observation.outcome();
+        var binding = outcome.cohortBinding();
+        var foreign = new CohortBinding(binding.cohortBucket(), "bucket-mapping/other", binding.mappingVersion(),
+                binding.featureSchemaVersion());
+        var mispaired = new RoutingObservation(new RoutingOutcome(outcome.contractVersion(), outcome.decisionRef(),
+                outcome.executedRoute(), foreign, outcome.catalogVersion(), outcome.routingPolicyId(),
+                outcome.routingPolicyVersion(), outcome.sourceFingerprint(), outcome.contextFingerprint(),
+                outcome.constraintsFingerprint(), outcome.evaluationPolicyId(), outcome.evaluationPolicyVersion(),
+                outcome.cutoff(), outcome.invocation(), outcome.outcomeStatus(), outcome.outcomeOrigin(),
+                outcome.acceptedAttemptId(), outcome.acceptedAttemptStatus(), outcome.outcomeSequence(),
+                outcome.observations(), outcome.judgedRevisions(), outcome.resources(), outcome.attribution()),
+                observation.experienceRef(), observation.revision(), observation.ledgerSequence(),
+                observation.supersedesSequence());
+        var none = noUpdate(policy().derive(mispaired, spec.decision, spec.request,
+                bindings(spec.decision, spec.request, NODE_A)));
+        assertEquals(NoUpdateReason.MAPPING_MISMATCH, none.reason());
+    }
+
+    @Test
+    void aPeerOfAnotherBucketMappingIsNotAComparison() {
+        var self = new FeedbackFixtures.Spec().passing();
+        self.resources = tokens(400, ResourceValue.Provenance.REPORTED);
+        var peer = peer("task-17", tokens(900, ResourceValue.Provenance.REPORTED), true);
+        var outcome = peer.observation().outcome();
+        var binding = outcome.cohortBinding();
+        var foreign = new CohortBinding(binding.cohortBucket(), "bucket-mapping/other", binding.mappingVersion(),
+                binding.featureSchemaVersion());
+        var foreignPeer = new RoutingObservation(new RoutingOutcome(outcome.contractVersion(), outcome.decisionRef(),
+                outcome.executedRoute(), foreign, outcome.catalogVersion(), outcome.routingPolicyId(),
+                outcome.routingPolicyVersion(), outcome.sourceFingerprint(), outcome.contextFingerprint(),
+                outcome.constraintsFingerprint(), outcome.evaluationPolicyId(), outcome.evaluationPolicyVersion(),
+                outcome.cutoff(), outcome.invocation(), outcome.outcomeStatus(), outcome.outcomeOrigin(),
+                outcome.acceptedAttemptId(), outcome.acceptedAttemptStatus(), outcome.outcomeSequence(),
+                outcome.observations(), outcome.judgedRevisions(), outcome.resources(), outcome.attribution()),
+                "exp-2", 0, 12L, Feature.unknown());
+        var reference = new CostReference(foreignPeer, peer.decision, peer.request);
+        var f = feedback(policy().derive(self.observation(), self.decision, self.request,
+                bindings(self.decision, self.request, NODE_A), Optional.of(reference)));
+        assertEquals(ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL, f.rule());
+    }
+
+    @Test
+    void aForeignBindingPartitionIsRejectedBeforeEveryNeutralOrNoUpdateExit() {
+        var foreignScope = new TargetBindings("scope-other", "forge-gates", "1", DEFINITION.mappingVersion(),
+                FeedbackFixtures.SCHEMA, List.of());
+        var foreignPolicy = new TargetBindings("scope-demo", "forge-gates", "9", DEFINITION.mappingVersion(),
+                FeedbackFixtures.SCHEMA, List.of());
+        var pending = new FeedbackFixtures.Spec().passing();
+        pending.status = OutcomeStatus.PENDING;
+        var environmental = new FeedbackFixtures.Spec().failing();
+        environmental.invocation = InvocationStatus.TIMED_OUT;
+        var chainOnly = new FeedbackFixtures.Spec().passing();
+        chainOnly.attribution = StageAttribution.none();
+        for (var s : List.of(new FeedbackFixtures.Spec(), pending, environmental, chainOnly)) {
+            assertEquals(NoUpdateReason.BINDING_SCOPE_MISMATCH, noUpdate(
+                    policy().derive(s.observation(), s.decision, s.request, foreignScope)).reason());
+            assertEquals(NoUpdateReason.BINDING_PARTITION_MISMATCH, noUpdate(
+                    policy().derive(s.observation(), s.decision, s.request, foreignPolicy)).reason());
+        }
+    }
+
+    @Test
+    void aCostRefinedRewardRecordsThePeerRevisionItDependedOn() {
+        var self = new FeedbackFixtures.Spec().passing();
+        self.resources = tokens(400, ResourceValue.Provenance.REPORTED);
+        var peer = peer("task-17", tokens(900, ResourceValue.Provenance.REPORTED), true);
+        var f = withCost(policy(), self, peer);
+        assertEquals(Optional.of(new PeerRevision("exp-2", 0, 12L)), f.costPeer());
+        assertEquals(Optional.empty(), feedback(derive(new FeedbackFixtures.Spec().passing())).costPeer());
+    }
+
+    @Test
     void aPeerFromAfterTheFeedbackCutoffCannotInfluenceIt() {
         var self = new FeedbackFixtures.Spec().passing();
         self.resources = tokens(400, ResourceValue.Provenance.REPORTED);

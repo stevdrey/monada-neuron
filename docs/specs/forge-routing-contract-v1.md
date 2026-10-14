@@ -1377,7 +1377,8 @@ Evaluated in this order; the first match decides.
 
 | Condition | Result |
 | --- | --- |
-| The policy's `mappingVersion` differs from the decision's or the outcome's cohort binding (checked before provenance, so a mispaired foreign outcome is classified as foreign and never recorded) | `NoUpdate(MAPPING_MISMATCH)` |
+| The policy's `mappingVersion` or the cohort mapping's `bucketMappingVersion` differs from the decision's or the outcome's cohort binding (checked before provenance, so a mispaired foreign outcome is classified as foreign and never recorded) | `NoUpdate(MAPPING_MISMATCH)` |
+| The bindings belong to another scope, evaluation policy, `mappingVersion` or feature schema (checked here, before every neutral or no-update exit, so a foreign sample is never derived and recorded; only the exact target lookup waits for a reward or penalty) | `NoUpdate(BINDING_SCOPE_MISMATCH)` or `NoUpdate(BINDING_PARTITION_MISMATCH)` |
 | The decision was made, or the outcome recorded, under another feature schema than the state definition's cohort mapping (an ADR 0026 admission key) | `NoUpdate(FEATURE_SCHEMA_MISMATCH)` |
 | The state definition's cohort mapping, applied to the request's features, does not give the decision's recorded bucket (the request did not produce the decision) | `NoUpdate(PROVENANCE_MISMATCH)` with `COHORT_BINDING` |
 | `PROVENANCE_MISMATCH` (including executing a route other than the advised one, any other scope, stage, catalog, policy, fingerprints or evaluation policy) | `NoUpdate(PROVENANCE_MISMATCH)` with the differing fields; a selected-but-unexecuted candidate never earns credit |
@@ -1401,7 +1402,7 @@ what is learned, so the host must give the state definition a new `mappingVersio
 
 **Cost refinement (optional, reward-only).** `reinforceScore + costBonus` is granted only when a `CostReference` is supplied, the config
 declares a `CostObjective(UsageKind, MINIMIZE|MAXIMIZE)`, and all of the following hold: the peer (assessed by the policy itself with
-its own decision and request, not by a caller-supplied assessment) is a `POSITIVE_CANDIDATE` of **another** route under a different `DecisionRef` (two accounts of one decision are not two executions) whose request reproduces its decision's recorded bucket and whose cutoff is not after the feedback's (a later peer would let future data influence historical feedback); scope, task,
+its own decision and request, not by a caller-supplied assessment) is a `POSITIVE_CANDIDATE` of **another** route under a different `DecisionRef` (two accounts of one decision are not two executions) whose decision and outcome belong to the same partition (mapping, bucket mapping and schema), whose request reproduces its decision's recorded bucket and whose cutoff is not after the feedback's (a later peer would let future data influence historical feedback); scope, task,
 `stageKind`, the three fingerprints and the evaluation policy are equal (Section 6, directly comparable pair); both outcomes have
 `MEASURED` usage with a `Known` counter of the declared kind and equal provenance (`REPORTED` or `ESTIMATED`); and the executed
 value is strictly better. Unknown, not-measured, absent and `NO_BILLABLE_USAGE` data, equal values and non-comparable pairs yield
@@ -1411,7 +1412,7 @@ cost and actual billing are carried by the outcome but are not read.
 
 ### 21.3 Caller-owned applied-revision bookkeeping and rebuild
 
-The caller keeps a ledger of `AppliedRevision(identity, routingPolicyId, routingPolicyVersion, supersedesSequence, Optional<cohortKey>, Optional<targetNodeId>, disposition, score)` (the producing routing policy is retained as audit provenance, so the same revision delivered under another routing policy, with different correction ancestry or crediting another Node is a conflict, not a duplicate; the target Node is recorded exactly when the entry moved a Node): **one entry per sample reference, the
+The caller keeps a ledger of `AppliedRevision(identity, routingPolicyId, routingPolicyVersion, supersedesSequence, Optional<cohortKey>, Optional<targetNodeId>, Optional<costPeer>, disposition, score)` (the producing routing policy is retained as audit provenance, so the same revision delivered under another routing policy, with different correction ancestry or crediting another Node is a conflict, not a duplicate; the target Node is recorded exactly when the entry moved a Node, and a cost-refined reward records the exact peer revision it depended on as `PeerRevision`): **one entry per sample reference, the
 latest examined revision**, at most 4,096 entries (neutral feedback is recorded too, with score `0.0`, and so is a revision that derived nothing, as a marker from `AppliedRevision.ofNoUpdate(observation)` with no cohort, so a delayed older revision of the same sample stays stale). Neuron holds no ledger.
 `RevisionReconciler.reconcile(ledger, observation, derivation)` first requires that a derived feedback answers the exact observation (reference, revision, ledger sequence, `supersedesSequence`, decision, executed route, routing policy, catalog, cutoff, evaluation policy, `mappingVersion` and cohort bucket), else `IllegalArgumentException`; it then returns advice and modifies nothing:
 
@@ -1425,6 +1426,7 @@ latest examined revision**, at most 4,096 entries (neutral feedback is recorded 
 | Older revision | `StaleRevision` |
 | Newer revision, entry was neutral | `Apply` or, when nothing is derived, `RecordOnly` (either replaces the entry) |
 | Newer revision, entry was a reward or penalty, **whatever the new revision derives, including nothing** | `RebuildRequired(superseded, affectedFromSequence)` |
+| Any result that would be `Apply` or `RecordOnly`, while an applied entry was cost-refined against an **older revision of this very sample** (the peer needs no ledger entry of its own) | `RebuildRequired(dependent entry, its ledgerSequence)` |
 
 A newer revision must sit at a strictly later ledger position than the entry it replaces, and an older one at a strictly earlier position; otherwise the pairing is inconsistent caller data and `IllegalArgumentException` is thrown.
 

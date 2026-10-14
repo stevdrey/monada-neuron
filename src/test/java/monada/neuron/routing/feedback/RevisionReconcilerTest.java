@@ -6,6 +6,7 @@ import monada.neuron.evolution.FeedbackDisposition;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
+import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.outcome.OutcomeStatus;
@@ -84,7 +85,7 @@ class RevisionReconcilerTest {
         assertEquals(derived.feedback().routingPolicyId(), entry.routingPolicyId());
         assertEquals(derived.feedback().routingPolicyVersion(), entry.routingPolicyVersion());
         var otherPolicy = new AppliedRevision(entry.identity(), entry.routingPolicyId(), "other-version",
-                entry.supersedesSequence(), entry.cohortKey(), entry.targetNodeId(), entry.disposition(), entry.score());
+                entry.supersedesSequence(), entry.cohortKey(), entry.targetNodeId(), entry.costPeer(), entry.disposition(), entry.score());
         assertEquals(new Reconciliation.ConflictingRevision(otherPolicy),
                 reconciler.reconcile(List.of(otherPolicy), spec.observation(), derived));
     }
@@ -154,6 +155,39 @@ class RevisionReconcilerTest {
         assertInstanceOf(Reconciliation.RecordOnly.class, reconciler.reconcile(List.of(), r2.observation(), unbound));
         assertThrows(IllegalArgumentException.class,
                 () -> new Reconciliation.OutOfPartition(NoUpdateReason.NO_TARGET_BINDING));
+    }
+
+    @Test
+    void aCorrectedCostPeerForcesTheDependentRewardToBeRebuilt() {
+        var self = new FeedbackFixtures.Spec().passing();
+        self.resources = FeedbackFixtures.tokens(400, ResourceValue.Provenance.REPORTED);
+        var request = FeedbackFixtures.request("scope-demo", "task-17", "exec-2", "att-1", "s-impl-2", 102L);
+        var peer = new FeedbackFixtures.Spec(request, FeedbackFixtures.decide(request, "sub-b")).passing();
+        peer.experienceRef = "exp-2";
+        peer.resources = FeedbackFixtures.tokens(900, ResourceValue.Provenance.REPORTED);
+        var refined = (FeedbackDerivation.Derived) policy().derive(self.observation(), self.decision, self.request,
+                FeedbackFixtures.bindings(self.decision, self.request, NODE_A),
+                Optional.of(new CostReference(peer.observation(), peer.decision, peer.request)));
+        assertEquals(ScoreRule.REINFORCE_COST_REFINED, refined.feedback().rule());
+        var ledger = List.of(AppliedRevision.of(refined.feedback()));
+        assertEquals(Optional.of(new PeerRevision("exp-2", 0, 12L)), ledger.getFirst().costPeer());
+
+        // the peer was never processed itself (no ledger entry); a corrected revision of it still forces a rebuild
+        var correction = corrected(peer, 1, 40L).failing();
+        var penalty = derive(policy(), correction);
+        var rebuild = assertInstanceOf(Reconciliation.RebuildRequired.class,
+                reconciler.reconcile(ledger, correction.observation(), penalty));
+        assertEquals(ledger.getFirst(), rebuild.superseded());
+        var none = new FeedbackDerivation.NoUpdate(NoUpdateReason.NO_TARGET_BINDING, List.of(), List.of());
+        assertInstanceOf(Reconciliation.RebuildRequired.class,
+                reconciler.reconcile(ledger, correction.observation(), none));
+        // an unrelated sample, or the same peer revision again, does not
+        var other = new FeedbackFixtures.Spec().passing();
+        other.experienceRef = "exp-other";
+        assertEquals(new Reconciliation.Apply(Optional.empty()),
+                reconciler.reconcile(ledger, other.observation(), derive(policy(), other)));
+        assertInstanceOf(Reconciliation.Apply.class,
+                reconciler.reconcile(ledger, peer.observation(), derive(policy(), peer)));
     }
 
     @Test
@@ -316,7 +350,7 @@ class RevisionReconcilerTest {
             ledger.add(new AppliedRevision(new FeedbackIdentity("ref-" + i, 0, 12L, id.decisionRef(), id.route(),
                     id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()),
                     base.routingPolicyId(), base.routingPolicyVersion(), base.supersedesSequence(), Optional.of(base.cohortKey()), Optional.of(NODE_A),
-                    FeedbackDisposition.REINFORCE, 0.8));
+                    Optional.empty(), FeedbackDisposition.REINFORCE, 0.8));
         }
         return ledger;
     }
