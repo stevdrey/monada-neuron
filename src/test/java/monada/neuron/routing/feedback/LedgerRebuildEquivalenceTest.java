@@ -9,6 +9,8 @@ import monada.neuron.routing.RoutingDecision;
 import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
+import monada.neuron.routing.outcome.InvocationStatus;
+import monada.neuron.routing.outcome.OutcomeOrigin;
 import monada.neuron.routing.outcome.OutcomeStatus;
 import monada.neuron.routing.outcome.QualityDimension;
 import monada.neuron.routing.outcome.QualityState;
@@ -28,7 +30,6 @@ import java.util.UUID;
 import static monada.neuron.routing.feedback.FeedbackFixtures.NODE_A;
 import static monada.neuron.routing.feedback.FeedbackFixtures.NODE_B;
 import static monada.neuron.routing.feedback.FeedbackFixtures.obs;
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -39,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 class LedgerRebuildEquivalenceTest {
 
+    private static final UUID NODE_C = new UUID(0L, 9L);
     private static final int SAMPLES = 4;
     /** The third route has no bound Node, so its positive results derive nothing yet can still be cost peers. */
     private static final List<String> ROUTES = List.of("sub-a", "sub-b", "sub-c", "sub-a");
@@ -69,6 +71,7 @@ class LedgerRebuildEquivalenceTest {
         final Map<String, AppliedRevision> ledger = new HashMap<>();
         final Map<String, FeedbackFixtures.Spec> known = new HashMap<>();
         final boolean cost;
+        boolean routeCBound;
         final List<Sample> samples;
 
         State(boolean cost, List<Sample> samples) {
@@ -81,16 +84,22 @@ class LedgerRebuildEquivalenceTest {
             nodes.clear();
             nodes.put(NODE_A, baseline(NODE_A));
             nodes.put(NODE_B, baseline(NODE_B));
+            nodes.put(NODE_C, baseline(NODE_C));
             ledger.clear();
         }
 
         TargetBindings bindings() {
             var a = samples.get(0);
             var b = samples.get(1);
+            var c = samples.get(2);
+            List<TargetBinding> bound = new ArrayList<>(List.of(
+                    new TargetBinding(FeedbackFixtures.keyOf(a.decision(), a.request()), NODE_A),
+                    new TargetBinding(FeedbackFixtures.keyOf(b.decision(), b.request()), NODE_B)));
+            if (routeCBound) {
+                bound.add(new TargetBinding(FeedbackFixtures.keyOf(c.decision(), c.request()), NODE_C));
+            }
             return new TargetBindings("scope-demo", "forge-gates", "1", FeedbackFixtures.DEFINITION.mappingVersion(),
-                    FeedbackFixtures.SCHEMA, List.of(
-                            new TargetBinding(FeedbackFixtures.keyOf(a.decision(), a.request()), NODE_A),
-                            new TargetBinding(FeedbackFixtures.keyOf(b.decision(), b.request()), NODE_B)));
+                    FeedbackFixtures.SCHEMA, bound);
         }
 
         Optional<CostReference> costFor(FeedbackFixtures.Spec spec, Map<String, FeedbackFixtures.Spec> view) {
@@ -130,6 +139,14 @@ class LedgerRebuildEquivalenceTest {
             }
             for (var input : feedback.toFeedbackInputs()) {
                 ADAPTATION.adapt(nodes.get(input.targetNodeId()), input);
+            }
+        }
+
+        /** The caller binds a Node to the third route and redelivers every sample it knows (a late binding). */
+        void bindRouteC() {
+            routeCBound = true;
+            for (var spec : new ArrayList<>(known.values())) {
+                deliver(spec, known);
             }
         }
 
@@ -204,18 +221,35 @@ class LedgerRebuildEquivalenceTest {
         spec.cutoff = 10_000L;
         spec.supersedes = revision == 0 ? Feature.unknown() : Feature.known(previous);
         spec.resources = FeedbackFixtures.tokens(100 + random.nextInt(900), ResourceValue.Provenance.REPORTED);
-        switch (random.nextInt(6)) {
-            case 0, 1 -> spec.passing();
-            case 2 -> spec.failing();
-            case 3 -> {
+        switch (random.nextInt(12)) {
+            case 0, 1, 2 -> spec.passing();
+            case 3, 4 -> spec.failing();
+            case 5 -> {
                 spec.passing();
                 spec.status = OutcomeStatus.PENDING;
             }
-            case 4 -> spec.passing().with(obs("ev-late", 0, QualityDimension.TESTS, QualityState.UNKNOWN,
+            case 6 -> spec.passing().with(obs("ev-late", 0, QualityDimension.TESTS, QualityState.UNKNOWN,
                     sample.request().attemptId(), 8));
-            default -> {
+            case 7 -> {
                 spec.passing();
                 spec.attribution = StageAttribution.none();
+            }
+            case 8 -> {
+                spec.passing();
+                spec.origin = OutcomeOrigin.IMPORTED_CLAIM;
+            }
+            case 9 -> {
+                spec.failing();
+                spec.invocation = InvocationStatus.TIMED_OUT;
+            }
+            case 10 -> {
+                spec.passing();
+                spec.status = OutcomeStatus.CANCELLED;
+            }
+            default -> {
+                // a revision whose source fingerprint no longer matches the request: a provenance mismatch
+                spec.passing();
+                spec.sourceFingerprint = "src-other";
             }
         }
         return spec;
@@ -260,7 +294,16 @@ class LedgerRebuildEquivalenceTest {
             var state = new State(cost, samples);
             StringBuilder trace = new StringBuilder();
             List<Map<String, FeedbackFixtures.Spec>> views = new ArrayList<>();
+            int bindAt = random.nextInt(2) == 0 ? random.nextInt(DELIVERIES) : -1;
             for (int d = 0; d < DELIVERIES; d++) {
+                if (d == bindAt) {
+                    trace.append("[bind route C] ");
+                    try {
+                        state.bindRouteC();
+                    } catch (RuntimeException | AssertionError e) {
+                        throw new AssertionError("seed " + seed + " trace " + trace + ": " + e, e);
+                    }
+                }
                 var delivered = created.get(random.nextInt(created.size()));
                 // a delivery is sometimes derived against what was known a few deliveries ago (an asynchronous caller)
                 // (a peer revision may be out of date, but a known peer is never dropped: the reconciler can detect
@@ -278,9 +321,10 @@ class LedgerRebuildEquivalenceTest {
                     throw new AssertionError("seed " + seed + " trace " + trace + ": " + e, e);
                 }
                 var oracle = new State(cost, samples);
+                oracle.routeCBound = state.routeCBound;
                 oracle.known.putAll(state.known);
                 oracle.rebuild();
-                for (var id : List.of(NODE_A, NODE_B)) {
+                for (var id : List.of(NODE_A, NODE_B, NODE_C)) {
                     var mine = state.nodes.get(id);
                     var expected = oracle.nodes.get(id);
                     if (!mine.getFrequencyState().equals(expected.getFrequencyState())
@@ -303,6 +347,8 @@ class LedgerRebuildEquivalenceTest {
     @Test
     void incrementalStateEqualsARebuildWithoutCostRefinement() {
         run(false);
+        // NotRecorded (a partition mismatch) and CapacityExhausted are covered by unit tests: they depend on the caller's
+        // routing of samples and on a 4,096-entry ledger
         for (var kind : List.of("Apply", "RecordOnly", "RebuildRequired", "StaleRevision", "AlreadyApplied")) {
             assertTrue(outcomes.containsKey(kind), "never exercised " + kind + ": " + outcomes);
         }
@@ -313,6 +359,6 @@ class LedgerRebuildEquivalenceTest {
         run(true);
         assertTrue(costRefined > 0, "the cost refinement was never exercised: " + outcomes);
         assertTrue(stalePeers > 0, "no reward was ever derived against a superseded peer: " + outcomes);
-        assertEquals(true, outcomes.containsKey("RebuildRequired"), outcomes.toString());
+        assertTrue(outcomes.containsKey("RebuildRequired"), outcomes.toString());
     }
 }

@@ -282,6 +282,40 @@ class RoutingFeedbackValueTypesTest {
     }
 
     @Test
+    void scoreRuleIsTheSingleOwnerOfRuleAndAssessmentConsistency() {
+        var none = List.<IneligibilityReason>of();
+        var noFailures = List.<QualityDimension>of();
+        var tests = List.of(QualityDimension.TESTS);
+        // reward: validated, failure free, reason free
+        ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL.requireConsistent(DerivedAcceptance.VALIDATED_ACCEPTED, none, noFailures);
+        assertThrows(IllegalArgumentException.class, () -> ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL
+                .requireConsistent(DerivedAcceptance.ACCEPTED_UNVALIDATED, none, noFailures));
+        assertThrows(IllegalArgumentException.class, () -> ScoreRule.REINFORCE_COST_REFINED
+                .requireConsistent(DerivedAcceptance.VALIDATED_ACCEPTED, none, tests));
+        // penalty: failure present, not accepted or unvalidated, none of the neutralizing reasons
+        ScoreRule.PENALIZE_PROVEN_MANDATORY_FAILURE.requireConsistent(DerivedAcceptance.NOT_ACCEPTED, none, tests);
+        for (var reason : List.of(IneligibilityReason.IMPORTED_CLAIM, IneligibilityReason.NO_STAGE_ATTRIBUTION,
+                IneligibilityReason.NO_ATTRIBUTABLE_FAILURE, IneligibilityReason.PENDING)) {
+            assertThrows(IllegalArgumentException.class, () -> ScoreRule.PENALIZE_PROVEN_MANDATORY_FAILURE
+                    .requireConsistent(DerivedAcceptance.NOT_ACCEPTED, List.of(reason), tests));
+        }
+        assertThrows(IllegalArgumentException.class, () -> ScoreRule.PENALIZE_PROVEN_MANDATORY_FAILURE
+                .requireConsistent(DerivedAcceptance.NOT_ACCEPTED, none, noFailures));
+        // reasons for which the policy derives nothing never appear, for any rule
+        assertThrows(IllegalArgumentException.class, () -> ScoreRule.NEUTRAL_PENDING.requireConsistent(
+                DerivedAcceptance.PENDING, List.of(IneligibilityReason.PENDING, IneligibilityReason.PROVENANCE_MISMATCH),
+                noFailures));
+        // both records delegate to it: the same inconsistent claim is rejected by the feedback and by the entry basis
+        var f = reward();
+        assertThrows(IllegalArgumentException.class, () -> new EntryBasis.Derived(f.cohortKey(),
+                ScoreRule.NEUTRAL_PENDING, DerivedAcceptance.VALIDATED_ACCEPTED, none, noFailures));
+        assertThrows(IllegalArgumentException.class, () -> neutralWith(f, ScoreRule.NEUTRAL_PENDING,
+                DerivedAcceptance.VALIDATED_ACCEPTED, none));
+        assertThrows(IllegalArgumentException.class, () -> new EntryBasis.Derived(f.cohortKey(),
+                ScoreRule.PENALIZE_PROVEN_MANDATORY_FAILURE, DerivedAcceptance.NOT_ACCEPTED, none, noFailures));
+    }
+
+    @Test
     void aNeutralRuleMustMatchTheRecordedAssessmentAndPrecedence() {
         var f = reward();
         var accepted = DerivedAcceptance.VALIDATED_ACCEPTED;
@@ -341,9 +375,9 @@ class RoutingFeedbackValueTypesTest {
         // a marker is neutral and moves no Node
         assertThrows(IllegalArgumentException.class, () -> FeedbackFixtures.variant(marker, Optional.of(NODE_A),
                 Optional.empty(), marker.basis(), FeedbackDisposition.REINFORCE, 0.5));
-        // the unrecorded no-update reasons cannot form a marker
+        // the partition reasons are not recorded, so they cannot form a marker
         assertThrows(IllegalArgumentException.class, () -> AppliedRevision.ofNoUpdate(base.observation(),
-                NoUpdateReason.PROVENANCE_MISMATCH));
+                NoUpdateReason.MAPPING_MISMATCH));
     }
 
     @Test
@@ -419,7 +453,7 @@ class RoutingFeedbackValueTypesTest {
         var otherRoute = new EntryBasis.Derived(
                 new CohortKey(derived.cohortKey().scopeId(), derived.cohortKey().stageKind(),
                         derived.cohortKey().cohortBucket(), new RouteKey("sub-z", 1)),
-                derived.rule(), derived.acceptance(), derived.reasons());
+                derived.rule(), derived.acceptance(), derived.reasons(), derived.provenFailures());
         assertThrows(IllegalArgumentException.class, () -> entryWith(base, id, base.cutoff(),
                 base.supersedesSequence(), otherRoute, Optional.empty()));
         // a marker's binding was recorded under the identity's mapping version
@@ -433,7 +467,7 @@ class RoutingFeedbackValueTypesTest {
                 marker.supersedesSequence(), foreignMarker, Optional.empty()));
         // a cost peer is another sample that precedes the reward in applied order
         var refined = new EntryBasis.Derived(derived.cohortKey(), ScoreRule.REINFORCE_COST_REFINED,
-                derived.acceptance(), derived.reasons());
+                derived.acceptance(), derived.reasons(), derived.provenFailures());
         entryWith(base, id, base.cutoff(), base.supersedesSequence(), refined,
                 Optional.of(new PeerRevision("exp-2", 0, position - 1)));
         assertThrows(IllegalArgumentException.class, () -> entryWith(base, id, base.cutoff(),
@@ -544,7 +578,7 @@ class RoutingFeedbackValueTypesTest {
         assertEquals(0.8, applied.score(), 1e-12);
         assertTrue(applied.changedState());
         var neutralBasis = new EntryBasis.Derived(f.cohortKey(), ScoreRule.NEUTRAL_PENDING, DerivedAcceptance.PENDING,
-                List.of(IneligibilityReason.PENDING));
+                List.of(IneligibilityReason.PENDING), List.of());
         assertThrows(IllegalArgumentException.class, () -> FeedbackFixtures.variant(applied, Optional.empty(),
                 Optional.empty(), neutralBasis, FeedbackDisposition.NEUTRAL, 0.5));
         assertThrows(IllegalArgumentException.class, () -> FeedbackFixtures.variant(applied, Optional.of(NODE_A),

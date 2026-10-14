@@ -1,5 +1,6 @@
 package monada.neuron.routing.feedback;
 
+import monada.neuron.routing.token.CanonicalLists;
 import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.Comparator;
@@ -45,7 +46,7 @@ public record TargetBindings(
         OpaqueTokens.require(evaluationPolicyVersion, "evaluationPolicyVersion");
         OpaqueTokens.require(mappingVersion, "mappingVersion");
         OpaqueTokens.require(featureSchemaVersion, "featureSchemaVersion");
-        bindings = Canonical.sortedUnique(Objects.requireNonNull(bindings, "bindings must not be null"), ORDER,
+        bindings = CanonicalLists.canonical(Objects.requireNonNull(bindings, "bindings must not be null"), ORDER,
                 MAX_BINDINGS, "bindings");
         Set<UUID> nodes = new HashSet<>(bindings.size() * 2);
         for (TargetBinding binding : bindings) {

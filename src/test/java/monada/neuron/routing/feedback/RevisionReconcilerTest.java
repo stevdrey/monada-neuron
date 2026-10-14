@@ -28,6 +28,7 @@ import static monada.neuron.routing.feedback.FeedbackFixtures.NODE_A;
 import static monada.neuron.routing.feedback.FeedbackFixtures.obs;
 import static monada.neuron.routing.feedback.FeedbackFixtures.policy;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -305,7 +306,7 @@ class RevisionReconcilerTest {
         var unbound = policy().derive(s.observation(), s.decision, s.request, empty);
         var marker = assertInstanceOf(Reconciliation.RecordOnly.class,
                 reconciler.reconcile(List.of(), s.observation(), unbound)).marker();
-        assertTrue(marker.unbound());
+        assertTrue(marker.retryable());
         // still unbound: a duplicate
         assertEquals(new Reconciliation.AlreadyApplied(marker),
                 reconciler.reconcile(List.of(marker), s.observation(), unbound));
@@ -368,6 +369,90 @@ class RevisionReconcilerTest {
     }
 
     @Test
+    void aNewerRevisionThatNoLongerPairsRetractsAnAppliedRewardAndKeepsOlderDeliveriesStale() {
+        var first = new FeedbackFixtures.Spec().passing();
+        first.ledgerSequence = 20L;
+        var ledger = List.of(applied(derive(policy(), first)));
+        // revision 1 corrects the source fingerprint, so it no longer matches the request
+        var mismatching = corrected(first, 1, 30L).passing();
+        mismatching.sourceFingerprint = "src-other";
+        var derivation = derive(policy(), mismatching);
+        assertEquals(NoUpdateReason.PROVENANCE_MISMATCH, ((FeedbackDerivation.NoUpdate) derivation).reason());
+        var rebuild = assertInstanceOf(Reconciliation.RebuildRequired.class,
+                reconciler.reconcile(ledger, mismatching.observation(), derivation));
+        assertEquals(ledger.getFirst(), rebuild.superseded());
+        assertFalse(rebuild.ledgerFull());
+        // once the marker is recorded, a late delivery of the older revision is stale instead of applied
+        var marker = AppliedRevision.ofNoUpdate(mismatching.observation(), NoUpdateReason.PROVENANCE_MISMATCH);
+        assertEquals(new Reconciliation.StaleRevision(marker),
+                reconciler.reconcile(List.of(marker), first.observation(), derive(policy(), first)));
+    }
+
+    @Test
+    void aWrongPairingIsRetryableAndTheCorrectedPairingOfTheSameRevisionIsAppliedInPlace() {
+        var s = new FeedbackFixtures.Spec().passing();
+        var wrong = new FeedbackFixtures.Spec().passing();
+        wrong.sourceFingerprint = "src-other";
+        var mismatch = derive(policy(), wrong);
+        var marker = assertInstanceOf(Reconciliation.RecordOnly.class,
+                reconciler.reconcile(List.of(), s.observation(), mismatch)).marker();
+        assertTrue(marker.retryable());
+        // still wrong: a duplicate delivery
+        assertEquals(new Reconciliation.AlreadyApplied(marker),
+                reconciler.reconcile(List.of(marker), s.observation(), mismatch));
+        // fixed: applied in place, replacing the marker
+        assertEquals(new Reconciliation.Apply(Optional.of(marker)),
+                reconciler.reconcile(List.of(marker), s.observation(), derive(policy(), s)));
+        // the other cause that is removed after the fact: a Node bound later after a pairing mismatch
+        var empty = new TargetBindings("scope-demo", "forge-gates", "1", FeedbackFixtures.DEFINITION.mappingVersion(),
+                FeedbackFixtures.SCHEMA, List.of());
+        var unbound = policy().derive(s.observation(), s.decision, s.request, empty);
+        var replacing = assertInstanceOf(Reconciliation.RecordOnly.class,
+                reconciler.reconcile(List.of(marker), s.observation(), unbound));
+        assertEquals(Optional.of(marker), replacing.replaces());
+    }
+
+    @Test
+    void aCostViewDifferenceOfTheSameRevisionConvergesInsteadOfRepeating() {
+        var self = new FeedbackFixtures.Spec().passing();
+        self.resources = FeedbackFixtures.tokens(400, ResourceValue.Provenance.REPORTED);
+        var peer = costPeerSpec(10L);
+        var refined = (FeedbackDerivation.Derived) refinedAgainst(self, peer);
+        var ledgerEntry = AppliedRevision.of(refined.feedback());
+        // the caller omitted the cost reference: the ledger holds a refined reward, the caller derives a plain one
+        var plain = derive(policy(), self);
+        assertEquals(new Reconciliation.RebuildRequired(ledgerEntry, ledgerEntry.ledgerSequence(), false),
+                reconciler.reconcile(List.of(ledgerEntry), self.observation(), plain));
+        // the caller looked at an older peer revision than the ledger holds: the ledger is authoritative
+        var newerPeer = applied(derive(policy(), corrected(peer, 1, 40L).failing()));
+        var plainEntry = applied(plain);
+        var stale = assertInstanceOf(Reconciliation.StalePeerDependency.class,
+                reconciler.reconcile(List.of(plainEntry, newerPeer), self.observation(), refined));
+        assertEquals(newerPeer, stale.ledgerEntry());
+    }
+
+    @Test
+    void theEarliestDependentIsChosenWithATotalOrderWhateverTheLedgerListOrder() {
+        var peer = costPeerSpec(10L);
+        var entries = new ArrayList<AppliedRevision>();
+        for (String ref : List.of("m-1", "a-1")) {
+            var self = new FeedbackFixtures.Spec().passing();
+            self.experienceRef = ref;
+            self.ledgerSequence = 20L;
+            self.resources = FeedbackFixtures.tokens(400, ResourceValue.Provenance.REPORTED);
+            entries.add(AppliedRevision.of(((FeedbackDerivation.Derived) refinedAgainst(self, peer)).feedback()));
+        }
+        var correction = corrected(peer, 1, 40L).failing();
+        var penalty = derive(policy(), correction);
+        var forward = reconciler.reconcile(entries, correction.observation(), penalty);
+        var reversed = new ArrayList<>(entries);
+        Collections.reverse(reversed);
+        assertEquals(forward, reconciler.reconcile(reversed, correction.observation(), penalty));
+        var rebuild = assertInstanceOf(Reconciliation.RebuildRequired.class, forward);
+        assertEquals("a-1", rebuild.superseded().experienceRef());
+    }
+
+    @Test
     void invalidatingACostBonusWinsOverCapacityExhaustion() {
         var self = new FeedbackFixtures.Spec().passing();
         self.resources = FeedbackFixtures.tokens(400, ResourceValue.Provenance.REPORTED);
@@ -381,6 +466,8 @@ class RevisionReconcilerTest {
         var rebuild = assertInstanceOf(Reconciliation.RebuildRequired.class,
                 reconciler.reconcile(ledger, correction.observation(), derive(policy(), correction)));
         assertEquals(ledger.getLast(), rebuild.superseded());
+        // the sample is new and the ledger is full, so the rebuild needs a slot: the caller must compact first
+        assertTrue(rebuild.ledgerFull());
         // an unrelated new sample on the full ledger is still just a capacity report
         var other = new FeedbackFixtures.Spec().passing();
         other.experienceRef = "zzz";
@@ -389,12 +476,16 @@ class RevisionReconcilerTest {
     }
 
     @Test
-    void aWrongPairingIsNotRecorded() {
-        var none = new FeedbackDerivation.NoUpdate(NoUpdateReason.PROVENANCE_MISMATCH,
-                List.of(IneligibilityReason.PROVENANCE_MISMATCH),
-                List.of(ProvenanceField.CUTOFF));
-        assertEquals(new Reconciliation.NotRecorded(NoUpdateReason.PROVENANCE_MISMATCH),
-                reconciler.reconcile(List.of(), spec.passing().observation(), none));
+    void onlyPartitionMismatchesAreNotRecorded() {
+        for (var reason : NoUpdateReason.values()) {
+            boolean partition = reason == NoUpdateReason.MAPPING_MISMATCH
+                    || reason == NoUpdateReason.FEATURE_SCHEMA_MISMATCH
+                    || reason == NoUpdateReason.BINDING_SCOPE_MISMATCH
+                    || reason == NoUpdateReason.BINDING_PARTITION_MISMATCH;
+            assertEquals(!partition, reason.recordable(), reason.name());
+        }
+        assertThrows(IllegalArgumentException.class,
+                () -> new Reconciliation.NotRecorded(NoUpdateReason.PROVENANCE_MISMATCH));
     }
 
     @Test
@@ -473,7 +564,7 @@ class RevisionReconcilerTest {
                 .with(obs("ev-tests-late", 0, QualityDimension.TESTS, QualityState.FAIL, "att-1", 50));
         var penalty = derive(policy(), failed);
         assertEquals(FeedbackDisposition.PENALIZE, ((FeedbackDerivation.Derived) penalty).feedback().disposition());
-        assertEquals(new Reconciliation.RebuildRequired(ledger.getFirst(), 41L),
+        assertEquals(new Reconciliation.RebuildRequired(ledger.getFirst(), 41L, false),
                 reconciler.reconcile(ledger, failed.observation(), penalty));
 
         // an UNKNOWN correction turns it neutral: still a rebuild, the reward cannot be subtracted

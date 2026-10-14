@@ -800,7 +800,7 @@ Everything in this contract is additive and opt-in.
 - Stable provenance and schema/policy versions are required for replay; corrections and scope boundaries must not silently
   contaminate learned state, which is why mismatches are reported and rebuilds are explicit.
 - `NeuronRuntime` is sequential and not thread-safe; the preference snapshot must be passed by the host, not shared mutably.
-- The Store's contract is not yet implemented, so end-to-end behavior with real exports is unverified until #64 and #68.
+- The Store's execution-memory issues #94 to #101 are implemented on its `main` and #102 is informational (Section 10). Translation of real exports was exercised against a real `ExecutionMemory` by #64 (Section 20); the published API and the consumer loop over real exports remain unverified until #68.
 
 ## 13. Verification (issue #59, historical)
 
@@ -1424,14 +1424,16 @@ The caller keeps a ledger of `AppliedRevision(identity, routingPolicyId, routing
 
 | Relation of the observation to the ledger | Result |
 | --- | --- |
-| Nothing derived because the observation belongs to another state partition (`MAPPING_MISMATCH`, `FEATURE_SCHEMA_MISMATCH`, `BINDING_SCOPE_MISMATCH`, `BINDING_PARTITION_MISMATCH`) or is wrongly paired with its decision (`PROVENANCE_MISMATCH`); `NoUpdateReason.recordable()` is false for these | `NotRecorded`: nothing recorded, nothing applied, no capacity used; once the caller fixes the pairing the same revision can still be derived and applied |
+| Nothing derived because the observation belongs to another state partition (`MAPPING_MISMATCH`, `FEATURE_SCHEMA_MISMATCH`, `BINDING_SCOPE_MISMATCH`, `BINDING_PARTITION_MISMATCH`); `NoUpdateReason.recordable()` is false for these | `NotRecorded`: nothing recorded, nothing applied, no capacity used (the caller routes a sample to the ledger of its partition, so one sample reference never alternates between partitions) |
+| Nothing derived for a recordable reason, including `PROVENANCE_MISMATCH` (the outcome does not match its decision or request, a fact about this sample revision) | Handled like any other result below: a marker is recorded, an older reward of the sample is retracted by `RebuildRequired`, and an older revision delivered later is `StaleRevision` |
 | A newer revision at a ledger position that is not strictly later than the entry it replaces, or an older one that is not strictly earlier | `IllegalArgumentException` (inconsistent caller data) |
 | No entry, 4,096 entries exist | `CapacityExhausted` (nothing evicted, nothing applied) |
 | No entry, a feedback derived | `Apply`, subject to the order rule below |
 | No entry, nothing derived | `RecordOnly(marker)`, which only accepts the `NoUpdateMarker` form |
 | Same revision, equal entry (duplicate delivery) | `AlreadyApplied` |
-| Same revision, the entry is a marker for a missing Node binding (`NO_TARGET_BINDING`) and a feedback is now derived with the same claim, including the same cohort bucket | A first application, subject to the order rule (`Apply` replacing the marker, or `RebuildRequired`) |
-| Same revision, two rewards equal except for the cost refinement (rule or peer) | `StalePeerDependency(entry)`: nothing applied; the derivation looked at another view of the peer, so the caller derives again against the latest one |
+| Same revision, the entry is a retryable marker (`NO_TARGET_BINDING` or `PROVENANCE_MISMATCH`: the caller can bind the Node or fix the pairing) and the same claim is now delivered with the same cohort bucket | A first application, subject to the order rule (`Apply` or `RecordOnly` replacing the marker, or `RebuildRequired`) |
+| Same revision, two rewards equal except for the cost refinement (rule or peer), and the ledger holds a newer revision of the peer the incoming derivation looked at | `StalePeerDependency(peer entry)`: nothing applied; the ledger is authoritative, so deriving again against the latest peer converges |
+| Same revision, two rewards equal except for the cost refinement, otherwise (the caller knows more than the ledger, or left the cost reference out) | `RebuildRequired(entry, its ledgerSequence)`: only a rebuild converges |
 | Same revision, any other difference (score under another configuration, assessment, catalog, cutoff, Node, policy, ancestry) | `ConflictingRevision` |
 | Older revision | `StaleRevision` |
 | Newer revision, entry was a reward or penalty, **whatever the new revision derives, including nothing** | `RebuildRequired(superseded, affectedFromSequence)` |
@@ -1465,14 +1467,14 @@ an identical repeat. The caller derives each observation with the policy and app
 Let `O <= 32` observations, `D <= 6` dimensions, `P <= 32` judged revisions, `C <= 256` bindings, `L <= 4,096` ledger entries
 and `N <= 4,096` replayed observations. `derive` is `O(O + D + P*O + log C)` time and `O(O + D)` extra space (the cost refinement adds one
 `assess`); bindings are a sorted array with an allocation-free binary search, because they are point-queried and a map would add
-per-entry objects without benefit at `C <= 256`. `reconcile` is one `O(L)` scan plus one `O(L)` reference-uniqueness check
-(a hash set, never iterated), cheaper than keeping an index the caller would have to maintain. `RebuildOrder` is `O(N log N)` time and `O(N)` space. No cache, parallelism, SIMD or GPU.
+per-entry objects without benefit at `C <= 256`. `reconcile` is `O(L)` time with one hash map of `L` entries per call (it
+also checks that sample references are unique) and at most two linear scans over it, one for a later Node change and one for dependent rewards; both scans use total-order tie-breaks, so the iteration order of the map cannot influence a result. That is cheaper than an index the caller would have to maintain. `RebuildOrder` is `O(N log N)` time and `O(N)` space. No cache, parallelism, SIMD or GPU.
 
 **Measured** (JDK 27, `ThreadMXBean.getThreadAllocatedBytes`, 20,000 warm-up calls, one `derive`, two mandatory dimensions, no cost reference):
 6,672 bytes in the recorded run; the figure varies slightly with JIT state. The test publishes it through the JUnit report and asserts only a
 16 KiB regression ceiling. Latency is not measured and no performance claim is made. **Modeled, not measured**: a `RoutingFeedback` retains the order
-of a few hundred bytes plus its small evidence lists, and an `AppliedRevision` about 250 bytes including its identity, so a full 4,096-entry
-ledger is on the order of 1 MiB. That supersedes the 64-bytes-per-entry (256 KiB) estimate of Section 7, which predates the identity record.
+of a few hundred bytes plus its small evidence lists, and an `AppliedRevision` about 400 bytes including its identity, `EntryBasis` (cohort key or binding, reasons and proven failures), the optional Node and peer, so a full 4,096-entry
+ledger is on the order of 1.6 MiB. That supersedes the 64-bytes-per-entry (256 KiB) estimate of Section 7, which predates the identity record.
 
 ### 21.5 Verification and evidence gaps
 

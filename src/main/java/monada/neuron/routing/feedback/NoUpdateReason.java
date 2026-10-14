@@ -24,15 +24,17 @@ public enum NoUpdateReason {
     /**
      * True when a no-update of this kind is recorded in the ledger as a marker. It is not recorded when the
      * observation belongs to another state partition (mapping version, feature schema, scope or evaluation policy than
-     * the policy and bindings describe) or when the pairing itself is wrong ({@code PROVENANCE_MISMATCH}): such a result
-     * says nothing about the sample in this state, so recording it would pollute the ledger or block the correct
-     * derivation of the same revision once the caller fixes the pairing.
+     * the policy and bindings describe): such a result says nothing about any sample of this state, so recording it
+     * would pollute the ledger and consume its capacity; the caller routes a sample to the ledger of its partition.
+     * A {@code PROVENANCE_MISMATCH} is recorded: it is a fact about this sample revision (its outcome does not match
+     * its decision or request), so it must retract an older reward and keep an older delivery stale, and a corrected
+     * pairing of the same revision may replace the marker (see {@code AppliedRevision#retryable()}).
      */
     public boolean recordable() {
         return switch (this) {
-            case STALE_ARTIFACT_REVISION, CONTRADICTORY_EVIDENCE, NO_STAGE_ATTRIBUTION, NO_TARGET_BINDING -> true;
-            case PROVENANCE_MISMATCH, MAPPING_MISMATCH, FEATURE_SCHEMA_MISMATCH, BINDING_SCOPE_MISMATCH,
-                    BINDING_PARTITION_MISMATCH -> false;
+            case PROVENANCE_MISMATCH, STALE_ARTIFACT_REVISION, CONTRADICTORY_EVIDENCE, NO_STAGE_ATTRIBUTION,
+                    NO_TARGET_BINDING -> true;
+            case MAPPING_MISMATCH, FEATURE_SCHEMA_MISMATCH, BINDING_SCOPE_MISMATCH, BINDING_PARTITION_MISMATCH -> false;
         };
     }
 }

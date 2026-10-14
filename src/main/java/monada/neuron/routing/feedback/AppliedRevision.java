@@ -140,7 +140,7 @@ public record AppliedRevision(
                 // only a bonus depends on the peer; a view that earned nothing is checked on delivery, not kept
                 feedback.rule() == ScoreRule.REINFORCE_COST_REFINED ? feedback.costPeer() : Optional.empty(),
                 new EntryBasis.Derived(feedback.cohortKey(), feedback.rule(), feedback.derivedAcceptance(),
-                        feedback.reasons()),
+                        feedback.reasons(), feedback.provenFailures()),
                 feedback.disposition(), score);
     }
 
@@ -154,9 +154,14 @@ public record AppliedRevision(
         return basis instanceof EntryBasis.Derived derived && derived.rule() == ScoreRule.REINFORCE_COST_REFINED;
     }
 
-    /** True when this entry is the marker of an observation that was not credited because no Node was bound. */
-    public boolean unbound() {
-        return basis instanceof EntryBasis.NoUpdateMarker marker && marker.reason() == NoUpdateReason.NO_TARGET_BINDING;
+    /**
+     * True when this entry is a marker whose cause the caller can remove and then redeliver the same revision: no Node
+     * was bound for the cohort, or the observation was paired with the wrong decision or request.
+     */
+    public boolean retryable() {
+        return basis instanceof EntryBasis.NoUpdateMarker marker
+                && (marker.reason() == NoUpdateReason.NO_TARGET_BINDING
+                        || marker.reason() == NoUpdateReason.PROVENANCE_MISMATCH);
     }
 
     /** Sample reference. */

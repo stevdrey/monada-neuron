@@ -83,8 +83,11 @@ public sealed interface Reconciliation {
      * @param superseded the applied entry that the new revision replaces
      * @param affectedFromSequence earliest ledger sequence whose effect may be obsolete; a checkpoint is a valid
      *         starting point only if its {@code processedCutoff} is strictly below it
+     * @param ledgerFull true when the ledger is full and the delivered sample is new: the rebuild needs a slot, so the
+     *         caller must compact through a checkpoint first or the staged rebuild reports {@code CAPACITY_EXHAUSTED}
      */
-    record RebuildRequired(AppliedRevision superseded, long affectedFromSequence) implements Reconciliation {
+    record RebuildRequired(AppliedRevision superseded, long affectedFromSequence, boolean ledgerFull)
+            implements Reconciliation {
 
         /** Validates the entry and the sequence. */
         public RebuildRequired {
@@ -116,13 +119,11 @@ public sealed interface Reconciliation {
     }
 
     /**
-     * The incoming derivation looked at an out-of-date view of the cost peer: it was refined against a revision of
-     * the peer that the ledger has already superseded, or it is the same revision as a ledger entry and differs from
-     * it only in the cost refinement (score, rule or peer). Nothing is applied: the caller derives the sample again
-     * against the latest peer observation, so the incremental state equals a rebuild from the latest observations.
+     * The incoming derivation looked at a revision of its cost peer that the ledger has already superseded. Nothing is
+     * applied: the caller derives the sample again against the latest peer observation, so the incremental state
+     * equals a rebuild from the latest observations. The ledger is authoritative, so re-deriving converges.
      *
-     * @param ledgerEntry the ledger entry that shows the view is out of date: the newer peer revision, or the
-     *         sample's own entry derived against another peer view
+     * @param ledgerEntry the ledger entry that holds the newer revision of the peer
      */
     record StalePeerDependency(AppliedRevision ledgerEntry) implements Reconciliation {
 

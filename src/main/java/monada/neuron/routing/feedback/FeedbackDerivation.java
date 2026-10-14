@@ -1,5 +1,6 @@
 package monada.neuron.routing.feedback;
 
+import monada.neuron.routing.token.CanonicalLists;
 import monada.neuron.routing.outcome.IneligibilityReason;
 import monada.neuron.routing.outcome.ProvenanceField;
 
@@ -37,9 +38,9 @@ public sealed interface FeedbackDerivation permits FeedbackDerivation.Derived, F
         /** Validates and canonicalizes. */
         public NoUpdate {
             Objects.requireNonNull(reason, "reason must not be null");
-            reasons = Canonical.sortedUnique(reasons, Comparator.naturalOrder(), IneligibilityReason.values().length,
+            reasons = CanonicalLists.canonical(reasons, Comparator.naturalOrder(), IneligibilityReason.values().length,
                     "reasons");
-            mismatches = Canonical.sortedUnique(mismatches, Comparator.naturalOrder(), ProvenanceField.values().length,
+            mismatches = CanonicalLists.canonical(mismatches, Comparator.naturalOrder(), ProvenanceField.values().length,
                     "mismatches");
             if (reason != NoUpdateReason.PROVENANCE_MISMATCH && !mismatches.isEmpty()) {
                 throw new IllegalArgumentException("only PROVENANCE_MISMATCH lists mismatches");

@@ -6,11 +6,11 @@ import monada.neuron.routing.outcome.RoutingObservation;
 import monada.neuron.routing.outcome.RoutingOutcome;
 import monada.neuron.routing.token.OpaqueTokens;
 
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 
 /**
  * Decides how a derivation relates to the caller's applied-revision ledger, so each effective revision is applied
@@ -20,15 +20,18 @@ import java.util.Set;
  * <p>The ledger holds one entry per sample reference: its latest examined revision. Rules, in the order they are
  * checked:
  * <ul>
- * <li>a no-update that is not recorded (another state partition, or a wrong pairing): {@code NotRecorded};</li>
+ * <li>a no-update caused by another state partition (mapping version, feature schema, scope or evaluation policy):
+ *     {@code NotRecorded}; the caller routes a sample to the ledger of its partition;</li>
  * <li>a newer revision at a ledger position that is not strictly later (or an older one that is not strictly
  *     earlier) than the entry's is inconsistent caller data and rejected;</li>
  * <li>no entry: {@code CapacityExhausted} when {@value #MAX_LEDGER} entries exist, else {@code Apply} for a derived
  *     feedback or {@code RecordOnly} (a marker so an older delivery stays stale) when nothing was derived;</li>
  * <li>equal revision: an identical entry (identity, routing policy, ancestry, catalog, cutoff, rule, assessment, Node,
  *     peer; a marker equals a marker of the same reason and binding) is a duplicate delivery
- *     ({@code AlreadyApplied}); a marker for a missing Node binding followed by a derived feedback is a first
- *     application; anything else is {@code ConflictingRevision};</li>
+ *     ({@code AlreadyApplied}); a marker whose cause the caller can remove (no Node bound, wrong pairing) followed by
+ *     the same claim is a first application; two rewards that differ only in the cost refinement are
+ *     {@code StalePeerDependency} when the ledger holds a newer revision of the peer the derivation looked at and
+ *     {@code RebuildRequired} otherwise; anything else is {@code ConflictingRevision};</li>
  * <li>older revision: {@code StaleRevision};</li>
  * <li>newer revision: {@code Apply} or {@code RecordOnly} replacing a neutral entry, but {@code RebuildRequired} when
  *     the entry moved a Node, whatever the new revision says, including when it derives no feedback at all;</li>
@@ -36,15 +39,16 @@ import java.util.Set;
  *     experienceRef by code point)} is after every entry that moved a Node, because adaptation is clamped and order
  *     dependent; otherwise {@code RebuildRequired} from its own position;</li>
  * <li>a derived reward whose recorded peer claim contradicts the ledger (same revision at another sequence) is
- *     rejected; one that looked at a revision of its cost peer that the ledger already superseded, or the same
- *     revision as an entry that differs from it only in the cost refinement: {@code StalePeerDependency}, nothing
- *     applied, the caller derives again against the latest peer;</li>
- * <li>an {@code Apply}, {@code RecordOnly}, {@code RebuildRequired} or {@code CapacityExhausted} becomes {@code RebuildRequired} (or starts
- *     earlier) when an entry was cost-refined against an older revision of this very sample.</li>
+ *     rejected; one that looked at a revision of its cost peer that the ledger already superseded is
+ *     {@code StalePeerDependency};</li>
+ * <li>an {@code Apply}, {@code RecordOnly}, {@code RebuildRequired} or {@code CapacityExhausted} becomes
+ *     {@code RebuildRequired} (or starts earlier) when an entry was cost-refined against an older revision of this
+ *     very sample; on a full ledger the result says so ({@code ledgerFull}).</li>
  * </ul>
  *
- * <p>Stateless and side-effect free; {@code O(L)} for the ledger of at most {@value #MAX_LEDGER} entries, which is a
- * constant number of scans per delivered feedback, so no index is built.
+ * <p>Stateless and side-effect free. {@code O(L)} time and one hash map of {@code L <= MAX_LEDGER} entries per call
+ * (it also checks that sample references are unique); the scans that look for a later Node change and for dependent
+ * rewards use total-order tie-breaks, so the iteration order of the map cannot influence a result.
  */
 public final class RevisionReconciler {
 
@@ -59,25 +63,25 @@ public final class RevisionReconciler {
      * @param derivation what the policy derived for it
      * @return what the caller should do; the ledger is not modified
      * @throws IllegalArgumentException if the ledger is oversized or repeats a reference, the derived feedback does
-     *         not answer the observation, or the observation's position is inconsistent with its ledger entry
+     *         not answer the observation, the observation's position is inconsistent with its ledger entry, or the
+     *         recorded cost peer contradicts the ledger
      */
     public Reconciliation reconcile(
             List<AppliedRevision> ledger, RoutingObservation observation, FeedbackDerivation derivation) {
         Objects.requireNonNull(ledger, "ledger must not be null");
         Objects.requireNonNull(observation, "observation must not be null");
         Objects.requireNonNull(derivation, "derivation must not be null");
-        requireLedger(ledger);
+        Map<String, AppliedRevision> byRef = index(ledger);
         PeerRevision peerView = derivation instanceof FeedbackDerivation.Derived derived
                 ? derived.feedback().costPeer().orElse(null) : null;
         if (peerView != null) {
-            requirePeerClaimAgrees(ledger, peerView);
+            requirePeerClaimAgrees(byRef, peerView);
         }
-        Reconciliation result = classify(ledger, observation, derivation);
+        Reconciliation result = classify(byRef, observation, derivation, peerView);
         if (peerView != null && result instanceof Reconciliation.Apply) {
-            for (AppliedRevision entry : ledger) {
-                if (entry.experienceRef().equals(peerView.experienceRef()) && entry.revision() > peerView.revision()) {
-                    return new Reconciliation.StalePeerDependency(entry);
-                }
+            AppliedRevision newer = supersededPeer(byRef, peerView);
+            if (newer != null) {
+                return new Reconciliation.StalePeerDependency(newer);
             }
         }
         // invalidating a bonus wins over every report that would leave it in place, including a full ledger
@@ -89,11 +93,11 @@ public final class RevisionReconciler {
         // a reward that was refined by a cost peer is obsolete once that peer has a newer revision; the earliest such
         // reward also bounds which checkpoints can still be trusted
         AppliedRevision dependent = null;
-        for (AppliedRevision entry : ledger) {
+        for (AppliedRevision entry : byRef.values()) {
             if (entry.costRefined()
                     && entry.costPeer().get().experienceRef().equals(observation.experienceRef())
                     && entry.costPeer().get().revision() < observation.revision()
-                    && (dependent == null || entry.ledgerSequence() < dependent.ledgerSequence())) {
+                    && (dependent == null || compareApplied(entry, dependent) < 0)) {
                 dependent = entry;
             }
         }
@@ -102,14 +106,17 @@ public final class RevisionReconciler {
         }
         if (result instanceof Reconciliation.RebuildRequired rebuild) {
             return dependent.ledgerSequence() < rebuild.affectedFromSequence()
-                    ? new Reconciliation.RebuildRequired(rebuild.superseded(), dependent.ledgerSequence())
+                    ? new Reconciliation.RebuildRequired(rebuild.superseded(), dependent.ledgerSequence(),
+                            rebuild.ledgerFull())
                     : rebuild;
         }
-        return new Reconciliation.RebuildRequired(dependent, dependent.ledgerSequence());
+        return new Reconciliation.RebuildRequired(dependent, dependent.ledgerSequence(),
+                result instanceof Reconciliation.CapacityExhausted);
     }
 
     private Reconciliation classify(
-            List<AppliedRevision> ledger, RoutingObservation observation, FeedbackDerivation derivation) {
+            Map<String, AppliedRevision> byRef, RoutingObservation observation, FeedbackDerivation derivation,
+            PeerRevision peerView) {
         if (derivation instanceof FeedbackDerivation.NoUpdate none && !none.reason().recordable()) {
             return new Reconciliation.NotRecorded(none.reason());
         }
@@ -132,18 +139,12 @@ public final class RevisionReconciler {
             incoming = AppliedRevision.ofNoUpdate(observation, ((FeedbackDerivation.NoUpdate) derivation).reason());
         }
         boolean derived = derivation instanceof FeedbackDerivation.Derived;
-        AppliedRevision existing = null;
-        for (AppliedRevision entry : ledger) {
-            if (entry.experienceRef().equals(observation.experienceRef())) {
-                existing = entry;
-                break;
-            }
-        }
+        AppliedRevision existing = byRef.get(observation.experienceRef());
         if (existing == null) {
-            if (ledger.size() >= MAX_LEDGER) {
+            if (byRef.size() >= MAX_LEDGER) {
                 return new Reconciliation.CapacityExhausted();
             }
-            return application(ledger, incoming, derived, Optional.empty());
+            return application(byRef, incoming, derived, Optional.empty());
         }
         requireConsistentPositions(existing, observation);
         if (observation.revision() < existing.revision()) {
@@ -153,19 +154,24 @@ public final class RevisionReconciler {
             if (incoming.equals(existing)) {
                 return new Reconciliation.AlreadyApplied(existing);
             }
-            // the Node was not bound when this revision was first seen; deriving it now is its first application
-            if (existing.unbound() && derived && sameClaim(existing, incoming)) {
-                return application(ledger, incoming, true, Optional.of(existing));
+            // the cause of the marker (no Node bound, wrong pairing) was removed; deriving it now is its first application
+            if (existing.retryable() && sameClaim(existing, incoming)) {
+                return application(byRef, incoming, derived, Optional.of(existing));
             }
             if (differsOnlyInCost(existing, incoming)) {
-                return new Reconciliation.StalePeerDependency(existing);
+                AppliedRevision newer = peerView == null ? null : supersededPeer(byRef, peerView);
+                // the ledger is authoritative when it knows a newer peer revision than the derivation looked at; otherwise
+                // the caller knows more than the ledger (or left the reference out) and only a rebuild converges
+                return newer != null
+                        ? new Reconciliation.StalePeerDependency(newer)
+                        : new Reconciliation.RebuildRequired(existing, existing.ledgerSequence(), false);
             }
             return new Reconciliation.ConflictingRevision(existing);
         }
         if (existing.changedState()) {
-            return new Reconciliation.RebuildRequired(existing, affectedFrom(existing, observation));
+            return new Reconciliation.RebuildRequired(existing, affectedFrom(existing, observation), false);
         }
-        return application(ledger, incoming, derived, Optional.of(existing));
+        return application(byRef, incoming, derived, Optional.of(existing));
     }
 
     /**
@@ -173,10 +179,11 @@ public final class RevisionReconciler {
      * therefore order dependent, so only a rebuild from the incoming position equals a build from scratch.
      */
     private Reconciliation application(
-            List<AppliedRevision> ledger, AppliedRevision incoming, boolean derived, Optional<AppliedRevision> replaces) {
+            Map<String, AppliedRevision> byRef, AppliedRevision incoming, boolean derived,
+            Optional<AppliedRevision> replaces) {
         if (incoming.changedState()) {
             AppliedRevision later = null;
-            for (AppliedRevision entry : ledger) {
+            for (AppliedRevision entry : byRef.values()) {
                 if (entry.changedState() && !entry.experienceRef().equals(incoming.experienceRef())
                         && compareApplied(entry, incoming) > 0
                         && (later == null || compareApplied(entry, later) < 0)) {
@@ -184,7 +191,7 @@ public final class RevisionReconciler {
                 }
             }
             if (later != null) {
-                return new Reconciliation.RebuildRequired(later, incoming.ledgerSequence());
+                return new Reconciliation.RebuildRequired(later, incoming.ledgerSequence(), false);
             }
         }
         return derived
@@ -217,32 +224,45 @@ public final class RevisionReconciler {
                 && left.cohortKey().equals(right.cohortKey())
                 && left.acceptance() == right.acceptance()
                 && left.reasons().equals(right.reasons())
+                && left.provenFailures().equals(right.provenFailures())
                 // a different score alone is another scoring configuration, not another view of the peer
                 && (left.rule() != right.rule() || !existing.costPeer().equals(incoming.costPeer()));
     }
 
-    /** True when an unbound marker and a derived entry are the same claim apart from the binding outcome. */
-    private boolean sameClaim(AppliedRevision marker, AppliedRevision derived) {
-        return marker.identity().equals(derived.identity())
-                && marker.routingPolicyId().equals(derived.routingPolicyId())
-                && marker.routingPolicyVersion().equals(derived.routingPolicyVersion())
-                && marker.supersedesSequence().equals(derived.supersedesSequence())
-                && marker.catalogVersion().equals(derived.catalogVersion())
-                && marker.cutoff() == derived.cutoff()
-                && marker.basis() instanceof EntryBasis.NoUpdateMarker unbound
-                && derived.basis() instanceof EntryBasis.Derived credited
-                && unbound.cohortBinding().cohortBucket().equals(credited.cohortKey().cohortBucket());
+    /**
+     * True when a retryable marker and the incoming entry are the same claim apart from the cause that was removed:
+     * identity, routing policy, ancestry, catalog, cutoff and the cohort bucket agree.
+     */
+    private boolean sameClaim(AppliedRevision marker, AppliedRevision incoming) {
+        if (!marker.identity().equals(incoming.identity())
+                || !marker.routingPolicyId().equals(incoming.routingPolicyId())
+                || !marker.routingPolicyVersion().equals(incoming.routingPolicyVersion())
+                || !marker.supersedesSequence().equals(incoming.supersedesSequence())
+                || !marker.catalogVersion().equals(incoming.catalogVersion())
+                || marker.cutoff() != incoming.cutoff()
+                || !(marker.basis() instanceof EntryBasis.NoUpdateMarker recorded)) {
+            return false;
+        }
+        String bucket = recorded.cohortBinding().cohortBucket();
+        return switch (incoming.basis()) {
+            case EntryBasis.Derived credited -> bucket.equals(credited.cohortKey().cohortBucket());
+            case EntryBasis.NoUpdateMarker other -> bucket.equals(other.cohortBinding().cohortBucket());
+        };
+    }
+
+    /** The ledger entry that holds a newer revision of the peer a derivation looked at, if any. */
+    private AppliedRevision supersededPeer(Map<String, AppliedRevision> byRef, PeerRevision peer) {
+        AppliedRevision entry = byRef.get(peer.experienceRef());
+        return entry != null && entry.revision() > peer.revision() ? entry : null;
     }
 
     /** The ledger's entry for the peer sample must not contradict the peer claim a derivation recorded. */
-    private void requirePeerClaimAgrees(List<AppliedRevision> ledger, PeerRevision peer) {
-        for (AppliedRevision entry : ledger) {
-            if (entry.experienceRef().equals(peer.experienceRef()) && entry.revision() == peer.revision()
-                    && entry.ledgerSequence() != peer.ledgerSequence()) {
-                throw new IllegalArgumentException("the cost peer " + peer.experienceRef() + "@" + peer.revision()
-                        + " was recorded at sequence " + peer.ledgerSequence() + " but the ledger holds it at "
-                        + entry.ledgerSequence());
-            }
+    private void requirePeerClaimAgrees(Map<String, AppliedRevision> byRef, PeerRevision peer) {
+        AppliedRevision entry = byRef.get(peer.experienceRef());
+        if (entry != null && entry.revision() == peer.revision() && entry.ledgerSequence() != peer.ledgerSequence()) {
+            throw new IllegalArgumentException("the cost peer " + peer.experienceRef() + "@" + peer.revision()
+                    + " was recorded at sequence " + peer.ledgerSequence() + " but the ledger holds it at "
+                    + entry.ledgerSequence());
         }
     }
 
@@ -289,17 +309,19 @@ public final class RevisionReconciler {
                 : existing.ledgerSequence();
     }
 
-    private void requireLedger(List<AppliedRevision> ledger) {
+    /** One map for the whole call: checks the bound and that no sample reference appears twice. */
+    private Map<String, AppliedRevision> index(List<AppliedRevision> ledger) {
         if (ledger.size() > MAX_LEDGER) {
             throw new IllegalArgumentException(
                     "ledger allows at most " + MAX_LEDGER + " entries, got: " + ledger.size());
         }
-        Set<String> references = new HashSet<>(ledger.size() * 2);
+        Map<String, AppliedRevision> byRef = new HashMap<>(ledger.size() * 2);
         for (AppliedRevision entry : ledger) {
-            Objects.requireNonNull(entry, "ledger must not be null");
-            if (!references.add(entry.experienceRef())) {
+            Objects.requireNonNull(entry, "ledger must not contain null");
+            if (byRef.putIfAbsent(entry.experienceRef(), entry) != null) {
                 throw new IllegalArgumentException("ledger holds two entries for " + entry.experienceRef());
             }
         }
+        return byRef;
     }
 }

@@ -1,5 +1,6 @@
 package monada.neuron.routing.feedback;
 
+import monada.neuron.routing.token.CanonicalLists;
 import monada.neuron.evolution.FeedbackDisposition;
 import monada.neuron.evolution.FeedbackEntry;
 import monada.neuron.evolution.FeedbackInput;
@@ -115,12 +116,12 @@ public record RoutingFeedback(
             throw new IllegalArgumentException(
                     "entries must not exceed " + OutcomeFeedback.MAX_ENTRIES + ", got: " + entries.size());
         }
-        reasons = Canonical.sortedUnique(reasons, Comparator.naturalOrder(), IneligibilityReason.values().length,
+        reasons = CanonicalLists.canonical(reasons, Comparator.naturalOrder(), IneligibilityReason.values().length,
                 "reasons");
-        effectiveEvidence = Canonical.sortedUnique(effectiveEvidence,
+        effectiveEvidence = CanonicalLists.canonical(effectiveEvidence,
                 Comparator.comparing(LearningAssessment.EffectiveEvidence::dimension),
                 QualityDimension.values().length, "effectiveEvidence");
-        provenFailures = Canonical.sortedUnique(provenFailures, Comparator.naturalOrder(),
+        provenFailures = CanonicalLists.canonical(provenFailures, Comparator.naturalOrder(),
                 QualityDimension.values().length, "provenFailures");
         if (supersedesSequence instanceof Feature.Known<Long> known) {
             if (identity.revision() == 0) {
@@ -153,22 +154,9 @@ public record RoutingFeedback(
             throw new IllegalArgumentException(
                     "provenFailures " + provenFailures + " must equal the effective FAIL dimensions " + failed);
         }
-        if (reasons.contains(IneligibilityReason.PROVENANCE_MISMATCH)
-                || reasons.contains(IneligibilityReason.STALE_ARTIFACT_REVISION)
-                || reasons.contains(IneligibilityReason.CONTRADICTORY_EVIDENCE)) {
-            throw new IllegalArgumentException("the policy derives nothing for reasons " + reasons);
-        }
+        // the rule/assessment consistency has a single owner, shared with the ledger entry
+        rule.requireConsistent(derivedAcceptance, reasons, provenFailures);
         if (disposition == FeedbackDisposition.NEUTRAL) {
-            if (!rule.covers(derivedAcceptance, reasons, provenFailures)) {
-                throw new IllegalArgumentException("rule " + rule + " does not match the recorded assessment: "
-                        + derivedAcceptance + " " + reasons);
-            }
-            for (ScoreRule earlier : ScoreRule.values()) {
-                if (earlier.ordinal() < rule.ordinal() && earlier.covers(derivedAcceptance, reasons, provenFailures)) {
-                    throw new IllegalArgumentException(
-                            "rule " + earlier + " takes precedence over " + rule + " for " + reasons);
-                }
-            }
             if (!entries.isEmpty()) {
                 throw new IllegalArgumentException("NEUTRAL feedback must not carry entries");
             }
@@ -182,35 +170,11 @@ public record RoutingFeedback(
                 throw new IllegalArgumentException(disposition + " feedback cannot carry score " + score);
             }
         }
-        if (disposition == FeedbackDisposition.REINFORCE
-                && (derivedAcceptance != DerivedAcceptance.VALIDATED_ACCEPTED || !provenFailures.isEmpty()
-                        || !reasons.isEmpty())) {
-            throw new IllegalArgumentException(
-                    "REINFORCE needs validated acceptance, no proven failure and no ineligibility reason");
-        }
         if (disposition == FeedbackDisposition.REINFORCE && (effectiveEvidence.isEmpty()
                 || effectiveEvidence.stream().anyMatch(e -> e.state() != QualityState.PASS
                         && e.state() != QualityState.NOT_APPLICABLE))) {
             throw new IllegalArgumentException(
                     "REINFORCE needs effective evidence with every state PASS or NOT_APPLICABLE");
-        }
-        if (disposition == FeedbackDisposition.PENALIZE) {
-            if (provenFailures.isEmpty()) {
-                throw new IllegalArgumentException("PENALIZE needs a proven mandatory failure");
-            }
-            if (derivedAcceptance != DerivedAcceptance.NOT_ACCEPTED
-                    && derivedAcceptance != DerivedAcceptance.ACCEPTED_UNVALIDATED) {
-                throw new IllegalArgumentException("PENALIZE cannot follow " + derivedAcceptance);
-            }
-            if (reasons.stream().anyMatch(IneligibilityReason::blocking)) {
-                throw new IllegalArgumentException("PENALIZE must not carry a blocking reason: " + reasons);
-            }
-            if (reasons.contains(IneligibilityReason.IMPORTED_CLAIM)
-                    || reasons.contains(IneligibilityReason.NO_STAGE_ATTRIBUTION)
-                    || reasons.contains(IneligibilityReason.NO_ATTRIBUTABLE_FAILURE)) {
-                throw new IllegalArgumentException(
-                        "PENALIZE must not carry a reason that makes the policy neutral or derive nothing: " + reasons);
-            }
         }
     }
 

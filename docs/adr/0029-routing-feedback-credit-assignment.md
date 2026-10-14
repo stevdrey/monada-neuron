@@ -29,9 +29,11 @@ Add a separate, opt-in package `monada.neuron.routing.feedback` (Contract Sectio
 - Caller-owned applied-revision bookkeeping as records plus pure functions: `AppliedRevision`, `RevisionReconciler` and
   `RebuildOrder`. A superseded reward or penalty is never subtracted; the caller resets and replays in the Store's applied order.
   Ledger entries carry everything the contract validates about a claim (policy, ancestry, catalog, cutoff, rule and
-  assessment, credited Node, cost peer), a revision that derived nothing is recorded as a marker, an observation of another
-  state partition or with a wrong pairing is not recorded, and an application that moves a Node out of applied order requires a
-  rebuild because adaptation is clamped and order dependent.
+  assessment, credited Node, cost peer), a revision that derived nothing (including a provenance mismatch, which a corrected
+  pairing of the same revision can replace) is recorded as a marker, an observation of another state partition is not recorded,
+  and an application that moves a Node out of applied order requires a rebuild because adaptation is clamped and order
+  dependent. `ScoreRule.requireConsistent` is the single owner of the rule/assessment consistency that the feedback and the
+  ledger entry both enforce.
 - The invariant "incremental state equals a rebuild from the latest known revisions" is the acceptance test of that
   bookkeeping (`LedgerRebuildEquivalenceTest`, seeded delivery sequences), and a cost peer must be credited in the state and
   precede the reward in applied order, so a peer's arrival or correction is always a Node change the ledger sees.
@@ -55,7 +57,7 @@ Add a separate, opt-in package `monada.neuron.routing.feedback` (Contract Sectio
 - A scoring change needs a new `mappingVersion` chosen by the host until #66 folds the config into `RoutingStateDefinition`.
 - The invariant assumes the caller derives from its current knowledge: a cost peer left out (not merely out of date) is
   not detectable, and a rebuild must pass the same cost-peer selection rule.
-- The modeled ledger footprint (about 1 MiB at 4,096 entries) replaces the contract's earlier 256 KiB estimate.
+- The modeled ledger footprint (about 400 bytes per entry, 1.6 MiB at 4,096 entries) replaces the contract's earlier 256 KiB estimate.
 - No effectiveness claim: this ADR makes none, and #67 must supply a reproducible workload with controls.
 
 ## Follow-Up Work

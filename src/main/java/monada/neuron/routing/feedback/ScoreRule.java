@@ -61,6 +61,62 @@ public enum ScoreRule {
         };
     }
 
+    /**
+     * The single owner of the rule/assessment consistency that both {@link RoutingFeedback} and a ledger entry's
+     * {@link EntryBasis.Derived} enforce: the recorded assessment must be one {@link RoutingFeedbackPolicy} could have
+     * mapped to this rule. Reasons for which the policy derives nothing never appear; a reward is validated, failure
+     * free and reason free; a penalty follows an unaccepted or unvalidated result with a proven failure and none of the
+     * reasons that make the policy neutral or derive nothing; a neutral rule is covered and no earlier rule is.
+     *
+     * @throws IllegalArgumentException if the assessment could not have selected this rule
+     */
+    public void requireConsistent(
+            DerivedAcceptance acceptance, List<IneligibilityReason> reasons, List<QualityDimension> provenFailures) {
+        if (reasons.contains(IneligibilityReason.PROVENANCE_MISMATCH)
+                || reasons.contains(IneligibilityReason.STALE_ARTIFACT_REVISION)
+                || reasons.contains(IneligibilityReason.CONTRADICTORY_EVIDENCE)) {
+            throw new IllegalArgumentException("the policy derives nothing for reasons " + reasons);
+        }
+        switch (disposition) {
+            case REINFORCE -> {
+                if (acceptance != DerivedAcceptance.VALIDATED_ACCEPTED || !provenFailures.isEmpty()
+                        || !reasons.isEmpty()) {
+                    throw new IllegalArgumentException(
+                            "REINFORCE needs validated acceptance, no proven failure and no ineligibility reason");
+                }
+            }
+            case PENALIZE -> {
+                if (provenFailures.isEmpty()) {
+                    throw new IllegalArgumentException("PENALIZE needs a proven mandatory failure");
+                }
+                if (acceptance != DerivedAcceptance.NOT_ACCEPTED
+                        && acceptance != DerivedAcceptance.ACCEPTED_UNVALIDATED) {
+                    throw new IllegalArgumentException("PENALIZE cannot follow " + acceptance);
+                }
+                if (reasons.stream().anyMatch(IneligibilityReason::blocking)
+                        || reasons.contains(IneligibilityReason.IMPORTED_CLAIM)
+                        || reasons.contains(IneligibilityReason.NO_STAGE_ATTRIBUTION)
+                        || reasons.contains(IneligibilityReason.NO_ATTRIBUTABLE_FAILURE)) {
+                    throw new IllegalArgumentException(
+                            "PENALIZE must not carry a reason that blocks, makes the policy neutral or derives nothing: "
+                                    + reasons);
+                }
+            }
+            case NEUTRAL -> {
+                if (!covers(acceptance, reasons, provenFailures)) {
+                    throw new IllegalArgumentException(
+                            "rule " + this + " does not match the recorded assessment: " + acceptance + " " + reasons);
+                }
+                for (ScoreRule earlier : values()) {
+                    if (earlier.ordinal() < ordinal() && earlier.covers(acceptance, reasons, provenFailures)) {
+                        throw new IllegalArgumentException(
+                                "rule " + earlier + " takes precedence over " + this + " for " + reasons);
+                    }
+                }
+            }
+        }
+    }
+
     /** Disposition this rule yields. */
     public FeedbackDisposition disposition() {
         return disposition;
