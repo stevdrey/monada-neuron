@@ -266,6 +266,71 @@ class RoutingFeedbackValueTypesTest {
         assertThrows(IllegalArgumentException.class, () -> new PeerRevision("exp", -1, 0L));
     }
 
+    private static RoutingFeedback neutralWith(RoutingFeedback f, ScoreRule rule, DerivedAcceptance acceptance,
+            List<IneligibilityReason> reasons) {
+        return new RoutingFeedback(f.contractVersion(), f.identity(), f.supersedesSequence(), f.cohortKey(),
+                f.routingPolicyId(), f.routingPolicyVersion(), f.catalogVersion(), f.cutoff(), acceptance, rule,
+                FeedbackDisposition.NEUTRAL, List.of(), reasons, f.effectiveEvidence(), List.of(), Optional.empty());
+    }
+
+    @Test
+    void aNeutralRuleMustMatchTheRecordedAssessmentAndPrecedence() {
+        var f = reward();
+        var accepted = DerivedAcceptance.VALIDATED_ACCEPTED;
+        // a pending rule over a validated, reason-free assessment would suppress a reward the policy derives
+        assertThrows(IllegalArgumentException.class, () -> neutralWith(f, ScoreRule.NEUTRAL_PENDING, accepted, List.of()));
+        assertThrows(IllegalArgumentException.class,
+                () -> neutralWith(f, ScoreRule.NEUTRAL_INCOMPLETE_EVIDENCE, accepted, List.of()));
+        assertThrows(IllegalArgumentException.class,
+                () -> neutralWith(f, ScoreRule.NEUTRAL_UNVALIDATED_ACCEPTANCE, accepted, List.of()));
+        // the matching assessments are accepted
+        neutralWith(f, ScoreRule.NEUTRAL_PENDING, DerivedAcceptance.PENDING, List.of(IneligibilityReason.PENDING));
+        neutralWith(f, ScoreRule.NEUTRAL_UNVALIDATED_ACCEPTANCE, DerivedAcceptance.ACCEPTED_UNVALIDATED, List.of());
+        neutralWith(f, ScoreRule.NEUTRAL_INCOMPLETE_EVIDENCE, DerivedAcceptance.ACCEPTED_UNVALIDATED,
+                List.of(IneligibilityReason.MISSING_EVIDENCE));
+        // an earlier rule takes precedence: a pending outcome is not "incomplete evidence"
+        assertThrows(IllegalArgumentException.class, () -> neutralWith(f, ScoreRule.NEUTRAL_INCOMPLETE_EVIDENCE,
+                DerivedAcceptance.PENDING, List.of(IneligibilityReason.PENDING, IneligibilityReason.MISSING_EVIDENCE)));
+        // reasons for which the policy derives nothing never appear on a derived feedback
+        assertThrows(IllegalArgumentException.class, () -> neutralWith(f, ScoreRule.NEUTRAL_PENDING,
+                DerivedAcceptance.PENDING, List.of(IneligibilityReason.PENDING, IneligibilityReason.CONTRADICTORY_EVIDENCE)));
+        // an unattributed result is a no-update, so the late neutral rules cannot carry that reason
+        assertThrows(IllegalArgumentException.class, () -> neutralWith(f, ScoreRule.NEUTRAL_INCOMPLETE_EVIDENCE,
+                DerivedAcceptance.ACCEPTED_UNVALIDATED,
+                List.of(IneligibilityReason.MISSING_EVIDENCE, IneligibilityReason.NO_STAGE_ATTRIBUTION)));
+        assertTrue(!ScoreRule.REINFORCE_COST_REFINED.covers(accepted, List.of(), List.of()));
+    }
+
+    @Test
+    void theCohortMustBelongToTheExecutedRouteAndScope() {
+        var f = reward();
+        var otherRoute = new CohortKey(f.cohortKey().scopeId(), f.cohortKey().stageKind(),
+                f.cohortKey().cohortBucket(), new RouteKey("sub-z", 1));
+        var otherScope = new CohortKey("scope-other", f.cohortKey().stageKind(), f.cohortKey().cohortBucket(),
+                f.cohortKey().route());
+        for (var key : List.of(otherRoute, otherScope)) {
+            assertThrows(IllegalArgumentException.class, () -> new RoutingFeedback(f.contractVersion(), f.identity(),
+                    f.supersedesSequence(), key, f.routingPolicyId(), f.routingPolicyVersion(), f.catalogVersion(),
+                    f.cutoff(), f.derivedAcceptance(), f.rule(), f.disposition(), f.entries(), f.reasons(),
+                    f.effectiveEvidence(), f.provenFailures(), f.costPeer()));
+        }
+    }
+
+    @Test
+    void aMarkerKeepsTheOutcomeProvenanceThatDistinguishesTwoClaims() {
+        var base = new FeedbackFixtures.Spec().passing();
+        var other = new FeedbackFixtures.Spec().passing();
+        other.cutoff = 200L;
+        assertEquals(AppliedRevision.ofNoUpdate(base.observation()), AppliedRevision.ofNoUpdate(base.observation()));
+        assertNotEquals(AppliedRevision.ofNoUpdate(base.observation()),
+                AppliedRevision.ofNoUpdate(other.observation()));
+        var marker = AppliedRevision.ofNoUpdate(base.observation());
+        assertEquals(base.observation().outcome().catalogVersion(), marker.markerProvenance().get().catalogVersion());
+        assertThrows(IllegalArgumentException.class, () -> new AppliedRevision(marker.identity(),
+                marker.routingPolicyId(), marker.routingPolicyVersion(), marker.supersedesSequence(), Optional.empty(),
+                Optional.empty(), Optional.empty(), Optional.empty(), FeedbackDisposition.NEUTRAL, 0.0));
+    }
+
     @Test
     void aCostPeerMustNotLieBeyondTheCutoffNorAttachToANonRewardLedgerEntry() {
         var f = reward();
@@ -282,10 +347,10 @@ class RoutingFeedbackValueTypesTest {
         // a neutral marker, or a penalty, cannot carry a cost dependency
         assertThrows(IllegalArgumentException.class, () -> new AppliedRevision(f.identity(), f.routingPolicyId(),
                 f.routingPolicyVersion(), f.supersedesSequence(), Optional.empty(), Optional.empty(), onTime,
-                FeedbackDisposition.NEUTRAL, 0.0));
+                Optional.empty(), FeedbackDisposition.NEUTRAL, 0.0));
         assertThrows(IllegalArgumentException.class, () -> new AppliedRevision(f.identity(), f.routingPolicyId(),
                 f.routingPolicyVersion(), f.supersedesSequence(), Optional.of(f.cohortKey()), Optional.of(NODE_A),
-                onTime, FeedbackDisposition.PENALIZE, -0.4));
+                onTime, Optional.empty(), FeedbackDisposition.PENALIZE, -0.4));
     }
 
     @Test
@@ -389,19 +454,19 @@ class RoutingFeedbackValueTypesTest {
         assertTrue(applied.changedState());
         assertThrows(IllegalArgumentException.class,
                 () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(), f.supersedesSequence(),
-                        Optional.of(f.cohortKey()), Optional.empty(), Optional.empty(), FeedbackDisposition.NEUTRAL, 0.5));
+                        Optional.of(f.cohortKey()), Optional.empty(), Optional.empty(), Optional.empty(), FeedbackDisposition.NEUTRAL, 0.5));
         assertThrows(IllegalArgumentException.class,
                 () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(), f.supersedesSequence(),
-                        Optional.of(f.cohortKey()), Optional.of(NODE_A), Optional.empty(), FeedbackDisposition.REINFORCE, -0.5));
+                        Optional.of(f.cohortKey()), Optional.of(NODE_A), Optional.empty(), Optional.empty(), FeedbackDisposition.REINFORCE, -0.5));
         // a target Node is recorded exactly when the entry moved a Node
         assertThrows(IllegalArgumentException.class,
                 () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(),
                         f.supersedesSequence(), Optional.of(f.cohortKey()), Optional.empty(), Optional.empty(),
-                        FeedbackDisposition.REINFORCE, 0.5));
+                        Optional.empty(), FeedbackDisposition.REINFORCE, 0.5));
         assertThrows(IllegalArgumentException.class,
                 () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(),
                         f.supersedesSequence(), Optional.of(f.cohortKey()), Optional.of(NODE_A), Optional.empty(),
-                        FeedbackDisposition.NEUTRAL, 0.0));
+                        Optional.empty(), FeedbackDisposition.NEUTRAL, 0.0));
         assertThrows(IllegalArgumentException.class,
                 () -> new Reconciliation.Apply(Optional.of(applied)));
     }

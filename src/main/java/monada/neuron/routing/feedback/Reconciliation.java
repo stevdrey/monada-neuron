@@ -41,7 +41,8 @@ public sealed interface Reconciliation {
             if (replaces.isPresent() && replaces.get().changedState()) {
                 throw new IllegalArgumentException("only a neutral entry can be replaced without a rebuild");
             }
-            if (marker.changedState() || marker.cohortKey().isPresent() || marker.targetNodeId().isPresent()) {
+            if (marker.changedState() || marker.cohortKey().isPresent() || marker.targetNodeId().isPresent()
+                    || marker.markerProvenance().isEmpty()) {
                 throw new IllegalArgumentException("a record-only marker is neutral and names no cohort or Node, "
                         + "as AppliedRevision.ofNoUpdate builds it");
             }
@@ -111,6 +112,21 @@ public sealed interface Reconciliation {
             if (!reason.foreignPartition()) {
                 throw new IllegalArgumentException(reason + " is not a partition mismatch");
             }
+        }
+    }
+
+    /**
+     * The incoming reward was refined against a revision of its cost peer that the ledger has already superseded.
+     * Nothing is applied: the caller derives the sample again against the latest peer observation, so the incremental
+     * state equals a rebuild from the latest observations.
+     *
+     * @param peerEntry the ledger entry that holds a newer revision of the peer
+     */
+    record StalePeerDependency(AppliedRevision peerEntry) implements Reconciliation {
+
+        /** Requires the entry. */
+        public StalePeerDependency {
+            Objects.requireNonNull(peerEntry, "peerEntry must not be null");
         }
     }
 

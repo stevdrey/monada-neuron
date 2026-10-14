@@ -20,6 +20,8 @@ import java.util.Set;
  * <li>a result that would be {@code Apply} or {@code RecordOnly} becomes {@code RebuildRequired} when an applied
  *     entry was cost-refined against an older revision of this very sample, and an existing rebuild starts at the
  *     earliest such entry if that is earlier;</li>
+ * <li>a derived reward refined against a revision of its cost peer that the ledger already superseded:
+ *     {@code StalePeerDependency}, nothing applied;</li>
  * <li>a no-update caused by another state partition (mapping version, scope or evaluation policy):
  *     {@code OutOfPartition}, nothing recorded;</li>
  * <li>a newer revision at a ledger position that is not strictly later (or an older one that is not strictly
@@ -58,6 +60,15 @@ public final class RevisionReconciler {
         Objects.requireNonNull(derivation, "derivation must not be null");
         requireLedger(ledger);
         Reconciliation result = classify(ledger, observation, derivation);
+        if (result instanceof Reconciliation.Apply && derivation instanceof FeedbackDerivation.Derived derived
+                && derived.feedback().costPeer().isPresent()) {
+            PeerRevision peer = derived.feedback().costPeer().get();
+            for (AppliedRevision entry : ledger) {
+                if (entry.experienceRef().equals(peer.experienceRef()) && entry.revision() > peer.revision()) {
+                    return new Reconciliation.StalePeerDependency(entry);
+                }
+            }
+        }
         if (!(result instanceof Reconciliation.Apply) && !(result instanceof Reconciliation.RecordOnly)
                 && !(result instanceof Reconciliation.RebuildRequired)) {
             return result;

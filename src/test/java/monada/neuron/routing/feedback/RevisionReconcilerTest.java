@@ -85,7 +85,7 @@ class RevisionReconcilerTest {
         assertEquals(derived.feedback().routingPolicyId(), entry.routingPolicyId());
         assertEquals(derived.feedback().routingPolicyVersion(), entry.routingPolicyVersion());
         var otherPolicy = new AppliedRevision(entry.identity(), entry.routingPolicyId(), "other-version",
-                entry.supersedesSequence(), entry.cohortKey(), entry.targetNodeId(), entry.costPeer(), entry.disposition(), entry.score());
+                entry.supersedesSequence(), entry.cohortKey(), entry.targetNodeId(), entry.costPeer(), Optional.empty(), entry.disposition(), entry.score());
         assertEquals(new Reconciliation.ConflictingRevision(otherPolicy),
                 reconciler.reconcile(List.of(otherPolicy), spec.observation(), derived));
     }
@@ -213,6 +213,28 @@ class RevisionReconcilerTest {
         // without the dependency the rebuild would start at 20, and a checkpoint at 15 would keep A's stale bonus
         assertEquals(10L, rebuild.affectedFromSequence());
         assertEquals(ledger.get(1), rebuild.superseded());
+    }
+
+    @Test
+    void aRewardRefinedAgainstASupersededPeerRevisionIsNotApplied() {
+        var request = FeedbackFixtures.request("scope-demo", "task-17", "exec-2", "att-1", "s-impl-2", 102L);
+        var peer = new FeedbackFixtures.Spec(request, FeedbackFixtures.decide(request, "sub-b")).passing();
+        peer.experienceRef = "exp-2";
+        peer.resources = FeedbackFixtures.tokens(900, ResourceValue.Provenance.REPORTED);
+        var self = new FeedbackFixtures.Spec().passing();
+        self.resources = FeedbackFixtures.tokens(400, ResourceValue.Provenance.REPORTED);
+        var refined = policy().derive(self.observation(), self.decision, self.request,
+                FeedbackFixtures.bindings(self.decision, self.request, NODE_A),
+                Optional.of(new CostReference(peer.observation(), peer.decision, peer.request)));
+        // the peer's correction (revision 1) was already processed before the stale-derived reward arrives
+        var correction = corrected(peer, 1, 40L).failing();
+        var ledger = List.of(applied(derive(policy(), correction)));
+        var stale = assertInstanceOf(Reconciliation.StalePeerDependency.class,
+                reconciler.reconcile(ledger, self.observation(), refined));
+        assertEquals(ledger.getFirst(), stale.peerEntry());
+        // against the latest peer revision (or no peer) the reward applies
+        assertEquals(new Reconciliation.Apply(Optional.empty()),
+                reconciler.reconcile(ledger, self.observation(), derive(policy(), self)));
     }
 
     @Test
@@ -375,7 +397,7 @@ class RevisionReconcilerTest {
             ledger.add(new AppliedRevision(new FeedbackIdentity("ref-" + i, 0, 12L, id.decisionRef(), id.route(),
                     id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()),
                     base.routingPolicyId(), base.routingPolicyVersion(), base.supersedesSequence(), Optional.of(base.cohortKey()), Optional.of(NODE_A),
-                    Optional.empty(), FeedbackDisposition.REINFORCE, 0.8));
+                    Optional.empty(), Optional.empty(), FeedbackDisposition.REINFORCE, 0.8));
         }
         return ledger;
     }

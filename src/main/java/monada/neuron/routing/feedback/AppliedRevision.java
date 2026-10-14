@@ -26,6 +26,7 @@ import java.util.UUID;
  * @param cohortKey cohort the feedback named; empty for a no-update marker
  * @param targetNodeId Node the feedback credited; present exactly when the entry moved a Node
  * @param costPeer peer revision a cost-refined reward depended on, if any
+ * @param markerProvenance outcome provenance of a no-update marker; present exactly when the cohort is absent
  * @param disposition what the feedback did
  * @param score applied score; {@code 0.0} exactly for {@code NEUTRAL}
  */
@@ -37,6 +38,7 @@ public record AppliedRevision(
         Optional<CohortKey> cohortKey,
         Optional<UUID> targetNodeId,
         Optional<PeerRevision> costPeer,
+        Optional<ObservationProvenance> markerProvenance,
         FeedbackDisposition disposition,
         double score) {
 
@@ -49,6 +51,10 @@ public record AppliedRevision(
         Objects.requireNonNull(cohortKey, "cohortKey must not be null");
         Objects.requireNonNull(targetNodeId, "targetNodeId must not be null");
         Objects.requireNonNull(costPeer, "costPeer must not be null");
+        Objects.requireNonNull(markerProvenance, "markerProvenance must not be null");
+        if (markerProvenance.isPresent() != cohortKey.isEmpty()) {
+            throw new IllegalArgumentException("marker provenance is recorded exactly when the cohort is absent");
+        }
         if (costPeer.isPresent() && disposition != FeedbackDisposition.REINFORCE) {
             throw new IllegalArgumentException("only a reinforcing entry can depend on a cost peer");
         }
@@ -81,7 +87,10 @@ public record AppliedRevision(
                         outcome.decisionRef(), outcome.executedRoute(), outcome.cohortBinding().mappingVersion(),
                         outcome.evaluationPolicyId(), outcome.evaluationPolicyVersion()),
                 outcome.routingPolicyId(), outcome.routingPolicyVersion(), observation.supersedesSequence(),
-                Optional.empty(), Optional.empty(), Optional.empty(), FeedbackDisposition.NEUTRAL, 0.0);
+                Optional.empty(), Optional.empty(), Optional.empty(),
+                Optional.of(new ObservationProvenance(outcome.catalogVersion(), outcome.cutoff(),
+                        outcome.cohortBinding())),
+                FeedbackDisposition.NEUTRAL, 0.0);
     }
 
     /** Records the effect of a derived feedback. */
@@ -90,7 +99,8 @@ public record AppliedRevision(
         double score = feedback.entries().stream().mapToDouble(FeedbackEntry::score).sum();
         return new AppliedRevision(feedback.identity(), feedback.routingPolicyId(), feedback.routingPolicyVersion(),
                 feedback.supersedesSequence(), Optional.of(feedback.cohortKey()),
-                feedback.entries().stream().map(FeedbackEntry::targetNodeId).findFirst(), feedback.costPeer(), feedback.disposition(), score);
+                feedback.entries().stream().map(FeedbackEntry::targetNodeId).findFirst(), feedback.costPeer(), Optional.empty(),
+                feedback.disposition(), score);
     }
 
     /** Sample reference. */

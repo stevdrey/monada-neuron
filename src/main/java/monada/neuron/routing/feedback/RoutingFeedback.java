@@ -70,6 +70,11 @@ public record RoutingFeedback(
         Objects.requireNonNull(identity, "identity must not be null");
         Objects.requireNonNull(supersedesSequence, "supersedesSequence must not be null");
         Objects.requireNonNull(cohortKey, "cohortKey must not be null");
+        if (!cohortKey.route().equals(identity.route())
+                || !cohortKey.scopeId().equals(identity.decisionRef().scopeId())) {
+            throw new IllegalArgumentException("the cohort " + cohortKey + " does not belong to the executed route "
+                    + identity.route() + " in scope " + identity.decisionRef().scopeId());
+        }
         OpaqueTokens.require(routingPolicyId, "routingPolicyId");
         OpaqueTokens.require(routingPolicyVersion, "routingPolicyVersion");
         OpaqueTokens.require(catalogVersion, "catalogVersion");
@@ -137,7 +142,22 @@ public record RoutingFeedback(
             throw new IllegalArgumentException(
                     "provenFailures " + provenFailures + " must equal the effective FAIL dimensions " + failed);
         }
+        if (reasons.contains(IneligibilityReason.PROVENANCE_MISMATCH)
+                || reasons.contains(IneligibilityReason.STALE_ARTIFACT_REVISION)
+                || reasons.contains(IneligibilityReason.CONTRADICTORY_EVIDENCE)) {
+            throw new IllegalArgumentException("the policy derives nothing for reasons " + reasons);
+        }
         if (disposition == FeedbackDisposition.NEUTRAL) {
+            if (!rule.covers(derivedAcceptance, reasons, provenFailures)) {
+                throw new IllegalArgumentException("rule " + rule + " does not match the recorded assessment: "
+                        + derivedAcceptance + " " + reasons);
+            }
+            for (ScoreRule earlier : ScoreRule.values()) {
+                if (earlier.ordinal() < rule.ordinal() && earlier.covers(derivedAcceptance, reasons, provenFailures)) {
+                    throw new IllegalArgumentException(
+                            "rule " + earlier + " takes precedence over " + rule + " for " + reasons);
+                }
+            }
             if (!entries.isEmpty()) {
                 throw new IllegalArgumentException("NEUTRAL feedback must not carry entries");
             }
