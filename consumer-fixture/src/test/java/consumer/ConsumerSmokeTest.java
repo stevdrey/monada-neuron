@@ -40,6 +40,12 @@ class ConsumerSmokeTest {
     }
 
     @Test
+    void adaptiveRoutingStateIsAvailableThroughThePublishedArtifact() {
+        var decision = assertInstanceOf(RoutingDecision.Selected.class, ConsumerSmoke.routeFromAdaptiveState());
+        assertEquals("adaptive-routing-state/1", decision.provenance().state().mappingVersion());
+    }
+
+    @Test
     void portablePathWorksWithoutTheVectorModule() {
         assertTrue(ModuleLayer.boot().findModule("jdk.incubator.vector").isEmpty(),
                 "the fixture must run without jdk.incubator.vector");
