@@ -107,9 +107,10 @@ public record RoutingFeedback(
             }
         }
         for (LearningAssessment.EffectiveEvidence evidence : effectiveEvidence) {
-            if (evidence.ledgerSequence() > cutoff) {
+            if (evidence.ledgerSequence() > identity.ledgerSequence()) {
                 throw new IllegalArgumentException("effective " + evidence.dimension() + " evidence at sequence "
-                        + evidence.ledgerSequence() + " lies beyond the cutoff " + cutoff);
+                        + evidence.ledgerSequence() + " is later than the sample at " + identity.ledgerSequence()
+                        + " (and the cutoff " + cutoff + ")");
             }
         }
         List<QualityDimension> failed = effectiveEvidence.stream()
@@ -157,7 +158,8 @@ public record RoutingFeedback(
                 throw new IllegalArgumentException("PENALIZE must not carry a blocking reason: " + reasons);
             }
             if (reasons.contains(IneligibilityReason.IMPORTED_CLAIM)
-                    || reasons.contains(IneligibilityReason.NO_STAGE_ATTRIBUTION)) {
+                    || reasons.contains(IneligibilityReason.NO_STAGE_ATTRIBUTION)
+                    || reasons.contains(IneligibilityReason.NO_ATTRIBUTABLE_FAILURE)) {
                 throw new IllegalArgumentException(
                         "PENALIZE must not carry a reason that makes the policy neutral or derive nothing: " + reasons);
             }

@@ -347,6 +347,26 @@ class RoutingFeedbackPolicyTest {
     }
 
     @Test
+    void aPeerWhoseRequestDidNotProduceItsDecisionIsNotAComparison() {
+        var self = new FeedbackFixtures.Spec().passing();
+        self.resources = tokens(400, ResourceValue.Provenance.REPORTED);
+        var peer = peer("task-17", tokens(900, ResourceValue.Provenance.REPORTED), true);
+        var forged = new monada.neuron.routing.catalog.RoutingRequest(peer.request.contractVersion(),
+                peer.request.scopeId(), peer.request.taskId(), peer.request.executionId(), peer.request.attemptId(),
+                peer.request.stageId(), peer.request.stageKind(), peer.request.requestOrdinal(),
+                peer.request.sourceFingerprint(), peer.request.contextFingerprint(),
+                peer.request.constraintsFingerprint(), peer.request.evaluationPolicyId(),
+                peer.request.evaluationPolicyVersion(),
+                monada.neuron.routing.features.TaskFeatures.builder().stageKind("implement").changeSize(100_000L)
+                        .build(),
+                peer.request.requirements(), false, peer.request.cutoff());
+        var reference = new CostReference(peer.observation(), peer.decision, forged);
+        var f = feedback(policy().derive(self.observation(), self.decision, self.request,
+                bindings(self.decision, self.request, NODE_A), Optional.of(reference)));
+        assertEquals(ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL, f.rule());
+    }
+
+    @Test
     void twoAccountsOfOneExactDecisionAreNotACostComparison() {
         var self = new FeedbackFixtures.Spec().passing();
         self.resources = tokens(400, ResourceValue.Provenance.REPORTED);

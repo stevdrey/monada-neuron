@@ -2,6 +2,7 @@ package monada.neuron.routing.feedback;
 
 import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.outcome.RoutingObservation;
+import monada.neuron.routing.outcome.RoutingOutcome;
 
 import java.util.HashSet;
 import java.util.List;
@@ -16,13 +17,13 @@ import java.util.Set;
  * <p>The ledger holds one entry per sample reference: its latest applied revision. Rules, by comparing the
  * observation's revision with the entry of the same reference:
  * <ul>
- * <li>no entry: {@code Apply}, or {@code CapacityExhausted} when {@value #MAX_LEDGER} entries exist; a derivation
- *     with no feedback changes nothing;</li>
- * <li>equal revision: identical identity and score is a duplicate delivery ({@code AlreadyApplied}); anything else is
- *     {@code ConflictingRevision};</li>
+ * <li>no entry: {@code Apply} for a derived feedback, {@code RecordOnly} (a marker so an older delivery stays stale)
+ *     when nothing was derived, or {@code CapacityExhausted} when {@value #MAX_LEDGER} entries exist;</li>
+ * <li>equal revision: an identical entry (identity, routing policy, ancestry, cohort, score; a marker equals a marker)
+ *     is a duplicate delivery ({@code AlreadyApplied}); anything else is {@code ConflictingRevision};</li>
  * <li>older revision: {@code StaleRevision};</li>
- * <li>newer revision: {@code Apply} replacing a neutral entry, but {@code RebuildRequired} when the entry moved a
- *     Node, whatever the new revision says, including when it derives no feedback at all.</li>
+ * <li>newer revision: {@code Apply} or {@code RecordOnly} replacing a neutral entry, but {@code RebuildRequired} when
+ *     the entry moved a Node, whatever the new revision says, including when it derives no feedback at all.</li>
  * </ul>
  *
  * <p>Stateless and side-effect free; {@code O(L)} for the ledger of at most {@value #MAX_LEDGER} entries, which is a
@@ -49,20 +50,25 @@ public final class RevisionReconciler {
         Objects.requireNonNull(observation, "observation must not be null");
         Objects.requireNonNull(derivation, "derivation must not be null");
         requireLedger(ledger);
-        RoutingFeedback incoming = null;
+        AppliedRevision incoming;
         if (derivation instanceof FeedbackDerivation.Derived derived) {
-            incoming = derived.feedback();
-            FeedbackIdentity identity = incoming.identity();
+            RoutingFeedback feedback = derived.feedback();
+            FeedbackIdentity identity = feedback.identity();
+            requireAnswers(feedback, observation);
+            incoming = AppliedRevision.of(feedback);
             if (!identity.experienceRef().equals(observation.experienceRef())
                     || identity.revision() != observation.revision()
                     || identity.ledgerSequence() != observation.ledgerSequence()
-                    || !incoming.supersedesSequence().equals(observation.supersedesSequence())) {
+                    || !feedback.supersedesSequence().equals(observation.supersedesSequence())) {
                 throw new IllegalArgumentException("the feedback answers " + identity.experienceRef() + "@"
                         + identity.revision() + " at sequence " + identity.ledgerSequence()
                         + ", not the observation " + observation.experienceRef() + "@" + observation.revision()
                         + " at sequence " + observation.ledgerSequence());
             }
+        } else {
+            incoming = AppliedRevision.ofNoUpdate(observation);
         }
+        boolean derived = derivation instanceof FeedbackDerivation.Derived;
         AppliedRevision existing = null;
         for (AppliedRevision entry : ledger) {
             if (entry.experienceRef().equals(observation.experienceRef())) {
@@ -71,27 +77,50 @@ public final class RevisionReconciler {
             }
         }
         if (existing == null) {
-            if (incoming == null) {
-                return new Reconciliation.NoChange();
+            if (ledger.size() >= MAX_LEDGER) {
+                return new Reconciliation.CapacityExhausted();
             }
-            return ledger.size() >= MAX_LEDGER
-                    ? new Reconciliation.CapacityExhausted()
-                    : new Reconciliation.Apply(Optional.empty());
+            return derived
+                    ? new Reconciliation.Apply(Optional.empty())
+                    : new Reconciliation.RecordOnly(incoming, Optional.empty());
         }
         if (observation.revision() < existing.revision()) {
             return new Reconciliation.StaleRevision(existing);
         }
         if (observation.revision() == existing.revision()) {
-            return incoming != null && AppliedRevision.of(incoming).equals(existing)
+            return incoming.equals(existing)
                     ? new Reconciliation.AlreadyApplied(existing)
                     : new Reconciliation.ConflictingRevision(existing);
         }
         if (existing.changedState()) {
             return new Reconciliation.RebuildRequired(existing, affectedFrom(existing, observation));
         }
-        return incoming == null
-                ? new Reconciliation.NoChange()
-                : new Reconciliation.Apply(Optional.of(existing));
+        return derived
+                ? new Reconciliation.Apply(Optional.of(existing))
+                : new Reconciliation.RecordOnly(incoming, Optional.of(existing));
+    }
+
+    /** Requires the feedback to answer this very observation, not merely one with the same position. */
+    private void requireAnswers(RoutingFeedback feedback, RoutingObservation observation) {
+        RoutingOutcome outcome = observation.outcome();
+        FeedbackIdentity identity = feedback.identity();
+        CohortKey key = feedback.cohortKey();
+        boolean answers = identity.decisionRef().equals(outcome.decisionRef())
+                && identity.route().equals(outcome.executedRoute())
+                && identity.mappingVersion().equals(outcome.cohortBinding().mappingVersion())
+                && identity.evaluationPolicyId().equals(outcome.evaluationPolicyId())
+                && identity.evaluationPolicyVersion().equals(outcome.evaluationPolicyVersion())
+                && feedback.routingPolicyId().equals(outcome.routingPolicyId())
+                && feedback.routingPolicyVersion().equals(outcome.routingPolicyVersion())
+                && feedback.catalogVersion().equals(outcome.catalogVersion())
+                && feedback.cutoff() == outcome.cutoff()
+                && key.scopeId().equals(outcome.decisionRef().scopeId())
+                && key.route().equals(outcome.executedRoute())
+                && key.cohortBucket().equals(outcome.cohortBinding().cohortBucket());
+        if (!answers) {
+            throw new IllegalArgumentException("the feedback for " + identity.experienceRef() + "@"
+                    + identity.revision() + " was not derived from this observation's outcome");
+        }
     }
 
     /** The earliest sequence whose effect may be obsolete: the replaced revision's own, or earlier if declared. */

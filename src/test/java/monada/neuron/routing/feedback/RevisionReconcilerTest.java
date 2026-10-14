@@ -150,9 +150,10 @@ class RevisionReconcilerTest {
         var next = corrected(first, 1, 30L).passing();
         assertEquals(new Reconciliation.Apply(Optional.of(ledger.getFirst())),
                 reconciler.reconcile(ledger, next.observation(), derive(policy(), next)));
-        // a corrected revision that derives nothing leaves a neutral entry alone
+        // a corrected revision that derives nothing replaces a neutral entry with a marker
         var none = new FeedbackDerivation.NoUpdate(NoUpdateReason.CONTRADICTORY_EVIDENCE, List.of(), List.of());
-        assertEquals(new Reconciliation.NoChange(), reconciler.reconcile(ledger, next.observation(), none));
+        assertEquals(new Reconciliation.RecordOnly(AppliedRevision.ofNoUpdate(next.observation()),
+                Optional.of(ledger.getFirst())), reconciler.reconcile(ledger, next.observation(), none));
     }
 
     @Test
@@ -201,9 +202,43 @@ class RevisionReconcilerTest {
     }
 
     @Test
-    void aNewSampleWithNothingToApplyChangesNothing() {
+    void aNewSampleWithNothingToApplyIsRecordedAsAMarkerThatKeepsOlderDeliveriesStale() {
         var none = new FeedbackDerivation.NoUpdate(NoUpdateReason.NO_STAGE_ATTRIBUTION, List.of(), List.of());
-        assertEquals(new Reconciliation.NoChange(), reconciler.reconcile(List.of(), spec.passing().observation(), none));
+        var r2 = corrected(spec.passing(), 2, 40L).passing();
+        var result = assertInstanceOf(Reconciliation.RecordOnly.class,
+                reconciler.reconcile(List.of(), r2.observation(), none));
+        assertEquals(AppliedRevision.ofNoUpdate(r2.observation()), result.marker());
+        assertEquals(Optional.empty(), result.marker().cohortKey());
+        assertEquals(FeedbackDisposition.NEUTRAL, result.marker().disposition());
+        // a delayed older revision of the same sample is now stale instead of a fresh Apply
+        var ledger = List.of(result.marker());
+        var r1 = corrected(spec, 1, 30L).passing();
+        assertEquals(new Reconciliation.StaleRevision(result.marker()),
+                reconciler.reconcile(ledger, r1.observation(), derive(policy(), r1)));
+        // redelivery of the same no-update is a duplicate; a derived feedback at that revision conflicts
+        assertEquals(new Reconciliation.AlreadyApplied(result.marker()),
+                reconciler.reconcile(ledger, r2.observation(), none));
+        assertInstanceOf(Reconciliation.ConflictingRevision.class,
+                reconciler.reconcile(ledger, r2.observation(), derive(policy(), r2)));
+        // a full ledger has no slot for a new marker either
+        assertEquals(new Reconciliation.CapacityExhausted(), reconciler.reconcile(
+                ledgerOf(RevisionReconciler.MAX_LEDGER), r2.observation(), none));
+    }
+
+    @Test
+    void aFeedbackDerivedFromAnotherOutcomeDoesNotAnswerTheObservation() {
+        spec.passing();
+        var derivation = derive(policy(), spec);
+        // same reference, revision, ledger position and ancestry, but another decision and route
+        var otherRequest = FeedbackFixtures.request("scope-demo", "task-99", "exec-9", "att-1", "s-other", 900L);
+        var other = new FeedbackFixtures.Spec(otherRequest, FeedbackFixtures.decide(otherRequest, "sub-b")).passing();
+        assertThrows(IllegalArgumentException.class,
+                () -> reconciler.reconcile(List.of(), other.observation(), derivation));
+        // same decision and route, but another executed-route catalog/policy view of the outcome
+        var otherCutoff = new FeedbackFixtures.Spec().passing();
+        otherCutoff.cutoff = 200L;
+        assertThrows(IllegalArgumentException.class,
+                () -> reconciler.reconcile(List.of(), otherCutoff.observation(), derivation));
     }
 
     // ---- capacity and argument validation ----
@@ -215,7 +250,7 @@ class RevisionReconcilerTest {
             var id = base.identity();
             ledger.add(new AppliedRevision(new FeedbackIdentity("ref-" + i, 0, 12L, id.decisionRef(), id.route(),
                     id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()),
-                    base.routingPolicyId(), base.routingPolicyVersion(), base.supersedesSequence(), base.cohortKey(),
+                    base.routingPolicyId(), base.routingPolicyVersion(), base.supersedesSequence(), Optional.of(base.cohortKey()),
                     FeedbackDisposition.REINFORCE, 0.8));
         }
         return ledger;

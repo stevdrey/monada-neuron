@@ -25,8 +25,23 @@ public sealed interface Reconciliation {
         }
     }
 
-    /** The revision derives no feedback and the ledger holds nothing it could contradict: do nothing. */
-    record NoChange() implements Reconciliation {
+    /**
+     * The revision derives no feedback, so no Node changes, but the caller records the marker
+     * ({@link AppliedRevision#ofNoUpdate}) so a delayed older revision of the same sample stays stale.
+     *
+     * @param marker entry to record
+     * @param replaces neutral entry the marker replaces, if any
+     */
+    record RecordOnly(AppliedRevision marker, Optional<AppliedRevision> replaces) implements Reconciliation {
+
+        /** Validates the marker and the replaced entry. */
+        public RecordOnly {
+            Objects.requireNonNull(marker, "marker must not be null");
+            Objects.requireNonNull(replaces, "replaces must not be null");
+            if (replaces.isPresent() && replaces.get().changedState()) {
+                throw new IllegalArgumentException("only a neutral entry can be replaced without a rebuild");
+            }
+        }
     }
 
     /** Duplicate delivery: this exact revision, identity and score is already applied. Do nothing. */

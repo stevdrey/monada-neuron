@@ -118,6 +118,7 @@ final class FeedbackFixtures {
         String experienceRef = "exp-1";
         long revision = 0;
         long ledgerSequence = 12L;
+        long cutoff = 100L;
         Feature<Long> supersedes = Feature.unknown();
         InvocationStatus invocation = InvocationStatus.COMPLETED;
         OutcomeStatus status = OutcomeStatus.ACCEPTED;
@@ -168,7 +169,7 @@ final class FeedbackFixtures {
             var outcome = new RoutingOutcome(RoutingRequest.CONTRACT_VERSION, DecisionRef.of(request), executed,
                     decision.cohortBinding(), decision.provenance().catalogVersion(),
                     decision.provenance().policyId(), decision.provenance().policyVersion(), sourceFingerprint,
-                    "ctx-1", "con-1", "forge-gates", "1", 100L, invocation, status, origin, accepted,
+                    "ctx-1", "con-1", "forge-gates", "1", cutoff, invocation, status, origin, accepted,
                     acceptedAttemptStatus, 10L, observations, judged, resources, attribution);
             return new RoutingObservation(outcome, experienceRef, revision, ledgerSequence, supersedes);
         }

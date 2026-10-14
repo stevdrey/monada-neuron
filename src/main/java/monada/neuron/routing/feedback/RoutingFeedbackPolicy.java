@@ -103,7 +103,7 @@ public final class RoutingFeedbackPolicy {
         if (!definition.mappingVersion().equals(decision.cohortBinding().mappingVersion())) {
             return noUpdate(NoUpdateReason.MAPPING_MISMATCH, null);
         }
-        if (!definition.cohortMapping().bucketOf(request.features()).equals(decision.cohortBinding().cohortBucket())) {
+        if (!producedBy(request, decision)) {
             // the request is not the one whose features produced the decision, so its stage kind cannot be trusted
             return new FeedbackDerivation.NoUpdate(NoUpdateReason.PROVENANCE_MISMATCH,
                     List.of(IneligibilityReason.PROVENANCE_MISMATCH), List.of(ProvenanceField.COHORT_BINDING));
@@ -139,6 +139,11 @@ public final class RoutingFeedbackPolicy {
                     credit(observation, decision, request, bindings, cost, assessment);
             case NOT_ELIGIBLE -> neutral(observation, decision, request, assessment, notEligibleRule(reasons));
         };
+    }
+
+    /** True when the request's features reproduce the cohort bucket the decision recorded. */
+    private boolean producedBy(RoutingRequest request, RoutingDecision.Selected decision) {
+        return definition.cohortMapping().bucketOf(request.features()).equals(decision.cohortBinding().cohortBucket());
     }
 
     private FeedbackDerivation credit(
@@ -260,6 +265,9 @@ public final class RoutingFeedbackPolicy {
                 || !self.evaluationPolicyVersion().equals(peer.evaluationPolicyVersion())
                 || self.executedRoute().equals(peer.executedRoute())
                 || self.decisionRef().equals(peer.decisionRef())) {
+            return false;
+        }
+        if (!producedBy(peerRequest, reference.peerDecision())) {
             return false;
         }
         LearningAssessment peerAssessment =

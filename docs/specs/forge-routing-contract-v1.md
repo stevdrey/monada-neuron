@@ -1243,7 +1243,7 @@ Examples covered by tests: accepted, repaired chain (with and without stage-loca
 unavailable/timed out, stale policy and artifact revision, incomplete usage, imported claim, contradictory evidence,
 provenance mismatch, future evidence, cost that cannot offset a failed gate.
 
-Evidence gaps: `stageKind` is not retained in the decision or the outcome, so the request's `stageKind` is host-asserted; the policy only verifies that the request's features reproduce the decision's recorded bucket, and a request that differs from the original in `stageKind` alone is not detected; the evaluator trusts the host's judgments, attribution basis and mandatory set (descriptors and evidence are
+Evidence gaps: `stageKind` is not retained in the decision or the outcome, so the request's `stageKind` is host-asserted; the policy only verifies that the request's features reproduce the decision's recorded bucket (the reference mapping ignores `stageKind`), so a request that differs from the original in `stageKind` alone, with the same bucket, is not detected; the evaluator trusts the host's judgments, attribution basis and mandatory set (descriptors and evidence are
 observations, not proof); `STAGE_LOCAL` is accepted on the host's assertion plus at least one reference; Store export
 translation, envelope verification and sample `ExperienceRef` handling were delivered by #64 (Section 20); feedback scores and dispositions were delivered by #65 (Section 21);
 no latency measurement; no claim that eligibility rules improve routing.
@@ -1365,7 +1365,7 @@ clock, randomness, background task or Node access. The caller-owned mutable stat
 | --- | --- |
 | `RoutingFeedbackPolicy(RoutingStateDefinition, RoutingFeedbackConfig, EvidencePolicy)` | `derive(observation, selectedDecision, request, bindings[, Optional<CostReference>]) -> FeedbackDerivation`. Pure and stateless. Runs `OutcomeEvaluator.assess`, which stays the single owner of the verdict rule, and only maps the assessment. |
 | `FeedbackDerivation` | Sealed: `Derived(RoutingFeedback)` or `NoUpdate(NoUpdateReason, reasons, mismatches)`. |
-| `RoutingFeedback` | Contract version, `FeedbackIdentity`, `supersedesSequence`, `CohortKey`, routing policy id/version, catalog version, cutoff, `DerivedAcceptance`, `ScoreRule`, `FeedbackDisposition`, 0 or 1 `FeedbackEntry`, assessment reasons, effective evidence and proven failures. Validates rule, disposition, entries and evidence against each other: entries are score-only (no target Signal), `provenFailures` equal the effective `FAIL` dimensions, a `REINFORCE` has non-empty effective evidence that is all `PASS` or `NOT_APPLICABLE`, a `PENALIZE` follows `NOT_ACCEPTED` or `ACCEPTED_UNVALIDATED` and carries no blocking reason and no `IMPORTED_CLAIM` or `NO_STAGE_ATTRIBUTION` (the policy derives neutral or nothing for those), and the sample position and every effective evidence position lie at or before the cutoff. `toFeedbackInputs()` is the explicit adapter to `FeedbackInput`/`AdaptationPolicy`: it manufactures no `ActionStatus` and no `OutcomeFeedback`, and is empty for `NEUTRAL`. |
+| `RoutingFeedback` | Contract version, `FeedbackIdentity`, `supersedesSequence`, `CohortKey`, routing policy id/version, catalog version, cutoff, `DerivedAcceptance`, `ScoreRule`, `FeedbackDisposition`, 0 or 1 `FeedbackEntry`, assessment reasons, effective evidence and proven failures. Validates rule, disposition, entries and evidence against each other: entries are score-only (no target Signal), `provenFailures` equal the effective `FAIL` dimensions, a `REINFORCE` has non-empty effective evidence that is all `PASS` or `NOT_APPLICABLE`, a `PENALIZE` follows `NOT_ACCEPTED` or `ACCEPTED_UNVALIDATED` and carries no blocking reason and no `IMPORTED_CLAIM`, `NO_STAGE_ATTRIBUTION` or `NO_ATTRIBUTABLE_FAILURE` (the policy derives neutral or nothing for those), and every effective evidence position is at or before the sample position, which is at or before the cutoff. `toFeedbackInputs()` is the explicit adapter to `FeedbackInput`/`AdaptationPolicy`: it manufactures no `ActionStatus` and no `OutcomeFeedback`, and is empty for `NEUTRAL`. |
 | `FeedbackIdentity` | Exact `experienceRef`, `revision`, `ledgerSequence`, `DecisionRef`, executed `RouteKey`, `mappingVersion` and evaluation policy. Compared by equality, never hashed or generated. |
 | `CohortKey`, `TargetBinding`, `TargetBindings` | `(scopeId, stageKind, cohortBucket, RouteKey)`, the caller's binding of a cohort to a Node `UUID`, and an immutable, canonical-order set of at most 256 bindings of one `(scopeId, evaluationPolicy, mappingVersion)` partition with unique keys and unique Nodes. Only identifiers are carried, so derivation cannot mutate a target. |
 | `RoutingFeedbackConfig`, `CostObjective`, `CostReference` | Scoring rules (below) and the optional cost refinement. |
@@ -1400,7 +1400,7 @@ what is learned, so the host must give the state definition a new `mappingVersio
 
 **Cost refinement (optional, reward-only).** `reinforceScore + costBonus` is granted only when a `CostReference` is supplied, the config
 declares a `CostObjective(UsageKind, MINIMIZE|MAXIMIZE)`, and all of the following hold: the peer (assessed by the policy itself with
-its own decision and request, not by a caller-supplied assessment) is a `POSITIVE_CANDIDATE` of **another** route under a different `DecisionRef` (two accounts of one decision are not two executions); scope, task,
+its own decision and request, not by a caller-supplied assessment) is a `POSITIVE_CANDIDATE` of **another** route under a different `DecisionRef` (two accounts of one decision are not two executions) whose request reproduces its decision's recorded bucket; scope, task,
 `stageKind`, the three fingerprints and the evaluation policy are equal (Section 6, directly comparable pair); both outcomes have
 `MEASURED` usage with a `Known` counter of the declared kind and equal provenance (`REPORTED` or `ESTIMATED`); and the executed
 value is strictly better. Unknown, not-measured, absent and `NO_BILLABLE_USAGE` data, equal values and non-comparable pairs yield
@@ -1410,18 +1410,18 @@ cost and actual billing are carried by the outcome but are not read.
 
 ### 21.3 Caller-owned applied-revision bookkeeping and rebuild
 
-The caller keeps a ledger of `AppliedRevision(identity, routingPolicyId, routingPolicyVersion, supersedesSequence, cohortKey, disposition, score)` (the producing routing policy is retained as audit provenance, so the same revision delivered under another routing policy or with different correction ancestry is a conflict, not a duplicate): **one entry per sample reference, the
-latest applied revision**, at most 4,096 entries (neutral feedback is recorded too, with score `0.0`). Neuron holds no ledger.
-`RevisionReconciler.reconcile(ledger, observation, derivation)` first requires that a derived feedback answers the exact observation (reference, revision, ledger sequence and `supersedesSequence`), else `IllegalArgumentException`; it then returns advice and modifies nothing:
+The caller keeps a ledger of `AppliedRevision(identity, routingPolicyId, routingPolicyVersion, supersedesSequence, Optional<cohortKey>, disposition, score)` (the producing routing policy is retained as audit provenance, so the same revision delivered under another routing policy or with different correction ancestry is a conflict, not a duplicate): **one entry per sample reference, the
+latest examined revision**, at most 4,096 entries (neutral feedback is recorded too, with score `0.0`, and so is a revision that derived nothing, as a marker from `AppliedRevision.ofNoUpdate(observation)` with no cohort, so a delayed older revision of the same sample stays stale). Neuron holds no ledger.
+`RevisionReconciler.reconcile(ledger, observation, derivation)` first requires that a derived feedback answers the exact observation (reference, revision, ledger sequence, `supersedesSequence`, decision, executed route, routing policy, catalog, cutoff, evaluation policy, `mappingVersion` and cohort bucket), else `IllegalArgumentException`; it then returns advice and modifies nothing:
 
 | Relation of the observation to the entry of the same sample reference | Result |
 | --- | --- |
 | No entry, a feedback derived | `Apply`; `CapacityExhausted` when 4,096 entries exist (nothing evicted, nothing applied) |
-| No entry, nothing derived | `NoChange` |
-| Same revision, equal identity and score (duplicate delivery) | `AlreadyApplied` |
+| No entry, nothing derived | `RecordOnly(marker)`; `CapacityExhausted` when full |
+| Same revision, equal entry (duplicate delivery; a marker equals a marker) | `AlreadyApplied` |
 | Same revision, any difference in identity or score, or now deriving nothing (conflicting revision) | `ConflictingRevision` |
 | Older revision | `StaleRevision` |
-| Newer revision, entry was neutral | `Apply` (replaces the entry), or `NoChange` when nothing is derived |
+| Newer revision, entry was neutral | `Apply` or, when nothing is derived, `RecordOnly` (either replaces the entry) |
 | Newer revision, entry was a reward or penalty, **whatever the new revision derives, including nothing** | `RebuildRequired(superseded, affectedFromSequence)` |
 
 `affectedFromSequence` is the smaller of the superseded entry's `ledgerSequence` and the observation's `supersedesSequence` when
