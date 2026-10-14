@@ -83,7 +83,7 @@ class RevisionReconcilerTest {
         assertEquals(derived.feedback().routingPolicyId(), entry.routingPolicyId());
         assertEquals(derived.feedback().routingPolicyVersion(), entry.routingPolicyVersion());
         var otherPolicy = new AppliedRevision(entry.identity(), entry.routingPolicyId(), "other-version",
-                entry.supersedesSequence(), entry.cohortKey(), entry.disposition(), entry.score());
+                entry.supersedesSequence(), entry.cohortKey(), entry.targetNodeId(), entry.disposition(), entry.score());
         assertEquals(new Reconciliation.ConflictingRevision(otherPolicy),
                 reconciler.reconcile(List.of(otherPolicy), spec.observation(), derived));
     }
@@ -119,6 +119,62 @@ class RevisionReconcilerTest {
         var supersedesDerivation = derive(policy(), withSupersedes);
         assertThrows(IllegalArgumentException.class,
                 () -> reconciler.reconcile(List.of(), otherSupersedes.observation(), supersedesDerivation));
+    }
+
+    @Test
+    void theSameObservationCreditingAnotherNodeIsAConflict() {
+        spec.passing();
+        var key = FeedbackFixtures.keyOf(spec.decision, spec.request);
+        var otherBinding = new TargetBindings("scope-demo", "forge-gates", "1",
+                FeedbackFixtures.DEFINITION.mappingVersion(),
+                List.of(new TargetBinding(key, FeedbackFixtures.NODE_B)));
+        var ledger = List.of(applied(derive(policy(), spec)));
+        assertEquals(Optional.of(NODE_A), ledger.getFirst().targetNodeId());
+        var rebound = policy().derive(spec.observation(), spec.decision, spec.request, otherBinding);
+        assertEquals(new Reconciliation.ConflictingRevision(ledger.getFirst()),
+                reconciler.reconcile(ledger, spec.observation(), rebound));
+    }
+
+    @Test
+    void anObservationOfAnotherStatePartitionIsNeverRecorded() {
+        var r2 = corrected(spec.passing(), 2, 40L).passing();
+        for (var reason : List.of(NoUpdateReason.MAPPING_MISMATCH, NoUpdateReason.BINDING_SCOPE_MISMATCH,
+                NoUpdateReason.BINDING_PARTITION_MISMATCH)) {
+            var none = new FeedbackDerivation.NoUpdate(reason, List.of(), List.of());
+            assertEquals(new Reconciliation.OutOfPartition(reason),
+                    reconciler.reconcile(List.of(), r2.observation(), none));
+            // a full ledger neither overflows nor is touched
+            assertEquals(new Reconciliation.OutOfPartition(reason),
+                    reconciler.reconcile(ledgerOf(RevisionReconciler.MAX_LEDGER), r2.observation(), none));
+        }
+        // an unbound cohort of this partition is still recorded
+        var unbound = new FeedbackDerivation.NoUpdate(NoUpdateReason.NO_TARGET_BINDING, List.of(), List.of());
+        assertInstanceOf(Reconciliation.RecordOnly.class, reconciler.reconcile(List.of(), r2.observation(), unbound));
+        assertThrows(IllegalArgumentException.class,
+                () -> new Reconciliation.OutOfPartition(NoUpdateReason.NO_TARGET_BINDING));
+    }
+
+    @Test
+    void aCorrectionMustSitAtALaterLedgerPositionThanTheRevisionItReplaces() {
+        var first = new FeedbackFixtures.Spec().passing();
+        first.ledgerSequence = 41L;
+        var ledger = List.of(applied(derive(policy(), first)));
+        for (long sequence : new long[] {41L, 30L}) {
+            var invalid = corrected(first, 1, sequence).passing();
+            invalid.supersedes = Feature.known(5L);
+            assertThrows(IllegalArgumentException.class,
+                    () -> reconciler.reconcile(ledger, invalid.observation(), derive(policy(), invalid)));
+        }
+        // an older revision at a later position is just as inconsistent
+        var current = new FeedbackFixtures.Spec().passing();
+        current.revision = 1;
+        current.ledgerSequence = 30L;
+        current.supersedes = Feature.known(12L);
+        var currentLedger = List.of(applied(derive(policy(), current)));
+        var late = new FeedbackFixtures.Spec().passing();
+        late.ledgerSequence = 35L;
+        assertThrows(IllegalArgumentException.class,
+                () -> reconciler.reconcile(currentLedger, late.observation(), derive(policy(), late)));
     }
 
     @Test
@@ -250,7 +306,7 @@ class RevisionReconcilerTest {
             var id = base.identity();
             ledger.add(new AppliedRevision(new FeedbackIdentity("ref-" + i, 0, 12L, id.decisionRef(), id.route(),
                     id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()),
-                    base.routingPolicyId(), base.routingPolicyVersion(), base.supersedesSequence(), Optional.of(base.cohortKey()),
+                    base.routingPolicyId(), base.routingPolicyVersion(), base.supersedesSequence(), Optional.of(base.cohortKey()), Optional.of(NODE_A),
                     FeedbackDisposition.REINFORCE, 0.8));
         }
         return ledger;

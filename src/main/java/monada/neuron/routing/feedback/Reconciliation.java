@@ -92,6 +92,25 @@ public sealed interface Reconciliation {
         }
     }
 
+    /**
+     * The observation belongs to another state partition (another mapping version, scope or evaluation policy than the
+     * one the policy and bindings describe). Nothing is applied and nothing is recorded, so a foreign partition can
+     * neither pollute this ledger nor consume its capacity.
+     *
+     * @param reason why the derivation found the observation foreign
+     */
+    record OutOfPartition(NoUpdateReason reason) implements Reconciliation {
+
+        /** Requires a partition reason. */
+        public OutOfPartition {
+            Objects.requireNonNull(reason, "reason must not be null");
+            if (reason != NoUpdateReason.MAPPING_MISMATCH && reason != NoUpdateReason.BINDING_SCOPE_MISMATCH
+                    && reason != NoUpdateReason.BINDING_PARTITION_MISMATCH) {
+                throw new IllegalArgumentException(reason + " is not a partition mismatch");
+            }
+        }
+    }
+
     /** The ledger is full and the sample is new: nothing is applied or evicted. Compact through a checkpoint. */
     record CapacityExhausted() implements Reconciliation {
     }

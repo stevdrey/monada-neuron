@@ -9,6 +9,7 @@ import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * One entry of the caller-owned applied-revision ledger (contract section 7): the effective revision of a sample
@@ -23,6 +24,7 @@ import java.util.Optional;
  * @param routingPolicyVersion version of that routing policy
  * @param supersedesSequence sequence of the earliest revision the sample replaces, as copied from the observation
  * @param cohortKey cohort the feedback named; empty for a no-update marker
+ * @param targetNodeId Node the feedback credited; present exactly when the entry moved a Node
  * @param disposition what the feedback did
  * @param score applied score; {@code 0.0} exactly for {@code NEUTRAL}
  */
@@ -32,6 +34,7 @@ public record AppliedRevision(
         String routingPolicyVersion,
         Feature<Long> supersedesSequence,
         Optional<CohortKey> cohortKey,
+        Optional<UUID> targetNodeId,
         FeedbackDisposition disposition,
         double score) {
 
@@ -42,6 +45,10 @@ public record AppliedRevision(
         OpaqueTokens.require(routingPolicyVersion, "routingPolicyVersion");
         Objects.requireNonNull(supersedesSequence, "supersedesSequence must not be null");
         Objects.requireNonNull(cohortKey, "cohortKey must not be null");
+        Objects.requireNonNull(targetNodeId, "targetNodeId must not be null");
+        if (targetNodeId.isPresent() != (disposition != FeedbackDisposition.NEUTRAL)) {
+            throw new IllegalArgumentException("a target Node is recorded exactly when the entry moved a Node");
+        }
         if (cohortKey.isEmpty() && disposition != FeedbackDisposition.NEUTRAL) {
             throw new IllegalArgumentException("only a neutral entry can omit its cohort");
         }
@@ -68,7 +75,7 @@ public record AppliedRevision(
                         outcome.decisionRef(), outcome.executedRoute(), outcome.cohortBinding().mappingVersion(),
                         outcome.evaluationPolicyId(), outcome.evaluationPolicyVersion()),
                 outcome.routingPolicyId(), outcome.routingPolicyVersion(), observation.supersedesSequence(),
-                Optional.empty(), FeedbackDisposition.NEUTRAL, 0.0);
+                Optional.empty(), Optional.empty(), FeedbackDisposition.NEUTRAL, 0.0);
     }
 
     /** Records the effect of a derived feedback. */
@@ -76,7 +83,8 @@ public record AppliedRevision(
         Objects.requireNonNull(feedback, "feedback must not be null");
         double score = feedback.entries().stream().mapToDouble(FeedbackEntry::score).sum();
         return new AppliedRevision(feedback.identity(), feedback.routingPolicyId(), feedback.routingPolicyVersion(),
-                feedback.supersedesSequence(), Optional.of(feedback.cohortKey()), feedback.disposition(), score);
+                feedback.supersedesSequence(), Optional.of(feedback.cohortKey()),
+                feedback.entries().stream().map(FeedbackEntry::targetNodeId).findFirst(), feedback.disposition(), score);
     }
 
     /** Sample reference. */

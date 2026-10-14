@@ -17,6 +17,10 @@ import java.util.Set;
  * <p>The ledger holds one entry per sample reference: its latest applied revision. Rules, by comparing the
  * observation's revision with the entry of the same reference:
  * <ul>
+ * <li>a no-update caused by another state partition (mapping version, scope or evaluation policy):
+ *     {@code OutOfPartition}, nothing recorded;</li>
+ * <li>a newer revision at a ledger position that is not strictly later (or an older one that is not strictly
+ *     earlier) than the entry's is inconsistent caller data and rejected;</li>
  * <li>no entry: {@code Apply} for a derived feedback, {@code RecordOnly} (a marker so an older delivery stays stale)
  *     when nothing was derived, or {@code CapacityExhausted} when {@value #MAX_LEDGER} entries exist;</li>
  * <li>equal revision: an identical entry (identity, routing policy, ancestry, cohort, score; a marker equals a marker)
@@ -50,6 +54,9 @@ public final class RevisionReconciler {
         Objects.requireNonNull(observation, "observation must not be null");
         Objects.requireNonNull(derivation, "derivation must not be null");
         requireLedger(ledger);
+        if (derivation instanceof FeedbackDerivation.NoUpdate none && isForeignPartition(none.reason())) {
+            return new Reconciliation.OutOfPartition(none.reason());
+        }
         AppliedRevision incoming;
         if (derivation instanceof FeedbackDerivation.Derived derived) {
             RoutingFeedback feedback = derived.feedback();
@@ -84,6 +91,7 @@ public final class RevisionReconciler {
                     ? new Reconciliation.Apply(Optional.empty())
                     : new Reconciliation.RecordOnly(incoming, Optional.empty());
         }
+        requireConsistentPositions(existing, observation);
         if (observation.revision() < existing.revision()) {
             return new Reconciliation.StaleRevision(existing);
         }
@@ -98,6 +106,24 @@ public final class RevisionReconciler {
         return derived
                 ? new Reconciliation.Apply(Optional.of(existing))
                 : new Reconciliation.RecordOnly(incoming, Optional.of(existing));
+    }
+
+    private boolean isForeignPartition(NoUpdateReason reason) {
+        return reason == NoUpdateReason.MAPPING_MISMATCH || reason == NoUpdateReason.BINDING_SCOPE_MISMATCH
+                || reason == NoUpdateReason.BINDING_PARTITION_MISMATCH;
+    }
+
+    /** A newer revision sits at a strictly later ledger position and an older one at a strictly earlier one. */
+    private void requireConsistentPositions(AppliedRevision existing, RoutingObservation observation) {
+        boolean newer = observation.revision() > existing.revision();
+        boolean older = observation.revision() < existing.revision();
+        if ((newer && observation.ledgerSequence() <= existing.ledgerSequence())
+                || (older && observation.ledgerSequence() >= existing.ledgerSequence())) {
+            throw new IllegalArgumentException("revision " + observation.revision() + " of "
+                    + observation.experienceRef() + " at sequence " + observation.ledgerSequence()
+                    + " is inconsistent with the applied revision " + existing.revision() + " at sequence "
+                    + existing.ledgerSequence());
+        }
     }
 
     /** Requires the feedback to answer this very observation, not merely one with the same position. */

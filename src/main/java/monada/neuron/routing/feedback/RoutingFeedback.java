@@ -95,10 +95,16 @@ public record RoutingFeedback(
                 QualityDimension.values().length, "effectiveEvidence");
         provenFailures = Canonical.sortedUnique(provenFailures, Comparator.naturalOrder(),
                 QualityDimension.values().length, "provenFailures");
-        if (supersedesSequence instanceof Feature.Known<Long> known
-                && (known.value() < 0 || known.value() >= identity.ledgerSequence())) {
-            throw new IllegalArgumentException(
-                    "supersedesSequence must be in [0, ledgerSequence), got: " + known.value());
+        if (supersedesSequence instanceof Feature.Known<Long> known) {
+            if (identity.revision() == 0) {
+                throw new IllegalArgumentException("an initial revision replaces nothing, so it has no supersedesSequence");
+            }
+            if (known.value() < 0 || known.value() >= identity.ledgerSequence()) {
+                throw new IllegalArgumentException(
+                        "supersedesSequence must be in [0, ledgerSequence), got: " + known.value());
+            }
+        } else if (identity.revision() > 0) {
+            throw new IllegalArgumentException("a corrected revision must carry the supersedesSequence it replaces");
         }
         for (FeedbackEntry entry : entries) {
             if (entry.targetSignal() != null) {

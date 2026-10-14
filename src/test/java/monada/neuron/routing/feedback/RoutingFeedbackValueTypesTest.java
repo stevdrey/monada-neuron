@@ -244,6 +244,24 @@ class RoutingFeedbackValueTypesTest {
     }
 
     @Test
+    void correctionAncestryFollowsTheRevision() {
+        var f = reward();
+        var id = f.identity();
+        var plus = List.of(FeedbackEntry.of(NODE_A, 0.8));
+        java.util.function.BiFunction<Long, Feature<Long>, RoutingFeedback> make = (revision, supersedes) ->
+                new RoutingFeedback(f.contractVersion(),
+                        new FeedbackIdentity(id.experienceRef(), revision, 30L, id.decisionRef(), id.route(),
+                                id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()),
+                        supersedes, f.cohortKey(), f.routingPolicyId(), f.routingPolicyVersion(), f.catalogVersion(),
+                        f.cutoff(), f.derivedAcceptance(), f.rule(), f.disposition(), plus, f.reasons(),
+                        f.effectiveEvidence(), f.provenFailures());
+        make.apply(0L, Feature.unknown());
+        make.apply(1L, Feature.known(12L));
+        assertThrows(IllegalArgumentException.class, () -> make.apply(1L, Feature.unknown()));
+        assertThrows(IllegalArgumentException.class, () -> make.apply(0L, Feature.known(12L)));
+    }
+
+    @Test
     void feedbackCannotLieBeyondItsCutoff() {
         var f = reward();
         long sequence = f.identity().ledgerSequence();
@@ -297,10 +315,19 @@ class RoutingFeedbackValueTypesTest {
         assertTrue(applied.changedState());
         assertThrows(IllegalArgumentException.class,
                 () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(), f.supersedesSequence(),
-                        Optional.of(f.cohortKey()), FeedbackDisposition.NEUTRAL, 0.5));
+                        Optional.of(f.cohortKey()), Optional.empty(), FeedbackDisposition.NEUTRAL, 0.5));
         assertThrows(IllegalArgumentException.class,
                 () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(), f.supersedesSequence(),
-                        Optional.of(f.cohortKey()), FeedbackDisposition.REINFORCE, -0.5));
+                        Optional.of(f.cohortKey()), Optional.of(NODE_A), FeedbackDisposition.REINFORCE, -0.5));
+        // a target Node is recorded exactly when the entry moved a Node
+        assertThrows(IllegalArgumentException.class,
+                () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(),
+                        f.supersedesSequence(), Optional.of(f.cohortKey()), Optional.empty(),
+                        FeedbackDisposition.REINFORCE, 0.5));
+        assertThrows(IllegalArgumentException.class,
+                () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(),
+                        f.supersedesSequence(), Optional.of(f.cohortKey()), Optional.of(NODE_A),
+                        FeedbackDisposition.NEUTRAL, 0.0));
         assertThrows(IllegalArgumentException.class,
                 () -> new Reconciliation.Apply(Optional.of(applied)));
     }
