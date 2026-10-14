@@ -209,13 +209,13 @@ public final class RoutingFeedbackPolicy {
                 assessment.provenFailures());
     }
 
-    private static CohortKey cohortKey(
+    private CohortKey cohortKey(
             RoutingDecision.Selected decision, RoutingRequest request, RoutingOutcome outcome) {
         return new CohortKey(outcome.decisionRef().scopeId(), request.stageKind(),
                 decision.cohortBinding().cohortBucket(), outcome.executedRoute());
     }
 
-    private static ScoreRule notEligibleRule(List<IneligibilityReason> reasons) {
+    private ScoreRule notEligibleRule(List<IneligibilityReason> reasons) {
         if (reasons.contains(IneligibilityReason.NO_ATTRIBUTABLE_FAILURE)) {
             return ScoreRule.NEUTRAL_NO_ATTRIBUTABLE_FAILURE;
         }
@@ -227,7 +227,7 @@ public final class RoutingFeedbackPolicy {
         return ScoreRule.NEUTRAL_UNVALIDATED_ACCEPTANCE;
     }
 
-    private static FeedbackDerivation noUpdate(NoUpdateReason reason, LearningAssessment assessment) {
+    private FeedbackDerivation noUpdate(NoUpdateReason reason, LearningAssessment assessment) {
         return assessment == null
                 ? new FeedbackDerivation.NoUpdate(reason, List.of(), List.of())
                 : new FeedbackDerivation.NoUpdate(reason, assessment.reasons(),
@@ -270,7 +270,7 @@ public final class RoutingFeedbackPolicy {
                 : own.value() > other.value();
     }
 
-    private static ResourceValue.Known known(ResourceSummary resources, CostObjective objective) {
+    private ResourceValue.Known known(ResourceSummary resources, CostObjective objective) {
         if (resources.declaration() != UsageDeclaration.MEASURED) {
             return null;
         }

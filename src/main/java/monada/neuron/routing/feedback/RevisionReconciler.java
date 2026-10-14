@@ -54,10 +54,13 @@ public final class RevisionReconciler {
             incoming = derived.feedback();
             FeedbackIdentity identity = incoming.identity();
             if (!identity.experienceRef().equals(observation.experienceRef())
-                    || identity.revision() != observation.revision()) {
+                    || identity.revision() != observation.revision()
+                    || identity.ledgerSequence() != observation.ledgerSequence()
+                    || !incoming.supersedesSequence().equals(observation.supersedesSequence())) {
                 throw new IllegalArgumentException("the feedback answers " + identity.experienceRef() + "@"
-                        + identity.revision() + ", not the observation " + observation.experienceRef() + "@"
-                        + observation.revision());
+                        + identity.revision() + " at sequence " + identity.ledgerSequence()
+                        + ", not the observation " + observation.experienceRef() + "@" + observation.revision()
+                        + " at sequence " + observation.ledgerSequence());
             }
         }
         AppliedRevision existing = null;

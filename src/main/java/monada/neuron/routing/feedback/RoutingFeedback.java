@@ -10,6 +10,7 @@ import monada.neuron.routing.outcome.DerivedAcceptance;
 import monada.neuron.routing.outcome.IneligibilityReason;
 import monada.neuron.routing.outcome.LearningAssessment;
 import monada.neuron.routing.outcome.QualityDimension;
+import monada.neuron.routing.outcome.QualityState;
 import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.Comparator;
@@ -95,6 +96,19 @@ public record RoutingFeedback(
             throw new IllegalArgumentException(
                     "supersedesSequence must be in [0, ledgerSequence), got: " + known.value());
         }
+        for (FeedbackEntry entry : entries) {
+            if (entry.targetSignal() != null) {
+                throw new IllegalArgumentException(
+                        "routing entries are score-only: a target Signal would select another adaptation rule");
+            }
+        }
+        List<QualityDimension> failed = effectiveEvidence.stream()
+                .filter(e -> e.state() == QualityState.FAIL).map(LearningAssessment.EffectiveEvidence::dimension)
+                .toList();
+        if (!failed.equals(provenFailures)) {
+            throw new IllegalArgumentException(
+                    "provenFailures " + provenFailures + " must equal the effective FAIL dimensions " + failed);
+        }
         if (disposition == FeedbackDisposition.NEUTRAL) {
             if (!entries.isEmpty()) {
                 throw new IllegalArgumentException("NEUTRAL feedback must not carry entries");
@@ -115,8 +129,17 @@ public record RoutingFeedback(
             throw new IllegalArgumentException(
                     "REINFORCE needs validated acceptance, no proven failure and no ineligibility reason");
         }
-        if (disposition == FeedbackDisposition.PENALIZE && provenFailures.isEmpty()) {
-            throw new IllegalArgumentException("PENALIZE needs a proven mandatory failure");
+        if (disposition == FeedbackDisposition.PENALIZE) {
+            if (provenFailures.isEmpty()) {
+                throw new IllegalArgumentException("PENALIZE needs a proven mandatory failure");
+            }
+            if (derivedAcceptance != DerivedAcceptance.NOT_ACCEPTED
+                    && derivedAcceptance != DerivedAcceptance.ACCEPTED_UNVALIDATED) {
+                throw new IllegalArgumentException("PENALIZE cannot follow " + derivedAcceptance);
+            }
+            if (reasons.stream().anyMatch(IneligibilityReason::blocking)) {
+                throw new IllegalArgumentException("PENALIZE must not carry a blocking reason: " + reasons);
+            }
         }
     }
 

@@ -21,7 +21,7 @@ import java.util.Objects;
  * from the same corrected export. This class only orders; it keeps nothing.
  *
  * <p>Stateless. {@code O(N log N)} time and {@code O(N)} space for {@code N <= MAX_OBSERVATIONS} observations; the
- * hash map is point-queried and never iterated, so it cannot influence the order.
+ * hash maps are point-queried and never iterated, so it cannot influence the order.
  */
 public final class RebuildOrder {
 
@@ -47,15 +47,22 @@ public final class RebuildOrder {
             throw new IllegalArgumentException("a rebuild call allows at most " + MAX_OBSERVATIONS
                     + " observations, got: " + observations.size());
         }
+        // Every claim is checked before an older revision is discarded, so validation never depends on input order.
+        record Claim(String experienceRef, long revision) {
+        }
+        Map<Claim, RoutingObservation> claims = new HashMap<>(observations.size() * 2);
         Map<String, RoutingObservation> latest = new HashMap<>(observations.size() * 2);
         for (RoutingObservation observation : observations) {
             Objects.requireNonNull(observation, "observations must not contain null");
+            var claim = new Claim(observation.experienceRef(), observation.revision());
+            RoutingObservation claimed = claims.putIfAbsent(claim, observation);
+            if (claimed != null && !claimed.equals(observation)) {
+                throw new IllegalArgumentException("two different observations claim " + observation.experienceRef()
+                        + "@" + observation.revision());
+            }
             RoutingObservation known = latest.get(observation.experienceRef());
             if (known == null || observation.revision() > known.revision()) {
                 latest.put(observation.experienceRef(), observation);
-            } else if (observation.revision() == known.revision() && !observation.equals(known)) {
-                throw new IllegalArgumentException("two different observations claim " + observation.experienceRef()
-                        + "@" + observation.revision());
             }
         }
         List<RoutingObservation> ordered = new ArrayList<>(latest.values());

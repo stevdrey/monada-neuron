@@ -76,6 +76,38 @@ class RevisionReconcilerTest {
     }
 
     @Test
+    void theSameRevisionFromAnotherRoutingPolicyIsAConflictNotADuplicate() {
+        spec.passing();
+        var derived = (FeedbackDerivation.Derived) derive(policy(), spec);
+        var entry = AppliedRevision.of(derived.feedback());
+        assertEquals(derived.feedback().routingPolicyId(), entry.routingPolicyId());
+        assertEquals(derived.feedback().routingPolicyVersion(), entry.routingPolicyVersion());
+        var otherPolicy = new AppliedRevision(entry.identity(), entry.routingPolicyId(), "other-version",
+                entry.cohortKey(), entry.disposition(), entry.score());
+        assertEquals(new Reconciliation.ConflictingRevision(otherPolicy),
+                reconciler.reconcile(List.of(otherPolicy), spec.observation(), derived));
+    }
+
+    @Test
+    void aFeedbackFromAnotherLedgerPositionOfTheSameRevisionDoesNotAnswerTheObservation() {
+        spec.passing();
+        var derivation = derive(policy(), spec);
+        var moved = new FeedbackFixtures.Spec().passing();
+        moved.ledgerSequence = 20L;
+        assertThrows(IllegalArgumentException.class,
+                () -> reconciler.reconcile(List.of(), moved.observation(), derivation));
+        var otherSupersedes = new FeedbackFixtures.Spec().passing();
+        otherSupersedes.revision = 1;
+        otherSupersedes.supersedes = Feature.known(3L);
+        var withSupersedes = new FeedbackFixtures.Spec().passing();
+        withSupersedes.revision = 1;
+        withSupersedes.supersedes = Feature.known(4L);
+        var supersedesDerivation = derive(policy(), withSupersedes);
+        assertThrows(IllegalArgumentException.class,
+                () -> reconciler.reconcile(List.of(), otherSupersedes.observation(), supersedesDerivation));
+    }
+
+    @Test
     void anOlderRevisionArrivingLateIsStale() {
         var current = new FeedbackFixtures.Spec().passing();
         current.revision = 1;
@@ -168,7 +200,8 @@ class RevisionReconcilerTest {
         for (int i = 0; i < size; i++) {
             var id = base.identity();
             ledger.add(new AppliedRevision(new FeedbackIdentity("ref-" + i, 0, 12L, id.decisionRef(), id.route(),
-                    id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()), base.cohortKey(),
+                    id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()),
+                    base.routingPolicyId(), base.routingPolicyVersion(), base.cohortKey(),
                     FeedbackDisposition.REINFORCE, 0.8));
         }
         return ledger;

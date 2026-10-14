@@ -145,6 +145,56 @@ class RoutingFeedbackValueTypesTest {
                 FeedbackDisposition.REINFORCE, plus, accepted, Feature.known(f.identity().ledgerSequence())));
     }
 
+    private static RoutingFeedback penalty() {
+        var s = new FeedbackFixtures.Spec().failing();
+        return ((FeedbackDerivation.Derived) FeedbackFixtures.policy().derive(s.observation(), s.decision, s.request,
+                FeedbackFixtures.bindings(s.decision, s.request, NODE_A))).feedback();
+    }
+
+    private static RoutingFeedback penaltyWith(RoutingFeedback f, DerivedAcceptance acceptance,
+            List<IneligibilityReason> reasons, List<monada.neuron.routing.outcome.QualityDimension> failures,
+            List<FeedbackEntry> entries) {
+        return new RoutingFeedback(f.contractVersion(), f.identity(), f.supersedesSequence(), f.cohortKey(),
+                f.routingPolicyId(), f.routingPolicyVersion(), f.catalogVersion(), f.cutoff(), acceptance,
+                ScoreRule.PENALIZE_PROVEN_MANDATORY_FAILURE, FeedbackDisposition.PENALIZE, entries, reasons,
+                f.effectiveEvidence(), failures);
+    }
+
+    @Test
+    void routingEntriesAreScoreOnly() {
+        var f = reward();
+        var signal = new monada.neuron.signal.Signal(monada.neuron.signal.SignalKind.FEEDBACK,
+                new monada.neuron.model.FrequencyState(1.0, 1.0, 0.0));
+        assertThrows(IllegalArgumentException.class, () -> rebuilt(f, ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL,
+                FeedbackDisposition.REINFORCE, List.of(new FeedbackEntry(NODE_A, signal, 0.8)),
+                DerivedAcceptance.VALIDATED_ACCEPTED, Feature.unknown()));
+        assertTrue(f.toFeedbackInputs().stream().allMatch(i -> i.targetSignal() == null));
+    }
+
+    @Test
+    void aPenaltyMirrorsTheNegativeCandidateInvariants() {
+        var p = penalty();
+        var minus = List.of(FeedbackEntry.of(NODE_A, -0.4));
+        // the derived penalty is valid
+        penaltyWith(p, p.derivedAcceptance(), p.reasons(), p.provenFailures(), minus);
+        // blocking reasons are rejected
+        assertThrows(IllegalArgumentException.class, () -> penaltyWith(p, p.derivedAcceptance(),
+                List.of(IneligibilityReason.PROVENANCE_MISMATCH), p.provenFailures(), minus));
+        assertThrows(IllegalArgumentException.class, () -> penaltyWith(p, p.derivedAcceptance(),
+                List.of(IneligibilityReason.PENDING), p.provenFailures(), minus));
+        // failures must be the effective FAIL dimensions: fabricated, and dropped
+        assertThrows(IllegalArgumentException.class, () -> penaltyWith(p, p.derivedAcceptance(), p.reasons(),
+                List.of(monada.neuron.routing.outcome.QualityDimension.TESTS,
+                        monada.neuron.routing.outcome.QualityDimension.SECURITY), minus));
+        assertThrows(IllegalArgumentException.class, () -> penaltyWith(p, p.derivedAcceptance(), p.reasons(),
+                List.of(), minus));
+        // a penalty cannot follow validated or pending acceptance
+        assertThrows(IllegalArgumentException.class,
+                () -> penaltyWith(p, DerivedAcceptance.VALIDATED_ACCEPTED, p.reasons(), p.provenFailures(), minus));
+        assertThrows(IllegalArgumentException.class,
+                () -> penaltyWith(p, DerivedAcceptance.PENDING, p.reasons(), p.provenFailures(), minus));
+    }
+
     @Test
     void scoreRulesMapToExactlyOneDisposition() {
         for (var rule : ScoreRule.values()) {
@@ -179,9 +229,11 @@ class RoutingFeedbackValueTypesTest {
         assertEquals(0.8, applied.score(), 1e-12);
         assertTrue(applied.changedState());
         assertThrows(IllegalArgumentException.class,
-                () -> new AppliedRevision(f.identity(), f.cohortKey(), FeedbackDisposition.NEUTRAL, 0.5));
+                () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(), f.cohortKey(),
+                        FeedbackDisposition.NEUTRAL, 0.5));
         assertThrows(IllegalArgumentException.class,
-                () -> new AppliedRevision(f.identity(), f.cohortKey(), FeedbackDisposition.REINFORCE, -0.5));
+                () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(), f.cohortKey(),
+                        FeedbackDisposition.REINFORCE, -0.5));
         assertThrows(IllegalArgumentException.class,
                 () -> new Reconciliation.Apply(Optional.of(applied)));
     }

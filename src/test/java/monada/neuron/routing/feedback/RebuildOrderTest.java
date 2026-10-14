@@ -46,6 +46,20 @@ class RebuildOrderTest {
     }
 
     @Test
+    void conflictingOlderRevisionsAreRejectedInEveryInputOrder() {
+        var current = observation("a", 1, 40);
+        var olderOne = observation("a", 0, 12);
+        var olderTwo = observation("a", 0, 13);
+        var all = List.of(current, olderOne, olderTwo);
+        for (var permutation : List.of(
+                List.of(all.get(0), all.get(1), all.get(2)), List.of(all.get(0), all.get(2), all.get(1)),
+                List.of(all.get(1), all.get(0), all.get(2)), List.of(all.get(1), all.get(2), all.get(0)),
+                List.of(all.get(2), all.get(0), all.get(1)), List.of(all.get(2), all.get(1), all.get(0)))) {
+            assertThrows(IllegalArgumentException.class, () -> order.order(permutation));
+        }
+    }
+
+    @Test
     void anyInputPermutationGivesTheSameOrder() {
         var input = new ArrayList<>(List.of(observation("a", 0, 12), observation("b", 1, 40), observation("b", 0, 20),
                 observation("c", 0, 12), observation("d", 0, 33)));

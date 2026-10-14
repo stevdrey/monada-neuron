@@ -2,6 +2,7 @@ package monada.neuron.routing.feedback;
 
 import monada.neuron.evolution.FeedbackDisposition;
 import monada.neuron.evolution.FeedbackEntry;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.Objects;
 
@@ -14,16 +15,25 @@ import java.util.Objects;
  * duplicate delivery or correction must be compared with.
  *
  * @param identity exact sample revision and definition that was applied
+ * @param routingPolicyId routing policy that produced the applied effect (audit provenance)
+ * @param routingPolicyVersion version of that routing policy
  * @param cohortKey cohort the feedback named
  * @param disposition what the feedback did
  * @param score applied score; {@code 0.0} exactly for {@code NEUTRAL}
  */
 public record AppliedRevision(
-        FeedbackIdentity identity, CohortKey cohortKey, FeedbackDisposition disposition, double score) {
+        FeedbackIdentity identity,
+        String routingPolicyId,
+        String routingPolicyVersion,
+        CohortKey cohortKey,
+        FeedbackDisposition disposition,
+        double score) {
 
     /** Validates that the score agrees with the disposition. */
     public AppliedRevision {
         Objects.requireNonNull(identity, "identity must not be null");
+        OpaqueTokens.require(routingPolicyId, "routingPolicyId");
+        OpaqueTokens.require(routingPolicyVersion, "routingPolicyVersion");
         Objects.requireNonNull(cohortKey, "cohortKey must not be null");
         Objects.requireNonNull(disposition, "disposition must not be null");
         boolean consistent = switch (disposition) {
@@ -40,7 +50,8 @@ public record AppliedRevision(
     public static AppliedRevision of(RoutingFeedback feedback) {
         Objects.requireNonNull(feedback, "feedback must not be null");
         double score = feedback.entries().stream().mapToDouble(FeedbackEntry::score).sum();
-        return new AppliedRevision(feedback.identity(), feedback.cohortKey(), feedback.disposition(), score);
+        return new AppliedRevision(feedback.identity(), feedback.routingPolicyId(), feedback.routingPolicyVersion(),
+                feedback.cohortKey(), feedback.disposition(), score);
     }
 
     /** Sample reference. */

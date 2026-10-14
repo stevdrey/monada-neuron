@@ -1365,7 +1365,7 @@ clock, randomness, background task or Node access. The caller-owned mutable stat
 | --- | --- |
 | `RoutingFeedbackPolicy(RoutingStateDefinition, RoutingFeedbackConfig, EvidencePolicy)` | `derive(observation, selectedDecision, request, bindings[, Optional<CostReference>]) -> FeedbackDerivation`. Pure and stateless. Runs `OutcomeEvaluator.assess`, which stays the single owner of the verdict rule, and only maps the assessment. |
 | `FeedbackDerivation` | Sealed: `Derived(RoutingFeedback)` or `NoUpdate(NoUpdateReason, reasons, mismatches)`. |
-| `RoutingFeedback` | Contract version, `FeedbackIdentity`, `supersedesSequence`, `CohortKey`, routing policy id/version, catalog version, cutoff, `DerivedAcceptance`, `ScoreRule`, `FeedbackDisposition`, 0 or 1 `FeedbackEntry`, assessment reasons, effective evidence and proven failures. Validates rule, disposition, entries and evidence against each other. `toFeedbackInputs()` is the explicit adapter to `FeedbackInput`/`AdaptationPolicy`: it manufactures no `ActionStatus` and no `OutcomeFeedback`, and is empty for `NEUTRAL`. |
+| `RoutingFeedback` | Contract version, `FeedbackIdentity`, `supersedesSequence`, `CohortKey`, routing policy id/version, catalog version, cutoff, `DerivedAcceptance`, `ScoreRule`, `FeedbackDisposition`, 0 or 1 `FeedbackEntry`, assessment reasons, effective evidence and proven failures. Validates rule, disposition, entries and evidence against each other: entries are score-only (no target Signal), `provenFailures` equal the effective `FAIL` dimensions, and a `PENALIZE` follows `NOT_ACCEPTED` or `ACCEPTED_UNVALIDATED` and carries no blocking reason. `toFeedbackInputs()` is the explicit adapter to `FeedbackInput`/`AdaptationPolicy`: it manufactures no `ActionStatus` and no `OutcomeFeedback`, and is empty for `NEUTRAL`. |
 | `FeedbackIdentity` | Exact `experienceRef`, `revision`, `ledgerSequence`, `DecisionRef`, executed `RouteKey`, `mappingVersion` and evaluation policy. Compared by equality, never hashed or generated. |
 | `CohortKey`, `TargetBinding`, `TargetBindings` | `(scopeId, stageKind, cohortBucket, RouteKey)`, the caller's binding of a cohort to a Node `UUID`, and an immutable, canonical-order set of at most 256 bindings of one `(scopeId, evaluationPolicy, mappingVersion)` partition with unique keys and unique Nodes. Only identifiers are carried, so derivation cannot mutate a target. |
 | `RoutingFeedbackConfig`, `CostObjective`, `CostReference` | Scoring rules (below) and the optional cost refinement. |
@@ -1409,9 +1409,9 @@ cost and actual billing are carried by the outcome but are not read.
 
 ### 21.3 Caller-owned applied-revision bookkeeping and rebuild
 
-The caller keeps a ledger of `AppliedRevision(identity, cohortKey, disposition, score)`: **one entry per sample reference, the
+The caller keeps a ledger of `AppliedRevision(identity, routingPolicyId, routingPolicyVersion, cohortKey, disposition, score)` (the producing routing policy is retained as audit provenance, so the same revision delivered under another routing policy is a conflict, not a duplicate): **one entry per sample reference, the
 latest applied revision**, at most 4,096 entries (neutral feedback is recorded too, with score `0.0`). Neuron holds no ledger.
-`RevisionReconciler.reconcile(ledger, observation, derivation)` returns advice and modifies nothing:
+`RevisionReconciler.reconcile(ledger, observation, derivation)` first requires that a derived feedback answers the exact observation (reference, revision, ledger sequence and `supersedesSequence`), else `IllegalArgumentException`; it then returns advice and modifies nothing:
 
 | Relation of the observation to the entry of the same sample reference | Result |
 | --- | --- |
@@ -1427,7 +1427,7 @@ latest applied revision**, at most 4,096 entries (neutral feedback is recorded t
 known; a checkpoint is a valid starting point only if its `processedCutoff` is strictly below it (Section 7). Node adaptation is not
 exactly invertible, so a superseded reward is never subtracted: the caller resets the partition's Nodes to the baseline and replays
 `RebuildOrder.order(observations)`, which keeps the latest revision of each sample reference and sorts by `(ledgerSequence, experienceRef by
-code point)`. It rejects more than 4,096 observations and two different observations claiming the same sample revision, and collapses
+code point)`. It rejects more than 4,096 observations and two different observations claiming the same sample revision (checked for every revision before older ones are discarded, so the result never depends on input order), and collapses
 an identical repeat. The caller derives each observation with the policy and applies the results in that order; the replay
 equals a build from scratch from the same corrected export because the order and the derivation are pure functions of it
 (tested, including the Section 9.5 scenario). A rebuild is staged and swapped by the caller as Section 7 requires.
