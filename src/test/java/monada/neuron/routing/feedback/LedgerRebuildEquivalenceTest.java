@@ -70,6 +70,8 @@ class LedgerRebuildEquivalenceTest {
         final Map<UUID, Node> nodes = new HashMap<>();
         final Map<String, AppliedRevision> ledger = new HashMap<>();
         final Map<String, FeedbackFixtures.Spec> known = new HashMap<>();
+        /** Every observation ever delivered, including older revisions and re-exports at other snapshots. */
+        final List<FeedbackFixtures.Spec> everDelivered = new ArrayList<>();
         final boolean cost;
         boolean routeCBound;
         final List<Sample> samples;
@@ -153,14 +155,12 @@ class LedgerRebuildEquivalenceTest {
         /** A rebuild from scratch from the latest known revision of every sample, in applied order. */
         void rebuild() {
             reset();
-            Map<String, FeedbackFixtures.Spec> byRef = new HashMap<>();
-            List<RoutingObservation> observations = new ArrayList<>();
-            for (var spec : known.values()) {
-                observations.add(spec.observation());
-                byRef.put(spec.experienceRef, spec);
+            Map<RoutingObservation, FeedbackFixtures.Spec> byObservation = new HashMap<>();
+            for (var spec : everDelivered) {
+                byObservation.put(spec.observation(), spec);
             }
-            for (var observation : rebuildOrder.order(observations)) {
-                var spec = byRef.get(observation.experienceRef());
+            for (var observation : rebuildOrder.order(new ArrayList<>(byObservation.keySet()))) {
+                var spec = byObservation.get(observation);
                 var derivation = derive(spec);
                 if (derivation instanceof FeedbackDerivation.Derived derived) {
                     apply(derived.feedback());
@@ -183,6 +183,9 @@ class LedgerRebuildEquivalenceTest {
             var current = known.get(delivered.experienceRef);
             if (current == null || delivered.revision > current.revision) {
                 known.put(delivered.experienceRef, delivered);
+            }
+            if (retry) {
+                everDelivered.add(delivered);
             }
             var derivation = derive(delivered, view);
             var result = reconciler.reconcile(List.copyOf(ledger.values()), delivered.observation(), derivation);
@@ -213,15 +216,15 @@ class LedgerRebuildEquivalenceTest {
     }
 
     private static FeedbackFixtures.Spec revision(Sample sample, int revision, long sequence, long previous,
-            Random random) {
+            long tokens, int kind, long cutoff) {
         var spec = new FeedbackFixtures.Spec(sample.request(), sample.decision());
         spec.experienceRef = sample.ref();
         spec.revision = revision;
         spec.ledgerSequence = sequence;
-        spec.cutoff = 10_000L;
+        spec.cutoff = cutoff;
         spec.supersedes = revision == 0 ? Feature.unknown() : Feature.known(previous);
-        spec.resources = FeedbackFixtures.tokens(100 + random.nextInt(900), ResourceValue.Provenance.REPORTED);
-        switch (random.nextInt(12)) {
+        spec.resources = FeedbackFixtures.tokens(tokens, ResourceValue.Provenance.REPORTED);
+        switch (kind) {
             case 0, 1, 2 -> spec.passing();
             case 3, 4 -> spec.failing();
             case 5 -> {
@@ -282,12 +285,22 @@ class LedgerRebuildEquivalenceTest {
                     remaining--;
                 }
             }
-            List<FeedbackFixtures.Spec> created = new ArrayList<>();
+            // a revision is exported at one or more snapshots: same sample, position and evidence, different cutoff
+            List<List<FeedbackFixtures.Spec>> created = new ArrayList<>();
             Map<Integer, Long> previousSequence = new HashMap<>();
             long sequence = 100L;
             for (int[] event : creation) {
                 var sample = samples.get(event[0]);
-                created.add(revision(sample, event[1], sequence, previousSequence.getOrDefault(event[0], 0L), random));
+                long tokens = 100 + random.nextInt(900);
+                int kind = random.nextInt(12);
+                long previous = previousSequence.getOrDefault(event[0], 0L);
+                List<FeedbackFixtures.Spec> exports = new ArrayList<>();
+                exports.add(revision(sample, event[1], sequence, previous, tokens, kind, 10_000L));
+                for (int more = random.nextInt(3); more > 0; more--) {
+                    exports.add(revision(sample, event[1], sequence, previous, tokens, kind,
+                            10_001L + random.nextInt(50)));
+                }
+                created.add(exports);
                 previousSequence.put(event[0], sequence);
                 sequence += 10L;
             }
@@ -304,7 +317,8 @@ class LedgerRebuildEquivalenceTest {
                         throw new AssertionError("seed " + seed + " trace " + trace + ": " + e, e);
                     }
                 }
-                var delivered = created.get(random.nextInt(created.size()));
+                var exports = created.get(random.nextInt(created.size()));
+                var delivered = exports.get(random.nextInt(exports.size()));
                 // a delivery is sometimes derived against what was known a few deliveries ago (an asynchronous caller)
                 // (a peer revision may be out of date, but a known peer is never dropped: the reconciler can detect
                 // a superseded peer revision, not a peer the caller left out)
@@ -314,7 +328,7 @@ class LedgerRebuildEquivalenceTest {
                     view.putAll(views.get(random.nextInt(views.size())));
                 }
                 trace.append(delivered.experienceRef).append('@').append(delivered.revision)
-                        .append(view == state.known ? " " : "(stale view) ");
+                        .append("/c").append(delivered.cutoff).append(view == state.known ? " " : "(stale view) ");
                 try {
                     state.deliver(delivered, view);
                 } catch (RuntimeException | AssertionError e) {
@@ -323,6 +337,7 @@ class LedgerRebuildEquivalenceTest {
                 var oracle = new State(cost, samples);
                 oracle.routeCBound = state.routeCBound;
                 oracle.known.putAll(state.known);
+                oracle.everDelivered.addAll(state.everDelivered);
                 oracle.rebuild();
                 for (var id : List.of(NODE_A, NODE_B, NODE_C)) {
                     var mine = state.nodes.get(id);

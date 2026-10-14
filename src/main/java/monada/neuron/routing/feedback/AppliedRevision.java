@@ -26,7 +26,9 @@ import java.util.UUID;
  * @param routingPolicyVersion version of that routing policy
  * @param supersedesSequence sequence of the earliest revision the sample replaces, as copied from the observation
  * @param catalogVersion catalog snapshot behind the decision
- * @param cutoff ledger cutoff the outcome was evaluated as of
+ * @param cutoff ledger cutoff of the export snapshot the outcome was read at. It is audit context, not part of the claim:
+ *         the same unchanged sample re-exported at a later snapshot has the same revision, position and effective
+ *         evidence, so {@link #equals} and {@link #hashCode} ignore it (the position is still checked against it)
  * @param targetNodeId Node the feedback credited; present exactly when the entry moved a Node
  * @param costPeer peer revision a cost-refined reward depended on; present exactly for {@code REINFORCE_COST_REFINED}
  * @param basis the derived feedback's rule and assessment, or the no-update marker's reason and cohort binding
@@ -142,6 +144,28 @@ public record AppliedRevision(
                 new EntryBasis.Derived(feedback.cohortKey(), feedback.rule(), feedback.derivedAcceptance(),
                         feedback.reasons(), feedback.provenFailures()),
                 feedback.disposition(), score);
+    }
+
+    /** Equality of the claim: every component except {@code cutoff}, which is the snapshot the claim was read at. */
+    @Override
+    public boolean equals(Object other) {
+        return other instanceof AppliedRevision that
+                && identity.equals(that.identity)
+                && routingPolicyId.equals(that.routingPolicyId)
+                && routingPolicyVersion.equals(that.routingPolicyVersion)
+                && supersedesSequence.equals(that.supersedesSequence)
+                && catalogVersion.equals(that.catalogVersion)
+                && targetNodeId.equals(that.targetNodeId)
+                && costPeer.equals(that.costPeer)
+                && basis.equals(that.basis)
+                && disposition == that.disposition
+                && Double.compare(score, that.score) == 0;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(identity, routingPolicyId, routingPolicyVersion, supersedesSequence, catalogVersion,
+                targetNodeId, costPeer, basis, disposition, score);
     }
 
     /** Cohort the feedback named; empty for a no-update marker. */

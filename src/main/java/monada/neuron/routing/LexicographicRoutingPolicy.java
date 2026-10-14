@@ -138,6 +138,6 @@ public final class LexicographicRoutingPolicy implements RoutingPolicy {
             RoutingRequest request, RouteCatalog catalog, RoutingPreference preference, StateValidation validation) {
         return new Provenance(DecisionRef.of(request), catalog.catalogVersion(), POLICY_ID, POLICY_VERSION,
                 request.cutoff(), preference.binding(), validation,
-                parameters);
+                parameters, Optional.of(request.stageKind()));
     }
 }

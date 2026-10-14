@@ -58,6 +58,11 @@ Add a separate, opt-in package `monada.neuron.routing.feedback` (Contract Sectio
 - The invariant assumes the caller derives from its current knowledge: a cost peer left out (not merely out of date) is
   not detectable, and a rebuild must pass the same cost-peer selection rule.
 - The modeled ledger footprint (about 400 bytes per entry, 1.6 MiB at 4,096 entries) replaces the contract's earlier 256 KiB estimate.
+- The stage kind of a credited cohort comes from the decision's recorded `Provenance.stageKind` (an additive field of
+  the #62 type, set by `LexicographicRoutingPolicy` and checked against the request by the validator); a decision that
+  never recorded it derives no update, so a request cannot move credit to another stage cohort of the same bucket.
+- The export cutoff is the as-of context of a read, not part of a sample's claim: ledger entries and rebuild inputs
+  compare equal across cutoffs, and a rebuild keeps the later snapshot of a sample revision.
 - No effectiveness claim: this ADR makes none, and #67 must supply a reproducible workload with controls.
 
 ## Follow-Up Work

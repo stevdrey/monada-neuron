@@ -72,6 +72,28 @@ class RebuildOrderTest {
                 order.order(List.of(observation("a", 2, 30), original, observation("a", 1, 25))));
     }
 
+    private static RoutingObservation exportedAt(String ref, long revision, long sequence, long cutoff) {
+        var s = new FeedbackFixtures.Spec().passing();
+        s.experienceRef = ref;
+        s.revision = revision;
+        s.ledgerSequence = sequence;
+        s.supersedes = revision > 0 ? Feature.known(sequence - 1) : Feature.unknown();
+        s.cutoff = cutoff;
+        return s.observation();
+    }
+
+    @Test
+    void theSameClaimExportedAtDifferentCutoffsCollapsesToTheLaterSnapshotInAnyOrder() {
+        var first = exportedAt("a", 0, 20, 100);
+        var later = exportedAt("a", 0, 20, 150);
+        assertEquals(List.of(later), order.order(List.of(first, later)));
+        assertEquals(List.of(later), order.order(List.of(later, first)));
+        assertEquals(List.of(later), order.order(List.of(first, later, first, later)));
+        // a real difference at the same revision is still a conflict, whatever the cutoffs
+        var changed = observation("a", 0, 21);
+        assertThrows(IllegalArgumentException.class, () -> order.order(List.of(first, changed)));
+    }
+
     @Test
     void anyInputPermutationGivesTheSameOrder() {
         var input = new ArrayList<>(List.of(observation("a", 0, 12), observation("b", 1, 40), observation("b", 0, 20),

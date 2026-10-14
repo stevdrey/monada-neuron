@@ -1,6 +1,7 @@
 package monada.neuron.routing.feedback;
 
 import monada.neuron.routing.outcome.RoutingObservation;
+import monada.neuron.routing.outcome.RoutingOutcome;
 import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.ArrayList;
@@ -34,13 +35,45 @@ public final class RebuildOrder {
                     .thenComparing(RoutingObservation::experienceRef, OpaqueTokens::compareCodePoints);
 
     /**
+     * The merged observation when two observations are the same claim, otherwise {@code null}. The export cutoff is
+     * the snapshot an observation was read at, not part of the claim: the same unchanged sample re-exported at a later
+     * snapshot has the same revision, position and effective evidence. Both are compared as of the later cutoff and
+     * the one read at the later snapshot is kept (an equal pair keeps the first), so the result never depends on the
+     * input order.
+     */
+    private RoutingObservation sameClaim(RoutingObservation left, RoutingObservation right) {
+        if (left.equals(right)) {
+            return left;
+        }
+        long cutoff = Math.max(left.outcome().cutoff(), right.outcome().cutoff());
+        if (!asOf(left, cutoff).equals(asOf(right, cutoff))) {
+            return null;
+        }
+        return left.outcome().cutoff() >= right.outcome().cutoff() ? left : right;
+    }
+
+    /** The observation read at {@code cutoff}, which must not be earlier than the one it was read at. */
+    private RoutingObservation asOf(RoutingObservation observation, long cutoff) {
+        RoutingOutcome o = observation.outcome();
+        RoutingOutcome moved = new RoutingOutcome(o.contractVersion(), o.decisionRef(), o.executedRoute(),
+                o.cohortBinding(), o.catalogVersion(), o.routingPolicyId(), o.routingPolicyVersion(),
+                o.sourceFingerprint(), o.contextFingerprint(), o.constraintsFingerprint(), o.evaluationPolicyId(),
+                o.evaluationPolicyVersion(), cutoff, o.invocation(), o.outcomeStatus(), o.outcomeOrigin(),
+                o.acceptedAttemptId(), o.acceptedAttemptStatus(), o.outcomeSequence(), o.observations(),
+                o.judgedRevisions(), o.resources(), o.attribution());
+        return new RoutingObservation(moved, observation.experienceRef(), observation.revision(),
+                observation.ledgerSequence(), observation.supersedesSequence());
+    }
+
+    /**
      * Orders the effective observations.
      *
      * @param observations at most {@value #MAX_OBSERVATIONS} observations, in any order, possibly with several
      *         revisions of one sample
      * @return the highest revision of each sample in applied order
      * @throws IllegalArgumentException if more than {@value #MAX_OBSERVATIONS} are given, or two different
-     *         observations claim the same sample revision (an identical repeat is collapsed), or a higher revision of a
+     *         observations claim the same sample revision (an identical repeat, or the same claim read at another
+     *         export cutoff, is collapsed to the later snapshot), or a higher revision of a
      *         sample is not at a strictly later ledger position than the lower one
      */
     public List<RoutingObservation> order(Collection<RoutingObservation> observations) {
@@ -55,10 +88,16 @@ public final class RebuildOrder {
             Objects.requireNonNull(observation, "observations must not contain null");
             TreeMap<Long, RoutingObservation> revisions =
                     bySample.computeIfAbsent(observation.experienceRef(), ref -> new TreeMap<>());
-            RoutingObservation claimed = revisions.putIfAbsent(observation.revision(), observation);
-            if (claimed != null && !claimed.equals(observation)) {
-                throw new IllegalArgumentException("two different observations claim " + observation.experienceRef()
-                        + "@" + observation.revision());
+            RoutingObservation claimed = revisions.get(observation.revision());
+            if (claimed == null) {
+                revisions.put(observation.revision(), observation);
+            } else {
+                RoutingObservation merged = sameClaim(claimed, observation);
+                if (merged == null) {
+                    throw new IllegalArgumentException("two different observations claim "
+                            + observation.experienceRef() + "@" + observation.revision());
+                }
+                revisions.put(observation.revision(), merged);
             }
         }
         Map<String, RoutingObservation> latest = new HashMap<>(bySample.size() * 2);

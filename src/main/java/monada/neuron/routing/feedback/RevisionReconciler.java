@@ -26,7 +26,7 @@ import java.util.Optional;
  *     earlier) than the entry's is inconsistent caller data and rejected;</li>
  * <li>no entry: {@code CapacityExhausted} when {@value #MAX_LEDGER} entries exist, else {@code Apply} for a derived
  *     feedback or {@code RecordOnly} (a marker so an older delivery stays stale) when nothing was derived;</li>
- * <li>equal revision: an identical entry (identity, routing policy, ancestry, catalog, cutoff, rule, assessment, Node,
+ * <li>equal revision: an identical entry (identity, routing policy, ancestry, catalog, rule, assessment, Node,
  *     peer; a marker equals a marker of the same reason and binding) is a duplicate delivery
  *     ({@code AlreadyApplied}); a marker whose cause the caller can remove (no Node bound, wrong pairing) followed by
  *     the same claim is a first application; two rewards that differ only in the cost refinement are
@@ -219,7 +219,6 @@ public final class RevisionReconciler {
                 && existing.routingPolicyVersion().equals(incoming.routingPolicyVersion())
                 && existing.supersedesSequence().equals(incoming.supersedesSequence())
                 && existing.catalogVersion().equals(incoming.catalogVersion())
-                && existing.cutoff() == incoming.cutoff()
                 && existing.targetNodeId().equals(incoming.targetNodeId())
                 && left.cohortKey().equals(right.cohortKey())
                 && left.acceptance() == right.acceptance()
@@ -231,7 +230,7 @@ public final class RevisionReconciler {
 
     /**
      * True when a retryable marker and the incoming entry are the same claim apart from the cause that was removed:
-     * identity, routing policy, ancestry, catalog, cutoff and the cohort bucket agree.
+     * identity, routing policy, ancestry, catalog and the cohort bucket agree.
      */
     private boolean sameClaim(AppliedRevision marker, AppliedRevision incoming) {
         if (!marker.identity().equals(incoming.identity())
@@ -239,7 +238,6 @@ public final class RevisionReconciler {
                 || !marker.routingPolicyVersion().equals(incoming.routingPolicyVersion())
                 || !marker.supersedesSequence().equals(incoming.supersedesSequence())
                 || !marker.catalogVersion().equals(incoming.catalogVersion())
-                || marker.cutoff() != incoming.cutoff()
                 || !(marker.basis() instanceof EntryBasis.NoUpdateMarker recorded)) {
             return false;
         }

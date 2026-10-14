@@ -18,6 +18,7 @@ import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
 import org.junit.jupiter.api.Test;
 
+import java.util.Collections;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -68,7 +69,7 @@ class RoutingFeedbackValueTypesTest {
     void cohortKeysAreOrderedByScopeStageBucketAndRoute() {
         var keys = new ArrayList<>(List.of(key("s", "b", "r", 2), key("s", "b", "r", 1), key("s", "a", "z", 1),
                 key("r", "z", "z", 9)));
-        java.util.Collections.sort(keys);
+        Collections.sort(keys);
         assertEquals(List.of(key("r", "z", "z", 9), key("s", "a", "z", 1), key("s", "b", "r", 1),
                 key("s", "b", "r", 2)), keys);
     }
@@ -282,6 +283,73 @@ class RoutingFeedbackValueTypesTest {
     }
 
     @Test
+    void ledgerEntryEqualityCoversEveryComponentExceptTheExportCutoff() throws Exception {
+        var entry = AppliedRevision.of(reward());
+        var components = AppliedRevision.class.getRecordComponents();
+        var cutoff = AppliedRevision.class.getRecordComponents()[5];
+        assertEquals("cutoff", cutoff.getName());
+        for (var component : components) {
+            var copy = changing(entry, component.getName());
+            if (component.getName().equals("cutoff")) {
+                assertEquals(entry, copy, "the export cutoff must not be part of the claim");
+                assertEquals(entry.hashCode(), copy.hashCode());
+            } else {
+                assertNotEquals(entry, copy, component.getName() + " must be part of the claim");
+            }
+        }
+    }
+
+    /** The entry with one component changed to a different, still valid value. */
+    private static AppliedRevision changing(AppliedRevision e, String component) {
+        var id = e.identity();
+        var derived = (EntryBasis.Derived) e.basis();
+        return switch (component) {
+            case "identity" -> new AppliedRevision(
+                    new FeedbackIdentity("other-ref", id.revision(), id.ledgerSequence(), id.decisionRef(), id.route(),
+                            id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()),
+                    e.routingPolicyId(), e.routingPolicyVersion(), e.supersedesSequence(), e.catalogVersion(),
+                    e.cutoff(), e.targetNodeId(), e.costPeer(), e.basis(), e.disposition(), e.score());
+            case "routingPolicyId" -> new AppliedRevision(id, "other", e.routingPolicyVersion(),
+                    e.supersedesSequence(), e.catalogVersion(), e.cutoff(), e.targetNodeId(), e.costPeer(), e.basis(),
+                    e.disposition(), e.score());
+            case "routingPolicyVersion" -> new AppliedRevision(id, e.routingPolicyId(), "other",
+                    e.supersedesSequence(), e.catalogVersion(), e.cutoff(), e.targetNodeId(), e.costPeer(), e.basis(),
+                    e.disposition(), e.score());
+            case "supersedesSequence" -> new AppliedRevision(
+                    new FeedbackIdentity(id.experienceRef(), 1, id.ledgerSequence(), id.decisionRef(), id.route(),
+                            id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()),
+                    e.routingPolicyId(), e.routingPolicyVersion(), Feature.known(3L), e.catalogVersion(), e.cutoff(),
+                    e.targetNodeId(), e.costPeer(), e.basis(), e.disposition(), e.score());
+            case "catalogVersion" -> new AppliedRevision(id, e.routingPolicyId(), e.routingPolicyVersion(),
+                    e.supersedesSequence(), "other", e.cutoff(), e.targetNodeId(), e.costPeer(), e.basis(),
+                    e.disposition(), e.score());
+            case "cutoff" -> new AppliedRevision(id, e.routingPolicyId(), e.routingPolicyVersion(),
+                    e.supersedesSequence(), e.catalogVersion(), e.cutoff() + 1, e.targetNodeId(), e.costPeer(),
+                    e.basis(), e.disposition(), e.score());
+            case "targetNodeId" -> new AppliedRevision(id, e.routingPolicyId(), e.routingPolicyVersion(),
+                    e.supersedesSequence(), e.catalogVersion(), e.cutoff(), Optional.of(NODE_B), e.costPeer(),
+                    e.basis(), e.disposition(), e.score());
+            case "costPeer" -> new AppliedRevision(id, e.routingPolicyId(), e.routingPolicyVersion(),
+                    e.supersedesSequence(), e.catalogVersion(), e.cutoff(), e.targetNodeId(),
+                    Optional.of(new PeerRevision("exp-2", 0, id.ledgerSequence() - 1)),
+                    new EntryBasis.Derived(derived.cohortKey(), ScoreRule.REINFORCE_COST_REFINED, derived.acceptance(),
+                            derived.reasons(), derived.provenFailures()),
+                    e.disposition(), e.score());
+            case "basis" -> new AppliedRevision(id, e.routingPolicyId(), e.routingPolicyVersion(),
+                    e.supersedesSequence(), e.catalogVersion(), e.cutoff(), e.targetNodeId(), e.costPeer(),
+                    new EntryBasis.Derived(
+                            new CohortKey(derived.cohortKey().scopeId(), derived.cohortKey().stageKind(), "other-bucket",
+                                    derived.cohortKey().route()),
+                            derived.rule(), derived.acceptance(), derived.reasons(), derived.provenFailures()),
+                    e.disposition(), e.score());
+            case "disposition", "score" -> new AppliedRevision(id, e.routingPolicyId(), e.routingPolicyVersion(),
+                    e.supersedesSequence(), e.catalogVersion(), e.cutoff(), e.targetNodeId(), e.costPeer(),
+                    e.basis(), e.disposition(), e.score() - 0.1);
+            default -> throw new AssertionError("a new component " + component + " needs a case here and in equals");
+        };
+    }
+
+    @Test
     void scoreRuleIsTheSingleOwnerOfRuleAndAssessmentConsistency() {
         var none = List.<IneligibilityReason>of();
         var noFailures = List.<QualityDimension>of();
@@ -359,15 +427,18 @@ class RoutingFeedbackValueTypesTest {
     }
 
     @Test
-    void aMarkerKeepsTheOutcomeProvenanceThatDistinguishesTwoClaims() {
+    void aMarkerKeepsTheClaimProvenanceButNotTheExportCutoff() {
         var base = new FeedbackFixtures.Spec().passing();
         var other = new FeedbackFixtures.Spec().passing();
         other.cutoff = 200L;
         var reason = NoUpdateReason.NO_STAGE_ATTRIBUTION;
         assertEquals(AppliedRevision.ofNoUpdate(base.observation(), reason),
                 AppliedRevision.ofNoUpdate(base.observation(), reason));
-        assertNotEquals(AppliedRevision.ofNoUpdate(base.observation(), reason),
+        // the export cutoff is audit context, not part of the claim
+        assertEquals(AppliedRevision.ofNoUpdate(base.observation(), reason),
                 AppliedRevision.ofNoUpdate(other.observation(), reason));
+        assertEquals(AppliedRevision.ofNoUpdate(base.observation(), reason).hashCode(),
+                AppliedRevision.ofNoUpdate(other.observation(), reason).hashCode());
         assertNotEquals(AppliedRevision.ofNoUpdate(base.observation(), reason),
                 AppliedRevision.ofNoUpdate(base.observation(), NoUpdateReason.NO_TARGET_BINDING));
         var marker = AppliedRevision.ofNoUpdate(base.observation(), reason);

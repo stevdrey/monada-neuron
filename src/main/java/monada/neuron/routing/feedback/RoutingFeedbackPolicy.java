@@ -118,6 +118,11 @@ public final class RoutingFeedbackPolicy {
                 || !bindings.featureSchemaVersion().equals(definition.cohortMapping().featureSchemaVersion())) {
             return noUpdate(NoUpdateReason.BINDING_PARTITION_MISMATCH, null);
         }
+        if (!stageRecordedBy(decision, request)) {
+            // the stage kind comes from the decision, never from the request alone: the bucket cannot prove it
+            return new FeedbackDerivation.NoUpdate(NoUpdateReason.PROVENANCE_MISMATCH,
+                    List.of(IneligibilityReason.PROVENANCE_MISMATCH), List.of(ProvenanceField.STAGE_KIND));
+        }
         if (!definition.cohortMapping().featureSchemaVersion().equals(request.features().schemaVersion())) {
             // checked before the cohort mapping runs: a mapping built for its own schema may reject foreign features
             return new FeedbackDerivation.NoUpdate(NoUpdateReason.PROVENANCE_MISMATCH,
@@ -177,6 +182,14 @@ public final class RoutingFeedbackPolicy {
             return Optional.of(NoUpdateReason.FEATURE_SCHEMA_MISMATCH);
         }
         return Optional.empty();
+    }
+
+    /**
+     * True when the decision recorded the stage kind it was made for and the request is for that stage. A decision
+     * that recorded none cannot earn feedback: the stage would be whatever the caller says.
+     */
+    private boolean stageRecordedBy(RoutingDecision.Selected decision, RoutingRequest request) {
+        return decision.provenance().stageKind().filter(request.stageKind()::equals).isPresent();
     }
 
     /** True when the request's features reproduce the cohort bucket the decision recorded. */
@@ -263,7 +276,7 @@ public final class RoutingFeedbackPolicy {
 
     private CohortKey cohortKey(
             RoutingDecision.Selected decision, RoutingRequest request, RoutingOutcome outcome) {
-        return new CohortKey(outcome.decisionRef().scopeId(), request.stageKind(),
+        return new CohortKey(outcome.decisionRef().scopeId(), decision.provenance().stageKind().orElseThrow(),
                 decision.cohortBinding().cohortBucket(), outcome.executedRoute());
     }
 
@@ -298,10 +311,9 @@ public final class RoutingFeedbackPolicy {
         RoutingOutcome self = observation.outcome();
         RoutingOutcome peer = reference.peer().outcome();
         RoutingRequest peerRequest = reference.peerRequest();
-        if (peer.cutoff() > self.cutoff()) {
-            // a later peer would let future acceptance and usage influence feedback as of an earlier cutoff
-            return false;
-        }
+        // the export cutoffs are not compared: they are the snapshots the two observations were read at. A peer that
+        // precedes the reward in applied order (checked below) has all its evidence at or before that position, whatever
+        // snapshot it was exported in, so a re-export can never change which peers qualify
         if (!new PeerRevision(reference.peer().experienceRef(), reference.peer().revision(),
                 reference.peer().ledgerSequence()).precedes(observation.ledgerSequence(), observation.experienceRef())) {
             // the peer must come first in applied order, or a replay would let the reward depend on later data
@@ -318,6 +330,9 @@ public final class RoutingFeedbackPolicy {
                 || self.executedRoute().equals(peer.executedRoute())
                 || self.decisionRef().equals(peer.decisionRef())
                 || observation.experienceRef().equals(reference.peer().experienceRef())) {
+            return false;
+        }
+        if (!stageRecordedBy(reference.peerDecision(), peerRequest)) {
             return false;
         }
         if (partitionMismatch(reference.peerDecision().cohortBinding(), peer.cohortBinding()).isPresent()

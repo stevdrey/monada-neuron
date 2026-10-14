@@ -389,6 +389,31 @@ class RevisionReconcilerTest {
     }
 
     @Test
+    void theSameUnchangedSampleReExportedAtALaterCutoffIsADuplicateNotAConflict() {
+        // reward, neutral feedback and a no-update marker, each re-exported at a later snapshot
+        var reward = new FeedbackFixtures.Spec().passing();
+        var rewardLater = new FeedbackFixtures.Spec().passing();
+        rewardLater.cutoff = reward.cutoff + 50;
+        var neutral = new FeedbackFixtures.Spec();
+        var neutralLater = new FeedbackFixtures.Spec();
+        neutralLater.cutoff = neutral.cutoff + 50;
+        for (var pair : List.of(List.of(reward, rewardLater), List.of(neutral, neutralLater))) {
+            var ledger = List.of(applied(derive(policy(), pair.get(0))));
+            assertEquals(new Reconciliation.AlreadyApplied(ledger.getFirst()),
+                    reconciler.reconcile(ledger, pair.get(1).observation(), derive(policy(), pair.get(1))));
+        }
+        var none = new FeedbackDerivation.NoUpdate(NoUpdateReason.NO_STAGE_ATTRIBUTION, List.of(), List.of());
+        var marker = AppliedRevision.ofNoUpdate(reward.observation(), NoUpdateReason.NO_STAGE_ATTRIBUTION);
+        assertEquals(new Reconciliation.AlreadyApplied(marker),
+                reconciler.reconcile(List.of(marker), rewardLater.observation(), none));
+        // a change of the effective claim at the same revision is still a conflict, whatever the cutoff
+        var changed = new FeedbackFixtures.Spec().failing();
+        changed.cutoff = reward.cutoff + 50;
+        assertInstanceOf(Reconciliation.ConflictingRevision.class, reconciler.reconcile(
+                List.of(applied(derive(policy(), reward))), changed.observation(), derive(policy(), changed)));
+    }
+
+    @Test
     void aWrongPairingIsRetryableAndTheCorrectedPairingOfTheSameRevisionIsAppliedInPlace() {
         var s = new FeedbackFixtures.Spec().passing();
         var wrong = new FeedbackFixtures.Spec().passing();

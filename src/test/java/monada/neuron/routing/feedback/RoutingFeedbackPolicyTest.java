@@ -8,6 +8,8 @@ import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
 import monada.neuron.routing.CohortBinding;
 import monada.neuron.routing.CohortMapping;
+import monada.neuron.routing.Provenance;
+import monada.neuron.routing.RoutingDecision;
 import monada.neuron.routing.RoutingStateDefinition;
 import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.catalog.RouteKey;
@@ -34,6 +36,7 @@ import monada.neuron.testsupport.AllocationProbe;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestReporter;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -342,15 +345,19 @@ class RoutingFeedbackPolicyTest {
     }
 
     @Test
-    void aPeerFromAfterTheFeedbackCutoffCannotInfluenceIt() {
+    void aPeerFromAfterTheRewardInAppliedOrderCannotInfluenceItButTheExportSnapshotDoesNotMatter() {
         var self = new FeedbackFixtures.Spec().passing();
         self.resources = tokens(400, ResourceValue.Provenance.REPORTED);
-        var later = peer("task-17", tokens(900, ResourceValue.Provenance.REPORTED), true);
-        later.cutoff = self.cutoff + 1;
-        assertEquals(ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL, withCost(policy(), self, later).rule());
-        // a peer evaluated as of the same cutoff still counts
-        var same = peer("task-17", tokens(900, ResourceValue.Provenance.REPORTED), true);
-        assertEquals(ScoreRule.REINFORCE_COST_REFINED, withCost(policy(), self, same).rule());
+        // positioned after the reward: no bonus, whatever snapshot it was exported in
+        var after = peer("task-17", tokens(900, ResourceValue.Provenance.REPORTED), true);
+        after.ledgerSequence = self.ledgerSequence + 1;
+        assertEquals(ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL, withCost(policy(), self, after).rule());
+        // positioned before the reward: the bonus holds even when the peer was exported at a later snapshot
+        var laterSnapshot = peer("task-17", tokens(900, ResourceValue.Provenance.REPORTED), true);
+        laterSnapshot.cutoff = self.cutoff + 500;
+        assertEquals(ScoreRule.REINFORCE_COST_REFINED, withCost(policy(), self, laterSnapshot).rule());
+        var sameSnapshot = peer("task-17", tokens(900, ResourceValue.Provenance.REPORTED), true);
+        assertEquals(ScoreRule.REINFORCE_COST_REFINED, withCost(policy(), self, sameSnapshot).rule());
     }
 
     @Test
@@ -368,15 +375,73 @@ class RoutingFeedbackPolicyTest {
         spec.passing();
         var other = new RoutingRequest(spec.request.contractVersion(),
                 spec.request.scopeId(), spec.request.taskId(), spec.request.executionId(), spec.request.attemptId(),
-                spec.request.stageId(), "review", spec.request.requestOrdinal(), spec.request.sourceFingerprint(),
+                spec.request.stageId(), "implement", spec.request.requestOrdinal(), spec.request.sourceFingerprint(),
                 spec.request.contextFingerprint(), spec.request.constraintsFingerprint(),
                 spec.request.evaluationPolicyId(), spec.request.evaluationPolicyVersion(),
-                TaskFeatures.builder().stageKind("review").changeSize(100_000L).build(),
+                TaskFeatures.builder().stageKind("implement").changeSize(100_000L).build(),
                 spec.request.requirements(), false, spec.request.cutoff());
         var none = noUpdate(policy().derive(spec.observation(), spec.decision, other,
                 bindings(spec.decision, other, NODE_A)));
         assertEquals(NoUpdateReason.PROVENANCE_MISMATCH, none.reason());
         assertEquals(List.of(ProvenanceField.COHORT_BINDING), none.mismatches());
+    }
+
+    private RoutingRequest withStage(RoutingRequest r, String stageKind) {
+        return new RoutingRequest(r.contractVersion(), r.scopeId(), r.taskId(), r.executionId(), r.attemptId(),
+                r.stageId(), stageKind, r.requestOrdinal(), r.sourceFingerprint(), r.contextFingerprint(),
+                r.constraintsFingerprint(), r.evaluationPolicyId(), r.evaluationPolicyVersion(),
+                TaskFeatures.builder().stageKind(stageKind).build(), r.requirements(), false, r.cutoff());
+    }
+
+    private TargetBindings bothStages(FeedbackFixtures.Spec s, UUID implementNode, UUID reviewNode) {
+        var key = FeedbackFixtures.keyOf(s.decision, s.request);
+        var review = new CohortKey(key.scopeId(), "review", key.cohortBucket(), key.route());
+        return new TargetBindings("scope-demo", "forge-gates", "1", DEFINITION.mappingVersion(),
+                FeedbackFixtures.SCHEMA,
+                List.of(new TargetBinding(key, implementNode), new TargetBinding(review, reviewNode)));
+    }
+
+    @Test
+    void aRequestOfAnotherStageKindWithTheSameBucketNeverReachesTheOtherStagesNode() {
+        var review = withStage(spec.request, "review");
+        for (var s : List.of(new FeedbackFixtures.Spec().passing(), new FeedbackFixtures.Spec().failing())) {
+            var bindings = bothStages(s, NODE_A, NODE_B);
+            // the substituted request keeps the DecisionRef, fingerprints, policy, cutoff and bucket
+            var none = noUpdate(policy().derive(s.observation(), s.decision, review, bindings));
+            assertEquals(NoUpdateReason.PROVENANCE_MISMATCH, none.reason());
+            assertEquals(List.of(ProvenanceField.STAGE_KIND), none.mismatches());
+            // the genuine request still credits only the Node of its own stage
+            var f = feedback(policy().derive(s.observation(), s.decision, s.request, bindings));
+            assertEquals(List.of(NODE_A), f.entries().stream().map(e -> e.targetNodeId()).toList());
+            assertEquals("implement", f.cohortKey().stageKind());
+        }
+    }
+
+    @Test
+    void aDecisionThatRecordedNoStageKindCannotEarnFeedback() {
+        spec.passing();
+        var p = spec.decision.provenance();
+        var unrecorded = new Provenance(p.decisionRef(), p.catalogVersion(), p.policyId(),
+                p.policyVersion(), p.cutoff(), p.state(), p.validation(), p.parameters());
+        var d = spec.decision;
+        var bare = new RoutingDecision.Selected(unrecorded, d.route(), d.executionMode(), d.basis(), d.overflowUsed(),
+                d.candidates(), d.candidatesTruncated(), d.rulesApplied(), d.rulesSkipped(), d.exclusions(),
+                d.cohortBinding());
+        var none = noUpdate(policy().derive(spec.observation(), bare, spec.request,
+                bindings(spec.decision, spec.request, NODE_A)));
+        assertEquals(List.of(ProvenanceField.STAGE_KIND), none.mismatches());
+        assertEquals(Optional.of("implement"), spec.decision.provenance().stageKind());
+    }
+
+    @Test
+    void aCostPeerOfASubstitutedStageIsNotAComparison() {
+        var self = new FeedbackFixtures.Spec().passing();
+        self.resources = tokens(400, ResourceValue.Provenance.REPORTED);
+        var peer = peer("task-17", tokens(900, ResourceValue.Provenance.REPORTED), true);
+        var swapped = new CostReference(peer.observation(), peer.decision, withStage(peer.request, "review"));
+        var f = feedback(policy().derive(self.observation(), self.decision, self.request,
+                bindings(self.decision, self.request, NODE_A), Optional.of(swapped)));
+        assertEquals(ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL, f.rule());
     }
 
     // ---- neutral and no-update cases ----
@@ -649,7 +714,7 @@ class RoutingFeedbackPolicyTest {
     void permutedEvidenceOrderGivesEqualFeedback() {
         var forward = new FeedbackFixtures.Spec().passing();
         var backward = new FeedbackFixtures.Spec().passing();
-        java.util.Collections.reverse(backward.observations);
+        Collections.reverse(backward.observations);
         assertEquals(feedback(derive(forward)), feedback(derive(backward)));
     }
 
