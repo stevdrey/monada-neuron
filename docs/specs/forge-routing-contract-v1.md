@@ -1571,10 +1571,13 @@ movement; they are **not tuned or calibrated**, and amplitudes are preference or
 Let `C <= 256` cohorts, `L <= 4,096` ledger entries, `R <= 32` routes and `N <= 4,096` replayed observations. Cohorts are a
 `TreeMap` keyed by `CohortKey` (point lookup on every consumption, canonical iteration for snapshots, rare insertion), the
 ledger a `TreeMap` keyed by sample reference in code-point order; neither order depends on hashing or insertion.
+Binding is rare (setup, catalog changes, recovery), so the ledger scan in `bind` is accepted rather than maintaining a
+credited-cohort index on every consumption.
 
 | Operation | Time | Extra space |
 | --- | --- | --- |
-| `bind` of `k` keys | `O(k log C + C)` (bindings rebuilt) | `O(C)` |
+| `bind` of `k` keys | `O(k log k + k log C + L log k + C log C)`: dedup and lookup of the keys, a scan of the ledger for credited keys (only when a key is new) and the canonical rebuild of the bindings | `O(k + C)` |
+| `unbindDormant` | `O(log C + R + C log C)` (bindings rebuilt) | `O(C)` |
 | `consume` | `O(L + log C)`: a ledger copy and the reconciler's `O(L)` scan dominate | `O(L)` transient |
 | `snapshot` / `cohorts` | `O(C·R)` | `O(C)` |
 | `rebuild` | `O(N log N + N·L)` | `O(N + C + L)` staged |

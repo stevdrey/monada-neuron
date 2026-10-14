@@ -126,6 +126,9 @@ public final class RoutingStateStore {
      * samples in applied order. Redelivering a sample instead may return {@code RebuildRequired}, because a later effect
      * on another cohort may already be applied.
      *
+     * <p>{@code O(k log k + k log C + L log k + C log C)} for {@code k} keys, {@code C} cohorts and {@code L} ledger
+     * entries: the ledger is scanned only when a key is new, and binding is rare, so no credited-cohort index is kept.
+     *
      * @return {@code Bound} with the new keys, or {@code CapacityExhausted} or {@code RebuildRequired} with nothing bound
      * @throws IllegalArgumentException if a key belongs to another scope
      */
