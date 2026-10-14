@@ -83,9 +83,23 @@ class RevisionReconcilerTest {
         assertEquals(derived.feedback().routingPolicyId(), entry.routingPolicyId());
         assertEquals(derived.feedback().routingPolicyVersion(), entry.routingPolicyVersion());
         var otherPolicy = new AppliedRevision(entry.identity(), entry.routingPolicyId(), "other-version",
-                entry.cohortKey(), entry.disposition(), entry.score());
+                entry.supersedesSequence(), entry.cohortKey(), entry.disposition(), entry.score());
         assertEquals(new Reconciliation.ConflictingRevision(otherPolicy),
                 reconciler.reconcile(List.of(otherPolicy), spec.observation(), derived));
+    }
+
+    @Test
+    void theSameRevisionWithDifferentCorrectionAncestryIsAConflict() {
+        var first = new FeedbackFixtures.Spec().passing();
+        first.revision = 1;
+        first.supersedes = Feature.known(3L);
+        var second = new FeedbackFixtures.Spec().passing();
+        second.revision = 1;
+        second.supersedes = Feature.known(4L);
+        var ledger = List.of(applied(derive(policy(), first)));
+        assertEquals(Feature.known(3L), ledger.getFirst().supersedesSequence());
+        assertEquals(new Reconciliation.ConflictingRevision(ledger.getFirst()),
+                reconciler.reconcile(ledger, second.observation(), derive(policy(), second)));
     }
 
     @Test
@@ -201,7 +215,7 @@ class RevisionReconcilerTest {
             var id = base.identity();
             ledger.add(new AppliedRevision(new FeedbackIdentity("ref-" + i, 0, 12L, id.decisionRef(), id.route(),
                     id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()),
-                    base.routingPolicyId(), base.routingPolicyVersion(), base.cohortKey(),
+                    base.routingPolicyId(), base.routingPolicyVersion(), base.supersedesSequence(), base.cohortKey(),
                     FeedbackDisposition.REINFORCE, 0.8));
         }
         return ledger;

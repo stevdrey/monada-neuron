@@ -196,6 +196,60 @@ class RoutingFeedbackValueTypesTest {
     }
 
     @Test
+    void aPenaltyCannotCarryReasonsThatMakeThePolicyNeutralOrDeriveNothing() {
+        var p = penalty();
+        var minus = List.of(FeedbackEntry.of(NODE_A, -0.4));
+        for (var reason : List.of(IneligibilityReason.IMPORTED_CLAIM, IneligibilityReason.NO_STAGE_ATTRIBUTION)) {
+            assertThrows(IllegalArgumentException.class, () -> penaltyWith(p, p.derivedAcceptance(),
+                    List.of(reason), p.provenFailures(), minus));
+        }
+    }
+
+    private static RoutingFeedback rewardWith(RoutingFeedback f, long cutoff, long ledgerSequence,
+            List<monada.neuron.routing.outcome.LearningAssessment.EffectiveEvidence> evidence) {
+        var id = f.identity();
+        return new RoutingFeedback(f.contractVersion(),
+                new FeedbackIdentity(id.experienceRef(), id.revision(), ledgerSequence, id.decisionRef(), id.route(),
+                        id.mappingVersion(), id.evaluationPolicyId(), id.evaluationPolicyVersion()),
+                f.supersedesSequence(), f.cohortKey(), f.routingPolicyId(), f.routingPolicyVersion(),
+                f.catalogVersion(), cutoff, f.derivedAcceptance(), f.rule(), f.disposition(), f.entries(),
+                f.reasons(), evidence, f.provenFailures());
+    }
+
+    @Test
+    void aRewardNeedsPassingEffectiveEvidence() {
+        var f = reward();
+        var passing = f.effectiveEvidence();
+        rewardWith(f, f.cutoff(), f.identity().ledgerSequence(), passing);
+        assertThrows(IllegalArgumentException.class,
+                () -> rewardWith(f, f.cutoff(), f.identity().ledgerSequence(), List.of()));
+        var unknown = new monada.neuron.routing.outcome.LearningAssessment.EffectiveEvidence(
+                monada.neuron.routing.outcome.QualityDimension.TESTS,
+                monada.neuron.routing.outcome.QualityState.UNKNOWN, 5L);
+        assertThrows(IllegalArgumentException.class,
+                () -> rewardWith(f, f.cutoff(), f.identity().ledgerSequence(), List.of(unknown)));
+    }
+
+    @Test
+    void feedbackCannotLieBeyondItsCutoff() {
+        var f = reward();
+        long sequence = f.identity().ledgerSequence();
+        assertThrows(IllegalArgumentException.class, () -> rewardWith(f, sequence - 1, sequence, f.effectiveEvidence()));
+        var late = new monada.neuron.routing.outcome.LearningAssessment.EffectiveEvidence(
+                monada.neuron.routing.outcome.QualityDimension.TESTS,
+                monada.neuron.routing.outcome.QualityState.PASS, f.cutoff() + 1);
+        assertThrows(IllegalArgumentException.class, () -> rewardWith(f, f.cutoff(), sequence, List.of(late)));
+    }
+
+    @Test
+    void aProvenanceNoUpdateNeedsTheDifferingFieldsAndTheMatchingReason() {
+        assertThrows(IllegalArgumentException.class, () -> new FeedbackDerivation.NoUpdate(
+                NoUpdateReason.PROVENANCE_MISMATCH, List.of(IneligibilityReason.PROVENANCE_MISMATCH), List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new FeedbackDerivation.NoUpdate(
+                NoUpdateReason.PROVENANCE_MISMATCH, List.of(), List.of(ProvenanceField.CUTOFF)));
+    }
+
+    @Test
     void scoreRulesMapToExactlyOneDisposition() {
         for (var rule : ScoreRule.values()) {
             if (rule.name().startsWith("NEUTRAL")) {
@@ -229,11 +283,11 @@ class RoutingFeedbackValueTypesTest {
         assertEquals(0.8, applied.score(), 1e-12);
         assertTrue(applied.changedState());
         assertThrows(IllegalArgumentException.class,
-                () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(), f.cohortKey(),
-                        FeedbackDisposition.NEUTRAL, 0.5));
+                () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(), f.supersedesSequence(),
+                        f.cohortKey(), FeedbackDisposition.NEUTRAL, 0.5));
         assertThrows(IllegalArgumentException.class,
-                () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(), f.cohortKey(),
-                        FeedbackDisposition.REINFORCE, -0.5));
+                () -> new AppliedRevision(f.identity(), f.routingPolicyId(), f.routingPolicyVersion(), f.supersedesSequence(),
+                        f.cohortKey(), FeedbackDisposition.REINFORCE, -0.5));
         assertThrows(IllegalArgumentException.class,
                 () -> new Reconciliation.Apply(Optional.of(applied)));
     }

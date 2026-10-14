@@ -95,13 +95,13 @@ public final class RevisionReconciler {
     }
 
     /** The earliest sequence whose effect may be obsolete: the replaced revision's own, or earlier if declared. */
-    private static long affectedFrom(AppliedRevision existing, RoutingObservation observation) {
+    private long affectedFrom(AppliedRevision existing, RoutingObservation observation) {
         return observation.supersedesSequence() instanceof Feature.Known<Long> known
                 ? Math.min(known.value(), existing.ledgerSequence())
                 : existing.ledgerSequence();
     }
 
-    private static void requireLedger(List<AppliedRevision> ledger) {
+    private void requireLedger(List<AppliedRevision> ledger) {
         if (ledger.size() > MAX_LEDGER) {
             throw new IllegalArgumentException(
                     "ledger allows at most " + MAX_LEDGER + " entries, got: " + ledger.size());

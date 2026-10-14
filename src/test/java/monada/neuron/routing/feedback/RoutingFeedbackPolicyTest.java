@@ -148,6 +148,22 @@ class RoutingFeedbackPolicyTest {
                 noUpdate(policy.derive(spec.observation(), spec.decision, spec.request, bindings)).reason());
     }
 
+    @Test
+    void aRequestThatDidNotProduceTheDecisionIsRejectedBeforeAnyLookup() {
+        spec.passing();
+        var other = new monada.neuron.routing.catalog.RoutingRequest(spec.request.contractVersion(),
+                spec.request.scopeId(), spec.request.taskId(), spec.request.executionId(), spec.request.attemptId(),
+                spec.request.stageId(), "review", spec.request.requestOrdinal(), spec.request.sourceFingerprint(),
+                spec.request.contextFingerprint(), spec.request.constraintsFingerprint(),
+                spec.request.evaluationPolicyId(), spec.request.evaluationPolicyVersion(),
+                monada.neuron.routing.features.TaskFeatures.builder().stageKind("review").changeSize(100_000L).build(),
+                spec.request.requirements(), false, spec.request.cutoff());
+        var none = noUpdate(policy().derive(spec.observation(), spec.decision, other,
+                bindings(spec.decision, other, NODE_A)));
+        assertEquals(NoUpdateReason.PROVENANCE_MISMATCH, none.reason());
+        assertEquals(List.of(ProvenanceField.COHORT_BINDING), none.mismatches());
+    }
+
     // ---- neutral and no-update cases ----
 
     @Test
@@ -328,6 +344,17 @@ class RoutingFeedbackPolicyTest {
             assertEquals(ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL, f.rule());
             assertEquals(0.8, f.entries().getFirst().score(), EPS);
         }
+    }
+
+    @Test
+    void twoAccountsOfOneExactDecisionAreNotACostComparison() {
+        var self = new FeedbackFixtures.Spec().passing();
+        self.resources = tokens(400, ResourceValue.Provenance.REPORTED);
+        // same DecisionRef (same request), but a catalog whose only route is sub-b
+        var rival = new FeedbackFixtures.Spec(self.request, decide(self.request, "sub-b")).passing();
+        rival.experienceRef = "exp-2";
+        rival.resources = tokens(900, ResourceValue.Provenance.REPORTED);
+        assertEquals(ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL, withCost(policy(), self, rival).rule());
     }
 
     @Test

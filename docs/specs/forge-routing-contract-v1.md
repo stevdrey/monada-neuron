@@ -1243,7 +1243,7 @@ Examples covered by tests: accepted, repaired chain (with and without stage-loca
 unavailable/timed out, stale policy and artifact revision, incomplete usage, imported claim, contradictory evidence,
 provenance mismatch, future evidence, cost that cannot offset a failed gate.
 
-Evidence gaps: the evaluator trusts the host's judgments, attribution basis and mandatory set (descriptors and evidence are
+Evidence gaps: `stageKind` is not retained in the decision or the outcome, so the request's `stageKind` is host-asserted; the policy only verifies that the request's features reproduce the decision's recorded bucket, and a request that differs from the original in `stageKind` alone is not detected; the evaluator trusts the host's judgments, attribution basis and mandatory set (descriptors and evidence are
 observations, not proof); `STAGE_LOCAL` is accepted on the host's assertion plus at least one reference; Store export
 translation, envelope verification and sample `ExperienceRef` handling were delivered by #64 (Section 20); feedback scores and dispositions were delivered by #65 (Section 21);
 no latency measurement; no claim that eligibility rules improve routing.
@@ -1365,7 +1365,7 @@ clock, randomness, background task or Node access. The caller-owned mutable stat
 | --- | --- |
 | `RoutingFeedbackPolicy(RoutingStateDefinition, RoutingFeedbackConfig, EvidencePolicy)` | `derive(observation, selectedDecision, request, bindings[, Optional<CostReference>]) -> FeedbackDerivation`. Pure and stateless. Runs `OutcomeEvaluator.assess`, which stays the single owner of the verdict rule, and only maps the assessment. |
 | `FeedbackDerivation` | Sealed: `Derived(RoutingFeedback)` or `NoUpdate(NoUpdateReason, reasons, mismatches)`. |
-| `RoutingFeedback` | Contract version, `FeedbackIdentity`, `supersedesSequence`, `CohortKey`, routing policy id/version, catalog version, cutoff, `DerivedAcceptance`, `ScoreRule`, `FeedbackDisposition`, 0 or 1 `FeedbackEntry`, assessment reasons, effective evidence and proven failures. Validates rule, disposition, entries and evidence against each other: entries are score-only (no target Signal), `provenFailures` equal the effective `FAIL` dimensions, and a `PENALIZE` follows `NOT_ACCEPTED` or `ACCEPTED_UNVALIDATED` and carries no blocking reason. `toFeedbackInputs()` is the explicit adapter to `FeedbackInput`/`AdaptationPolicy`: it manufactures no `ActionStatus` and no `OutcomeFeedback`, and is empty for `NEUTRAL`. |
+| `RoutingFeedback` | Contract version, `FeedbackIdentity`, `supersedesSequence`, `CohortKey`, routing policy id/version, catalog version, cutoff, `DerivedAcceptance`, `ScoreRule`, `FeedbackDisposition`, 0 or 1 `FeedbackEntry`, assessment reasons, effective evidence and proven failures. Validates rule, disposition, entries and evidence against each other: entries are score-only (no target Signal), `provenFailures` equal the effective `FAIL` dimensions, a `REINFORCE` has non-empty effective evidence that is all `PASS` or `NOT_APPLICABLE`, a `PENALIZE` follows `NOT_ACCEPTED` or `ACCEPTED_UNVALIDATED` and carries no blocking reason and no `IMPORTED_CLAIM` or `NO_STAGE_ATTRIBUTION` (the policy derives neutral or nothing for those), and the sample position and every effective evidence position lie at or before the cutoff. `toFeedbackInputs()` is the explicit adapter to `FeedbackInput`/`AdaptationPolicy`: it manufactures no `ActionStatus` and no `OutcomeFeedback`, and is empty for `NEUTRAL`. |
 | `FeedbackIdentity` | Exact `experienceRef`, `revision`, `ledgerSequence`, `DecisionRef`, executed `RouteKey`, `mappingVersion` and evaluation policy. Compared by equality, never hashed or generated. |
 | `CohortKey`, `TargetBinding`, `TargetBindings` | `(scopeId, stageKind, cohortBucket, RouteKey)`, the caller's binding of a cohort to a Node `UUID`, and an immutable, canonical-order set of at most 256 bindings of one `(scopeId, evaluationPolicy, mappingVersion)` partition with unique keys and unique Nodes. Only identifiers are carried, so derivation cannot mutate a target. |
 | `RoutingFeedbackConfig`, `CostObjective`, `CostReference` | Scoring rules (below) and the optional cost refinement. |
@@ -1378,6 +1378,7 @@ Evaluated in this order; the first match decides.
 | Condition | Result |
 | --- | --- |
 | The policy's `mappingVersion` differs from the decision's cohort binding | `NoUpdate(MAPPING_MISMATCH)` |
+| The state definition's cohort mapping, applied to the request's features, does not give the decision's recorded bucket (the request did not produce the decision) | `NoUpdate(PROVENANCE_MISMATCH)` with `COHORT_BINDING` |
 | `PROVENANCE_MISMATCH` (including executing a route other than the advised one, any other scope, stage, catalog, policy, fingerprints or evaluation policy) | `NoUpdate(PROVENANCE_MISMATCH)` with the differing fields; a selected-but-unexecuted candidate never earns credit |
 | `STALE_ARTIFACT_REVISION`, `CONTRADICTORY_EVIDENCE` | `NoUpdate` with that reason |
 | `ENVIRONMENTAL_FAILURE`, `CANCELLED`, `PENDING`, `IMPORTED_CLAIM` | `Derived` `NEUTRAL` (`NEUTRAL_ENVIRONMENTAL`, `NEUTRAL_CANCELLED`, `NEUTRAL_PENDING`, `NEUTRAL_IMPORTED_CLAIM`); an imported claim is neutral even when it carries a failing observation |
@@ -1399,7 +1400,7 @@ what is learned, so the host must give the state definition a new `mappingVersio
 
 **Cost refinement (optional, reward-only).** `reinforceScore + costBonus` is granted only when a `CostReference` is supplied, the config
 declares a `CostObjective(UsageKind, MINIMIZE|MAXIMIZE)`, and all of the following hold: the peer (assessed by the policy itself with
-its own decision and request, not by a caller-supplied assessment) is a `POSITIVE_CANDIDATE` of **another** route; scope, task,
+its own decision and request, not by a caller-supplied assessment) is a `POSITIVE_CANDIDATE` of **another** route under a different `DecisionRef` (two accounts of one decision are not two executions); scope, task,
 `stageKind`, the three fingerprints and the evaluation policy are equal (Section 6, directly comparable pair); both outcomes have
 `MEASURED` usage with a `Known` counter of the declared kind and equal provenance (`REPORTED` or `ESTIMATED`); and the executed
 value is strictly better. Unknown, not-measured, absent and `NO_BILLABLE_USAGE` data, equal values and non-comparable pairs yield
@@ -1409,7 +1410,7 @@ cost and actual billing are carried by the outcome but are not read.
 
 ### 21.3 Caller-owned applied-revision bookkeeping and rebuild
 
-The caller keeps a ledger of `AppliedRevision(identity, routingPolicyId, routingPolicyVersion, cohortKey, disposition, score)` (the producing routing policy is retained as audit provenance, so the same revision delivered under another routing policy is a conflict, not a duplicate): **one entry per sample reference, the
+The caller keeps a ledger of `AppliedRevision(identity, routingPolicyId, routingPolicyVersion, supersedesSequence, cohortKey, disposition, score)` (the producing routing policy is retained as audit provenance, so the same revision delivered under another routing policy or with different correction ancestry is a conflict, not a duplicate): **one entry per sample reference, the
 latest applied revision**, at most 4,096 entries (neutral feedback is recorded too, with score `0.0`). Neuron holds no ledger.
 `RevisionReconciler.reconcile(ledger, observation, derivation)` first requires that a derived feedback answers the exact observation (reference, revision, ledger sequence and `supersedesSequence`), else `IllegalArgumentException`; it then returns advice and modifies nothing:
 

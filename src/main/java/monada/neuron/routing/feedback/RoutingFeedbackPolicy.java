@@ -11,6 +11,7 @@ import monada.neuron.routing.outcome.EvidencePolicy;
 import monada.neuron.routing.outcome.IneligibilityReason;
 import monada.neuron.routing.outcome.LearningAssessment;
 import monada.neuron.routing.outcome.OutcomeEvaluator;
+import monada.neuron.routing.outcome.ProvenanceField;
 import monada.neuron.routing.outcome.ResourceSummary;
 import monada.neuron.routing.outcome.RoutingObservation;
 import monada.neuron.routing.outcome.RoutingOutcome;
@@ -101,6 +102,11 @@ public final class RoutingFeedbackPolicy {
         Objects.requireNonNull(cost, "cost must not be null");
         if (!definition.mappingVersion().equals(decision.cohortBinding().mappingVersion())) {
             return noUpdate(NoUpdateReason.MAPPING_MISMATCH, null);
+        }
+        if (!definition.cohortMapping().bucketOf(request.features()).equals(decision.cohortBinding().cohortBucket())) {
+            // the request is not the one whose features produced the decision, so its stage kind cannot be trusted
+            return new FeedbackDerivation.NoUpdate(NoUpdateReason.PROVENANCE_MISMATCH,
+                    List.of(IneligibilityReason.PROVENANCE_MISMATCH), List.of(ProvenanceField.COHORT_BINDING));
         }
         LearningAssessment assessment = evaluator.assess(observation, decision, request, evidencePolicy);
         List<IneligibilityReason> reasons = assessment.reasons();
@@ -252,7 +258,8 @@ public final class RoutingFeedbackPolicy {
                 || !self.constraintsFingerprint().equals(peer.constraintsFingerprint())
                 || !self.evaluationPolicyId().equals(peer.evaluationPolicyId())
                 || !self.evaluationPolicyVersion().equals(peer.evaluationPolicyVersion())
-                || self.executedRoute().equals(peer.executedRoute())) {
+                || self.executedRoute().equals(peer.executedRoute())
+                || self.decisionRef().equals(peer.decisionRef())) {
             return false;
         }
         LearningAssessment peerAssessment =

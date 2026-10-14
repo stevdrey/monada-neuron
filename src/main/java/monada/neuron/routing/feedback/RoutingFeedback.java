@@ -73,6 +73,10 @@ public record RoutingFeedback(
         if (cutoff < 0) {
             throw new IllegalArgumentException("cutoff must be non-negative, got: " + cutoff);
         }
+        if (identity.ledgerSequence() > cutoff) {
+            throw new IllegalArgumentException("the sample at sequence " + identity.ledgerSequence()
+                    + " lies beyond the cutoff " + cutoff);
+        }
         Objects.requireNonNull(derivedAcceptance, "derivedAcceptance must not be null");
         Objects.requireNonNull(rule, "rule must not be null");
         Objects.requireNonNull(disposition, "disposition must not be null");
@@ -102,6 +106,12 @@ public record RoutingFeedback(
                         "routing entries are score-only: a target Signal would select another adaptation rule");
             }
         }
+        for (LearningAssessment.EffectiveEvidence evidence : effectiveEvidence) {
+            if (evidence.ledgerSequence() > cutoff) {
+                throw new IllegalArgumentException("effective " + evidence.dimension() + " evidence at sequence "
+                        + evidence.ledgerSequence() + " lies beyond the cutoff " + cutoff);
+            }
+        }
         List<QualityDimension> failed = effectiveEvidence.stream()
                 .filter(e -> e.state() == QualityState.FAIL).map(LearningAssessment.EffectiveEvidence::dimension)
                 .toList();
@@ -129,6 +139,12 @@ public record RoutingFeedback(
             throw new IllegalArgumentException(
                     "REINFORCE needs validated acceptance, no proven failure and no ineligibility reason");
         }
+        if (disposition == FeedbackDisposition.REINFORCE && (effectiveEvidence.isEmpty()
+                || effectiveEvidence.stream().anyMatch(e -> e.state() != QualityState.PASS
+                        && e.state() != QualityState.NOT_APPLICABLE))) {
+            throw new IllegalArgumentException(
+                    "REINFORCE needs effective evidence with every state PASS or NOT_APPLICABLE");
+        }
         if (disposition == FeedbackDisposition.PENALIZE) {
             if (provenFailures.isEmpty()) {
                 throw new IllegalArgumentException("PENALIZE needs a proven mandatory failure");
@@ -139,6 +155,11 @@ public record RoutingFeedback(
             }
             if (reasons.stream().anyMatch(IneligibilityReason::blocking)) {
                 throw new IllegalArgumentException("PENALIZE must not carry a blocking reason: " + reasons);
+            }
+            if (reasons.contains(IneligibilityReason.IMPORTED_CLAIM)
+                    || reasons.contains(IneligibilityReason.NO_STAGE_ATTRIBUTION)) {
+                throw new IllegalArgumentException(
+                        "PENALIZE must not carry a reason that makes the policy neutral or derive nothing: " + reasons);
             }
         }
     }
