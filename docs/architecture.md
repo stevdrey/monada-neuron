@@ -577,7 +577,8 @@ Resonance Store API types; the core never depends on it (ADR 0018). It holds one
 translates store failures into `UNAVAILABLE`/`FAILED` responses. Signal-to-text encoding and
 recalled-content decoding are injected codecs with deterministic placeholder defaults. Verify with
 `./gradlew :monada-neuron-resonance-adapter:test`; it requires the sibling `monada-resonance-store`
-checkout; without it the module is not part of the build, and core builds are unaffected.
+checkout; without it the module is not part of the build, and core builds are unaffected. CI's `adapter` job runs it
+against store `main` and records the tested store commit in the job summary (Issue #84).
 
 `ResonanceMemoryPort` is a synchronous, transport-neutral capability contract. Its request, result,
 and response records use only Neuron Signals, an opaque adapter reference, a finite score, explicit

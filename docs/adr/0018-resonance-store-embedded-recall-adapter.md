@@ -67,7 +67,16 @@ Deferred: no artifact repository exists yet; a composite build keeps sources aut
 - Contract tests run the same port semantics against a deterministic fixture and the production
   adapter over a temporary seeded store.
 - Recall quality depends on the injected codec; the defaults are for reproducibility only.
-- The store's Java 26 toolchain must be installed alongside Java 27 for adapter builds.
+- The store builds with the same Java 27 toolchain as Neuron, so adapter builds need no second JDK.
+- CI exercises the adapter (Issue #84): the `adapter` job in `.github/workflows/ci.yml` checks out the store next to
+  this repository and runs `./gradlew :monada-neuron-resonance-adapter:test`; it fails when the store checkout is
+  missing or that task does not exist. It tracks store `main` rather than a pinned commit, because the store is still
+  evolving in lockstep with Neuron and a pin would need constant bumps. Each run records the tested Neuron commit (the
+  merge commit for pull requests) and store commit in the job summary; reproduce a run locally by checking out both at
+  those commits in the sibling layout. A manual `workflow_dispatch` with `resonance_store_ref=<sha>` re-tests a branch
+  head only, not a pull request merge commit, and is unavailable for fork pull requests. Trade-off: a store change can turn a Neuron pull request red
+  without any Neuron change, and re-running the same pull request may test a different store commit. The Neuron-only
+  `verify` job keeps proving that core builds and tests do not need the store.
 
 - Execution experience is read through a second, separate seam (Issue #64): `StoreExperienceTranslator` turns the Store's
   bounded `execution-sample/1` exports into Neuron-owned `RoutingObservation`s. It is read-only against a caller-owned
@@ -81,7 +90,9 @@ Deferred: no artifact repository exists yet; a composite build keeps sources aut
 
 - Domain-meaningful Signal codec.
 - Remote transport and timeouts/virtual threads only if deployment requires them.
-- Publish the store to a versioned repository and replace the composite build with a version range.
+- Publish the store to a versioned repository and replace the composite build with a version range; at that point,
+  or once the store stabilizes, replace the `main` tracking of the CI `adapter` job with a pinned revision or range.
 - ~~Measure adapter translation overhead separately from store recall.~~ Done in Issue #49 with JMH; see
   [adapter overhead benchmark](../benchmarks/resonance-store-adapter-overhead.md).
 - ~~Translate Store execution exports into routing observations.~~ Done in Issue #64; see the contract Section 20.
+- ~~Exercise the adapter module in CI.~~ Done in Issue #84 against store `main`, with the tested commit recorded.
