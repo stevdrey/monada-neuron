@@ -30,4 +30,22 @@ public sealed interface BindResult {
      */
     record CapacityExhausted(int requested, int available) implements BindResult {
     }
+
+    /**
+     * The ledger still records applied effects for these previously removed cohorts; binding a baseline Node under
+     * them would make the published preference disagree with the ledger. Nothing was bound. The caller rebuilds (the
+     * rebuilt ledger records those samples as {@code NO_TARGET_BINDING} markers), binds again and redelivers them.
+     *
+     * @param credited the requested keys the ledger still credits, in canonical order
+     */
+    record RebuildRequired(List<CohortKey> credited) implements BindResult {
+
+        /** Copies the list and requires at least one key. */
+        public RebuildRequired {
+            credited = List.copyOf(Objects.requireNonNull(credited, "credited must not be null"));
+            if (credited.isEmpty()) {
+                throw new IllegalArgumentException("a rebuild-required bind names at least one credited key");
+            }
+        }
+    }
 }

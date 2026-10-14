@@ -1509,7 +1509,7 @@ registry, session, singleton, clock, randomness, background task or exploration.
 | `AdaptiveStateDefinition(RoutingStateDefinition, InitialNodeState, AdaptationConfig, RoutingFeedbackConfig)` | The composite definition of Section 7 under the one `mappingVersion` of its `RoutingStateDefinition`, added as a new type so `RoutingStateDefinition` keeps its signature. Rejects `minAmplitude <= 0`, a baseline outside `(minAmplitude, maxAmplitude]`, and an initial energy or frequency outside the adaptation bounds. `feedbackPolicy(EvidencePolicy)` builds the `RoutingFeedbackPolicy` of exactly this mapping and scores. `reference()` is `adaptive-routing-state/1` (Section 22.3). |
 | `StatePartition(scopeId, evaluationPolicyId, evaluationPolicyVersion)` | One store learns for one scope under one evaluation policy; the feature schema and mapping come from the definition. |
 | `RoutingStateStore` | Caller-owned, mutable, **not thread-safe**. Cohort Nodes with their support counts, the applied-revision ledger and the `processedCutoff` watermark. `bind`, `unbindDormant`, `bindings`, `consume`, `advanceCutoff`, `snapshot`, `cohorts`, `resetCopy`, `rebuild`. |
-| `BindResult` | Sealed: `Bound(added)` or `CapacityExhausted(requested, available)`; binding is all-or-nothing. |
+| `BindResult` | Sealed: `Bound(added)`, `CapacityExhausted(requested, available)` or `RebuildRequired(credited)`; binding is all-or-nothing. |
 | `StateUpdate` | Sealed result of `consume`: `Applied`, `Recorded`, `Unchanged` (`AlreadyApplied`, `StaleRevision`, `NotRecorded`), `RebuildRequired`, `Blocked` (`ConflictingRevision`, `StalePeerDependency`, `CapacityExhausted`) and `ForeignPartition(fields)`. `examined()` says whether the watermark advanced. |
 | `RebuildResult` | Sealed: `Rebuilt(store)` or `Failed(observation, update)`. |
 | `CohortState`, `CohortStatus`, `PartitionField` | Read-only diagnostic view of a cohort (`ACTIVE` or `DORMANT` for a given catalog) and the parts of an observation that make it foreign. |
@@ -1535,7 +1535,10 @@ Node identity is the name-based UUID of Section 7 (tag `forge-routing/1/node`, l
   with `preferenceValue = amplitude - baselineAmplitude`, the support count, the partition, the definition's
   `mappingVersion` and feature schema, the producing policy and the watermark. A cohort whose route is absent is `DORMANT`:
   kept, never published, still counted toward the bound, and published again intact when the identical route returns.
-  `unbindDormant` is the only way a cohort leaves the state and refuses an active cohort.
+  `unbindDormant` is the only way a cohort leaves the state and refuses an active cohort. Its applied ledger entries stay
+  until the next rebuild, and until then `bind` refuses the same key with `RebuildRequired`: a baseline Node under entries
+  recorded as applied would never regain their effect, because redelivery is a duplicate. The rebuild records those samples
+  as `NO_TARGET_BINDING` markers; after binding again, redelivering them applies them as first applications.
 - **Fallback** is the #62 policy's, unchanged: a cold or partial snapshot, an unbound route or support below
   `minSupportingObservations` for any eligible route gives exactly the baseline decision; a snapshot of another mapping,
   scope, schema or evaluation policy, or with a watermark beyond the request cutoff, gives `Abstain(STATE_INCOMPATIBLE)`.
@@ -1596,7 +1599,8 @@ changes a later eligible route only once support reaches the minimum, an ineligi
 preference, saturation at both bounds and recovery from the floor, neutral feedback, duplicate delivery, unbound routes,
 scope isolation, mapping-version mismatch (foreign consumption and incompatible snapshot), cohort and ledger capacity with
 the state unchanged, dormant cohorts and the watermark. `StateRebuildTest` covers rebuild equality with a from-scratch state
-after a correction, independence of input order, a failed rebuild leaving the live state unchanged, and dormant replay.
+after a correction, independence of input order, a failed rebuild leaving the live state unchanged, dormant replay, and a
+removed cohort that must be rebuilt before it is bound again and then regains exactly its learned state on redelivery.
 `AdaptiveStateDeterminismTest` is the long deterministic fixture: 4,000 seeded deliveries per scope over 3 stages, 4 buckets
 and 3 routes (36 cohorts) in two scopes, with corrections and staged rebuilds; two independent runs give identical cohorts,
 ledgers, watermarks and decisions, scope B's samples offered to scope A are never examined there and leave A identical to a
@@ -1612,5 +1616,5 @@ snapshot through the published artifact.
 - No effectiveness, accuracy or cost claim: the reference values are illustrative, and replay evaluation with controls is #67.
 - Latency and retained memory are unmeasured; the allocation figures above are regression guards, not benchmarks.
 - A removed dormant cohort leaves its ledger entries until the next rebuild, which records them as `NO_TARGET_BINDING`
-  markers; the caller decides when to rebuild.
+  markers; the caller decides when to rebuild, and the key cannot be bound again before it.
 - `RoutingStateStore` is single-threaded, like `NeuronRuntime`; the host publishes snapshots to concurrent readers.

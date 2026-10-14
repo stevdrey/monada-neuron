@@ -4,6 +4,8 @@ import monada.neuron.routing.RoutingDecision;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.feedback.CohortKey;
+import monada.neuron.routing.feedback.EntryBasis;
+import monada.neuron.routing.feedback.NoUpdateReason;
 import monada.neuron.routing.outcome.RoutingObservation;
 import org.junit.jupiter.api.Test;
 
@@ -163,5 +165,42 @@ class StateRebuildTest {
         assertEquals(KEY_B, dormant.key());
         assertEquals(CohortStatus.DORMANT, dormant.status());
         assertEquals(5.6, dormant.amplitude(), 1e-12);
+    }
+
+    @Test
+    void aRemovedCohortTheLedgerStillCreditsIsRebuiltBeforeItCanBeBoundAgain() {
+        var live = bound();
+        List<RoutingObservation> observations = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            var observation = sample("exp-b-" + i, "sub-b", 0, 20 + i, Feature.unknown(), Kind.PASS);
+            observations.add(observation);
+            assertInstanceOf(StateUpdate.Applied.class, deliverTo(live, observation));
+        }
+        var learned = live.cohorts(demo()).getLast();
+        var onlyA = AdaptationFixtures.only("sub-a");
+        assertEquals(true, live.unbindDormant(KEY_B, onlyA));
+
+        // rebinding before a rebuild would put a baseline Node under entries the ledger records as applied
+        assertEquals(new BindResult.RebuildRequired(List.of(KEY_B)), live.bind(List.of(KEY_B)));
+        assertEquals(1, live.cohortCount());
+
+        var rebuilt = assertInstanceOf(RebuildResult.Rebuilt.class, rebuild(live, observations, 30)).store();
+        for (var entry : rebuilt.ledger()) {
+            assertEquals(NoUpdateReason.NO_TARGET_BINDING,
+                    ((EntryBasis.NoUpdateMarker) entry.basis()).reason());
+        }
+        assertEquals(new BindResult.Bound(List.of(KEY_B)), rebuilt.bind(List.of(KEY_B)));
+        for (var observation : observations) {
+            assertInstanceOf(StateUpdate.Applied.class, deliverTo(rebuilt, observation));
+        }
+        assertEquals(learned, rebuilt.cohorts(demo()).getLast());
+    }
+
+    @Test
+    void aRemovedCohortWithoutAppliedEffectsCanBeBoundAgainDirectly() {
+        var live = bound();
+        deliverTo(live, sample("exp-b", "sub-b", 0, 20, Feature.unknown(), Kind.PENDING));
+        assertEquals(true, live.unbindDormant(KEY_B, AdaptationFixtures.only("sub-a")));
+        assertEquals(new BindResult.Bound(List.of(KEY_B)), live.bind(List.of(KEY_B)));
     }
 }

@@ -118,7 +118,13 @@ public final class RoutingStateStore {
      * initial state with its deterministic identity; an already bound key is left as it is.
      *
      * @param keys cohorts to bind
-     * @return {@code Bound} with the new keys, or {@code CapacityExhausted} with nothing bound
+     * <p>A new key that the ledger still credits (a cohort removed by {@link #unbindDormant} whose applied effects were
+     * not yet replayed away) is refused with {@code RebuildRequired}: a baseline Node under a ledger that records those
+     * effects as applied would never get them back, because their redelivery is a duplicate. After a {@link #rebuild},
+     * those entries are {@code NO_TARGET_BINDING} markers, the key can be bound, and redelivering the samples applies
+     * them as first applications.
+     *
+     * @return {@code Bound} with the new keys, or {@code CapacityExhausted} or {@code RebuildRequired} with nothing bound
      * @throws IllegalArgumentException if a key belongs to another scope
      */
     public BindResult bind(Collection<CohortKey> keys) {
@@ -133,6 +139,17 @@ public final class RoutingStateStore {
             if (!cohorts.containsKey(key)) {
                 added.add(key);
             }
+        }
+        var credited = new TreeSet<CohortKey>();
+        if (!added.isEmpty()) {
+            for (AppliedRevision entry : ledger.values()) {
+                if (entry.changedState() && entry.cohortKey().filter(added::contains).isPresent()) {
+                    credited.add(entry.cohortKey().get());
+                }
+            }
+        }
+        if (!credited.isEmpty()) {
+            return new BindResult.RebuildRequired(List.copyOf(credited));
         }
         int available = MAX_COHORTS - cohorts.size();
         if (added.size() > available) {
@@ -149,7 +166,8 @@ public final class RoutingStateStore {
 
     /**
      * Removes a dormant cohort: the only way a cohort leaves the state. Ledger entries that credited it stay until the
-     * next rebuild, which, without the binding, records them as {@code NO_TARGET_BINDING} markers.
+     * next rebuild, which, without the binding, records them as {@code NO_TARGET_BINDING} markers; until then the key
+     * cannot be bound again ({@link BindResult.RebuildRequired}).
      *
      * @param key the cohort
      * @param catalog the catalog the route must be absent from
