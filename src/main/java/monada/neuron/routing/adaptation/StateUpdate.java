@@ -121,6 +121,53 @@ public sealed interface StateUpdate {
     }
 
     /**
+     * Only a store whose ledger was {@linkplain RoutingStateStore#compact compacted} (or rebuilt from a checkpoint)
+     * answers this: the observation cannot be reconciled against the entries the checkpoint replaced by its digest.
+     * Nothing was changed, including the watermark.
+     *
+     * <p>{@code COVERED} needs no action: it is a delivery at or below the horizon of a sample the checkpoint already
+     * accounted for. The other kinds invalidate the checkpoint for this observation: the caller rebuilds from a
+     * checkpoint whose cutoff is strictly below {@code affectedFromSequence}, or from scratch.
+     *
+     * @param kind why the observation is beyond the checkpoint
+     * @param horizon the store's compaction horizon
+     * @param affectedFromSequence the earliest position the observation affects: its {@code supersedesSequence} for
+     *         {@code SUPERSEDES_COMPACTED}, otherwise its own ledger sequence
+     */
+    record BeyondCheckpoint(Kind kind, long horizon, long affectedFromSequence) implements StateUpdate {
+
+        /** Requires the kind and positions consistent with it. */
+        public BeyondCheckpoint {
+            Objects.requireNonNull(kind, "kind must not be null");
+            if (horizon < 0 || affectedFromSequence < 0) {
+                throw new IllegalArgumentException("horizon and affectedFromSequence must be non-negative");
+            }
+            if (affectedFromSequence > horizon) {
+                throw new IllegalArgumentException("an observation affecting only sequences after the horizon "
+                        + horizon + " is not beyond the checkpoint, got: " + affectedFromSequence);
+            }
+        }
+
+        @Override
+        public boolean examined() {
+            return false;
+        }
+
+        /** Why an observation is beyond the checkpoint. */
+        public enum Kind {
+            /** A delivery at or below the horizon of a sample whose entry was compacted: a repeat or an older one. */
+            COVERED,
+            /** A newer revision replaces one whose entry was compacted; its old effect is part of the checkpoint. */
+            SUPERSEDES_COMPACTED,
+            /**
+             * A delivery at or below the horizon that would apply or record something there (a retried marker), which
+             * only a replay from before that position can place in applied order.
+             */
+            BEFORE_HORIZON
+        }
+    }
+
+    /**
      * The observation belongs to another state partition; nothing was changed or recorded.
      *
      * @param fields the differing parts, unique and in declaration order

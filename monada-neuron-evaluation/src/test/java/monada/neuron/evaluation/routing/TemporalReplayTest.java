@@ -250,4 +250,35 @@ class TemporalReplayTest {
                     () -> assertEquals(digests.feedback(fresh), digests.feedback(again)));
         }
     }
+
+    @Test
+    void checkpointedRebuildsReplayLessAndReachTheSameDecisionsAndState() {
+        var replay = new TemporalReplay(fixtures.workload(240));
+        var digests = new ReplayDigests();
+        var scratch = replay.run(ReplayArm.ADAPTIVE);
+        var checkpointed = replay.run(ReplayArm.ADAPTIVE, RebuildStrategy.CHECKPOINT);
+        var state = checkpointed.state().orElseThrow();
+        var restored = assertInstanceOf(RebuildResult.Rebuilt.class, replay.rebuildFromCheckpoint(checkpointed));
+
+        RoutingReplayEvaluation.requireSameReplay(checkpointed, scratch, digests);
+        assertAll(
+                () -> assertEquals(digests.decisions(scratch), digests.decisions(checkpointed)),
+                () -> assertEquals(digests.feedback(scratch), digests.feedback(checkpointed)),
+                () -> assertEquals(digests.state(state), digests.state(restored.store())),
+                () -> assertEquals(scratch.rebuilds().rebuilds(), checkpointed.rebuilds().rebuilds()),
+                () -> assertTrue(checkpointed.rebuilds().fromCheckpoint() > 0),
+                () -> assertTrue(checkpointed.rebuilds().compactedEntries() > 0),
+                () -> assertTrue(state.ledger().size() < state.ledgerDigest().entries()),
+                () -> assertTrue(checkpointed.rebuilds().replayedObservations()
+                        < scratch.rebuilds().replayedObservations()));
+    }
+
+    @Test
+    void aRunThatWasNeverCompactedCannotBeRebuiltFromACheckpoint() {
+        var replay = new TemporalReplay(fixtures.workload(240));
+        var scratch = replay.run(ReplayArm.ADAPTIVE);
+        assertThrows(IllegalArgumentException.class, () -> replay.rebuildFromCheckpoint(scratch));
+        assertThrows(IllegalArgumentException.class,
+                () -> replay.rebuildFromCheckpoint(replay.run(ReplayArm.STATIC)));
+    }
 }

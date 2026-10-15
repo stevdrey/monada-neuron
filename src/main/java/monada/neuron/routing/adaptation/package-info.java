@@ -9,6 +9,11 @@
  * {@code RoutingPreference} snapshots that a pure routing policy reads. Deriving feedback never touches the store,
  * so derivation without consumption is a no-op.
  *
+ * <p>Opt-in {@link monada.neuron.routing.adaptation.RoutingStateCheckpoint}s (issue #89) capture every cohort and the
+ * order-independent {@link monada.neuron.routing.adaptation.LedgerDigest}; compacting to one bounds the live ledger,
+ * and a rebuild can start from one and replay only later observations, with a result identical to a rebuild from
+ * scratch.
+ *
  * <p>The store is mutable and <b>not thread-safe</b>; Neuron keeps no registry, session, singleton, timer,
  * background task or persistence. A Node amplitude is a preference ordinal, <b>not</b> a calibrated success
  * probability. Learned preference only reorders routes that are already eligible; it never changes authorization,

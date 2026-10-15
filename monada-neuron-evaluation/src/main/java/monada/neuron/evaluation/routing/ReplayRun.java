@@ -21,6 +21,7 @@ import java.util.Optional;
  * @param derivations every delivery's derivation by rule and reason, counted whether or not events are recorded
  * @param state the final caller-owned state; absent for the static arm, which keeps none. The run hands it over:
  *        nothing else holds it
+ * @param rebuilds how the run's correction-triggered rebuilds were carried out
  */
 public record ReplayRun(
         ReplayArm arm,
@@ -29,7 +30,37 @@ public record ReplayRun(
         List<Delivered> delivered,
         DecisionTrace decisions,
         Derivations derivations,
-        Optional<RoutingStateStore> state) {
+        Optional<RoutingStateStore> state,
+        RebuildStats rebuilds) {
+
+    /**
+     * Rebuild work of one run: what the checkpoint strategy is meant to reduce.
+     *
+     * @param strategy where rebuilds started
+     * @param rebuilds correction-triggered rebuilds
+     * @param fromCheckpoint rebuilds that started from a checkpoint
+     * @param replayedObservations observations handed to all rebuild calls together
+     * @param checkpoints checkpoints taken
+     * @param compactions compactions that dropped at least one entry
+     * @param compactedEntries ledger entries dropped by compaction
+     */
+    public record RebuildStats(RebuildStrategy strategy, int rebuilds, int fromCheckpoint, long replayedObservations,
+            int checkpoints, int compactions, int compactedEntries) {
+
+        /** No rebuild work: a run that never rebuilt from scratch. */
+        public static final RebuildStats NONE = new RebuildStats(RebuildStrategy.SCRATCH, 0, 0, 0L, 0, 0, 0);
+
+        /** Requires the strategy. */
+        public RebuildStats {
+            Objects.requireNonNull(strategy, "strategy must not be null");
+        }
+    }
+
+    /** A run that did no rebuild work, such as one assembled by hand. */
+    public ReplayRun(ReplayArm arm, List<ReplaySample> samples, List<FeedbackEvent> feedback, List<Delivered> delivered,
+            DecisionTrace decisions, Derivations derivations, Optional<RoutingStateStore> state) {
+        this(arm, samples, feedback, delivered, decisions, derivations, state, RebuildStats.NONE);
+    }
 
     /**
      * An observation and the decision and request it answers.
@@ -59,5 +90,6 @@ public record ReplayRun(
         Objects.requireNonNull(decisions, "decisions must not be null");
         Objects.requireNonNull(derivations, "derivations must not be null");
         Objects.requireNonNull(state, "state must not be null");
+        Objects.requireNonNull(rebuilds, "rebuilds must not be null");
     }
 }

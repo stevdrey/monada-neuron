@@ -3,7 +3,6 @@ package monada.neuron.evaluation.routing;
 import monada.neuron.routing.adaptation.CohortState;
 import monada.neuron.routing.adaptation.RoutingStateStore;
 import monada.neuron.routing.catalog.RouteCatalog;
-import monada.neuron.routing.feedback.AppliedRevision;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -68,13 +67,15 @@ public final class ReplayDigests {
         return lines.digest();
     }
 
-    /** Learned state: cohort Nodes, support, ledger and watermark. */
+    /**
+     * Learned state: cohort Nodes, support, the core {@code routing-ledger-digest/1} of every entry the state has
+     * accounted for, and the watermark. The core ledger digest does not change when the ledger is compacted, so a
+     * checkpointed run and a from-scratch rebuild compare digest for digest.
+     */
     public String state(RoutingStateStore state) {
         var lines = new Lines();
         cohortLines(lines, state);
-        for (AppliedRevision entry : state.ledger()) {
-            lines.add("ledger", entry);
-        }
+        lines.add("ledgerDigest", state.ledgerDigest());
         lines.add("processedCutoff", state.processedCutoff());
         return lines.digest();
     }

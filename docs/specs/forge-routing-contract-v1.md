@@ -33,7 +33,7 @@ Inspected `main` at `d1dd569` (Java 27). Already implemented and **reused unchan
 - `RuntimeBackendSelector`, which selects *internal computational backends* (SCALAR/VECTOR_API, object/CSR graph, ...). It
   never selects external workers or models.
 
-At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 22 describe what has been added since. Still absent: `RoutingStateCheckpoint` and ledger compaction (tracked in #89), and the published consumer loop (#68); the replay evaluation (#67) exists in the evaluation module only ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)). `ActionRequest` carries Signals and an
+At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 23 describe what has been added since. Still absent: the published consumer loop (#68); the replay evaluation (#67) exists in the evaluation module only ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)). `ActionRequest` carries Signals and an
 opaque host context, not a route. `Signal` carries no identity (ADR 0005).
 
 ## Goal
@@ -163,7 +163,7 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 | `RoutingObservation` | #63 (implemented, Section 19) | Neutral, Store-independent record of one effective execution sample, defined with `RoutingOutcome` so feedback derivation needs only #63. #64 only *produces* it from Store exports. |
 | `RoutingFeedback` | #65 (implemented, Section 21) | Bounded artifact derived from an observation; separate from `OutcomeFeedback`. |
 | `RoutingPreference`, `CohortMapping`, `RoutingStateDefinition` | #62 (implemented, Section 17) | `CohortMapping` is the pure, versioned `TaskFeatures -> cohortBucket` function with its `bucketMappingVersion`. `RoutingStateDefinition` groups the `CohortMapping`, `initialNodeState`, `AdaptationConfig` and feedback scoring and eligibility rules under one composite `mappingVersion` that changes when any part changes. `RoutingPreference` is the **immutable value snapshot** of `scopeId`, `featureSchemaVersion`, `evaluationPolicy`, `mappingVersion`, cohort preference values, supporting counts and `processedCutoff`, taken from the caller's mutable state and passed to `decide`. #62 defines the value type, its valid empty cold-start form (`EMPTY` for a scope, feature schema, evaluation policy and mapping version) and its admission validation, so `decide` needs no later type; #66 only builds non-empty snapshots from the caller's state. |
-| `RoutingStateStore` (caller-owned, mutable) | #66 (implemented, Section 22) | The caller's `Node` bindings, applied-revision ledger and watermark; it produces the `RoutingPreference` snapshots. It is never passed to `decide`. The composite definition is the additive `AdaptiveStateDefinition`; `RoutingStateCheckpoint` is deferred (Section 22.6). |
+| `RoutingStateStore` (caller-owned, mutable) | #66 (implemented, Section 22) | The caller's `Node` bindings, applied-revision ledger and watermark; it produces the `RoutingPreference` snapshots. It is never passed to `decide`. The composite definition is the additive `AdaptiveStateDefinition`; `RoutingStateCheckpoint`, the ledger digest and compaction are #89 (implemented, Section 23). |
 | `RoutingCognitiveStageResult` | #62 (implemented, Section 17) | Level B stage result that retains the full `RoutingDecision` together with the hypothesis hand-off (Section 3.5). |
 
 ### 3.1 Request, catalog and policy inputs
@@ -589,9 +589,8 @@ The adaptive state (#66) reuses the existing generic learning path; **no second 
   `RoutingStateCheckpoint(scopeId, featureSchemaVersion, evaluationPolicy, mappingVersion, policyId, policyVersion, processedCutoff, preferenceSnapshot, ledgerDigest)` and compacts the entries it covers. A rebuild may
   start from the latest checkpoint whose `processedCutoff` is **strictly less than** the `supersedesSequence` of the earliest
   superseded revision (an inclusive checkpoint at that sequence already contains the obsolete effect) and replay only later
-  observations. Starting from a valid checkpoint must give a state **identical** to a rebuild from scratch (#67 shows only
-  that the incrementally built state equals a full rebuild from scratch; the checkpoint type and its checkpoint-then-replay
-  equivalence are tracked in #89). A superseded revision at or before the checkpoint's `processedCutoff` invalidates it and forces a full rebuild.
+  observations. Starting from a valid checkpoint must give a state **identical** to a rebuild from scratch (#89
+  implements and verifies this, Section 23). A superseded revision at or before the checkpoint's `processedCutoff` invalidates it and forces a full rebuild.
 - **Atomic application.** Applying a `RoutingFeedback` is all-or-nothing. The caller **preflights** the ledger capacity (the
   entries it would add against the 4,096 bound) and the cohort capacity before mutating anything. If either would be
   exceeded the result is `CAPACITY_EXHAUSTED` and the Nodes, the applied-revision ledger, the supporting-observation counts and
@@ -1492,7 +1491,7 @@ bindings, every neutral and no-update rule above, cheap failing work, incomplete
 determinism under permuted evidence, immutable target state, every reconciliation result, ledger capacity, and rebuild equality from any input order.
 
 Evidence gaps: the evaluator trusts the host's judgments, attribution basis and mandatory set; `RoutingOutcome` carries no `stageKind`, so the stage kind is bound to the decision's recorded `Provenance.stageKind` (a decision that never recorded it derives no update, and the cost peer is checked the same way); usage counters are stage-level and carry no unit, so cost refinement compares counters only; the Node baseline,
-identity, `AdaptationConfig`, ledger and snapshots are implemented by #66 (Section 22) and checkpoints are tracked in #89; the #67 replay evaluation supplies controls and coverage but no effectiveness claim; and
+identity, `AdaptationConfig`, ledger and snapshots are implemented by #66 (Section 22) and checkpoints by #89 (Section 23); the #67 replay evaluation supplies controls and coverage but no effectiveness claim; and
 only exploratory replay latency and a modeled retained footprint exist, from #67.
 
 ## 22. Implemented: Bounded Caller-Owned Adaptive State (#66)
@@ -1625,10 +1624,8 @@ snapshot through the published artifact.
 
 ### 22.6 Evidence gaps and follow-up
 
-- `RoutingStateCheckpoint`, its ledger digest and ledger compaction (Section 7) are **not implemented**: a store whose ledger
-  is full reports `CapacityExhausted` and the caller rebuilds into a new scope or waits for compaction (#89). The #67 replay
-  shows that incremental state equals a full rebuild from scratch, digest for digest; that a rebuild started from a
-  checkpoint and replaying only later observations gives the same state is still #89's to verify.
+- `RoutingStateCheckpoint`, its ledger digest and ledger compaction (Section 7) were not part of #66; #89 implements them
+  (Section 23), so a store whose ledger is full can checkpoint, compact and learn again.
 - No effectiveness, accuracy or cost claim: the reference values are illustrative and untuned; the #67 replay with controls
   ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)) shows they can follow stale rewards and validates
   nothing about them.
@@ -1639,3 +1636,153 @@ snapshot through the published artifact.
 - A removed dormant cohort leaves its ledger entries until the next rebuild, which records them as `NO_TARGET_BINDING`
   markers; the caller decides when to rebuild, and the key cannot be bound again before it.
 - `RoutingStateStore` is single-threaded, like `NeuronRuntime`; the host publishes snapshots to concurrent readers.
+
+## 23. Implemented: Checkpoints, Ledger Digest and Compaction (#89)
+
+Package `monada.neuron.routing.adaptation`. This section describes **implemented behavior** and refines Section 7; it does not
+change its semantics. Everything is additive and opt-in: a store that is never compacted behaves exactly as in Section 22,
+digest for digest. There is still no persistence, registry, clock, randomness or background task, and nothing compacts
+automatically. Decision record: [ADR 0031](../adr/0031-routing-state-checkpoint-and-ledger-compaction.md).
+
+### 23.1 Types
+
+| Type | Role |
+| --- | --- |
+| `RoutingStateCheckpoint(scopeId, featureSchemaVersion, evaluationPolicyId, evaluationPolicyVersion, mappingVersion, policyId, policyVersion, processedCutoff, preferenceSnapshot, ledgerDigest, retainedMarkers)` | The Section 7 checkpoint. `preferenceSnapshot` holds **every** cohort, active and dormant, in canonical order. `retainedMarkers` are the retryable markers (`NO_TARGET_BINDING`, `PROVENANCE_MISMATCH`) it covers, kept as entries because their redelivery can still become a first application. |
+| `CheckpointCohort(key, amplitude, frequency, phase, energy, supportingObservations)` | One cohort's four Node channels and support. A restored Node is built like a reset one (deterministic identity, the definition's `NodeType`, `historyLimit = 0`) with these channels. |
+| `LedgerDigest(entries, sum)` | `routing-ledger-digest/1` (Section 23.2). `of(entries)`, `plus`, `minus`, `EMPTY`. |
+| `CompactionResult` | Sealed: `Compacted(removed, horizon)` or `Refused(STALE \| BEHIND_HORIZON \| CREDITS_UNBOUND_COHORT)`. |
+| `StateUpdate.BeyondCheckpoint(kind, horizon, affectedFromSequence)` | New permitted subtype: `COVERED`, `SUPERSEDES_COMPACTED` or `BEFORE_HORIZON` (Section 23.3). |
+
+`RoutingStateStore` gains `checkpoint(policy)`, `compact(checkpoint)`, `rebuildFrom(checkpoint, observations, exportCutoff,
+derive)`, `ledgerDigest()`, `latestCheckpoint()` and `compactionHorizon()`.
+
+### 23.2 `routing-ledger-digest/1`
+
+Each `AppliedRevision` is encoded as UTF-8 of the tag `forge-routing/1/ledger-entry` followed by every component that
+`AppliedRevision.equals` compares, in declaration order, **excluding `cutoff`**:
+
+- strings are a 4-byte big-endian length and their UTF-8;
+- `long` is 8 bytes and `int` 4 bytes, big-endian;
+- the score is its `Double.doubleToLongBits`;
+- enum constants are their names;
+- a `Feature` or `Optional` is a presence byte, then the value;
+- a `UUID` is its two halves;
+- a list is its size, then its elements;
+- an `EntryBasis` is a tag byte (`1` derived, `2` marker), then its components;
+- nested records (`FeedbackIdentity`, `DecisionRef`, `RouteKey`, `CohortKey`, `CohortBinding`, `PeerRevision`) are encoded
+  component by component.
+
+The digest is the entry count and the sum, modulo 2^256, of each encoding's SHA-256, as 64 lowercase hex digits. The sum is
+order-independent and foldable: `ledgerDigest()` is the compacted part plus the live ledger, so compaction never changes it
+and it equals the digest of a from-scratch rebuild's ledger. It is an integrity and equivalence check over caller-owned
+data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value; any encoding change bumps the format.
+
+### 23.3 Rules
+
+- **Checkpoint.** `checkpoint(policy)` captures the state at its `processedCutoff`; every ledger entry lies at or below it.
+- **Compaction is all-or-nothing.**
+  - `compact(checkpoint)` requires the checkpoint's partition and definition and a cutoff not beyond the watermark;
+    anything else throws.
+  - It is `Refused` and changes nothing:
+    - `STALE` when the ledger at or below the cutoff changed since the checkpoint was taken (its digest or markers no
+      longer match);
+    - `BEHIND_HORIZON` below the current horizon;
+    - `CREDITS_UNBOUND_COHORT` when a dropped or already compacted entry credits a cohort the checkpoint does not hold.
+  - Otherwise every covered entry except retryable markers is folded into the digest and dropped, and the cutoff becomes
+    the **compaction horizon**.
+  - The Nodes, support counts, watermark and `ledgerDigest()` do not change.
+  - Compacting with an older checkpoint keeps newer entries reconcilable; compacting with the newest empties the ledger.
+- **Horizon rules (compacted stores only)**, after the partition checks of Section 22.2:
+  - a sample whose entry was compacted is `COVERED` when delivered at or below the horizon, and `SUPERSEDES_COMPACTED`
+    when a newer revision's `supersedesSequence` is at or below it;
+  - a delivery at or below the horizon that the reconciler would apply or record is `BEFORE_HORIZON`, because the
+    compacted entries after it are invisible to the order rule;
+  - all three change nothing, including the watermark. `COVERED` needs no action. The other two tell the caller to
+    rebuild from a checkpoint strictly below `affectedFromSequence`, or from scratch.
+- **Binding** in a compacted store also refuses (`BindResult.RebuildRequired`) a new key that a compacted entry credited,
+  or that a retained `NO_TARGET_BINDING` marker at or below the horizon names. The marker records no stage kind, so the
+  match by scope, bucket and route is conservative.
+- **Cost peers.** A cost-refined derivation whose peer revision was compacted is trusted to come from the same export as
+  the observation, which is later than the horizon. The compacted ledger cannot re-check an older peer view.
+- **Rebuild from a checkpoint.** `rebuildFrom` stages a store with:
+  - the checkpoint's cohorts (channels and support) plus this store's other cohorts at the baseline;
+  - the retained markers as its ledger;
+  - the checkpoint's digest, and its cutoff as both watermark and horizon.
+
+  It then replays `RebuildOrder.order(observations)` under the horizon rules. Applied, recorded, not-recorded, repeated
+  markers and `COVERED` deliveries continue the replay; an observation that invalidates the checkpoint ends it as
+  `RebuildResult.Failed`. It throws when the checkpoint holds a Node channel outside the definition's bounds, the cohort
+  union exceeds 256, or a cohort bound after the checkpoint is named by one of its retained `NO_TARGET_BINDING` markers.
+  The live store is never modified.
+- **Equivalence.** Starting from a valid checkpoint gives, over the same cohort set:
+  - the same cohort channels (bit for bit), support counts, `ledgerDigest()`, watermark and snapshot as a rebuild from
+    scratch;
+  - and its ledger equals the scratch ledger above the horizon, plus the retained markers.
+
+### 23.4 Complexity and footprint
+
+| Operation | Time | Extra space |
+| --- | --- | --- |
+| `checkpoint` | `O(C + L)` (cohort copy and the digest of the live ledger) | `O(C + M)` retained for `M` markers |
+| `compact` | `O(L log L + C log C)` | `O(L)` transient |
+| `ledgerDigest` | `O(L)` plus an `O(1)` folded part (a count and 32 bytes) | `O(1)` |
+| `consume` | unchanged `O(L + log C)`; the horizon check is one map lookup | unchanged |
+| `rebuildFrom` | `O(N' log N' + N'·L' + C log C)` for the `N'` observations and `L'` entries after the cutoff | `O(N' + C + L')` staged |
+
+**Measured** in the #67 replay (full mode, 960 tasks, 51 correction-triggered rebuilds, JDK 27; one run on a single
+machine, exploratory, not a gate; [forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)):
+
+| Row | Mean per iteration | Alloc per decision | Replayed observations | Live / digested ledger entries |
+| --- | --- | --- | --- | --- |
+| `RoutingReplay.adaptive` | 322.69 ms | 357.53 KB | 24,349 | 910 / 910 |
+| `RoutingReplay.adaptive-checkpointed` | 18.43 ms | 28.93 KB | 893 | 34 / 910 |
+
+Both rows reach the same decision trace, deliveries, derivations and state digest. The checkpointed row:
+
+- takes a checkpoint every 32 deliveries and keeps 4;
+- starts 50 of the 51 rebuilds from a checkpoint;
+- compacts 31 entries explicitly; restores also shrink the ledger.
+
+**Modeled, not measured**: a checkpoint is about 64 bytes per cohort plus its markers and digest.
+
+### 23.5 Verification
+
+```bash
+./gradlew test --tests 'monada.neuron.routing.adaptation.*'
+./gradlew :monada-neuron-evaluation:test
+./gradlew :monada-neuron-evaluation:runForgeRoutingEvaluation
+```
+
+`LedgerDigestTest`:
+
+- pins the golden digest and the encoding prefix;
+- shows order independence and that `cutoff` is excluded while the score and catalog are not;
+- covers folding and unfolding.
+
+`RoutingStateCheckpointTest` covers:
+
+- a checkpoint's cohorts (including dormant ones), channels, digest and markers;
+- compaction leaving the state and digest unchanged, idempotently;
+- a full ledger that learns again after compaction, with the retry applied exactly once and an older sample `COVERED`;
+- a correction of a compacted revision refused as `SUPERSEDES_COMPACTED`, a rebuild from either checkpoint at or after
+  its `supersedesSequence` failing, and a rebuild from scratch succeeding;
+- checkpoint-then-replay equal to scratch after a correction;
+- `STALE`, `BEHIND_HORIZON` and `CREDITS_UNBOUND_COHORT`;
+- a rebind of a compacted cohort refused until a rebuild from the checkpoint;
+- retained retryable markers with a conservative bind refusal and `BEFORE_HORIZON`;
+- foreign or future checkpoints;
+- a long seeded fixture with short- and long-delay corrections, periodic checkpoints and compaction. Every rebuild
+  starts from the latest valid checkpoint, and the final state, and a rebuild from every remaining checkpoint, equal a
+  rebuild from scratch.
+
+In the evaluation module, `state.checkpoint-equals-rebuild` and `TemporalReplayTest` compare the checkpointed adaptive run
+with the from-scratch run.
+
+### 23.6 Evidence gaps
+
+- No checkpoint persistence or serialization format; the record is in-memory and hosts persist it as they wish.
+- The checkpoint cadence of the evaluation (32 deliveries, 4 kept) is illustrative, not tuned.
+- A correction of anything at or below the horizon needs an earlier checkpoint or a full rebuild, which is capped at
+  4,096 observations per call.
+- Adding a permitted subtype to `StateUpdate` breaks exhaustive `switch`es over it at compile time (ADR 0031).

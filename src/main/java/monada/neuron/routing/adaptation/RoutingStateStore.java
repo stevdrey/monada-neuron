@@ -1,5 +1,6 @@
 package monada.neuron.routing.adaptation;
 
+import monada.neuron.evolution.AdaptationConfig;
 import monada.neuron.evolution.AdaptationPolicy;
 import monada.neuron.evolution.DeterministicBaselineAdaptationPolicy;
 import monada.neuron.evolution.FeedbackInput;
@@ -13,8 +14,11 @@ import monada.neuron.routing.catalog.CatalogEntry;
 import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.feedback.AppliedRevision;
+import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.feedback.CohortKey;
+import monada.neuron.routing.feedback.EntryBasis;
 import monada.neuron.routing.feedback.FeedbackDerivation;
+import monada.neuron.routing.feedback.NoUpdateReason;
 import monada.neuron.routing.feedback.RebuildOrder;
 import monada.neuron.routing.feedback.Reconciliation;
 import monada.neuron.routing.feedback.RevisionReconciler;
@@ -33,6 +37,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.UUID;
@@ -53,6 +59,13 @@ import java.util.function.Function;
  * <p>Bounds: at most {@value #MAX_COHORTS} cohorts (active and dormant) and {@value #MAX_LEDGER} ledger entries;
  * exceeding either is reported as a value, never evicted and never learned into another scope. Cohort Nodes keep no
  * history ({@link InitialNodeState#HISTORY_LIMIT}), so the retained state is {@code O(C + L)}.
+ *
+ * <p>Checkpoints are opt-in. {@link #checkpoint} captures every cohort and the {@link #ledgerDigest()};
+ * {@link #compact} drops the ledger entries a checkpoint covers (keeping retryable markers), folds them into the
+ * digest and makes its cutoff the <em>compaction horizon</em>, so a full ledger can learn again;
+ * {@link #rebuildFrom} replays only observations after a checkpoint. A store that is never compacted behaves exactly
+ * as one without checkpoints. A compacted store answers what it can no longer reconcile with
+ * {@link StateUpdate.BeyondCheckpoint}.
  *
  * <p>Data structures: cohorts are point-queried by key on every consumption, iterated in canonical order for
  * snapshots and rarely added, so a {@link TreeMap} keyed by {@link CohortKey} gives {@code O(log C)} lookup and a
@@ -79,6 +92,12 @@ public final class RoutingStateStore {
     private final List<AppliedRevision> ledgerView = new LedgerView();
     private long processedCutoff;
     private TargetBindings bindings;
+    /** The checkpoint the ledger is compacted to; {@code null} until the first compaction or restore. */
+    private RoutingStateCheckpoint compactedTo;
+    /** Digest of the entries dropped by compaction, so {@link #ledgerDigest()} does not depend on compaction. */
+    private LedgerDigest compacted = LedgerDigest.EMPTY;
+    /** Cohorts that dropped entries moved: their effects live only in the checkpoint, so a rebind needs a rebuild. */
+    private final TreeSet<CohortKey> compactedCredits = new TreeSet<>();
 
     /**
      * An empty state: no cohorts, an empty ledger and a zero watermark.
@@ -113,9 +132,31 @@ public final class RoutingStateStore {
         return cohorts.size();
     }
 
-    /** A copy of the ledger in sample-reference code-point order. */
+    /**
+     * A copy of the live ledger in sample-reference code-point order; after compaction, only the entries above the
+     * horizon and the retained markers. {@link #ledgerDigest()} covers the compacted entries too.
+     */
     public List<AppliedRevision> ledger() {
         return List.copyOf(ledger.values());
+    }
+
+    /**
+     * The {@value LedgerDigest#FORMAT} digest of every entry this state has accounted for: the compacted entries plus
+     * the live ledger. Compaction does not change it, so it equals the digest of a from-scratch rebuild's ledger.
+     * {@code O(L)}.
+     */
+    public LedgerDigest ledgerDigest() {
+        return compacted.plus(LedgerDigest.of(ledger.values()));
+    }
+
+    /** The checkpoint the ledger was compacted to or restored from; empty for a store that never was. */
+    public Optional<RoutingStateCheckpoint> latestCheckpoint() {
+        return Optional.ofNullable(compactedTo);
+    }
+
+    /** The compaction horizon, the {@code processedCutoff} of {@link #latestCheckpoint()}; empty when there is none. */
+    public OptionalLong compactionHorizon() {
+        return compactedTo == null ? OptionalLong.empty() : OptionalLong.of(compactedTo.processedCutoff());
     }
 
     /**
@@ -126,6 +167,11 @@ public final class RoutingStateStore {
      * not yet replayed away) is refused with {@code RebuildRequired}: a baseline Node under a ledger that records those
      * effects as applied would never get them back, because their redelivery is a duplicate. The cohort is restored by
      * one staged {@link #rebuild(Collection, long, Collection, BiFunction)} whose cohort set includes the key.
+     *
+     * <p>A compacted store refuses the same way a new key whose effects were compacted, and a new key that a retained
+     * {@code NO_TARGET_BINDING} marker at or below the horizon names by scope, bucket and route (the marker records no
+     * stage kind, so the match is conservative): binding it in place would leave that sample unapplied where a replay
+     * from before the horizon would apply it.
      *
      * <p>{@code O(k log k + k log C + L log k + C log C)} for {@code k} keys, {@code C} cohorts and {@code L} ledger
      * entries: the ledger is scanned only when a key is new, and binding is rare, so no credited-cohort index is kept.
@@ -152,6 +198,20 @@ public final class RoutingStateStore {
             for (AppliedRevision entry : ledger.values()) {
                 if (entry.changedState() && entry.cohortKey().filter(added::contains).isPresent()) {
                     credited.add(entry.cohortKey().get());
+                }
+                if (compactedTo != null && entry.ledgerSequence() <= compactedTo.processedCutoff()
+                        && entry.basis() instanceof EntryBasis.NoUpdateMarker marker
+                        && marker.reason() == NoUpdateReason.NO_TARGET_BINDING) {
+                    for (CohortKey key : added) {
+                        if (names(marker, entry, key)) {
+                            credited.add(key);
+                        }
+                    }
+                }
+            }
+            for (CohortKey key : added) {
+                if (compactedCredits.contains(key)) {
+                    credited.add(key);
                 }
             }
         }
@@ -214,6 +274,13 @@ public final class RoutingStateStore {
      * ledger sequence, because the watermark records what was examined. {@code RebuildRequired}, a conflict, a stale
      * cost peer and a full ledger change nothing at all.
      *
+     * <p>A compacted store first applies the horizon rules: a sample whose entry was compacted is {@code COVERED} when
+     * delivered at or below the horizon and {@code SUPERSEDES_COMPACTED} when a newer revision replaces it; a delivery
+     * at or below the horizon that would apply or record something is {@code BEFORE_HORIZON}. All three are
+     * {@link StateUpdate.BeyondCheckpoint} and change nothing. A cost-refined derivation whose peer revision was
+     * compacted is trusted to have been derived from the same export as the observation, which is later than the
+     * horizon; the compacted ledger cannot re-check an older view of that peer.
+     *
      * @param observation the observation
      * @param derivation what the feedback policy derived for it, against {@link #bindings()}
      * @return what happened
@@ -230,7 +297,24 @@ public final class RoutingStateStore {
         if (!foreign.isEmpty()) {
             return new StateUpdate.ForeignPartition(foreign);
         }
+        long horizon = compactedTo == null ? -1 : compactedTo.processedCutoff();
+        if (horizon >= 0 && !ledger.containsKey(observation.experienceRef())) {
+            if (observation.ledgerSequence() <= horizon) {
+                return new StateUpdate.BeyondCheckpoint(StateUpdate.BeyondCheckpoint.Kind.COVERED, horizon,
+                        observation.ledgerSequence());
+            }
+            if (observation.supersedesSequence() instanceof Feature.Known<Long> known && known.value() <= horizon) {
+                return new StateUpdate.BeyondCheckpoint(StateUpdate.BeyondCheckpoint.Kind.SUPERSEDES_COMPACTED,
+                        horizon, known.value());
+            }
+        }
         Reconciliation advice = reconciler.reconcile(ledgerView, observation, derivation);
+        // the compacted entries after this position are invisible to the reconciler, so it cannot place it in order
+        if (observation.ledgerSequence() <= horizon
+                && (advice instanceof Reconciliation.Apply || advice instanceof Reconciliation.RecordOnly)) {
+            return new StateUpdate.BeyondCheckpoint(StateUpdate.BeyondCheckpoint.Kind.BEFORE_HORIZON, horizon,
+                    observation.ledgerSequence());
+        }
         return switch (advice) {
             case Reconciliation.Apply ignored -> {
                 RoutingFeedback feedback = ((FeedbackDerivation.Derived) derivation).feedback();
@@ -331,7 +415,8 @@ public final class RoutingStateStore {
 
     /**
      * A new store with the same definition, partition and cohort keys, every Node replaced by a new one built from the
-     * initial state with the same identity, an empty ledger and a zero watermark. This store is not modified.
+     * initial state with the same identity, an empty ledger, no checkpoint and a zero watermark. This store is not
+     * modified.
      */
     public RoutingStateStore resetCopy() {
         var copy = new RoutingStateStore(definition, partition);
@@ -394,19 +479,229 @@ public final class RoutingStateStore {
             throw new IllegalArgumentException("a rebuilt store allows at most " + MAX_COHORTS + " cohorts, got: "
                     + full.requested());
         }
-        TargetBindings stagedBindings = staged.bindings();
+        return staged.replay(ordered, exportCutoff, derive);
+    }
+
+    /**
+     * A checkpoint of this state at its {@code processedCutoff}: every cohort's Node channels and support, active and
+     * dormant, the {@link #ledgerDigest()} and the retryable markers. This store is not modified. {@code O(C + L)}.
+     *
+     * @param policyId routing policy the checkpoint is taken for (provenance only)
+     * @param policyVersion version of that routing policy
+     */
+    public RoutingStateCheckpoint checkpoint(String policyId, String policyVersion) {
+        var cohortValues = new ArrayList<CheckpointCohort>(cohorts.size());
+        for (Map.Entry<CohortKey, Cohort> entry : cohorts.entrySet()) {
+            Node node = entry.getValue().node;
+            FrequencyState state = node.getFrequencyState();
+            cohortValues.add(new CheckpointCohort(entry.getKey(), state.amplitude(), state.frequency(), state.phase(),
+                    node.getEnergy(), entry.getValue().support));
+        }
+        var markers = new ArrayList<AppliedRevision>();
+        for (AppliedRevision entry : ledger.values()) {
+            if (entry.retryable()) {
+                markers.add(entry);
+            }
+        }
+        return new RoutingStateCheckpoint(partition.scopeId(), definition.featureSchemaVersion(),
+                partition.evaluationPolicyId(), partition.evaluationPolicyVersion(), definition.mappingVersion(),
+                policyId, policyVersion, processedCutoff, cohortValues, ledgerDigest(), markers);
+    }
+
+    /** {@link #checkpoint(String, String)} with the policy's identity. */
+    public RoutingStateCheckpoint checkpoint(RoutingPolicy policy) {
+        Objects.requireNonNull(policy, "policy must not be null");
+        return checkpoint(policy.policyId(), policy.policyVersion());
+    }
+
+    /**
+     * Compacts the ledger to a checkpoint taken earlier from this state, all-or-nothing: every entry at or below its
+     * cutoff except retryable markers is folded into the digest and dropped, its cutoff becomes the compaction horizon
+     * and it becomes the {@link #latestCheckpoint()}. The Nodes, support counts, watermark and {@link #ledgerDigest()}
+     * do not change. Compacting with an older checkpoint keeps the newer entries, so a correction of them can still be
+     * reconciled and rebuilt from that checkpoint; compacting with the newest empties the ledger.
+     *
+     * <p>Refused, changing nothing, when the ledger at or below the cutoff changed since the checkpoint was taken
+     * ({@code STALE}), when the cutoff is below the current horizon ({@code BEHIND_HORIZON}), or when a dropped or already
+     * compacted entry credits a cohort the checkpoint does not hold ({@code CREDITS_UNBOUND_COHORT}).
+     * {@code O(L log L + C log C)}.
+     *
+     * @param checkpoint the checkpoint
+     * @return what happened
+     * @throws IllegalArgumentException if the checkpoint belongs to another partition or definition, or lies beyond
+     *         this store's watermark
+     */
+    public CompactionResult compact(RoutingStateCheckpoint checkpoint) {
+        requireLineage(checkpoint);
+        long cutoff = checkpoint.processedCutoff();
+        if (compactedTo != null && cutoff < compactedTo.processedCutoff()) {
+            return new CompactionResult.Refused(CompactionResult.Reason.BEHIND_HORIZON);
+        }
+        var covered = new ArrayList<AppliedRevision>();
+        var markers = new ArrayList<AppliedRevision>();
+        var dropped = new ArrayList<AppliedRevision>();
+        for (AppliedRevision entry : ledger.values()) {
+            if (entry.ledgerSequence() <= cutoff) {
+                covered.add(entry);
+                (entry.retryable() ? markers : dropped).add(entry);
+            }
+        }
+        if (!compacted.plus(LedgerDigest.of(covered)).equals(checkpoint.ledgerDigest())
+                || !markers.equals(checkpoint.retainedMarkers())) {
+            return new CompactionResult.Refused(CompactionResult.Reason.STALE);
+        }
+        var credits = new TreeSet<>(compactedCredits);
+        for (AppliedRevision entry : dropped) {
+            if (entry.changedState()) {
+                credits.add(entry.cohortKey().orElseThrow());
+            }
+        }
+        var held = new TreeSet<CohortKey>();
+        checkpoint.preferenceSnapshot().forEach(cohort -> held.add(cohort.key()));
+        if (!held.containsAll(credits)) {
+            return new CompactionResult.Refused(CompactionResult.Reason.CREDITS_UNBOUND_COHORT);
+        }
+        for (AppliedRevision entry : dropped) {
+            ledger.remove(entry.experienceRef());
+        }
+        compacted = compacted.plus(LedgerDigest.of(dropped));
+        compactedCredits.addAll(credits);
+        compactedTo = checkpoint;
+        return new CompactionResult.Compacted(dropped.size(), cutoff);
+    }
+
+    /**
+     * Rebuilds the state on a staged store that starts from a checkpoint instead of the baseline, replaying only what
+     * follows it. The staged store holds the checkpoint's cohorts with their Node channels and support plus this
+     * store's other cohorts at the baseline, the checkpoint's retained markers as its ledger, the checkpoint's digest
+     * and its cutoff as both watermark and compaction horizon. Observations are ordered by {@link RebuildOrder} and
+     * consumed under the horizon rules: one at or below the cutoff whose entry was compacted is skipped
+     * ({@code COVERED}), and one that supersedes a compacted revision ends the replay as {@link RebuildResult.Failed}
+     * with {@code SUPERSEDES_COMPACTED}: the checkpoint is not valid for it, so the caller uses one whose cutoff is
+     * strictly below its {@code supersedesSequence}, or rebuilds from scratch. This store is never modified.
+     *
+     * <p>Starting from a valid checkpoint gives a state identical to a rebuild from scratch over the same cohort set:
+     * equal cohort channels and support, an equal ledger after the cutoff, an equal {@link #ledgerDigest()} and an
+     * equal watermark. {@code O(N log N + N·L + C log C)} time for {@code N} observations, a ledger of {@code L <= N + M}
+     * entries ({@code M} retained markers) and {@code C} cohorts.
+     *
+     * @param checkpoint the checkpoint to start from; it may be older than this store's horizon
+     * @param observations the effective observations after the checkpoint (earlier ones are allowed and skipped), at
+     *         most {@value RebuildOrder#MAX_OBSERVATIONS}
+     * @param exportCutoff the export's high-watermark the rebuilt state has examined, not below this store's
+     *         {@link #processedCutoff()}
+     * @param derive derives one observation against the staged bindings; called once per replayed observation
+     * @return the rebuilt store or where the replay stopped
+     * @throws IllegalArgumentException if the checkpoint belongs to another partition or definition, lies beyond this
+     *         store's watermark, holds a Node channel outside the definition's bounds, the union of cohorts is
+     *         oversized, a cohort bound after the checkpoint is named by one of its retained {@code NO_TARGET_BINDING}
+     *         markers, or as {@link #rebuild(Collection, long, Collection, BiFunction)}
+     */
+    public RebuildResult rebuildFrom(RoutingStateCheckpoint checkpoint, Collection<RoutingObservation> observations,
+            long exportCutoff, BiFunction<RoutingObservation, TargetBindings, FeedbackDerivation> derive) {
+        requireLineage(checkpoint);
+        Objects.requireNonNull(observations, "observations must not be null");
+        Objects.requireNonNull(derive, "derive must not be null");
+        if (exportCutoff < processedCutoff) {
+            throw new IllegalArgumentException("exportCutoff " + exportCutoff + " is below processedCutoff "
+                    + processedCutoff + ": the rebuilt state would forget examined observations");
+        }
+        List<RoutingObservation> ordered = new RebuildOrder().order(observations);
+        var staged = new RoutingStateStore(definition, partition);
+        staged.restore(checkpoint, cohorts.keySet());
+        return staged.replay(ordered, exportCutoff, derive);
+    }
+
+    /** Sets this new, empty store to a checkpoint plus the given extra cohorts at the baseline. */
+    private void restore(RoutingStateCheckpoint checkpoint, Collection<CohortKey> extra) {
+        AdaptationConfig bounds = definition.adaptation();
+        for (CheckpointCohort value : checkpoint.preferenceSnapshot()) {
+            if (value.amplitude() < bounds.minAmplitude() || value.amplitude() > bounds.maxAmplitude()
+                    || value.energy() < bounds.minEnergy() || value.energy() > bounds.maxEnergy()
+                    || value.frequency() < bounds.minFrequency() || value.frequency() > bounds.maxFrequency()) {
+                throw new IllegalArgumentException("cohort " + value.key()
+                        + " holds a Node channel outside the definition's adaptation bounds");
+            }
+            var cohort = new Cohort(node(value.key(),
+                    new FrequencyState(value.amplitude(), value.frequency(), value.phase()), value.energy()));
+            cohort.support = value.supportingObservations();
+            cohorts.put(value.key(), cohort);
+            if (value.supportingObservations() > 0) {
+                compactedCredits.add(value.key());
+            }
+        }
+        for (CohortKey key : extra) {
+            if (!cohorts.containsKey(key)) {
+                for (AppliedRevision marker : checkpoint.retainedMarkers()) {
+                    if (marker.basis() instanceof EntryBasis.NoUpdateMarker basis
+                            && basis.reason() == NoUpdateReason.NO_TARGET_BINDING && names(basis, marker, key)) {
+                        throw new IllegalArgumentException("cohort " + key + " was bound after the checkpoint at "
+                                + checkpoint.processedCutoff() + ", which records sample " + marker.experienceRef()
+                                + " as unbound; rebuild from an earlier checkpoint or from scratch");
+                    }
+                }
+                cohorts.put(key, new Cohort(baselineNode(key)));
+            }
+        }
+        if (cohorts.size() > MAX_COHORTS) {
+            throw new IllegalArgumentException("a rebuilt store allows at most " + MAX_COHORTS + " cohorts, got: "
+                    + cohorts.size());
+        }
+        for (AppliedRevision marker : checkpoint.retainedMarkers()) {
+            ledger.put(marker.experienceRef(), marker);
+        }
+        compacted = checkpoint.ledgerDigest().minus(LedgerDigest.of(checkpoint.retainedMarkers()));
+        compactedTo = checkpoint;
+        processedCutoff = checkpoint.processedCutoff();
+        bindings = buildBindings();
+    }
+
+    /**
+     * Replays ordered observations on this staged store. Applied, recorded and not-recorded observations continue the
+     * replay, and so do a repeat of a retained marker and a delivery the checkpoint covers; anything else stops it.
+     */
+    private RebuildResult replay(List<RoutingObservation> ordered, long exportCutoff,
+            BiFunction<RoutingObservation, TargetBindings, FeedbackDerivation> derive) {
+        TargetBindings stagedBindings = bindings;
         for (RoutingObservation observation : ordered) {
-            StateUpdate update = staged.consume(observation, Objects.requireNonNull(
+            StateUpdate update = consume(observation, Objects.requireNonNull(
                     derive.apply(observation, stagedBindings), "derivation must not be null"));
-            boolean continues = update instanceof StateUpdate.Applied || update instanceof StateUpdate.Recorded
-                    || (update instanceof StateUpdate.Unchanged unchanged
-                            && unchanged.advice() instanceof Reconciliation.NotRecorded);
+            boolean continues = switch (update) {
+                case StateUpdate.Applied ignored -> true;
+                case StateUpdate.Recorded ignored -> true;
+                case StateUpdate.Unchanged unchanged -> unchanged.advice() instanceof Reconciliation.NotRecorded
+                        || unchanged.advice() instanceof Reconciliation.AlreadyApplied;
+                case StateUpdate.BeyondCheckpoint beyond -> beyond.kind() == StateUpdate.BeyondCheckpoint.Kind.COVERED;
+                default -> false;
+            };
             if (!continues) {
                 return new RebuildResult.Failed(observation, update);
             }
         }
-        staged.advanceCutoff(exportCutoff);
-        return new RebuildResult.Rebuilt(staged);
+        advanceCutoff(exportCutoff);
+        return new RebuildResult.Rebuilt(this);
+    }
+
+    private void requireLineage(RoutingStateCheckpoint checkpoint) {
+        Objects.requireNonNull(checkpoint, "checkpoint must not be null");
+        if (!checkpoint.scopeId().equals(partition.scopeId())
+                || !checkpoint.evaluationPolicyId().equals(partition.evaluationPolicyId())
+                || !checkpoint.evaluationPolicyVersion().equals(partition.evaluationPolicyVersion())
+                || !checkpoint.mappingVersion().equals(definition.mappingVersion())
+                || !checkpoint.featureSchemaVersion().equals(definition.featureSchemaVersion())) {
+            throw new IllegalArgumentException("the checkpoint belongs to another partition or definition");
+        }
+        if (checkpoint.processedCutoff() > processedCutoff) {
+            throw new IllegalArgumentException("the checkpoint at " + checkpoint.processedCutoff()
+                    + " lies beyond processedCutoff " + processedCutoff);
+        }
+    }
+
+    /** True when a {@code NO_TARGET_BINDING} marker's sample would credit the cohort, ignoring its stage kind. */
+    private boolean names(EntryBasis.NoUpdateMarker marker, AppliedRevision entry, CohortKey key) {
+        return marker.cohortBinding().cohortBucket().equals(key.cohortBucket())
+                && entry.identity().route().equals(key.route())
+                && entry.identity().decisionRef().scopeId().equals(key.scopeId());
     }
 
     private Cohort target(RoutingFeedback feedback) {
@@ -454,12 +749,18 @@ public final class RoutingStateStore {
 
     private Node baselineNode(CohortKey key) {
         InitialNodeState initial = definition.initial();
+        return node(key, new FrequencyState(initial.baselineAmplitude(), initial.frequency(), initial.phase()),
+                initial.energy());
+    }
+
+    /** A new cohort Node with the deterministic identity, the definition's type and no history. */
+    private Node node(CohortKey key, FrequencyState state, double energy) {
         return new Node.Builder()
                 .id(CohortNodeIdentity.of(key, partition.evaluationPolicyId(), partition.evaluationPolicyVersion(),
                         definition.mappingVersion()))
-                .type(initial.nodeType())
-                .frequencyState(new FrequencyState(initial.baselineAmplitude(), initial.frequency(), initial.phase()))
-                .energy(initial.energy())
+                .type(definition.initial().nodeType())
+                .frequencyState(state)
+                .energy(energy)
                 .historyLimit(InitialNodeState.HISTORY_LIMIT)
                 .build();
     }
