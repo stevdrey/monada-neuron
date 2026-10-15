@@ -100,11 +100,33 @@ class ReplayFixtureBoundsTest {
                         List.of(reordered, second))));
     }
 
+    @Test
+    void aBatchSharingOneCutoffReplaysInIssuanceOrderWhateverItsIds() {
+        var fixture = fixtures.improvement(2);
+        ReplayTask first = fixture.tasks().get(0);
+        ReplayTask second = fixture.tasks().get(1);
+        long cutoff = first.request().cutoff();
+        // issued first but with the later-sorting id, then issued second with the earlier-sorting id
+        var z = new ReplayTask(withIdentity(first.request(), "z", "exe-z", 1L, cutoff), first.catalog(),
+                first.oracle());
+        var a = new ReplayTask(withIdentity(second.request(), "a", "exe-a", 2L, cutoff), second.catalog(),
+                second.oracle());
+        var batch = new ReplayFixture("f", "1", fixture.definition(), fixture.evidencePolicy(), fixture.policy(),
+                fixture.partition(), List.of(a, z));
+
+        assertEquals(List.of("z", "a"), batch.tasks().stream().map(t -> t.request().taskId()).toList());
+    }
+
     private static RoutingRequest withIdentity(RoutingRequest r, String taskId, String executionId, long ordinal) {
+        return withIdentity(r, taskId, executionId, ordinal, r.cutoff());
+    }
+
+    private static RoutingRequest withIdentity(RoutingRequest r, String taskId, String executionId, long ordinal,
+            long cutoff) {
         return new RoutingRequest(r.contractVersion(), r.scopeId(), taskId, executionId, r.attemptId(), r.stageId(),
                 r.stageKind(), ordinal, r.sourceFingerprint(), r.contextFingerprint(), r.constraintsFingerprint(),
                 r.evaluationPolicyId(), r.evaluationPolicyVersion(), r.features(), r.requirements(),
-                r.overflowPermitted(), r.cutoff());
+                r.overflowPermitted(), cutoff);
     }
 
     @Test

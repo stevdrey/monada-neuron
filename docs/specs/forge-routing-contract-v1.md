@@ -590,7 +590,7 @@ The adaptive state (#66) reuses the existing generic learning path; **no second 
   start from the latest checkpoint whose `processedCutoff` is **strictly less than** the `supersedesSequence` of the earliest
   superseded revision (an inclusive checkpoint at that sequence already contains the obsolete effect) and replay only later
   observations. Starting from a valid checkpoint must give a state **identical** to a rebuild from scratch (#67 verifies
-  this). A superseded revision at or before the checkpoint's `processedCutoff` invalidates it and forces a full rebuild.
+  the incremental-versus-rebuild equivalence such a checkpoint must satisfy; the checkpoint type itself is tracked in #89). A superseded revision at or before the checkpoint's `processedCutoff` invalidates it and forces a full rebuild.
 - **Atomic application.** Applying a `RoutingFeedback` is all-or-nothing. The caller **preflights** the ledger capacity (the
   entries it would add against the 4,096 bound) and the cohort capacity before mutating anything. If either would be
   exceeded the result is `CAPACITY_EXHAUSTED` and the Nodes, the applied-revision ledger, the supporting-observation counts and
@@ -607,7 +607,7 @@ Retained-footprint model (**modeled, not measured**; a 64-bit HotSpot with compr
 `RoutingFeedback` is about 64 B plus 36 B per entry (at most about 2.4 KB at 64 entries); the applied-revision ledger at
 about 64 B per entry is at most about 256 KiB at 4,096 entries; a checkpoint is the snapshot plus a digest (a few KB at 256
 cohorts); preference Nodes have `historyLimit = 0`, so they retain no history and cost only the Node and its four numeric
-channels, on the order of 100 B each, a few tens of KiB for 256 cohorts (a model, not a measurement). Measured allocation and latency are deferred to #67 and must not be inferred from this model.
+channels, on the order of 100 B each, a few tens of KiB for 256 cohorts (a model, not a measurement). Measured allocation and latency of whole replays are reported by the #67 evaluation ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)) as exploratory single-machine figures; they must not be inferred from this model, nor this model from them.
 
 ## 8. Algorithm, Data Structures and Complexity
 
@@ -789,10 +789,12 @@ Everything in this contract is additive and opt-in.
 
 ## 12. Limits and Remaining Evidence Gaps
 
-- **No effectiveness claim.** This document makes no claim that routing improves quality, acceptance or cost. #67 may report
-  coverage and chosen-route outcomes on a reproducible workload with controls; replay on Store exports observes only the route
-  that was actually chosen and cannot prove counterfactual or online improvement.
-- Footprint figures in Section 7 are a model. Latency and allocation are unmeasured until #67.
+- **No effectiveness claim.** This document makes no claim that routing improves quality, acceptance or cost. #67
+  ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)) reports coverage and chosen-route outcomes on a
+  reproducible workload with controls; replay on Store exports observes only the route that was actually chosen and cannot
+  prove counterfactual or online improvement.
+- Footprint figures in Section 7 are a model. The #67 replay reports exploratory, single-machine latency and allocation of whole
+  replays; no production latency or memory figure exists.
 - Unknown or incomplete evidence can bias routing; the contract's answer is to refuse unsupported inferences (neutral or no
   update), not to estimate them.
 - Descriptors are caller observations. A wrong catalog yields wrong advice; Forge's revalidation before execution is the
@@ -921,7 +923,7 @@ and no latency is measured. No cache, parallelism, SIMD or GPU is used.
 ```
 
 Evidence gaps: no claim that this layout improves routing or that Signal resonance reflects task similarity; the default
-vocabularies, the band layout and the unknown semantics are unvalidated policy choices; latency is unmeasured and allocation is a single upper-bound check (#67); the
+vocabularies, the band layout and the unknown semantics are unvalidated policy choices; encoder latency is unmeasured (the #67 replay does not exercise the encoder) and allocation is a single upper-bound check; the
 encoder is not yet consumed by a `PerceptionCapability`; `RoutingRequest` (#61, Section 16) carries the typed `TaskFeatures` record beside its hard requirements, but nothing feeds the encoded Signals into a request or a cycle yet.
 
 ## 16. Implemented: Route Catalog and Eligibility Filtering (#61)
@@ -1489,8 +1491,8 @@ bindings, every neutral and no-update rule above, cheap failing work, incomplete
 determinism under permuted evidence, immutable target state, every reconciliation result, ledger capacity, and rebuild equality from any input order.
 
 Evidence gaps: the evaluator trusts the host's judgments, attribution basis and mandatory set; `RoutingOutcome` carries no `stageKind`, so the stage kind is bound to the decision's recorded `Provenance.stageKind` (a decision that never recorded it derives no update, and the cost peer is checked the same way); usage counters are stage-level and carry no unit, so cost refinement compares counters only; the Node baseline,
-identity, `AdaptationConfig`, ledger and snapshots are implemented by #66 (Section 22) and checkpoints are deferred; replay evaluation and any effectiveness claim are #67; and
-no latency or retained-memory measurement exists.
+identity, `AdaptationConfig`, ledger and snapshots are implemented by #66 (Section 22) and checkpoints are tracked in #89; the #67 replay evaluation supplies controls and coverage but no effectiveness claim; and
+only exploratory replay latency and a modeled retained footprint exist, from #67.
 
 ## 22. Implemented: Bounded Caller-Owned Adaptive State (#66)
 
@@ -1622,9 +1624,11 @@ snapshot through the published artifact.
 ### 22.6 Evidence gaps and follow-up
 
 - `RoutingStateCheckpoint`, its ledger digest and ledger compaction (Section 7) are **not implemented**: a store whose ledger
-  is full reports `CapacityExhausted` and the caller rebuilds into a new scope or waits for #67, which also verifies
-  checkpoint-versus-scratch equivalence.
-- No effectiveness, accuracy or cost claim: the reference values are illustrative, and replay evaluation with controls is #67.
+  is full reports `CapacityExhausted` and the caller rebuilds into a new scope or waits for compaction (#89). The #67 replay
+  verifies the equivalence a checkpoint must satisfy: incremental state equals a rebuild from scratch, digest for digest.
+- No effectiveness, accuracy or cost claim: the reference values are illustrative and untuned; the #67 replay with controls
+  ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)) shows they can follow stale rewards and validates
+  nothing about them.
 - Latency and retained memory are unmeasured; the allocation figures above are regression guards, not benchmarks.
 - A removed dormant cohort leaves its ledger entries until the next rebuild, which records them as `NO_TARGET_BINDING`
   markers; the caller decides when to rebuild, and the key cannot be bound again before it.

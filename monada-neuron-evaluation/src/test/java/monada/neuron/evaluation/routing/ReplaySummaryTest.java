@@ -1,11 +1,15 @@
 package monada.neuron.evaluation.routing;
 
+import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.routing.outcome.UsageCounter;
 import monada.neuron.routing.outcome.UsageKind;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -63,11 +67,29 @@ class ReplaySummaryTest {
 
         assertAll(
                 // cheap 50 + nine 300-token sub-a stages; the unknown-usage stage adds nothing to the sum
-                () -> assertEquals(50 + 9 * 300, output.knownSum()),
+                () -> assertEquals(BigInteger.valueOf(50 + 9 * 300), output.knownSum()),
                 () -> assertEquals(10, output.known()),
                 () -> assertEquals(1, output.unknown()),
                 () -> assertEquals(1, reasoning.notMeasured()),
                 () -> assertEquals(10, reasoning.absent()));
+    }
+
+    @Test
+    void knownTokenTotalsNeverWrap() {
+        ReplayRun run = new TemporalReplay(fixtures.cases()).run(ReplayArm.STATIC);
+        var huge = List.of(new UsageCounter(UsageKind.OUTPUT_TOKENS,
+                new ResourceValue.Known(Long.MAX_VALUE, ResourceValue.Provenance.REPORTED)));
+        var samples = run.samples().stream()
+                .filter(s -> s.coverage() == ReplaySample.Coverage.OBSERVED).limit(2)
+                .map(s -> new ReplaySample(s.decisionRef(), s.stageKind(), s.cutoff(), s.stateCutoff(), s.arm(),
+                        s.kind(), s.route(), s.basis(), s.abstainReason(), s.coverage(), s.acceptance(), s.verdict(),
+                        s.provenFailures(), s.attempts(), huge, s.chainCost(), s.comparison()))
+                .toList();
+        var summary = ReplaySummary.of(new ReplayRun(ReplayArm.STATIC, samples, List.of(), List.of(),
+                run.decisions(), run.state()));
+
+        assertEquals(BigInteger.valueOf(Long.MAX_VALUE).multiply(BigInteger.TWO),
+                summary.total().tokens().get(UsageKind.OUTPUT_TOKENS.name()).knownSum());
     }
 
     @Test

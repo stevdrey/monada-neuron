@@ -116,8 +116,9 @@ task carries:
 - Observations are bounded at ≤ 4096, so a full rebuild stays possible.
 
 **Order and timing.**
-- **Decision order.** Tasks are decided in total order: cutoff first, then every `DecisionRef` field in code-point
-  order.
+- **Decision order.** Tasks are decided in total order: cutoff first, then `requestOrdinal` (the caller's issuance
+  order), then the other `DecisionRef` fields in code-point order. A batch of requests that share a cutoff therefore
+  replays in issuance order, never in the order of its opaque ids.
 - **Visibility.** The cutoff is inclusive, as the routing contract defines it ("Ordinals and cutoff"). Before the
   decision at cutoff `c`, exactly the pending observations with `ledgerSequence <= c` are delivered, in
   `(ledgerSequence, experienceRef, revision)` order. An outcome, acceptance, correction or usage observed after `c`
@@ -213,7 +214,7 @@ The `cases` scenario holds:
 | :--- | :--- |
 | `sub-a` attempt | 0.0420 |
 | `sub-b` attempt | 0.0525 |
-| Repaired chain (`0.0420 + 0.0315`) | 0.0735, counted once |
+| Repaired chain (`0.0420 + 0.0315`) | 0.0735, counted once; the repair attempt id is `repair-` plus 32 hex digits of the SHA-256 of the routed attempt id, 39 code points whatever that id's length |
 | Unknown-usage chain, including one later corrected to accepted | `PARTIAL` lower bound 0.0270 |
 | Two-currency chain | 0.0420 USD and 0.0390 EUR, never summed together |
 
@@ -276,7 +277,8 @@ reported per routed stage kind and in total.
 - selections by basis: `COLD_START` and `HOST_PRIORITY` count as baseline fallback;
 - coverage: `OBSERVED`, `MISSING_COUNTERFACTUAL`, `UNOBSERVED` or `NOT_EXECUTED`;
 - validated acceptances and gate failures;
-- routed-stage tokens per kind: the known sum, plus separate counts of known, unknown, not-measured and absent counters;
+- routed-stage tokens per kind: the exact known sum (a `BigInteger`, so large legal counters never wrap), plus separate
+  counts of known, unknown, not-measured and absent counters;
 - feedback per score rule or no-update reason, state updates, credits and eligibility violations.
 
 **Chain figures** are whole-execution facts, reported once per execution, identified by scope, task and execution, and
@@ -299,7 +301,9 @@ task. It reports changed decisions, gained and lost validated acceptances, and c
 ## Measurement method
 
 - **Instrument.** `EvaluationMetricsCollector`, the same one the other checked evaluations use.
-- **Operation.** One op is one replayed decision; an iteration replays the whole workload fixture under one arm.
+- **Operation and latency scope.** An iteration replays the whole workload fixture under one arm. The collector's latency
+  distribution (mean and percentiles) is **per replay iteration**, while throughput and allocation are **per replayed
+  decision**. Each row states this as `latencyScope` and adds the derived `meanNanosPerDecision`.
 - **Iterations.** Quick: 1 warmup and 3 measured. Full: 3 warmup and 10 measured.
 - **Timed window.** The replay runs without recording samples or events.
 - **Validation.** Each run replays without recording samples, but it still keeps a collision-free `DecisionTrace` of
@@ -322,18 +326,19 @@ task. It reports changed decisions, gained and lost validated acceptances, and c
 **Environment:** Linux 7.2.9 (Fedora 44, x86_64), 16 processors, OpenJDK 27 (Zulu 27+35), G1, 3832 MB max heap. Full
 mode.
 
-| Benchmark | Scale | Mean | p95 | Alloc / op |
-| :--- | :--- | :--- | :--- | :--- |
-| `RoutingReplay.static` | 960 tasks | 5.91 ms | 6.38 ms | 7.80 KB |
-| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 20.53 ms | 22.68 ms | 29.99 KB |
-| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 446.51 ms | 460.90 ms | 494.34 KB |
-| `StoreRoutingReplay.static` | 16 exported tasks | 0.98 ms | 1.51 ms | 9.41 KB |
-| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 2.02 ms | 2.56 ms | 19.99 KB |
-| `StoreRoutingReplay.adaptive` | 16 exported tasks | 2.42 ms | 2.99 ms | 19.96 KB |
+| Benchmark | Scale | Mean per iteration | p95 per iteration | Mean per decision (derived) | Alloc per decision |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `RoutingReplay.static` | 960 tasks | 3.27 ms | 3.74 ms | 3.4 µs | 6.47 KB |
+| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 18.57 ms | 20.57 ms | 19.3 µs | 27.08 KB |
+| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 450.97 ms | 480.72 ms | 469.8 µs | 487.96 KB |
+| `StoreRoutingReplay.static` | 16 exported tasks | 0.91 ms | 1.17 ms | 56.6 µs | 9.41 KB |
+| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 1.61 ms | 2.01 ms | 100.7 µs | 19.99 KB |
+| `StoreRoutingReplay.adaptive` | 16 exported tasks | 2.19 ms | 2.74 ms | 136.7 µs | 19.96 KB |
 
-These are single runs on one machine. Across the full runs made for this PR, adaptive mean latency varied between 397 ms
-and 490 ms. One run reported `static` at 18.38 ms, and two immediate repeats gave 5.72 ms and 5.82 ms with identical
-digests. Differences of this size are noise, not a trend.
+These are single runs on one machine. Across the full runs made for this PR, adaptive mean latency per iteration varied
+between 397 ms and 490 ms, and `static` between 3.27 ms and 18.38 ms; the outlier was immediately followed by 5.72 ms and
+5.82 ms with identical digests. Differences of this size are noise, not a trend. The Store per-decision figures include a
+fixed per-iteration cost (a fresh state and bindings) spread over only 16 decisions.
 
 Modeled retained state at the end of the workload: 0 B for static, 8,000 B for derived-not-consumed (20 cohorts) and
 326,500 B for adaptive (20 cohorts plus 910 ledger entries). This is a model, not a measurement.

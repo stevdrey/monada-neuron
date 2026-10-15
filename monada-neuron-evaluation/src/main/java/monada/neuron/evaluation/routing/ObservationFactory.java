@@ -53,10 +53,28 @@ public final class ObservationFactory {
                 Long.toString(ref.requestOrdinal()))) {
             encoded.append(field.getBytes(StandardCharsets.UTF_8).length).append(':').append(field).append('|');
         }
+        return REF_PREFIX + sha256Hex(encoded.toString());
+    }
+
+    /**
+     * The attempt a repaired outcome was accepted on: {@code repair-} and the first 32 hex digits of the SHA-256 of the
+     * routed attempt id. Deterministic and 39 code points long whatever the routed id's length, so a legal
+     * 128-code-point attempt id never pushes it past the token bound.
+     *
+     * @throws IllegalStateException if it would equal the routed attempt id
+     */
+    String repairAttemptId(String routedAttemptId) {
+        String repair = "repair-" + sha256Hex(routedAttemptId).substring(0, 32);
+        if (repair.equals(routedAttemptId)) {
+            throw new IllegalStateException("the repair attempt id would equal the routed attempt id " + repair);
+        }
+        return repair;
+    }
+
+    private static String sha256Hex(String text) {
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(encoded.toString().getBytes(StandardCharsets.UTF_8));
-            return REF_PREFIX + HexFormat.of().formatHex(digest);
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(text.getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is required of every Java platform", e);
         }
@@ -83,7 +101,7 @@ public final class ObservationFactory {
                 : outcome.quality();
         ChainOutcome chain = corrected ? outcome.correction().get().chain() : outcome.chain();
         boolean repaired = outcome.acceptedByRepair() && status == OutcomeStatus.ACCEPTED;
-        String evidenceAttempt = repaired ? request.attemptId() + "-repair" : request.attemptId();
+        String evidenceAttempt = repaired ? repairAttemptId(request.attemptId()) : request.attemptId();
         String ref = experienceRef(request);
 
         var observations = new ArrayList<QualityObservation>(quality.size());

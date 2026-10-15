@@ -6,6 +6,7 @@ import monada.neuron.routing.outcome.UsageCounter;
 import monada.neuron.routing.outcome.UsageKind;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -96,13 +97,13 @@ public record ReplaySummary(
     /**
      * Usage of one kind over the observed routed stages; unknown values are counted, never read as zero.
      *
-     * @param knownSum sum of the known values
+     * @param knownSum exact sum of the known values; a {@code BigInteger}, so large legal counters never wrap
      * @param known counters with a known value
      * @param unknown counters reported as unknown
      * @param notMeasured counters reported as not measured
      * @param absent observed stages that reported no counter of this kind
      */
-    public record TokenTally(long knownSum, int known, int unknown, int notMeasured, int absent) {
+    public record TokenTally(BigInteger knownSum, int known, int unknown, int notMeasured, int absent) {
     }
 
     /**
@@ -303,7 +304,7 @@ public record ReplaySummary(
         private final TreeMap<String, Integer> coverage = new TreeMap<>();
         private int validatedAccepted;
         private int gateFailures;
-        private final TreeMap<String, long[]> tokens = new TreeMap<>();
+        private final TreeMap<String, TokenAccumulator> tokens = new TreeMap<>();
         private final TreeMap<String, Integer> feedback = new TreeMap<>();
         private final TreeMap<String, Integer> updates = new TreeMap<>();
         private int credited;
@@ -331,20 +332,21 @@ public record ReplaySummary(
             }
             var reported = new HashSet<String>();
             for (UsageCounter counter : sample.stageUsage()) {
-                long[] tally = tokens.computeIfAbsent(counter.kind().name(), ignored -> new long[5]);
+                TokenAccumulator tally = tokens.computeIfAbsent(counter.kind().name(),
+                        ignored -> new TokenAccumulator());
                 reported.add(counter.kind().name());
                 switch (counter.value()) {
                     case ResourceValue.Known known -> {
-                        tally[0] += known.value();
-                        tally[1]++;
+                        tally.knownSum = tally.knownSum.add(BigInteger.valueOf(known.value()));
+                        tally.known++;
                     }
-                    case ResourceValue.Unknown ignored -> tally[2]++;
-                    case ResourceValue.NotMeasured ignored -> tally[3]++;
+                    case ResourceValue.Unknown ignored -> tally.unknown++;
+                    case ResourceValue.NotMeasured ignored -> tally.notMeasured++;
                 }
             }
             for (UsageKind kind : UsageKind.values()) {
                 if (!reported.contains(kind.name())) {
-                    tokens.computeIfAbsent(kind.name(), ignored -> new long[5])[4]++;
+                    tokens.computeIfAbsent(kind.name(), ignored -> new TokenAccumulator()).absent++;
                 }
             }
         }
@@ -365,9 +367,18 @@ public record ReplaySummary(
         StageFigures figures() {
             var tallies = new TreeMap<String, TokenTally>();
             tokens.forEach((kind, t) -> tallies.put(kind,
-                    new TokenTally(t[0], (int) t[1], (int) t[2], (int) t[3], (int) t[4])));
+                    new TokenTally(t.knownSum, t.known, t.unknown, t.notMeasured, t.absent)));
             return new StageFigures(decisions, selected, abstained, noEligibleRoute, basis, coverage,
                     validatedAccepted, gateFailures, tallies, feedback, updates, credited, eligibilityViolations);
         }
+    }
+
+    /** Mutable usage tally of one kind; never escapes {@link #of}. */
+    private static final class TokenAccumulator {
+        private BigInteger knownSum = BigInteger.ZERO;
+        private int known;
+        private int unknown;
+        private int notMeasured;
+        private int absent;
     }
 }

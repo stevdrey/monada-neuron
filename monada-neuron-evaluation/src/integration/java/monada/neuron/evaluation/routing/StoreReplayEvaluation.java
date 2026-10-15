@@ -6,6 +6,7 @@ import monada.neuron.evaluation.metrics.EvaluationCheck;
 import monada.neuron.evaluation.metrics.EvaluationMetricsCollector;
 import monada.neuron.evaluation.metrics.EvaluationReport.RunConfiguration;
 import monada.neuron.resonance.adapter.experience.ExperienceRejection;
+import monada.neuron.resonance.adapter.experience.RejectionReason;
 import monada.neuron.routing.adaptation.RebuildResult;
 import monada.neuron.routing.outcome.RoutingObservation;
 
@@ -66,8 +67,9 @@ public final class StoreReplayEvaluation {
     /** Returns the run configuration this evaluation actually uses. */
     public RunConfiguration runConfiguration() {
         return new RunConfiguration(0L, quick, warmupIterations, measurementIterations,
-                "One op is one replayed decision; an iteration replays the exported fixture under one arm from a fresh"
-                        + " state (setup excluded from timing); recording and export are not timed");
+                "An iteration replays the exported fixture under one arm from a fresh state (setup excluded from"
+                        + " timing); latency (mean and percentiles) is per replay iteration, while throughput and"
+                        + " allocation are per replayed decision; recording and export are not timed");
     }
 
     /** Records, exports, verifies and measures; never throws for a failing phase. */
@@ -228,6 +230,8 @@ public final class StoreReplayEvaluation {
         // the reference is the Store's encoded experience reference, which embeds the length-prefixed execution id
         require(rejections.size() == 1 && rejections.getFirst().executionRef().contains(":exe-" + (TASKS - 1) + "|"),
                 "expected exactly the unfinished execution to be rejected, got " + rejections);
+        require(rejections.getFirst().reason() == RejectionReason.MISSING_OUTCOME, "the unfinished execution was"
+                + " rejected as " + rejections.getFirst().reason() + ", not MISSING_OUTCOME");
         require(export.imported().diagnostics().isEmpty(), "diagnostics: " + export.imported().diagnostics());
         return observations + " observations imported, exactly one (revision 0) per finished execution exe-0..exe-"
                 + (TASKS - 2) + "; exe-" + (TASKS - 1) + " rejected as "
@@ -295,7 +299,7 @@ public final class StoreReplayEvaluation {
                 diagnostics);
         // the collector runs no setup after its last iteration, so the final measured run is validated here
         RoutingReplayEvaluation.requireSameReplay(pending[0], reference, digests);
-        return result;
+        return RoutingReplayEvaluation.withLatencyScope(result, fixture.tasks().size());
     }
 
     private static void check(List<Check> checks, String name, Verification verification) {

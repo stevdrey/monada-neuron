@@ -19,15 +19,19 @@ import java.util.Objects;
  */
 public record ReplayTask(RoutingRequest request, RouteCatalog catalog, OutcomeOracle oracle) {
 
-    /** Total replay order: decision cutoff, then every {@link DecisionRef} field in code-point order. */
+    /**
+     * Total replay order: decision cutoff, then the caller's issuance order ({@code requestOrdinal}), then the other
+     * {@link DecisionRef} fields in code-point order. Requests that share a cutoff (a batch) replay in the order they
+     * were issued, never in the order of their opaque ids.
+     */
     public static final Comparator<ReplayTask> ORDER = Comparator
             .comparingLong((ReplayTask t) -> t.request().cutoff())
+            .thenComparingLong(t -> t.request().requestOrdinal())
             .thenComparing(t -> t.request().scopeId(), OpaqueTokens::compareCodePoints)
             .thenComparing(t -> t.request().taskId(), OpaqueTokens::compareCodePoints)
             .thenComparing(t -> t.request().executionId(), OpaqueTokens::compareCodePoints)
             .thenComparing(t -> t.request().attemptId(), OpaqueTokens::compareCodePoints)
-            .thenComparing(t -> t.request().stageId(), OpaqueTokens::compareCodePoints)
-            .thenComparingLong(t -> t.request().requestOrdinal());
+            .thenComparing(t -> t.request().stageId(), OpaqueTokens::compareCodePoints);
 
     /** Validates that every outcome becomes visible strictly after the decision it answers. */
     public ReplayTask {

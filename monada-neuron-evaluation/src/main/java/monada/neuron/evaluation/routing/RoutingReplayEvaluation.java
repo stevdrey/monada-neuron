@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.function.Predicate;
@@ -95,8 +96,10 @@ public final class RoutingReplayEvaluation {
      */
     public RunConfiguration runConfiguration() {
         return new RunConfiguration(0L, quick, warmupIterations, measurementIterations,
-                "One op is one replayed decision; an iteration replays the whole workload fixture under one arm from a"
-                        + " fresh state (setup excluded from timing); fixtures are enumerated, so the seed is unused");
+                "An iteration replays the whole workload fixture under one arm from a fresh state (setup excluded from"
+                        + " timing); latency (mean and percentiles) is per replay iteration, while throughput and"
+                        + " allocation are per replayed decision (see each row's latencyScope and meanNanosPerDecision);"
+                        + " fixtures are enumerated, so the seed is unused");
     }
 
     /** Runs every semantic check, then the measurements. */
@@ -657,7 +660,21 @@ public final class RoutingReplayEvaluation {
                 diagnostics);
         // the collector runs no setup after its last iteration, so the final measured run is validated here
         requireSameReplay(pending[0], reference, digests);
-        return result;
+        return withLatencyScope(result, fixture.tasks().size());
+    }
+
+    /**
+     * The collector's latency distribution holds whole-iteration durations, while its throughput and allocation are
+     * per operation. This labels the row explicitly and adds the derived mean per decision, without changing the shared
+     * metrics types the other evaluations use.
+     */
+    static BenchmarkRunResult withLatencyScope(BenchmarkRunResult result, int decisionsPerIteration) {
+        var diagnostics = new LinkedHashMap<>(result.diagnostics());
+        diagnostics.put("latencyScope", "per replay iteration of " + decisionsPerIteration + " decisions");
+        diagnostics.put("meanNanosPerDecision",
+                String.format(Locale.ROOT, "%.1f", result.latency().meanNanos() / decisionsPerIteration));
+        return new BenchmarkRunResult(result.benchmarkName(), result.workloadScale(), result.iterations(),
+                result.latency(), result.allocation(), diagnostics);
     }
 
     /**

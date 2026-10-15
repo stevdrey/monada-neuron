@@ -69,7 +69,8 @@ public record ReplayFixture(
         for (ReplayTask task : tasks) {
             RoutingRequest request = task.request();
             // contract "Ordinals and cutoff": requestOrdinal is strictly increasing per scope, and a fixture has one
-            // scope, so in replay order every ordinal must exceed the previous one
+            // scope. Replay order breaks cutoff ties by ordinal, so this rejects only a repeated ordinal or a request
+            // issued later but decided at an earlier cutoff
             if (previous != null && request.requestOrdinal() <= previous.requestOrdinal()) {
                 throw new IllegalArgumentException("requestOrdinal must be strictly increasing in replay order: "
                         + request.executionId() + " has " + request.requestOrdinal() + " after "

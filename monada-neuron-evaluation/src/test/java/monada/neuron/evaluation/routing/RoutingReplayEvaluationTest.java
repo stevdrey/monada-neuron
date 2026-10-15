@@ -180,6 +180,10 @@ class RoutingReplayEvaluationTest {
                 () -> assertTrue(markdown.indexOf("## Semantic Checks") < markdown.indexOf("## Run Configuration")),
                 () -> assertTrue(report.toJson().contains("\"allChecksPassed\": true")),
                 () -> assertTrue(report.metadata().containsKey("fixture.workload.digest")),
+                // latency is per replay iteration; every row says so and carries the derived per-decision mean
+                () -> assertTrue(report.evaluation().results().stream().allMatch(r -> r.diagnostics()
+                        .get("latencyScope").startsWith("per replay iteration of ")
+                        && r.diagnostics().containsKey("meanNanosPerDecision"))),
                 () -> assertTrue(RoutingReplayRunner.storeArmUnavailable().startsWith("UNAVAILABLE")),
                 () -> assertEquals(3, RoutingReplayRunner.UNAVAILABLE));
     }
@@ -190,6 +194,8 @@ class RoutingReplayEvaluationTest {
         var full = new RoutingReplayEvaluation(false).runConfiguration();
 
         assertAll(
+                () -> assertTrue(quick.operationsPerIterationPolicy().contains("latency (mean and percentiles) is per"
+                        + " replay iteration")),
                 () -> assertTrue(quick.quickMode()),
                 () -> assertEquals(1, quick.defaultWarmupIterations()),
                 () -> assertEquals(3, quick.defaultMeasurementIterations()),
