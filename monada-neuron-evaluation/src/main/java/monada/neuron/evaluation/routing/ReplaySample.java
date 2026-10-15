@@ -3,11 +3,13 @@ package monada.neuron.evaluation.routing;
 import monada.neuron.routing.AbstainReason;
 import monada.neuron.routing.Basis;
 import monada.neuron.routing.DecisionRef;
+import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.outcome.DerivedAcceptance;
 import monada.neuron.routing.outcome.EligibilityVerdict;
 import monada.neuron.routing.outcome.QualityDimension;
 import monada.neuron.routing.outcome.UsageCounter;
+import monada.neuron.routing.outcome.UsageDeclaration;
 
 import java.util.List;
 import java.util.Objects;
@@ -35,6 +37,7 @@ import java.util.Optional;
  * @param provenFailures mandatory dimensions proven to fail, when observed
  * @param attempts whole-chain attempts, 0 when not observed
  * @param stageUsage the routed stage's usage counters, when observed
+ * @param usageDeclaration the routed stage's usage declaration, when observed
  * @param chainCost the whole chain's hypothetical cost to acceptance, when observed
  * @param comparison what a direct comparison requires to match
  */
@@ -54,6 +57,7 @@ public record ReplaySample(
         List<QualityDimension> provenFailures,
         int attempts,
         List<UsageCounter> stageUsage,
+        Optional<UsageDeclaration> usageDeclaration,
         Optional<ReplayCost> chainCost,
         ComparisonKey comparison) {
 
@@ -90,11 +94,24 @@ public record ReplaySample(
         Objects.requireNonNull(verdict, "verdict must not be null");
         provenFailures = List.copyOf(provenFailures);
         stageUsage = List.copyOf(stageUsage);
+        Objects.requireNonNull(usageDeclaration, "usageDeclaration must not be null");
         Objects.requireNonNull(chainCost, "chainCost must not be null");
         Objects.requireNonNull(comparison, "comparison must not be null");
-        if ((coverage == Coverage.OBSERVED) != acceptance.isPresent()) {
-            throw new IllegalArgumentException("an acceptance is reported exactly for an observed outcome");
+        if ((coverage == Coverage.OBSERVED) != acceptance.isPresent()
+                || (coverage == Coverage.OBSERVED) != usageDeclaration.isPresent()) {
+            throw new IllegalArgumentException("an acceptance and a usage declaration are reported exactly for an"
+                    + " observed outcome");
         }
+    }
+
+    /**
+     * Whether the routed stage's usage leaves the chain uncovered: a {@code MEASURED} declaration with no counter at
+     * all (unrecorded) or with an unknown or not-measured counter. A declared {@code NO_BILLABLE_USAGE} is complete.
+     * Not-observed samples report no usage and are never incomplete.
+     */
+    public boolean stageUsageIncomplete() {
+        return usageDeclaration.orElse(null) == UsageDeclaration.MEASURED && (stageUsage.isEmpty()
+                || stageUsage.stream().anyMatch(c -> !(c.value() instanceof ResourceValue.Known)));
     }
 
     /** Whether the advised route reached a validated acceptance. */

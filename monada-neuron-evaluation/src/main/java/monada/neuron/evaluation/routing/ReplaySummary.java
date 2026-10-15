@@ -110,16 +110,17 @@ public record ReplaySummary(
      * Whole-chain figures, counted once per execution.
      *
      * @param executions observed executions
-     * @param attempts attempts over them
-     * @param rework attempts beyond the first
+     * @param attempts attempts over them; a {@code long}, which cannot overflow: at most
+     *        {@value ReplayFixture#MAX_TASKS} executions of fewer than 2^31 attempts each
+     * @param rework attempts beyond the first, bounded the same way
      * @param costStatus executions per cost status
      * @param available sum of complete costs per currency
      * @param partialLowerBound sum of partial costs per currency; a lower bound, never mixed with {@code available}
      */
     public record ChainFigures(
             int executions,
-            int attempts,
-            int rework,
+            long attempts,
+            long rework,
             SortedMap<String, Integer> costStatus,
             SortedMap<String, BigDecimal> available,
             SortedMap<String, BigDecimal> partialLowerBound) {
@@ -138,7 +139,8 @@ public record ReplaySummary(
     }
 
     /**
-     * Pairs of observed executions of the same task.
+     * Pairs of observed executions of the same task. A pair needs two different executions: two observations of one
+     * execution, such as two routed attempts, are never paired.
      *
      * @param comparable pairs whose {@link ComparisonKey}s match: directly comparable
      * @param incomparable pairs that differ in some field: observational only
@@ -181,8 +183,8 @@ public record ReplaySummary(
     private static ChainFigures chain(List<ReplaySample> samples) {
         Set<ExecutionKey> seen = new HashSet<>();
         int executions = 0;
-        int attempts = 0;
-        int rework = 0;
+        long attempts = 0;
+        long rework = 0;
         var status = new TreeMap<String, Integer>();
         var available = new TreeMap<String, BigDecimal>();
         var partial = new TreeMap<String, BigDecimal>();
@@ -226,6 +228,10 @@ public record ReplaySummary(
         for (List<ReplaySample> group : byTask.values()) {
             for (int i = 0; i < group.size(); i++) {
                 for (int j = i + 1; j < group.size(); j++) {
+                    // two observations of one execution (for example two routed attempts) are not two executions
+                    if (group.get(i).decisionRef().executionId().equals(group.get(j).decisionRef().executionId())) {
+                        continue;
+                    }
                     List<String> fields = group.get(i).comparison().differingFields(group.get(j).comparison());
                     if (fields.isEmpty()) {
                         comparable++;
@@ -249,8 +255,8 @@ public record ReplaySummary(
         stageLines(lines, prefix + "total.", total);
         byStage.forEach((stage, figures) -> stageLines(lines, prefix + "stage." + stage + ".", figures));
         lines.put(prefix + "chain.executions", Integer.toString(chain.executions()));
-        lines.put(prefix + "chain.attempts", Integer.toString(chain.attempts()));
-        lines.put(prefix + "chain.rework", Integer.toString(chain.rework()));
+        lines.put(prefix + "chain.attempts", Long.toString(chain.attempts()));
+        lines.put(prefix + "chain.rework", Long.toString(chain.rework()));
         chain.costStatus().forEach((k, v) -> lines.put(prefix + "chain.cost.status." + k, Integer.toString(v)));
         chain.available().forEach((k, v) -> lines.put(prefix + "chain.cost.available." + k, v.toPlainString()));
         chain.partialLowerBound().forEach((k, v) -> lines.put(prefix + "chain.cost.partialLowerBound." + k,

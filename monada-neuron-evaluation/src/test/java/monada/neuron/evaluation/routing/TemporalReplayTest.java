@@ -77,6 +77,22 @@ class TemporalReplayTest {
     }
 
     @Test
+    void aFinishedDecisionTraceCannotBeChanged() {
+        var trace = new TemporalReplay(fixtures.improvement(8)).run(ReplayArm.ADAPTIVE).decisions();
+        var copy = new DecisionTrace(trace.routes(), trace.codes(), trace.watermarks());
+        String digest = new ReplayDigests().decisions(trace);
+
+        trace.routes()[0] = new RouteKey("tampered", 1);
+        trace.codes()[0] = -1;
+        trace.watermarks()[0] = -1;
+
+        assertAll(
+                () -> assertEquals(copy, trace),
+                () -> assertEquals(-1, copy.firstDifference(trace)),
+                () -> assertEquals(digest, new ReplayDigests().decisions(trace)));
+    }
+
+    @Test
     void routeIdsWithTheSameStringHashAreDifferentDecisions() {
         // "Aa" and "BB" share String.hashCode(), so a hash-folded checksum could not tell them apart
         var aa = new RouteKey("Aa", 1);

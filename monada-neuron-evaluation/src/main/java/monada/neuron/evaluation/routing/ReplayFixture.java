@@ -56,6 +56,12 @@ public record ReplayFixture(
         Objects.requireNonNull(evidencePolicy, "evidencePolicy must not be null");
         Objects.requireNonNull(policy, "policy must not be null");
         Objects.requireNonNull(partition, "partition must not be null");
+        if (!evidencePolicy.id().equals(partition.evaluationPolicyId())
+                || !evidencePolicy.version().equals(partition.evaluationPolicyVersion())) {
+            throw new IllegalArgumentException("evidence policy " + evidencePolicy.id() + "/" + evidencePolicy.version()
+                    + " is not the partition's evaluation policy " + partition.evaluationPolicyId() + "/"
+                    + partition.evaluationPolicyVersion());
+        }
         if (!policy.definition().equals(definition.state())) {
             throw new IllegalArgumentException("the policy must route over the adaptive definition's state "
                     + definition.mappingVersion() + ", got " + policy.definition().mappingVersion());

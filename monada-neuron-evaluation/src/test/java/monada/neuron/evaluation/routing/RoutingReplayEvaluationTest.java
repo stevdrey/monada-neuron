@@ -1,6 +1,7 @@
 package monada.neuron.evaluation.routing;
 
 import monada.neuron.routing.outcome.Money;
+import monada.neuron.routing.outcome.UsageDeclaration;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -155,14 +156,37 @@ class RoutingReplayEvaluationTest {
             overstated.add(!s.decisionRef().taskId().equals("task-unknown-usage") ? s : new ReplaySample(
                     s.decisionRef(), s.stageKind(), s.cutoff(), s.stateCutoff(), s.arm(), s.kind(), s.route(),
                     s.basis(), s.abstainReason(), s.coverage(), s.acceptance(), s.verdict(), s.provenFailures(),
-                    s.attempts(), s.stageUsage(), Optional.of(ReplayCost.available(
+                    s.attempts(), s.stageUsage(), s.usageDeclaration(), Optional.of(ReplayCost.available(
                             new Money(new BigDecimal("0.0420"), "USD"))), s.comparison()));
         }
         var corrupted = new EnumMap<ReplayArm, ReplayRun>(ReplayArm.class);
         corrupted.put(ReplayArm.STATIC, new ReplayRun(ReplayArm.STATIC, overstated, control.feedback(),
                 control.delivered(), control.decisions(), control.state()));
 
+        // an unrecorded MEASURED stage (no counters at all) with a complete cost must fail too
+        var unrecorded = new ArrayList<ReplaySample>();
+        for (ReplaySample s : control.samples()) {
+            unrecorded.add(s.coverage() != ReplaySample.Coverage.OBSERVED ? s : new ReplaySample(s.decisionRef(),
+                    s.stageKind(), s.cutoff(), s.stateCutoff(), s.arm(), s.kind(), s.route(), s.basis(),
+                    s.abstainReason(), s.coverage(), s.acceptance(), s.verdict(), s.provenFailures(), s.attempts(),
+                    List.of(), Optional.of(UsageDeclaration.MEASURED), Optional.of(ReplayCost.available(
+                            new Money(new BigDecimal("0.0420"), "USD"))), s.comparison()));
+        }
+        var empty = new EnumMap<ReplayArm, ReplayRun>(ReplayArm.class);
+        empty.put(ReplayArm.STATIC, new ReplayRun(ReplayArm.STATIC, unrecorded, control.feedback(),
+                control.delivered(), control.decisions(), control.state()));
+        ReplaySample observed = control.samples().stream()
+                .filter(s -> s.coverage() == ReplaySample.Coverage.OBSERVED).findFirst().orElseThrow();
+        var declaredNone = new ReplaySample(observed.decisionRef(), observed.stageKind(), observed.cutoff(),
+                observed.stateCutoff(), observed.arm(), observed.kind(), observed.route(), observed.basis(),
+                observed.abstainReason(), observed.coverage(), observed.acceptance(), observed.verdict(),
+                observed.provenFailures(), observed.attempts(), List.of(),
+                Optional.of(UsageDeclaration.NO_BILLABLE_USAGE), observed.chainCost(), observed.comparison());
+
         assertAll(
+                () -> assertFalse(RoutingReplayEvaluation.costCompletenessCheck(List.of(empty)).passed()),
+                // explicitly declared no billable usage is complete
+                () -> assertFalse(declaredNone.stageUsageIncomplete()),
                 () -> assertTrue(RoutingReplayEvaluation.costCompletenessCheck(List.of(cases)).passed()),
                 () -> assertFalse(RoutingReplayEvaluation.costCompletenessCheck(List.of(corrupted)).passed()),
                 // no sample with unknown usage: nothing was checked

@@ -384,8 +384,10 @@ public final class RoutingReplayEvaluation {
     }
 
     /**
-     * No observed sample whose routed stage has an unknown or not-measured usage counter reports a complete cost: the
-     * routed stage is part of the chain, so the chain cannot be fully covered (execution-memory contract v1 section 8).
+     * No observed sample whose routed stage usage is incomplete ({@link ReplaySample#stageUsageIncomplete()}: unknown,
+     * not-measured or unrecorded {@code MEASURED} usage) reports a complete cost: the routed stage is part of the chain,
+     * so the chain cannot be fully covered (execution-memory contract v1 section 8). {@code NO_BILLABLE_USAGE} is
+     * complete.
      */
     static Check costCompletenessCheck(List<Map<ReplayArm, ReplayRun>> all) {
         int uncovered = 0;
@@ -393,8 +395,7 @@ public final class RoutingReplayEvaluation {
         for (var runs : all) {
             for (ReplayRun run : runs.values()) {
                 for (ReplaySample sample : run.samples()) {
-                    if (sample.coverage() != ReplaySample.Coverage.OBSERVED || sample.stageUsage().stream()
-                            .allMatch(c -> c.value() instanceof ResourceValue.Known)) {
+                    if (!sample.stageUsageIncomplete()) {
                         continue;
                     }
                     uncovered++;
@@ -404,12 +405,13 @@ public final class RoutingReplayEvaluation {
                 }
             }
         }
-        // Consistency is vacuous if no sample with unknown usage was ever observed.
+        // Consistency is vacuous if no sample with incomplete usage was ever observed.
         boolean passed = uncovered > 0 && failures.isEmpty();
         return new Check("cost.completeness-consistent", passed, passed
-                ? uncovered + " observed samples with unknown or not-measured stage usage, none with an AVAILABLE cost"
-                : uncovered == 0 ? "no observed sample had unknown usage, so nothing was checked"
-                        : failures.size() + " complete costs despite unknown usage: "
+                ? uncovered + " observed samples with unknown, not-measured or unrecorded stage usage, none with an"
+                        + " AVAILABLE cost"
+                : uncovered == 0 ? "no observed sample had incomplete usage, so nothing was checked"
+                        : failures.size() + " complete costs despite incomplete usage: "
                                 + failures.subList(0, Math.min(5, failures.size())));
     }
 
@@ -461,8 +463,8 @@ public final class RoutingReplayEvaluation {
                 }
             }
             ReplaySummary summary = ReplaySummary.of(run);
-            int attempts = run.samples().stream().filter(s -> s.coverage() == ReplaySample.Coverage.OBSERVED)
-                    .mapToInt(ReplaySample::attempts).sum();
+            long attempts = run.samples().stream().filter(s -> s.coverage() == ReplaySample.Coverage.OBSERVED)
+                    .mapToLong(ReplaySample::attempts).sum();
             if (summary.chain().attempts() != attempts || summary.chain().rework() != 1) {
                 failures.add(run.arm() + ": chain attempts " + summary.chain().attempts() + " / rework "
                         + summary.chain().rework() + " are not counted once per execution");

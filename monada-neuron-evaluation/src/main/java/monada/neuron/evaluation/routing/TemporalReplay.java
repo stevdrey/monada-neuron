@@ -114,7 +114,7 @@ public final class TemporalReplay {
             // the state has examined the export through its horizon, not only through its last observation
             run.store.advanceCutoff(fixture.horizon());
         }
-        return new ReplayRun(arm, run.samples, run.events, run.delivered, run.trace,
+        return new ReplayRun(arm, run.samples, run.events, run.delivered, run.trace.build(),
                 Optional.ofNullable(run.store));
     }
 
@@ -167,7 +167,7 @@ public final class TemporalReplay {
         private final List<FeedbackEvent> events = new ArrayList<>();
         private RoutingStateStore store;
         /** Every decision's route, kind, basis, abstention, coverage and snapshot watermark, recorded or not. */
-        private final DecisionTrace trace = DecisionTrace.sized(fixture.tasks().size());
+        private final DecisionTrace.Builder trace = new DecisionTrace.Builder(fixture.tasks().size());
         private int decisions;
 
         Run(ReplayArm arm, boolean record) {
@@ -312,6 +312,7 @@ public final class TemporalReplay {
                         assessment.map(LearningAssessment::provenFailures).orElse(List.of()),
                         observed.map(o -> o.chain().attempts()).orElse(0),
                         observed.map(o -> o.observation().outcome().resources().counters()).orElse(List.of()),
+                        observed.map(o -> o.observation().outcome().resources().declaration()),
                         observed.map(o -> o.chain().cost()), comparison);
                 case RoutingDecision.Abstain abstain -> notExecuted(request, stateCutoff,
                         ReplaySample.DecisionKind.ABSTAINED, Optional.of(abstain.reason()), comparison);
@@ -325,7 +326,7 @@ public final class TemporalReplay {
             return new ReplaySample(DecisionRef.of(request), request.stageKind(), request.cutoff(), stateCutoff, arm,
                     kind,
                     Optional.empty(), Optional.empty(), reason, ReplaySample.Coverage.NOT_EXECUTED, Optional.empty(),
-                    Optional.empty(), List.of(), 0, List.of(), Optional.empty(), comparison);
+                    Optional.empty(), List.of(), 0, List.of(), Optional.empty(), Optional.empty(), comparison);
         }
     }
 

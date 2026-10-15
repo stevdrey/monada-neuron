@@ -83,13 +83,54 @@ class ReplaySummaryTest {
                 .filter(s -> s.coverage() == ReplaySample.Coverage.OBSERVED).limit(2)
                 .map(s -> new ReplaySample(s.decisionRef(), s.stageKind(), s.cutoff(), s.stateCutoff(), s.arm(),
                         s.kind(), s.route(), s.basis(), s.abstainReason(), s.coverage(), s.acceptance(), s.verdict(),
-                        s.provenFailures(), s.attempts(), huge, s.chainCost(), s.comparison()))
+                        s.provenFailures(), s.attempts(), huge, s.usageDeclaration(), s.chainCost(), s.comparison()))
                 .toList();
         var summary = ReplaySummary.of(new ReplayRun(ReplayArm.STATIC, samples, List.of(), List.of(),
                 run.decisions(), run.state()));
 
         assertEquals(BigInteger.valueOf(Long.MAX_VALUE).multiply(BigInteger.TWO),
                 summary.total().tokens().get(UsageKind.OUTPUT_TOKENS.name()).knownSum());
+    }
+
+    @Test
+    void chainAttemptTotalsNeverWrap() {
+        ReplayRun run = new TemporalReplay(fixtures.cases()).run(ReplayArm.STATIC);
+        var samples = run.samples().stream()
+                .filter(s -> s.coverage() == ReplaySample.Coverage.OBSERVED).limit(2)
+                .map(s -> new ReplaySample(s.decisionRef(), s.stageKind(), s.cutoff(), s.stateCutoff(), s.arm(),
+                        s.kind(), s.route(), s.basis(), s.abstainReason(), s.coverage(), s.acceptance(), s.verdict(),
+                        s.provenFailures(), Integer.MAX_VALUE, s.stageUsage(), s.usageDeclaration(), s.chainCost(),
+                        s.comparison()))
+                .toList();
+        var chain = ReplaySummary.of(new ReplayRun(ReplayArm.STATIC, samples, List.of(), List.of(), run.decisions(),
+                run.state())).chain();
+
+        assertAll(
+                () -> assertEquals(2L * Integer.MAX_VALUE, chain.attempts()),
+                () -> assertEquals(2L * (Integer.MAX_VALUE - 1), chain.rework()));
+    }
+
+    @Test
+    void twoObservationsOfOneExecutionAreNeverAPair() {
+        var base = fixtures.improvement(2);
+        var tasks = new ArrayList<ReplayTask>();
+        int attempt = 0;
+        for (ReplayTask task : base.tasks()) {
+            RoutingRequest r = task.request();
+            // one task and one execution, routed as two attempts with identical comparison keys
+            tasks.add(new ReplayTask(new RoutingRequest(r.contractVersion(), r.scopeId(), "task-one", "exe-one",
+                    "att-" + (++attempt), r.stageId(), r.stageKind(), r.requestOrdinal(), r.sourceFingerprint(),
+                    r.contextFingerprint(), r.constraintsFingerprint(), r.evaluationPolicyId(),
+                    r.evaluationPolicyVersion(), r.features(), r.requirements(), r.overflowPermitted(), r.cutoff()),
+                    task.catalog(), task.oracle()));
+        }
+        var fixture = new ReplayFixture(base.fixtureId(), base.version(), base.definition(), base.evidencePolicy(),
+                base.policy(), base.partition(), tasks);
+        var pairing = ReplaySummary.of(new TemporalReplay(fixture).run(ReplayArm.STATIC)).pairing();
+
+        assertAll(
+                () -> assertEquals(0, pairing.comparable()),
+                () -> assertEquals(0, pairing.incomparable()));
     }
 
     @Test

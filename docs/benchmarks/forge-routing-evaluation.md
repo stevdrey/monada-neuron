@@ -109,6 +109,8 @@ task carries:
 **Construction checks.** These hold before any replay, and an oversized fixture is rejected, never truncated:
 - Every outcome must be visible strictly after its decision.
 - `requestOrdinal` must be strictly increasing in replay order, as the contract requires per scope.
+- The evidence policy must be the partition's evaluation policy (same id and version), so feedback is never assessed
+  under a policy the requests do not name.
 - The observations of one logged decision must be revisions of one sample: one `experienceRef`, strictly increasing
   revisions and ledger sequences, and each later revision superseding the one before it. Two separately referenced
   samples can therefore never credit one execution twice.
@@ -249,7 +251,7 @@ derived, and unchanged earlier decisions are rejected as evidence when the mutat
 | `cases.unknown-usage` | Unknown and not-measured counters are counted as such, not as zero; the cost is a separate `PARTIAL` lower bound. |
 | `cases.incomparable-context-and-stage` | The same task under two context fingerprints, and the same task routed for two stages, are incomparable pairs (`context`, `stageKind`); identical keys form the only comparable pair. |
 | `cases.currencies-not-summed` | Complete costs are summed per currency only. |
-| `cost.completeness-consistent` | Across every fixture and arm, no observed sample whose routed stage has an unknown or not-measured usage counter reports an `AVAILABLE` cost (252 such samples in the full run). |
+| `cost.completeness-consistent` | Across every fixture and arm, no observed sample whose routed-stage usage is incomplete reports an `AVAILABLE` cost (252 such samples in the full run). Incomplete means `MEASURED` with an unknown or not-measured counter, or with no counter at all (unrecorded); a declared `NO_BILLABLE_USAGE` is complete. |
 | `cases.abstention-and-no-eligible-route` | A tier-capped stage abstains, an unserved stage has no eligible route, and both are `NOT_EXECUTED`. |
 | `cases.missing-counterfactual` | Adaptive choices of a route the log never executed are reported as coverage gaps with no outcome; an executed but unexported outcome is `UNOBSERVED`. |
 | `adaptation.improvement-and-degradation-visible` | On fixtures whose direction is known, the report shows both an improvement (+16 validated acceptances) and a degradation (−5). This tests the harness's sensitivity. No improvement is required on the measured workload. |
@@ -289,7 +291,8 @@ never per stage or route:
 - the per-currency `PARTIAL` lower bound.
 
 **Pairing** reports directly comparable versus incomparable pairs of observed executions of one task, with the
-differing fields named. The key is the contract's ("Direct comparable pairs"): scope, task, `stageKind`, the three
+differing fields named. A pair needs two different executions: two observations of one execution, such as two routed
+attempts, are never paired. The key is the contract's ("Direct comparable pairs"): scope, task, `stageKind`, the three
 fingerprints and the evaluation policy id and version. The replay adds the routing policy id and version and the policy's
 `ResourceObjective` binding. Every identity is a separate component, never a concatenation, because opaque tokens may
 contain any separator. Cohort summaries are observational.
@@ -328,12 +331,12 @@ mode.
 
 | Benchmark | Scale | Mean per iteration | p95 per iteration | Mean per decision (derived) | Alloc per decision |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `RoutingReplay.static` | 960 tasks | 3.27 ms | 3.74 ms | 3.4 µs | 6.47 KB |
-| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 18.57 ms | 20.57 ms | 19.3 µs | 27.08 KB |
-| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 450.97 ms | 480.72 ms | 469.8 µs | 487.96 KB |
-| `StoreRoutingReplay.static` | 16 exported tasks | 0.91 ms | 1.17 ms | 56.6 µs | 9.41 KB |
-| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 1.61 ms | 2.01 ms | 100.7 µs | 19.99 KB |
-| `StoreRoutingReplay.adaptive` | 16 exported tasks | 2.19 ms | 2.74 ms | 136.7 µs | 19.96 KB |
+| `RoutingReplay.static` | 960 tasks | 8.55 ms | 13.22 ms | 8.9 µs | 7.34 KB |
+| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 26.32 ms | 33.99 ms | 27.4 µs | 30.18 KB |
+| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 470.17 ms | 496.78 ms | 489.8 µs | 498.49 KB |
+| `StoreRoutingReplay.static` | 16 exported tasks | 1.03 ms | 1.39 ms | 64.3 µs | 9.43 KB |
+| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 2.10 ms | 2.28 ms | 131.5 µs | 18.91 KB |
+| `StoreRoutingReplay.adaptive` | 16 exported tasks | 2.07 ms | 3.02 ms | 129.1 µs | 20.05 KB |
 
 These are single runs on one machine. Across the full runs made for this PR, adaptive mean latency per iteration varied
 between 397 ms and 490 ms, and `static` between 3.27 ms and 18.38 ms; the outlier was immediately followed by 5.72 ms and

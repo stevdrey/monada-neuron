@@ -5,6 +5,7 @@ import monada.neuron.routing.adaptation.StatePartition;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
+import monada.neuron.routing.outcome.EvidencePolicy;
 import monada.neuron.routing.outcome.Money;
 import monada.neuron.routing.outcome.OutcomeStatus;
 import monada.neuron.routing.outcome.QualityDimension;
@@ -43,6 +44,16 @@ class ReplayFixtureBoundsTest {
                 () -> assertThrows(IllegalArgumentException.class, () -> new ReplayFixture("f", "1",
                         fixture.definition(), fixture.evidencePolicy(), fixture.policy(),
                         new StatePartition("other-scope", "forge-gates", "1"), fixture.tasks())));
+    }
+
+    @Test
+    void theEvidencePolicyMustBeThePartitionsEvaluationPolicy() {
+        var fixture = fixtures.improvement(4);
+        var otherVersion = new EvidencePolicy(fixture.evidencePolicy().id(), "2",
+                fixture.evidencePolicy().mandatoryDimensions());
+
+        assertThrows(IllegalArgumentException.class, () -> new ReplayFixture("f", "1", fixture.definition(),
+                otherVersion, fixture.policy(), fixture.partition(), fixture.tasks()));
     }
 
     @Test
