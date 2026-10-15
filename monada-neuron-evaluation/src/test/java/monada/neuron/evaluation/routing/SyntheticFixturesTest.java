@@ -1,5 +1,7 @@
 package monada.neuron.evaluation.routing;
 
+import monada.neuron.routing.RoutingDecision;
+import monada.neuron.routing.RoutingPreference;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.outcome.InvocationStatus;
 import monada.neuron.routing.outcome.Money;
@@ -110,32 +112,51 @@ class SyntheticFixturesTest {
                 () -> assertEquals(ReplayCost.Status.AVAILABLE, new ScriptedOutcome(passing.observedAt(),
                         InvocationStatus.FAILED, passing.status(), passing.origin(), passing.quality(),
                         StageAttribution.Basis.CHAIN_ONLY, true, passing.stage(),
-                        new ChainOutcome(2, passing.chain().cost()), Optional.empty()).chain().cost().status()));
+                        new ChainOutcome(2, 2, passing.chain().cost()), Optional.empty()).chain().cost().status()));
     }
 
     @Test
-    void aRepairOrChainOnlyAttributionNeedsTwoAttemptsInEveryRevision() {
+    void stagesAndAttemptsAreIndependentAndTheAttributionFollowsTheStages() {
         ScriptedOutcome passing = outcomeOf(fixtures.improvement(8), 5, SyntheticRoutingFixtures.SUB_B);
-        var single = new ChainOutcome(1, passing.chain().cost());
-        var twoAttempts = new ChainOutcome(2, passing.chain().cost());
-        var reAccepted = new ScriptedOutcome.Correction(passing.observedAt() + 10, OutcomeStatus.ACCEPTED,
-                passing.quality(), single);
+        ReplayCost cost = passing.chain().cost();
+        var request = fixtures.improvement(8).tasks().get(5);
+        var factory = new ObservationFactory();
+        var decision = (RoutingDecision.Selected) SyntheticRoutingFixtures.POLICY.decide(
+                request.request(), request.catalog(), RoutingPreference.empty(request.request(),
+                        SyntheticRoutingFixtures.DEFINITION.state(), SyntheticRoutingFixtures.POLICY.policyId(),
+                        SyntheticRoutingFixtures.POLICY.policyVersion()));
 
         assertAll(
-                // the reported case: a passing single-attempt chain marked as accepted by a repair
+                // one attempt over two stages is a valid chain-only execution
+                () -> assertEquals(2, outcome(passing, StageAttribution.Basis.CHAIN_ONLY, false,
+                        new ChainOutcome(1, 2, cost)).chain().stages()),
+                // the observation reports the stage count, not the attempts: two attempts over three stages is three
+                () -> assertEquals(3, factory.observe(request.request(), decision, ScriptedOutcome.acceptedByRepair(
+                        passing.observedAt(), SyntheticRoutingFixtures.GATES, passing.stage(),
+                        new ChainOutcome(2, 3, cost)), 0).outcome().attribution().chainStageCount()),
+                // stage-local evidence is about exactly one stage; chain-only spans two or more
+                () -> assertThrows(IllegalArgumentException.class, () -> outcome(passing,
+                        StageAttribution.Basis.STAGE_LOCAL, false, new ChainOutcome(1, 2, cost))),
+                () -> assertThrows(IllegalArgumentException.class, () -> outcome(passing,
+                        StageAttribution.Basis.CHAIN_ONLY, false, new ChainOutcome(2, 1, cost))),
+                // a one-stage repair chain is attributed to no stage, not chain-only
+                () -> assertEquals(StageAttribution.Basis.NONE, ScriptedOutcome.acceptedByRepair(passing.observedAt(),
+                        SyntheticRoutingFixtures.GATES, passing.stage(), new ChainOutcome(2, 1, cost)).attribution()),
+                () -> assertThrows(IllegalArgumentException.class, () -> outcome(passing,
+                        StageAttribution.Basis.CHAIN_ONLY, true, new ChainOutcome(2, 1, cost))),
+                // a repair is a later attempt: one attempt cannot be accepted by a repair, in any revision
                 () -> assertThrows(IllegalArgumentException.class, () -> passing.repaired()),
-                // a chain-only attribution without a repair also spans more than one attempt
                 () -> assertThrows(IllegalArgumentException.class, () -> new ScriptedOutcome(passing.observedAt(),
                         passing.invocation(), passing.status(), passing.origin(), passing.quality(),
-                        StageAttribution.Basis.CHAIN_ONLY, false, passing.stage(), single, Optional.empty())),
-                // a correction inherits the repair, so an accepted correction is held to it too
-                () -> assertThrows(IllegalArgumentException.class, () -> new ScriptedOutcome(passing.observedAt(),
-                        passing.invocation(), passing.status(), passing.origin(), passing.quality(),
-                        StageAttribution.Basis.CHAIN_ONLY, true, passing.stage(), twoAttempts,
-                        Optional.of(reAccepted))),
-                () -> assertEquals(2, new ScriptedOutcome(passing.observedAt(), passing.invocation(),
-                        passing.status(), passing.origin(), passing.quality(), StageAttribution.Basis.CHAIN_ONLY, true,
-                        passing.stage(), twoAttempts, Optional.empty()).chain().attempts()));
+                        StageAttribution.Basis.CHAIN_ONLY, true, passing.stage(), new ChainOutcome(2, 2, cost),
+                        Optional.of(new ScriptedOutcome.Correction(passing.observedAt() + 10, OutcomeStatus.ACCEPTED,
+                                passing.quality(), new ChainOutcome(1, 2, cost))))));
+    }
+
+    private static ScriptedOutcome outcome(ScriptedOutcome base, StageAttribution.Basis attribution, boolean repair,
+            ChainOutcome chain) {
+        return new ScriptedOutcome(base.observedAt(), base.invocation(), base.status(), base.origin(), base.quality(),
+                attribution, repair, base.stage(), chain, Optional.empty());
     }
 
     private static ScriptedOutcome outcomeOf(ReplayFixture fixture, int ordinal, RouteKey route) {

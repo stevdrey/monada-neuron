@@ -172,9 +172,11 @@ final class StoreReplaySource implements AutoCloseable {
             String execution = log.request().executionId();
             List<RoutingObservation> observed = imported.observations().stream()
                     .filter(o -> o.outcome().decisionRef().equals(DecisionRef.of(log.request()))).toList();
+            // the stage count mirrors the export's own attribution, so the fixture never contradicts it
+            int stages = observed.isEmpty() ? 1 : observed.getLast().outcome().attribution().chainStageCount();
             ChainOutcome chain = costs.containsKey(execution)
-                    ? new ChainOutcome(Math.max(1, attempts.get(execution)), replayCost(costs.get(execution)))
-                    : new ChainOutcome(1, ReplayCost.unavailable("NOT_EXPORTED"));
+                    ? new ChainOutcome(Math.max(1, attempts.get(execution)), stages, replayCost(costs.get(execution)))
+                    : new ChainOutcome(1, stages, ReplayCost.unavailable("NOT_EXPORTED"));
             replayTasks.add(new ReplayTask(log.request(), log.catalog(),
                     new OutcomeOracle.ChosenRouteOnly(log.decision(), observed, chain)));
         }

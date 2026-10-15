@@ -43,11 +43,15 @@ controls those documents asked for, not an effectiveness result.
 ./gradlew :monada-neuron-evaluation:runForgeRoutingEvaluation                              # full (960-task workload)
 ./gradlew :monada-neuron-evaluation:runForgeRoutingEvaluation -PbenchmarkArgs="--quick"     # smoke (240-task workload)
 ./gradlew :monada-neuron-evaluation:test                                                   # correctness; also runs integrationTest when the Store is present
-./gradlew :monada-neuron-evaluation:test -x :monada-neuron-evaluation:integrationTest      # correctness only, store-free
+./gradlew :monada-neuron-evaluation:test -x :monada-neuron-evaluation:integrationTest      # store-free correctness, when the Store is present
 ./gradlew :monada-neuron-evaluation:runForgeRoutingStoreReplay                             # real Store arm (optional)
 ./gradlew :monada-neuron-evaluation:integrationTest                                        # Store arm correctness (optional)
 ./gradlew test                                                                             # includes integrationTest when the Store is present
 ```
+
+**Store-free correctness.** Without the sibling Store checkout, `integrationTest` does not exist and
+`./gradlew :monada-neuron-evaluation:test` is already store-free (`-x` would fail on the missing task). With the
+checkout present, `test` also runs `integrationTest`, so exclude it with `-x :monada-neuron-evaluation:integrationTest`.
 
 Quote arguments that contain spaces, e.g. `-PbenchmarkArgs='--quick --output-dir "/tmp/benchmark reports"'`.
 
@@ -126,12 +130,15 @@ task carries:
   export cutoff is the same claim, as core `RebuildOrder` treats it: the copies are merged into the one read later, and
   two different claims of one revision are rejected.
 - A scripted repair chain is never attributed `STAGE_LOCAL` (contract `StageAttribution`), so a repair's evidence
-  cannot credit the routed route. An acceptance won by a repair, and any `CHAIN_ONLY` attribution, has a chain of at
-  least two attempts in every revision, so the reported attempts and rework never contradict the observation's
+  cannot credit the routed route. A chain records its stages apart from its attempts, and the observation reports
+  that stage count as its attribution's `chainStageCount`: `STAGE_LOCAL` needs exactly one stage, `CHAIN_ONLY` at least
+  two, and a repair chain is `CHAIN_ONLY` with two or more stages and `NONE` otherwise. An acceptance won by a repair
+  has at least two attempts in every revision, so the reported attempts and rework never contradict the observation's
   second attempt.
 - Cohorts are bounded at ≤ 256.
 - Observations are bounded at ≤ 4096, so a full rebuild stays possible. A synthetic task counts as the most it can
-  deliver (one, or two when a route's outcome has a correction); a logged task counts its listed revisions.
+  deliver through a route its catalog lists as available for its stage (none, one, or two when that route's outcome has
+  a correction); a logged task counts its listed revisions.
 
 **Order and timing.**
 - **Decision order.** Tasks are decided in total order: cutoff first, then `requestOrdinal` (the caller's issuance
@@ -191,7 +198,7 @@ task carries:
 - Between runs only the generated synthetic observations are kept, a pure function of the fixture. There is no clock,
   no randomness, no background task and no session.
 
-## Fixtures (`forge-routing-replay-v4`)
+## Fixtures (`forge-routing-replay-v5`)
 
 [`SyntheticRoutingFixtures`](../../monada-neuron-evaluation/src/main/java/monada/neuron/evaluation/routing/SyntheticRoutingFixtures.java)
 builds every fixture by index arithmetic. Any content change must bump `VERSION`.
@@ -253,7 +260,7 @@ token table shared with the Store arm:
 | `sub-a` attempt | 1200 / 300 | 0.0420 |
 | `sub-b` attempt | 1500 / 400 | 0.0545 |
 | Repair attempt | 500 / 300 | 0.0315 |
-| Repaired chain (`0.0420 + 0.0315`) | routed plus repair | 0.0735, counted once; the repair attempt id is `repair-` plus 32 hex digits of the SHA-256 of the routed attempt id's canonical encoding, 39 code points whatever that id's length |
+| Repaired chain (`0.0420 + 0.0315`) | routed plus repair: two attempts over two stages (`CHAIN_ONLY`) | 0.0735, counted once; the repair attempt id is `repair-` plus 32 hex digits of the SHA-256 of the routed attempt id's canonical encoding, 39 code points whatever that id's length |
 | Unknown-usage chain (output unknown) | 900 / unknown | `PARTIAL` lower bound 0.0135 (the known input only) |
 | Unknown-usage chain repaired | 900 / unknown, plus repair | `PARTIAL` lower bound 0.0450 (the repair attempt's known cost is kept) |
 | Two-currency chain | 1200 / 300 | 0.0420 USD and 0.0390 EUR, never summed together |
@@ -297,7 +304,7 @@ derived, and unchanged earlier decisions are rejected as evidence when the mutat
 | `cases.repaired-accepted` | 2 attempts, validated acceptance, 0.0735 USD counted once per execution (however many of its stages were routed); chain-only attribution earns no credit. |
 | `cases.unknown-usage` | Unknown and not-measured counters are counted as such, not as zero; the cost is a separate `PARTIAL` lower bound of 0.0135 USD. |
 | `cases.incomparable-context-and-stage` | The same task under two context fingerprints, and the same task routed for two stages, are incomparable pairs (`context`, `stageKind`); identical keys form the only comparable pair. |
-| `cases.currencies-not-summed` | Complete costs are summed per currency only. |
+| `cases.currencies-not-summed` | Complete costs are summed per currency only: exactly USD and EUR are reported, USD equals 0.3675 (the repaired chain plus seven `sub-a` chains, calculated from the token table) and EUR equals 0.0390. |
 | `cost.completeness-consistent` | Across every fixture and arm, no observed sample whose routed-stage usage is incomplete reports an `AVAILABLE` cost (252 such samples in the full run), and no sample reports an `AVAILABLE` or `PARTIAL` cost to an accepted outcome without a validated acceptance. Incomplete means `MEASURED` with an unknown or not-measured counter, or with no counter at all (unrecorded); a declared `NO_BILLABLE_USAGE` is complete. |
 | `cases.abstention-and-no-eligible-route` | A tier-capped stage abstains, an unserved stage has no eligible route, and both are `NOT_EXECUTED`. |
 | `cases.missing-counterfactual` | Adaptive choices of a route the log never executed are reported as coverage gaps with no outcome; an executed but unexported outcome is `UNOBSERVED`; chain figures count each observed execution exactly once. |
@@ -498,9 +505,9 @@ Observations, not conclusions:
 
 | Digest | Value |
 | :--- | :--- |
-| `fixture.workload.digest` (full) | `ee12cd4011940977f6ca2e3281463f56c97af47d35bf3a7b9a0375c119f682e0` |
+| `fixture.workload.digest` (full) | `1e55e2e210ae3d1659f89c1730148f9c0247229952b35bfd4c18fc169137d9ea` |
 | `workload.reportDigest` (full) | `b6576ce929214606a9a5c4905a73ca44b98a7322877721190cea52021c59a6aa` |
-| `store.fixtureDigest` | `f5bf198512de8f50749858b30d3c53784e3c222fd7851e32f9355d0f95b73302` |
+| `store.fixtureDigest` | `67fafedc160568d3004becfb49654f120267df2cd0cd882614072dfe814556b7` |
 | `store.exportDigest` (Store tooling) | `f11276157baf9565a14ea07a386502ac8c5a8b3656a6744fb2861f00b4ae2ee8` |
 | `store.reportDigest` | `2ce3cca46803be0e404ea5d696888c893e24648fec12bac7692f76c6e644d72e` |
 

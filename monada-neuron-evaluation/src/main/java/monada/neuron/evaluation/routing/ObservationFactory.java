@@ -113,13 +113,12 @@ public final class ObservationFactory {
                     0, dimension, state, justification, JUDGE, "1", request.evaluationPolicyId(),
                     request.evaluationPolicyVersion(), EvidenceSource.TOOL, evidenceAttempt, position - 1, List.of()));
         }
+        // the chain's own stage count, never its attempts: ScriptedOutcome keeps it consistent with the attribution
         StageAttribution attribution = switch (outcome.attribution()) {
-            case STAGE_LOCAL -> new StageAttribution(StageAttribution.Basis.STAGE_LOCAL, 1,
+            case STAGE_LOCAL -> new StageAttribution(StageAttribution.Basis.STAGE_LOCAL, chain.stages(),
                     List.of(new EvidenceRef("stage-log", ref, Feature.unknown())));
-            // ScriptedOutcome guarantees a chain-only chain has at least two attempts, so its count is reported as is
-            case CHAIN_ONLY -> new StageAttribution(StageAttribution.Basis.CHAIN_ONLY, chain.attempts(),
-                    List.of());
-            case NONE -> StageAttribution.none();
+            case CHAIN_ONLY -> new StageAttribution(StageAttribution.Basis.CHAIN_ONLY, chain.stages(), List.of());
+            case NONE -> new StageAttribution(StageAttribution.Basis.NONE, chain.stages(), List.of());
         };
         var routed = new RoutingOutcome(RoutingRequest.CONTRACT_VERSION, DecisionRef.of(request), decision.route(),
                 decision.cohortBinding(), decision.provenance().catalogVersion(), decision.provenance().policyId(),

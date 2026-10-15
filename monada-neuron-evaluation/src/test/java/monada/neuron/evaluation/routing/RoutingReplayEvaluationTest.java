@@ -105,6 +105,25 @@ class RoutingReplayEvaluationTest {
     }
 
     @Test
+    void theCurrencyCheckAssertsEveryCurrencyAndItsCalculatedTotal() {
+        var usd = new BigDecimal("0.3675");
+        var eur = new BigDecimal("0.0390");
+
+        assertAll(
+                () -> assertEquals(0, usd.compareTo(RoutingReplayEvaluation.CASES_AVAILABLE.get("USD"))),
+                () -> assertTrue(RoutingReplayEvaluation.currencyMismatch(Map.of("USD", usd, "EUR", eur)).isEmpty()),
+                // EUR intact, but USD folded into it
+                () -> assertTrue(RoutingReplayEvaluation.currencyMismatch(Map.of("EUR", eur.add(usd))).isPresent()),
+                // USD corrupted
+                () -> assertTrue(RoutingReplayEvaluation.currencyMismatch(Map.of("USD", usd.add(BigDecimal.ONE),
+                        "EUR", eur)).isPresent()),
+                // USD replaced by another currency, or an extra currency
+                () -> assertTrue(RoutingReplayEvaluation.currencyMismatch(Map.of("GBP", usd, "EUR", eur)).isPresent()),
+                () -> assertTrue(RoutingReplayEvaluation.currencyMismatch(Map.of("USD", usd, "EUR", eur,
+                        "GBP", BigDecimal.ONE)).isPresent()));
+    }
+
+    @Test
     void aMeasuredRunMustDeriveWhatItsReferenceDerivedDeliveryByDelivery() {
         var replay = new TemporalReplay(fixtures.workload(120));
         ReplayRun reference = replay.run(ReplayArm.DERIVED_NOT_CONSUMED);

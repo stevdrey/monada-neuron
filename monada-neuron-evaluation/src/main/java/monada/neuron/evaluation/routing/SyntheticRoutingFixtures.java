@@ -67,7 +67,7 @@ import java.util.TreeMap;
 public final class SyntheticRoutingFixtures {
 
     /** Fixture family version; any content change bumps it. */
-    public static final String VERSION = "forge-routing-replay-v4";
+    public static final String VERSION = "forge-routing-replay-v5";
 
     static final String SCOPE = "forge-replay";
     static final String IMPLEMENT = "implement";
@@ -175,8 +175,8 @@ public final class SyntheticRoutingFixtures {
         list.add(task(0, IMPLEMENT, 20L, "ctx-1", "task-cheap", FULL, Map.of(SUB_A,
                 ScriptedOutcome.failing(observedAt(0, 1), GATES, QualityDimension.SECURITY, cheap,
                         new ChainOutcome(1, ReplayCost.unavailable("NO_VALIDATED_ACCEPTANCE"))))));
-        var repaired = ScriptedOutcome.passing(observedAt(1, 1), GATES, stage(SUB_A),
-                new ChainOutcome(2, chainCost(stage(SUB_A), 2))).repaired();
+        var repaired = ScriptedOutcome.acceptedByRepair(observedAt(1, 1), GATES, stage(SUB_A),
+                new ChainOutcome(2, 2, chainCost(stage(SUB_A), 2)));
         list.add(task(1, IMPLEMENT, 20L, "ctx-1", "task-repair", FULL, Map.of(SUB_A, repaired)));
         var unknown = new ResourceSummary(UsageDeclaration.MEASURED, Feature.unknown(),
                 List.of(reported(UsageKind.INPUT_TOKENS, UNKNOWN_USAGE_INPUT_TOKENS),
@@ -253,8 +253,8 @@ public final class SyntheticRoutingFixtures {
                 ScriptedOutcome outcome = passes ? passing(i, delay, route)
                         : failing(i, delay, route, QualityDimension.TESTS);
                 if (i % 13 == 12 && passes) {
-                    outcome = ScriptedOutcome.passing(observedAt(i, delay), GATES, stage(route),
-                            new ChainOutcome(2, chainCost(stage(route), 2))).repaired();
+                    outcome = ScriptedOutcome.acceptedByRepair(observedAt(i, delay), GATES, stage(route),
+                            new ChainOutcome(2, 2, chainCost(stage(route), 2)));
                 }
                 if (i % 11 == 10) {
                     outcome = unknownUsage(outcome);
@@ -323,7 +323,7 @@ public final class SyntheticRoutingFixtures {
         ScriptedOutcome base = outcome;
         if (outcome.observedAt() >= from) {
             ResourceSummary usage = doubled(outcome.stage());
-            ScriptedOutcome.Correction opposite = opposite(outcome.status(), outcome.chain().attempts(), usage,
+            ScriptedOutcome.Correction opposite = opposite(outcome.status(), outcome.chain(), usage,
                     outcome.observedAt());
             base = opposite.status() == OutcomeStatus.ACCEPTED
                     ? ScriptedOutcome.passing(outcome.observedAt(), GATES, usage, opposite.chain())
@@ -336,7 +336,7 @@ public final class SyntheticRoutingFixtures {
         }
         if (outcome.correction().isPresent() && outcome.correction().get().observedAt() >= from) {
             ScriptedOutcome.Correction original = outcome.correction().get();
-            base = base.corrected(opposite(original.status(), original.chain().attempts(), base.stage(),
+            base = base.corrected(opposite(original.status(), original.chain(), base.stage(),
                     original.observedAt()));
         }
         return base;
@@ -344,20 +344,21 @@ public final class SyntheticRoutingFixtures {
 
     /** The opposite verdict of an outcome as a revision visible at {@code at}; the routed stage's usage is unchanged. */
     private ScriptedOutcome.Correction flip(ScriptedOutcome outcome, long at) {
-        return opposite(outcome.status(), outcome.chain().attempts(), outcome.stage(), at);
+        return opposite(outcome.status(), outcome.chain(), outcome.stage(), at);
     }
 
     /**
-     * The opposite of {@code status} over the same chain of {@code attempts}: an acceptance becomes a test failure with
-     * no cost, anything else a validated acceptance priced from {@code usage}. The chain keeps its attempts, which the
+     * The opposite of {@code status} over the same chain: an acceptance becomes a test failure with no cost, anything
+     * else a validated acceptance priced from {@code usage}. The chain keeps its attempts and stages, which the
      * correction does not undo.
      */
-    private ScriptedOutcome.Correction opposite(OutcomeStatus status, int attempts, ResourceSummary usage, long at) {
+    private ScriptedOutcome.Correction opposite(OutcomeStatus status, ChainOutcome chain, ResourceSummary usage,
+            long at) {
         boolean accepted = status == OutcomeStatus.ACCEPTED;
         return new ScriptedOutcome.Correction(at, accepted ? OutcomeStatus.REJECTED : OutcomeStatus.ACCEPTED,
                 accepted ? failQuality(QualityDimension.TESTS) : passQuality(),
-                new ChainOutcome(attempts, accepted ? ReplayCost.unavailable("NO_VALIDATED_ACCEPTANCE")
-                        : chainCost(usage, attempts)));
+                new ChainOutcome(chain.attempts(), chain.stages(), accepted
+                        ? ReplayCost.unavailable("NO_VALIDATED_ACCEPTANCE") : chainCost(usage, chain.attempts())));
     }
 
     /**
@@ -407,7 +408,7 @@ public final class SyntheticRoutingFixtures {
                 : chainCost(stage, outcome.chain().attempts());
         return new ScriptedOutcome(outcome.observedAt(), outcome.invocation(), outcome.status(), outcome.origin(),
                 outcome.quality(), outcome.attribution(), outcome.acceptedByRepair(), stage,
-                new ChainOutcome(outcome.chain().attempts(), cost), outcome.correction());
+                new ChainOutcome(outcome.chain().attempts(), outcome.chain().stages(), cost), outcome.correction());
     }
 
     private ScriptedOutcome neutralOutcome(int i, RouteKey route) {

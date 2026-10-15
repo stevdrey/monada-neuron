@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (implemented by issue #66; replay evaluation and checkpoint-equivalence evidence by issue #67; the core checkpoint type and ledger compaction are tracked in #89)
+Accepted (implemented by issue #66; replay evaluation and the full-rebuild baseline by issue #67; checkpoint-then-replay equivalence, the core checkpoint type and ledger compaction are tracked in #89)
 
 ## Context
 

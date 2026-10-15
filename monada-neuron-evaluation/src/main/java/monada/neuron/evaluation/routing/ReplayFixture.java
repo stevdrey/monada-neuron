@@ -4,6 +4,7 @@ import monada.neuron.routing.LexicographicRoutingPolicy;
 import monada.neuron.routing.adaptation.AdaptiveStateDefinition;
 import monada.neuron.routing.adaptation.RoutingStateStore;
 import monada.neuron.routing.adaptation.StatePartition;
+import monada.neuron.routing.catalog.Availability;
 import monada.neuron.routing.catalog.CatalogEntry;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.feedback.CohortKey;
@@ -103,11 +104,11 @@ public record ReplayFixture(
                     || !request.evaluationPolicyVersion().equals(partition.evaluationPolicyVersion())) {
                 throw new IllegalArgumentException(request.executionId() + " is outside partition " + partition);
             }
-            // the most a task can deliver: a synthetic task executes one route, an original plus its correction if any
-            // route's outcome has one; a logged task delivers exactly its listed revisions
+            // the most a task can deliver: a synthetic task executes one route the policy can select (in its catalog,
+            // available and serving its stage), an original plus its correction if that route's outcome has one; a
+            // logged task delivers exactly its listed revisions
             observations += switch (task.oracle()) {
-                case OutcomeOracle.KnownForEveryRoute known -> known.outcomes().isEmpty() ? 0
-                        : known.outcomes().values().stream().anyMatch(o -> o.correction().isPresent()) ? 2 : 1;
+                case OutcomeOracle.KnownForEveryRoute known -> mostDelivered(task, known);
                 case OutcomeOracle.ChosenRouteOnly logged -> logged.observed().size();
             };
         }
@@ -125,6 +126,27 @@ public record ReplayFixture(
             throw new IllegalArgumentException(
                     "at most " + RoutingStateStore.MAX_COHORTS + " cohorts, got: " + cohorts);
         }
+    }
+
+    /**
+     * The most observations a synthetic task can deliver: 0 when no selectable route has an outcome, 2 when a
+     * selectable route's outcome has a correction, 1 otherwise. A route is selectable when the task's catalog lists it
+     * as available for the task's stage; the policy's eligibility filter can only narrow that, so this is an upper
+     * bound.
+     */
+    private static int mostDelivered(ReplayTask task, OutcomeOracle.KnownForEveryRoute known) {
+        int most = 0;
+        for (CatalogEntry entry : task.catalog().entries()) {
+            if (entry.availability() != Availability.AVAILABLE
+                    || !entry.descriptor().stages().contains(task.request().stageKind())) {
+                continue;
+            }
+            ScriptedOutcome outcome = known.outcomes().get(entry.key());
+            if (outcome != null) {
+                most = Math.max(most, outcome.correction().isPresent() ? 2 : 1);
+            }
+        }
+        return most;
     }
 
     /** A fixture whose horizon is its latest task cutoff, observation position or export cutoff. */

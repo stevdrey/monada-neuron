@@ -26,6 +26,8 @@ import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.Predicate;
 
@@ -544,11 +546,12 @@ public final class RoutingReplayEvaluation {
 
     static Check repairedAcceptedCheck(Map<ReplayArm, ReplayRun> runs) {
         var failures = new ArrayList<String>();
-        BigDecimal expected = new BigDecimal("0.0735");
+        BigDecimal expected = SUB_A_ATTEMPT_USD.add(REPAIR_ATTEMPT_USD);
         for (ReplayRun run : runs.values()) {
             ReplaySample repaired = sampleOf(run, "task-repair");
             boolean costOk = repaired.chainCost().filter(c -> c.status() == ReplayCost.Status.AVAILABLE
-                    && c.amounts().size() == 1 && c.amounts().getFirst().amount().compareTo(expected) == 0).isPresent();
+                    && c.amounts().size() == 1 && c.amounts().getFirst().currency().equals("USD")
+                    && c.amounts().getFirst().amount().compareTo(expected) == 0).isPresent();
             if (repaired.attempts() != 2 || !repaired.validatedAccepted() || !costOk) {
                 failures.add(run.arm() + ": " + repaired);
             }
@@ -572,6 +575,20 @@ public final class RoutingReplayEvaluation {
                 : String.join("; ", failures));
     }
 
+    /** One {@code sub-a} attempt at the list prices, calculated from the token table. */
+    private static final BigDecimal SUB_A_ATTEMPT_USD = usd(
+            SyntheticRoutingFixtures.inputTokens(SyntheticRoutingFixtures.SUB_A),
+            SyntheticRoutingFixtures.outputTokens(SyntheticRoutingFixtures.SUB_A));
+    /** One repair attempt at the list prices. */
+    private static final BigDecimal REPAIR_ATTEMPT_USD = usd(SyntheticRoutingFixtures.REPAIR_INPUT_TOKENS,
+            SyntheticRoutingFixtures.REPAIR_OUTPUT_TOKENS);
+
+    private static BigDecimal usd(long input, long output) {
+        return SyntheticRoutingFixtures.INPUT_PER_THOUSAND.multiply(BigDecimal.valueOf(input))
+                .add(SyntheticRoutingFixtures.OUTPUT_PER_THOUSAND.multiply(BigDecimal.valueOf(output)))
+                .movePointLeft(3).setScale(4, RoundingMode.UNNECESSARY);
+    }
+
     /** The known input tokens of the unknown-usage case at the list prices: the only part of its cost known. */
     private static final BigDecimal UNKNOWN_USAGE_LOWER_BOUND = SyntheticRoutingFixtures.INPUT_PER_THOUSAND
             .multiply(BigDecimal.valueOf(SyntheticRoutingFixtures.UNKNOWN_USAGE_INPUT_TOKENS)).movePointLeft(3)
@@ -589,8 +606,8 @@ public final class RoutingReplayEvaluation {
             var output = summary.total().tokens().get(UsageKind.OUTPUT_TOKENS.name());
             var reasoning = summary.total().tokens().get(UsageKind.REASONING_TOKENS.name());
             boolean partial = sample.chainCost().map(ReplayCost::status).orElse(null) == ReplayCost.Status.PARTIAL
-                    && summary.chain().partialLowerBound().getOrDefault("USD", BigDecimal.ZERO)
-                            .compareTo(UNKNOWN_USAGE_LOWER_BOUND) == 0;
+                    && summary.chain().partialLowerBound().keySet().equals(Set.of("USD"))
+                    && summary.chain().partialLowerBound().get("USD").compareTo(UNKNOWN_USAGE_LOWER_BOUND) == 0;
             if (!unknownKept || output == null || output.unknown() != 1 || reasoning == null
                     || reasoning.notMeasured() != 1 || !partial) {
                 failures.add(run.arm() + ": unknownKept=" + unknownKept + ", output=" + output + ", reasoning="
@@ -620,19 +637,42 @@ public final class RoutingReplayEvaluation {
                 : String.join("; ", failures));
     }
 
+    /**
+     * The cases fixture's complete costs per currency, calculated from the token table and list prices, not from the
+     * replay: every arm routes {@code sub-a}, and eight chains end in a validated acceptance, the repaired chain
+     * ({@code sub-a} plus a repair attempt) and seven single {@code sub-a} attempts (tasks 3 to 7, 11 and 12), one of
+     * which (task 7) also reports 0.0390 EUR.
+     */
+    static final Map<String, BigDecimal> CASES_AVAILABLE = Map.of(
+            "USD", SUB_A_ATTEMPT_USD.multiply(BigDecimal.valueOf(7)).add(SUB_A_ATTEMPT_USD).add(REPAIR_ATTEMPT_USD),
+            "EUR", new BigDecimal("0.0390"));
+
     static Check currencyCheck(Map<ReplayArm, ReplayRun> runs) {
         var failures = new ArrayList<String>();
         for (ReplayRun run : runs.values()) {
-            var available = ReplaySummary.of(run).chain().available();
-            if (available.size() != 2 || available.getOrDefault("EUR", BigDecimal.ZERO)
-                    .compareTo(new BigDecimal("0.0390")) != 0) {
-                failures.add(run.arm() + ": " + available);
-            }
+            currencyMismatch(ReplaySummary.of(run).chain().available())
+                    .ifPresent(mismatch -> failures.add(run.arm() + ": " + mismatch));
         }
         boolean passed = failures.isEmpty();
         return new Check("cases.currencies-not-summed", passed, passed
-                ? "complete costs are summed per currency (USD, EUR) and never across currencies"
+                ? "complete costs are summed per currency and never across currencies: exactly USD "
+                        + CASES_AVAILABLE.get("USD").toPlainString() + " and EUR "
+                        + CASES_AVAILABLE.get("EUR").toPlainString() + ", as calculated from the token table"
                 : String.join("; ", failures));
+    }
+
+    /** Why the reported complete costs differ from {@link #CASES_AVAILABLE}: the currency set or any one total. */
+    static Optional<String> currencyMismatch(Map<String, BigDecimal> available) {
+        if (!available.keySet().equals(CASES_AVAILABLE.keySet())) {
+            return Optional.of("currencies " + available.keySet() + ", expected " + CASES_AVAILABLE.keySet());
+        }
+        for (var expected : CASES_AVAILABLE.entrySet()) {
+            if (available.get(expected.getKey()).compareTo(expected.getValue()) != 0) {
+                return Optional.of(expected.getKey() + " " + available.get(expected.getKey()).toPlainString()
+                        + ", expected " + expected.getValue().toPlainString());
+            }
+        }
+        return Optional.empty();
     }
 
     static Check abstentionCheck(Map<ReplayArm, ReplayRun> runs) {

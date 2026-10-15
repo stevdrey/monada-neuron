@@ -304,12 +304,20 @@ class ReplayFixtureBoundsTest {
         withCorrection.set(withCorrection.size() - 1, new ReplayTask(synthetic.request(), synthetic.catalog(),
                 new OutcomeOracle.KnownForEveryRoute(corrected)));
 
+        // a correction on a route the task's catalog cannot select (here: a route it does not list) adds nothing
+        var unselectable = new TreeMap<>(known.outcomes());
+        unselectable.put(new RouteKey("not-in-catalog", 1), corrected.values().iterator().next());
+        var withUnselectableCorrection = new ArrayList<>(tasks);
+        withUnselectableCorrection.set(withUnselectableCorrection.size() - 1, new ReplayTask(synthetic.request(),
+                synthetic.catalog(), new OutcomeOracle.KnownForEveryRoute(unselectable)));
+
         assertAll(
                 // exactly 4,096 possible observations
                 () -> assertEquals(3, logged.withTasks("at-bound", tasks).tasks().size()),
                 // a correction makes it 4,097
                 () -> assertThrows(IllegalArgumentException.class,
-                        () -> logged.withTasks("over-bound", withCorrection)));
+                        () -> logged.withTasks("over-bound", withCorrection)),
+                () -> assertEquals(3, logged.withTasks("unselectable", withUnselectableCorrection).tasks().size()));
     }
 
     @Test

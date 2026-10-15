@@ -101,10 +101,9 @@ public record ScriptedOutcome(
             requireValidatedAcceptance(correction.get().status(), origin, invocation, acceptedByRepair,
                     "the correction");
         }
-        // a repair is a later attempt, and a chain-only attribution spans more than one: either way the chain has at
-        // least two attempts, in every revision that keeps them (a correction inherits the repair and attribution)
-        requireChainOfTwo(chain, status, acceptedByRepair, attribution, "the outcome");
-        correction.ifPresent(c -> requireChainOfTwo(c.chain(), c.status(), acceptedByRepair, attribution,
+        // a correction inherits the repair and the attribution, so every revision's chain is held to them
+        requireConsistentChain(chain, status, acceptedByRepair, attribution, "the outcome");
+        correction.ifPresent(c -> requireConsistentChain(c.chain(), c.status(), acceptedByRepair, attribution,
                 "the correction"));
     }
 
@@ -124,16 +123,34 @@ public record ScriptedOutcome(
     }
 
     /**
-     * An acceptance won by a repair, or any chain-only attribution, needs a chain of at least two attempts: the routed
-     * one and a later one. A single-attempt chain would report no rework while the observation names a second
-     * attempt (contract "StageAttribution": a repair chain spans the routed and the accepted attempt).
+     * The chain must agree with the attribution and the repair (contract "StageAttribution"). Stages and attempts are
+     * independent:
+     * <ul>
+     *   <li>{@code STAGE_LOCAL} needs exactly one stage, {@code CHAIN_ONLY} at least two;</li>
+     *   <li>a repair chain is {@code CHAIN_ONLY} when the execution has two or more stages and {@code NONE}
+     *       otherwise;</li>
+     *   <li>an acceptance won by a repair needs at least two attempts, the routed one and the repair: a
+     *       single-attempt chain would report no rework while the observation names a second attempt.</li>
+     * </ul>
      */
-    private static void requireChainOfTwo(ChainOutcome chain, OutcomeStatus status, boolean acceptedByRepair,
+    private static void requireConsistentChain(ChainOutcome chain, OutcomeStatus status, boolean acceptedByRepair,
             StageAttribution.Basis attribution, String what) {
-        boolean repaired = acceptedByRepair && status == OutcomeStatus.ACCEPTED;
-        if ((repaired || attribution == StageAttribution.Basis.CHAIN_ONLY) && chain.attempts() < 2) {
-            throw new IllegalArgumentException((repaired ? "an acceptance won by a repair" : "a chain-only attribution")
-                    + " needs at least two attempts; " + what + " has " + chain.attempts());
+        if (attribution == StageAttribution.Basis.STAGE_LOCAL && chain.stages() != 1) {
+            throw new IllegalArgumentException("a stage-local attribution needs exactly one stage; " + what + " has "
+                    + chain.stages());
+        }
+        if (attribution == StageAttribution.Basis.CHAIN_ONLY && chain.stages() < 2) {
+            throw new IllegalArgumentException("a chain-only attribution needs at least two stages; " + what + " has "
+                    + chain.stages());
+        }
+        if (acceptedByRepair && attribution != (chain.stages() >= 2 ? StageAttribution.Basis.CHAIN_ONLY
+                : StageAttribution.Basis.NONE)) {
+            throw new IllegalArgumentException("a repair chain of " + chain.stages() + " stage(s) is attributed "
+                    + (chain.stages() >= 2 ? "CHAIN_ONLY" : "NONE") + ", not " + attribution);
+        }
+        if (acceptedByRepair && status == OutcomeStatus.ACCEPTED && chain.attempts() < 2) {
+            throw new IllegalArgumentException("an acceptance won by a repair needs at least two attempts; " + what
+                    + " has " + chain.attempts());
         }
     }
 
@@ -145,6 +162,19 @@ public record ScriptedOutcome(
         return new ScriptedOutcome(observedAt, InvocationStatus.COMPLETED, OutcomeStatus.ACCEPTED,
                 OutcomeOrigin.VALIDATED, quality, StageAttribution.Basis.STAGE_LOCAL, false, stage, chain,
                 Optional.empty());
+    }
+
+    /**
+     * A validated acceptance won by a later repair attempt, every listed dimension passing: attributed to the whole
+     * chain ({@code CHAIN_ONLY}) when it spans two or more stages, otherwise to no stage ({@code NONE}).
+     */
+    public static ScriptedOutcome acceptedByRepair(long observedAt, List<QualityDimension> dimensions,
+            ResourceSummary stage, ChainOutcome chain) {
+        var quality = new EnumMap<QualityDimension, QualityState>(QualityDimension.class);
+        dimensions.forEach(d -> quality.put(d, QualityState.PASS));
+        return new ScriptedOutcome(observedAt, InvocationStatus.COMPLETED, OutcomeStatus.ACCEPTED,
+                OutcomeOrigin.VALIDATED, quality, chain.stages() >= 2 ? StageAttribution.Basis.CHAIN_ONLY
+                        : StageAttribution.Basis.NONE, true, stage, chain, Optional.empty());
     }
 
     /** A validated, stage-local rejection with {@code failed} proven to fail and the other dimensions passing. */
@@ -161,7 +191,8 @@ public record ScriptedOutcome(
     /** The same outcome accepted through a later repair attempt, attributable only to the whole chain. */
     public ScriptedOutcome repaired() {
         return new ScriptedOutcome(observedAt, invocation, OutcomeStatus.ACCEPTED, origin, quality,
-                StageAttribution.Basis.CHAIN_ONLY, true, stage, chain, correction);
+                chain.stages() >= 2 ? StageAttribution.Basis.CHAIN_ONLY : StageAttribution.Basis.NONE, true, stage,
+                chain, correction);
     }
 
     /** The same outcome with a later revision. */
