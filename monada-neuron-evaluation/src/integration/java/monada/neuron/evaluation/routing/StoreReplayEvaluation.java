@@ -7,6 +7,7 @@ import monada.neuron.evaluation.metrics.EvaluationMetricsCollector;
 import monada.neuron.evaluation.metrics.EvaluationReport.RunConfiguration;
 import monada.neuron.resonance.adapter.experience.ExperienceRejection;
 import monada.neuron.routing.adaptation.RebuildResult;
+import monada.neuron.routing.outcome.RoutingObservation;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -186,16 +187,41 @@ public final class StoreReplayEvaluation {
         return new Outcome(checks, results, metadata);
     }
 
-    /** Every logged execution but the unfinished one is imported; the unfinished one is rejected with a reason. */
+    /**
+     * Every finished execution contributes exactly one observation (revision 0, no correction was recorded), answering
+     * exactly its own logged decision; the unfinished one is rejected with a reason. A total count alone would hide a
+     * dropped execution compensated by a duplicate.
+     */
     static String importCheck(StoreReplaySource.Export export) {
         int observations = export.imported().observations().size();
         List<ExperienceRejection> rejections = export.imported().rejections();
+        var perDecision = new TreeMap<String, List<Long>>();
+        for (RoutingObservation observation : export.imported().observations()) {
+            perDecision.computeIfAbsent(observation.outcome().decisionRef().executionId(), ignored -> new ArrayList<>())
+                    .add(observation.revision());
+        }
+        for (ReplayTask task : export.fixture().tasks()) {
+            String execution = task.request().executionId();
+            var logged = (OutcomeOracle.ChosenRouteOnly) task.oracle();
+            boolean finished = !execution.equals("exe-" + (TASKS - 1));
+            List<Long> revisions = perDecision.getOrDefault(execution, List.of());
+            require(revisions.equals(finished ? List.of(0L) : List.of()), execution + " imported revisions "
+                    + revisions + ", expected " + (finished ? "[0]" : "none"));
+            require(logged.observed().size() == revisions.size()
+                            && logged.observed().stream().allMatch(o -> o.outcome().decisionRef()
+                                    .equals(logged.loggedDecision().provenance().decisionRef())),
+                    execution + " fixture observations do not answer its own logged decision");
+        }
+        require(perDecision.keySet().stream().allMatch(e -> export.fixture().tasks().stream()
+                .anyMatch(t -> t.request().executionId().equals(e))), "observations for unknown executions: "
+                + perDecision.keySet());
         require(observations == TASKS - 1, "expected " + (TASKS - 1) + " observations, got " + observations);
         // the reference is the Store's encoded experience reference, which embeds the length-prefixed execution id
         require(rejections.size() == 1 && rejections.getFirst().executionRef().contains(":exe-" + (TASKS - 1) + "|"),
                 "expected exactly the unfinished execution to be rejected, got " + rejections);
         require(export.imported().diagnostics().isEmpty(), "diagnostics: " + export.imported().diagnostics());
-        return observations + " observations imported; exe-" + (TASKS - 1) + " rejected as "
+        return observations + " observations imported, exactly one (revision 0) per finished execution exe-0..exe-"
+                + (TASKS - 2) + "; exe-" + (TASKS - 1) + " rejected as "
                 + rejections.getFirst().reason() + " (no outcome to export)";
     }
 
@@ -240,24 +266,27 @@ public final class StoreReplayEvaluation {
     private BenchmarkRunResult measure(ReplayFixture fixture, ReplayArm arm) {
         var replay = new TemporalReplay(fixture);
         ReplayRun reference = replay.run(arm, false);
-        String referenceDigest = reference.state().map(digests::state).orElse("none");
+        RoutingReplayEvaluation.requireSameReplay(reference, replay.run(arm), digests);
         var diagnostics = new LinkedHashMap<String, String>();
-        diagnostics.put("stateDigest", referenceDigest);
+        diagnostics.put("stateDigest", reference.state().map(digests::state).orElse("none"));
+        diagnostics.put("decisionChecksum", Long.toHexString(reference.decisionChecksum()));
         diagnostics.put("decisionsPerIteration", Integer.toString(fixture.tasks().size()));
         diagnostics.put("deliveredObservations", Integer.toString(reference.delivered().size()));
         diagnostics.put("validationInWindow", "false");
         var pending = new ReplayRun[1];
-        return collector.measure("Store" + arm.benchmarkName(), "tasks=" + fixture.tasks().size(), warmupIterations,
-                measurementIterations, fixture.tasks().size(),
+        BenchmarkRunResult result = collector.measure("Store" + arm.benchmarkName(), "tasks=" + fixture.tasks().size(),
+                warmupIterations, measurementIterations, fixture.tasks().size(),
                 () -> {
-                    if (pending[0] != null && !pending[0].state().map(digests::state).orElse("none")
-                            .equals(referenceDigest)) {
-                        throw new IllegalStateException(arm + " measured replay differs from its reference");
+                    if (pending[0] != null) {
+                        RoutingReplayEvaluation.requireSameReplay(pending[0], reference, digests);
                     }
                     pending[0] = null;
                 },
                 () -> pending[0] = replay.run(arm, false),
                 diagnostics);
+        // the collector runs no setup after its last iteration, so the final measured run is validated here
+        RoutingReplayEvaluation.requireSameReplay(pending[0], reference, digests);
+        return result;
     }
 
     private static void check(List<Check> checks, String name, Verification verification) {

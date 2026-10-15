@@ -1,15 +1,19 @@
 package monada.neuron.evaluation.routing;
 
 import monada.neuron.routing.Basis;
+import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.adaptation.RebuildResult;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TemporalReplayTest {
@@ -29,6 +33,44 @@ class TemporalReplayTest {
                 () -> assertEquals(run.delivered().getFirst().observation().ledgerSequence(),
                         samples.get(2).stateCutoff()),
                 () -> assertTrue(samples.stream().allMatch(s -> s.stateCutoff() < s.cutoff())));
+    }
+
+    @Test
+    void anOutcomeAtExactlyALaterCutoffReachesThatDecisionBecauseTheCutoffIsInclusive() {
+        var fixture = fixtures.improvement(6);
+        long atDecisionTwo = fixtures.cutoff(2);
+        var shifted = new ArrayList<ReplayTask>();
+        for (ReplayTask task : fixture.tasks()) {
+            var known = (OutcomeOracle.KnownForEveryRoute) task.oracle();
+            if (task.request().requestOrdinal() != 0) {
+                shifted.add(task);
+                continue;
+            }
+            var outcomes = new TreeMap<RouteKey, ScriptedOutcome>();
+            known.outcomes().forEach((route, outcome) -> outcomes.put(route, outcome.observedAt(atDecisionTwo)));
+            shifted.add(new ReplayTask(task.request(), task.catalog(), new OutcomeOracle.KnownForEveryRoute(outcomes)));
+        }
+        var samples = new TemporalReplay(new ReplayFixture(fixture.fixtureId(), fixture.version(), fixture.definition(),
+                fixture.evidencePolicy(), fixture.policy(), fixture.partition(), shifted)).run(ReplayArm.ADAPTIVE)
+                .samples();
+
+        assertAll(
+                () -> assertEquals(0L, samples.get(1).stateCutoff()),
+                // visible at sequence c, so the decision at cutoff c has examined it
+                () -> assertEquals(atDecisionTwo, samples.get(2).stateCutoff()));
+    }
+
+    @Test
+    void theDecisionChecksumIsTheSameRecordedOrNotAndSeparatesDifferentDecisions() {
+        var replay = new TemporalReplay(fixtures.improvement(24));
+
+        assertAll(
+                () -> assertEquals(replay.run(ReplayArm.ADAPTIVE).decisionChecksum(),
+                        replay.run(ReplayArm.ADAPTIVE, false).decisionChecksum()),
+                () -> assertEquals(replay.run(ReplayArm.STATIC).decisionChecksum(),
+                        replay.run(ReplayArm.DERIVED_NOT_CONSUMED, false).decisionChecksum()),
+                () -> assertNotEquals(replay.run(ReplayArm.STATIC, false).decisionChecksum(),
+                        replay.run(ReplayArm.ADAPTIVE, false).decisionChecksum()));
     }
 
     @Test

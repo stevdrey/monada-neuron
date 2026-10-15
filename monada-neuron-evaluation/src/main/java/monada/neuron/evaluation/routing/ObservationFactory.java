@@ -15,7 +15,11 @@ import monada.neuron.routing.outcome.RoutingObservation;
 import monada.neuron.routing.outcome.RoutingOutcome;
 import monada.neuron.routing.outcome.StageAttribution;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -33,10 +37,29 @@ public final class ObservationFactory {
     /** Judge identity written on every synthetic quality observation. */
     static final String JUDGE = "replay-judge";
 
-    /** The sample reference of a decision: unique per {@link DecisionRef}. */
+    /** Prefix of every synthetic sample reference. */
+    static final String REF_PREFIX = "exp-sha256:";
+
+    /**
+     * The sample reference of a decision: SHA-256 over a length-prefixed UTF-8 encoding of every {@link DecisionRef}
+     * field. Opaque tokens may contain any separator, so plain concatenation could map two decisions to one reference;
+     * the length prefixes make the encoding injective and the digest keeps the reference within the 512 code points a
+     * reference allows, whatever the fields' lengths.
+     */
     public String experienceRef(RoutingRequest request) {
-        return "exp/" + request.executionId() + "/" + request.attemptId() + "/" + request.stageId() + "#"
-                + request.requestOrdinal();
+        DecisionRef ref = DecisionRef.of(request);
+        var encoded = new StringBuilder();
+        for (String field : List.of(ref.scopeId(), ref.taskId(), ref.executionId(), ref.attemptId(), ref.stageId(),
+                Long.toString(ref.requestOrdinal()))) {
+            encoded.append(field.getBytes(StandardCharsets.UTF_8).length).append(':').append(field).append('|');
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(encoded.toString().getBytes(StandardCharsets.UTF_8));
+            return REF_PREFIX + HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is required of every Java platform", e);
+        }
     }
 
     /**

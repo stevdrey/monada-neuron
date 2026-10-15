@@ -11,6 +11,7 @@ import java.util.TreeMap;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoutingReplayEvaluationTest {
@@ -110,6 +111,27 @@ class RoutingReplayEvaluationTest {
                         ReplaySummary.of(degradation.get(ReplayArm.STATIC)),
                         ReplaySummary.of(degradation.get(ReplayArm.ADAPTIVE))).passed()),
                 () -> assertFalse(RoutingReplayEvaluation.visibilityCheck(flat, flat, flat, flat).passed()));
+    }
+
+    @Test
+    void aMeasuredReplayIsRejectedWhenItsDecisionsDeliveriesOrStateDiffer() {
+        var replay = new TemporalReplay(fixtures.improvement(24));
+        var digests = new ReplayDigests();
+        var reference = replay.run(ReplayArm.ADAPTIVE, false);
+
+        assertAll(
+                () -> RoutingReplayEvaluation.requireSameReplay(replay.run(ReplayArm.ADAPTIVE, false), reference,
+                        digests),
+                // the static arm delivers nothing and keeps no state; its different decisions alone must be caught
+                () -> assertThrows(IllegalStateException.class, () -> RoutingReplayEvaluation.requireSameReplay(
+                        replay.run(ReplayArm.STATIC, false), replay.run(ReplayArm.ADAPTIVE, false), digests)),
+                // same decisions as static, but deliveries and state differ
+                () -> assertThrows(IllegalStateException.class, () -> RoutingReplayEvaluation.requireSameReplay(
+                        replay.run(ReplayArm.DERIVED_NOT_CONSUMED, false), replay.run(ReplayArm.STATIC, false),
+                        digests)),
+                // a missing final run is an error, not a silent pass
+                () -> assertThrows(IllegalStateException.class,
+                        () -> RoutingReplayEvaluation.requireSameReplay(null, reference, digests)));
     }
 
     @Test

@@ -284,17 +284,18 @@ public final class RoutingReplayEvaluation {
             for (ReplayRun run : runs.values()) {
                 for (ReplaySample sample : run.samples()) {
                     decisions++;
-                    // a watermark of 0 means nothing was examined yet (every ledger sequence is positive)
-                    if (sample.stateCutoff() >= sample.cutoff() && sample.stateCutoff() != 0) {
+                    // the cutoff is inclusive: a snapshot may have examined up to, never beyond, the decision cutoff
+                    if (sample.stateCutoff() > sample.cutoff()) {
                         failures.add(run.arm() + " " + sample.decisionRef().executionId() + ": state watermark "
-                                + sample.stateCutoff() + " is not before the decision at " + sample.cutoff());
+                                + sample.stateCutoff() + " is after the decision cutoff " + sample.cutoff());
                     }
                 }
             }
         }
         boolean passed = decisions > 0 && failures.isEmpty();
         return new Check("leakage.snapshot-watermark", passed, passed
-                ? "every one of " + decisions + " decisions read a snapshot that examined nothing at or after its cutoff"
+                ? "every one of " + decisions + " decisions read a snapshot that examined nothing after its"
+                        + " (inclusive) cutoff"
                 : decisions == 0 ? "no decision was replayed" : String.join("; ", failures));
     }
 
@@ -592,11 +593,13 @@ public final class RoutingReplayEvaluation {
     private BenchmarkRunResult measure(ReplayFixture fixture, ReplayArm arm) {
         var replay = new TemporalReplay(fixture);
         ReplayRun reference = replay.run(arm, false);
-        String referenceDigest = reference.state().map(digests::state).orElse("none");
+        // the unrecorded (timed) path must decide exactly as the recorded path the checks verified
+        requireSameReplay(reference, replay.run(arm), digests);
         int cohorts = reference.state().map(RoutingStateStore::cohortCount).orElse(0);
         int ledger = reference.state().map(s -> s.ledger().size()).orElse(0);
         var diagnostics = new LinkedHashMap<String, String>();
-        diagnostics.put("stateDigest", referenceDigest);
+        diagnostics.put("stateDigest", reference.state().map(digests::state).orElse("none"));
+        diagnostics.put("decisionChecksum", Long.toHexString(reference.decisionChecksum()));
         diagnostics.put("decisionsPerIteration", Integer.toString(fixture.tasks().size()));
         diagnostics.put("deliveredObservations", Integer.toString(reference.delivered().size()));
         diagnostics.put("cohorts", Integer.toString(cohorts));
@@ -607,25 +610,45 @@ public final class RoutingReplayEvaluation {
         diagnostics.put("validationInWindow", "false");
         diagnostics.put("gcTelemetryScope", "includes per-iteration setup and validation");
         var pending = new ReplayRun[1];
-        return collector.measure(arm.benchmarkName(),
+        BenchmarkRunResult result = collector.measure(arm.benchmarkName(),
                 "tasks=" + fixture.tasks().size() + ",routes=3,cohorts=" + cohorts, warmupIterations,
                 measurementIterations, fixture.tasks().size(),
                 () -> {
-                    validate(pending[0], arm, reference, referenceDigest);
+                    if (pending[0] != null) {
+                        requireSameReplay(pending[0], reference, digests);
+                    }
                     pending[0] = null;
                 },
                 () -> pending[0] = replay.run(arm, false),
                 diagnostics);
+        // the collector runs no setup after its last iteration, so the final measured run is validated here
+        requireSameReplay(pending[0], reference, digests);
+        return result;
     }
 
-    /** Validates a measured run outside the timed window: it must equal the untimed reference. */
-    private void validate(ReplayRun run, ReplayArm arm, ReplayRun reference, String referenceDigest) {
+    /**
+     * Requires a replay to equal a reference outside any timed window: same decision checksum (kind, route, basis,
+     * abstention, coverage and snapshot watermark of every decision), same deliveries and same learned state.
+     *
+     * @throws IllegalStateException naming the first difference
+     */
+    static void requireSameReplay(ReplayRun run, ReplayRun reference, ReplayDigests digests) {
         if (run == null) {
-            return;
+            throw new IllegalStateException(reference.arm() + ": no measured replay to validate");
         }
-        if (run.delivered().size() != reference.delivered().size()
-                || !run.state().map(digests::state).orElse("none").equals(referenceDigest)) {
-            throw new IllegalStateException(arm + " measured replay differs from its reference");
+        if (run.decisionChecksum() != reference.decisionChecksum()) {
+            throw new IllegalStateException(run.arm() + " replay made different decisions: checksum "
+                    + Long.toHexString(run.decisionChecksum()) + " vs "
+                    + Long.toHexString(reference.decisionChecksum()));
+        }
+        if (run.delivered().size() != reference.delivered().size()) {
+            throw new IllegalStateException(run.arm() + " replay delivered " + run.delivered().size()
+                    + " observations, its reference " + reference.delivered().size());
+        }
+        String state = run.state().map(digests::state).orElse("none");
+        String expected = reference.state().map(digests::state).orElse("none");
+        if (!state.equals(expected)) {
+            throw new IllegalStateException(run.arm() + " replay state " + state + " differs from " + expected);
         }
     }
 
@@ -647,7 +670,7 @@ public final class RoutingReplayEvaluation {
         metadata.put("evidence.policy", workload.evidencePolicy().id() + "@" + workload.evidencePolicy().version()
                 + " mandatory=" + workload.evidencePolicy().mandatoryDimensions());
         metadata.put("replay.ordering", "decisions by (cutoff, DecisionRef); observations delivered before a decision"
-                + " iff ledgerSequence < cutoff, by (ledgerSequence, experienceRef, revision)");
+                + " iff ledgerSequence <= cutoff (inclusive cutoff), by (ledgerSequence, experienceRef, revision)");
         metadata.put("replay.semantics", "synthetic: outcome known for every route; chosen-route-only: logged route"
                 + " only, other routes reported as missing counterfactuals; figures are counts, not causal claims");
         metadata.put("cost.basis", ReplayCost.BASIS + "; per currency, never summed across currencies; PARTIAL is a"

@@ -79,9 +79,9 @@ import java.util.stream.Stream;
  *
  * <p>The logging policy is the #62 static rule: each task is decided at the Store's high-watermark before it is
  * recorded, its routing envelope is published, and the execution is recorded with the routed stage's usage, the
- * judged evidence and the outcome. Truth: {@code sub-b} passes, {@code sub-a} fails tests, and a four-task {@code sub-a}
- * outage opens the log. The last execution never finishes, so it has no exportable outcome. Everything else is read
- * back through the public paths a host would use: {@link StoreExperienceTranslator} for the neutral observations and
+ * judged evidence and the outcome. Truth: {@code sub-b} passes, {@code sub-a} fails tests, and a four-task
+ * {@code sub-a} outage opens the log. The last execution never finishes, so it has no exportable outcome. Everything
+ * else is read back through the public paths a host would use: {@link StoreExperienceTranslator} for the neutral observations and
  * the Store's {@link ExperienceExportReport} (Store #99) for each execution's {@code CostToAcceptedOutcome}, priced at
  * the hand-calculable list prices below. Ids and timestamps are caller-supplied; nothing reads a clock.
  */

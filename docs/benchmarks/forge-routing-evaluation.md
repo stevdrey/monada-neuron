@@ -114,16 +114,19 @@ task carries:
 **Order and timing.**
 - **Decision order.** Tasks are decided in total order: cutoff first, then every `DecisionRef` field in code-point
   order.
-- **Visibility.** Before the decision at cutoff `c`, exactly the pending observations with `ledgerSequence < c` are
-  delivered, in `(ledgerSequence, experienceRef, revision)` order. An outcome, acceptance, correction or usage observed
-  at or after `c` cannot reach that decision.
+- **Visibility.** The cutoff is inclusive, as the routing contract defines it ("Ordinals and cutoff"). Before the
+  decision at cutoff `c`, exactly the pending observations with `ledgerSequence <= c` are delivered, in
+  `(ledgerSequence, experienceRef, revision)` order. An outcome, acceptance, correction or usage observed after `c`
+  cannot reach that decision, and a decision's own outcome must be visible strictly after its cutoff.
 - **Horizon.** After the last decision, every remaining observation is delivered, so the final state is the state as of
   the replay horizon.
 
 **Outcomes and feedback.**
 - **Synthetic outcomes** are built for the replayed decision's route through the public API
   ([`ObservationFactory`](../../monada-neuron-evaluation/src/main/java/monada/neuron/evaluation/routing/ObservationFactory.java)),
-  so they answer exactly that decision.
+  so they answer exactly that decision. Their sample reference is `exp-sha256:` plus the SHA-256 of a length-prefixed
+  UTF-8 encoding of every `DecisionRef` field. Opaque tokens may contain any separator, so plain concatenation could
+  merge two decisions in the ledger.
 - **Exported outcomes** answer the logged decision. They are delivered whatever the replay advises, because they really
   were observed. When the replay advises any route other than the logged one, the sample is `MISSING_COUNTERFACTUAL`,
   and it carries no outcome, cost or attempts.
@@ -225,7 +228,7 @@ derived, and unchanged earlier decisions are rejected as evidence when the mutat
 | `replay.deterministic` | Two replays of freshly built fixtures give identical fixture, decision, feedback, learned-state and report digests and sample order. |
 | `leakage.future-outcomes` | Flipping every outcome or correction visible at or after task 6's cutoff, including usage and cost, leaves every earlier decision and snapshot watermark unchanged. A replay truncated there equals the prefix of the full replay. Later adaptive decisions do change. |
 | `leakage.late-correction` | A correction visible six slots later changes no earlier decision; the adaptive arm rebuilt when it arrived. |
-| `leakage.snapshot-watermark` | Every decision read a snapshot that examined nothing at or after its cutoff. |
+| `leakage.snapshot-watermark` | Every decision read a snapshot that examined nothing after its inclusive cutoff. |
 | `control.derived-not-consumed-equals-static` | Same decision sequence on every fixture, with feedback derived. |
 | `control.static-equals-cold-start-baseline` | Static decisions equal `decide` over `RoutingPreference.empty`: #62 behavior is unchanged. |
 | `control.neutral-feedback-leaves-state-unchanged` | Neutral-only consumption leaves cohort Nodes and support equal to the reset baseline, and decisions equal static. |
@@ -244,7 +247,8 @@ derived, and unchanged earlier decisions are rejected as evidence when the mutat
 
 The `store.*` checks cover:
 - temporary-store cleanup;
-- a complete and explained import: 15 observations, and the unfinished execution rejected as `MISSING_OUTCOME`;
+- a complete and explained import: exactly one revision-0 observation per finished execution (`exe-0` to `exe-14`),
+  each answering its own logged decision, and the unfinished execution rejected as `MISSING_OUTCOME`;
 - two independent recordings exporting identical fixtures and Store export digests;
 - deterministic replay;
 - the derived-not-consumed control, zero eligibility violations and snapshot watermarks;
@@ -284,8 +288,12 @@ task. It reports changed decisions, gained and lost validated acceptances, and c
 - **Operation.** One op is one replayed decision; an iteration replays the whole workload fixture under one arm.
 - **Iterations.** Quick: 1 warmup and 3 measured. Full: 3 warmup and 10 measured.
 - **Timed window.** The replay runs without recording samples or events.
-- **Validation.** Each measured run's state digest must equal its untimed reference. This happens in the next
-  iteration's untimed setup (`validationInWindow=false`).
+- **Validation.** Each run replays without recording samples, but it still folds every decision into
+  `decisionChecksum`: kind, route, basis, abstention, coverage and snapshot watermark. That checksum also confirms the
+  unrecorded (timed) path decides exactly as the recorded path the checks verified. Each measured run must match its
+  untimed reference on decision checksum, delivered observations and learned-state digest. The comparison runs outside
+  the timed window (`validationInWindow=false`): in the next iteration's untimed setup, and once more after the
+  collector returns, because the collector runs no setup after its last iteration.
 - **Setup.** Fixture construction, the reference run and all semantic checks run before measurement.
 - **GC telemetry.** JVM-wide, so it includes setup and validation.
 - **Retained memory** (`modeledRetainedStateBytes`) is a **model**:
@@ -300,12 +308,15 @@ mode.
 
 | Benchmark | Scale | Mean | p95 | Alloc / op |
 | :--- | :--- | :--- | :--- | :--- |
-| `RoutingReplay.static` | 960 tasks | 5.89 ms | 9.73 ms | 6.63 KB |
-| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 22.79 ms | 25.55 ms | 25.38 KB |
-| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 396.68 ms | 410.39 ms | 486.43 KB |
-| `StoreRoutingReplay.static` | 16 exported tasks | 0.68 ms | 0.84 ms | 7.46 KB |
-| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 2.17 ms | 2.91 ms | 16.14 KB |
-| `StoreRoutingReplay.adaptive` | 16 exported tasks | 2.56 ms | 2.81 ms | 19.94 KB |
+| `RoutingReplay.static` | 960 tasks | 6.55 ms | 7.13 ms | 8.16 KB |
+| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 26.43 ms | 27.94 ms | 32.02 KB |
+| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 436.62 ms | 450.68 ms | 510.49 KB |
+| `StoreRoutingReplay.static` | 16 exported tasks | 0.80 ms | 1.03 ms | 7.47 KB |
+| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 1.94 ms | 2.35 ms | 16.14 KB |
+| `StoreRoutingReplay.adaptive` | 16 exported tasks | 2.56 ms | 3.20 ms | 19.94 KB |
+
+Modeled retained state at the end of the workload: 0 B for static, 8,000 B for derived-not-consumed (20 cohorts) and
+326,500 B for adaptive (20 cohorts plus 910 ledger entries). This is a model, not a measurement.
 
 **Workload figures (full, 960 tasks).** The workload is constructed, so its arm difference is a property of its
 residues, not evidence about real routing:
@@ -325,11 +336,10 @@ is an acceptance. It is not a per-task price comparison. Pairs whose key does no
 
 **Store arm (16 exported tasks).**
 - Static and derived-not-consumed both observe 15 tasks and accept 4; one task is `UNOBSERVED`.
-- The adaptive arm switches to `sub-b` once three `sub-a` failures are visible, at decision 8. An outcome recorded at
-  the Store's high-watermark is the next decision's cutoff, and visibility is strict (`ledgerSequence < cutoff`), so it
-  reaches only the decision after next.
-- Its 8 later choices are `MISSING_COUNTERFACTUAL`, because the log never executed them.
-- Its validated acceptances therefore stay at the 4 the log observed. The replay cannot say whether those 8 choices
+- The adaptive arm switches to `sub-b` at decision 7, once three `sub-a` failures are visible. Each decision is made
+  at the Store's high-watermark, which includes the previous execution's outcome, and the cutoff is inclusive.
+- Its 9 later choices are `MISSING_COUNTERFACTUAL`, because the log never executed them.
+- Its validated acceptances therefore stay at the 4 the log observed. The replay cannot say whether those 9 choices
   would have been accepted.
 
 Observations, not conclusions:
@@ -351,7 +361,7 @@ Observations, not conclusions:
 | `workload.reportDigest` (full) | `35d9fae2a2b52d64b9ad8c35feba473f23fa9f46c471cbad73232d51e8b97914` |
 | `store.fixtureDigest` | `d4d1b1845bf444a7e3359e0c1cac05027a49e8926e310f220a8b8a36140aab73` |
 | `store.exportDigest` (Store tooling) | `f11276157baf9565a14ea07a386502ac8c5a8b3656a6744fb2861f00b4ae2ee8` |
-| `store.reportDigest` | `ffcd96d5bacc96b970fb8ae904682d4c9e9c8faba0429c41751c965d2644fef2` |
+| `store.reportDigest` | `df6bee795f6240561ed91a73a32de3abd3c1e3bbd92f00893055c3a1787ff151` |
 
 - **Digests.** All are SHA-256 over canonical lines: records render in declaration order, every collection in a defined
   order, and Node doubles as exact bit patterns. They exclude timings, timestamps and environment.
