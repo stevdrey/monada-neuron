@@ -8,10 +8,12 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -114,7 +116,39 @@ class ReplayDigestsTest {
         var base = ((OutcomeOracle.KnownForEveryRoute) fixtures.improvement(1).tasks().getFirst().oracle()).outcomes()
                 .get(SyntheticRoutingFixtures.SUB_A);
 
-        assertEquals(withQuality(base, forward).toString(), withQuality(base, backward).toString());
+        var task = fixtures.improvement(1).tasks().getFirst();
+        // the digests of two fixtures that differ only in the quality map's insertion order
+        var passing = new LinkedHashMap<QualityDimension, QualityState>();
+        passing.put(QualityDimension.TESTS, QualityState.PASS);
+        passing.put(QualityDimension.SECURITY, QualityState.PASS);
+        assertAll(
+                () -> assertEquals(digests.fixture(withOutcome(task, withQuality(base, forward))),
+                        digests.fixture(withOutcome(task, withQuality(base, backward)))),
+                // the digest does cover the quality it is insensitive to the order of
+                () -> assertNotEquals(digests.fixture(withOutcome(task, withQuality(base, forward))),
+                        digests.fixture(withOutcome(task, withQuality(base, passing)))));
+    }
+
+    @Test
+    void mapAndSetDigestsDoNotDependOnIterationOrder() {
+        var encoder = new CanonicalEncoder();
+        var forward = new LinkedHashMap<String, Integer>();
+        forward.put("a", 1);
+        forward.put("b", 2);
+        var backward = new LinkedHashMap<String, Integer>();
+        backward.put("b", 2);
+        backward.put("a", 1);
+
+        assertAll(
+                () -> assertArrayEquals(encoder.encode(forward), encoder.encode(backward)),
+                () -> assertArrayEquals(encoder.encode(new LinkedHashSet<>(List.of("x", "y"))),
+                        encoder.encode(new LinkedHashSet<>(List.of("y", "x")))));
+    }
+
+    private static ReplayFixture withOutcome(ReplayTask task, ScriptedOutcome outcome) {
+        var fixture = new SyntheticRoutingFixtures().improvement(1);
+        return fixture.withTasks(fixture.fixtureId(), List.of(new ReplayTask(task.request(), task.catalog(),
+                OutcomeOracle.KnownForEveryRoute.of(Map.of(SyntheticRoutingFixtures.SUB_A, outcome)))));
     }
 
     @Test

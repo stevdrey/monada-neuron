@@ -66,17 +66,37 @@ class FeedbackEventTest {
         assertAll(
                 () -> assertThrows(IllegalArgumentException.class, () -> new FeedbackEvent("exp", 0, 1, REF,
                         "implement", EXECUTED, "M", true, EligibilityVerdict.NOT_ELIGIBLE,
-                        StageAttribution.Basis.STAGE_LOCAL, Optional.empty(), Optional.empty(), Optional.empty(),
-                        FeedbackEvent.Update.NOT_CONSUMED)),
+                        StageAttribution.Basis.STAGE_LOCAL, false, false, Optional.empty(), Optional.empty(),
+                        Optional.empty(), FeedbackEvent.Update.NOT_CONSUMED)),
                 () -> assertFalse(new FeedbackEvent("exp", 0, 1, REF, "implement", EXECUTED, "M", true,
-                        EligibilityVerdict.NOT_ELIGIBLE, StageAttribution.Basis.CHAIN_ONLY, Optional.empty(),
+                        EligibilityVerdict.NOT_ELIGIBLE, StageAttribution.Basis.CHAIN_ONLY, false, false,
+                        Optional.empty(),
                         Optional.of(NoUpdateReason.NO_STAGE_ATTRIBUTION), Optional.empty(),
                         FeedbackEvent.Update.RECORDED).eligibilityViolation()));
     }
 
+    @Test
+    void creditTheRawEvidenceDoesNotAdmitIsAViolationWhateverTheVerdict() {
+        assertAll(
+                // the evaluator called it a positive candidate, but the observation's own fields admit no reward
+                () -> assertTrue(event(ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL, EligibilityVerdict.POSITIVE_CANDIDATE,
+                        StageAttribution.Basis.STAGE_LOCAL, Optional.of(OWN), false, true).eligibilityViolation()),
+                () -> assertTrue(event(ScoreRule.PENALIZE_PROVEN_MANDATORY_FAILURE,
+                        EligibilityVerdict.NEGATIVE_CANDIDATE, StageAttribution.Basis.STAGE_LOCAL, Optional.of(OWN),
+                        true, false).eligibilityViolation()),
+                () -> assertFalse(event(ScoreRule.PENALIZE_PROVEN_MANDATORY_FAILURE,
+                        EligibilityVerdict.NEGATIVE_CANDIDATE, StageAttribution.Basis.STAGE_LOCAL, Optional.of(OWN),
+                        false, true).eligibilityViolation()));
+    }
+
     private static FeedbackEvent event(ScoreRule rule, EligibilityVerdict verdict, StageAttribution.Basis basis,
             Optional<CohortKey> credited) {
-        return new FeedbackEvent("exp", 0, 1, REF, "implement", EXECUTED, "M", true, verdict, basis, Optional.of(rule),
-                Optional.empty(), credited, FeedbackEvent.Update.APPLIED);
+        return event(rule, verdict, basis, credited, true, true);
+    }
+
+    private static FeedbackEvent event(ScoreRule rule, EligibilityVerdict verdict, StageAttribution.Basis basis,
+            Optional<CohortKey> credited, boolean rewardEvidence, boolean penaltyEvidence) {
+        return new FeedbackEvent("exp", 0, 1, REF, "implement", EXECUTED, "M", true, verdict, basis, rewardEvidence,
+                penaltyEvidence, Optional.of(rule), Optional.empty(), credited, FeedbackEvent.Update.APPLIED);
     }
 }

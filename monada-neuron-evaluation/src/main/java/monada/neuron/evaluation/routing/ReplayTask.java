@@ -64,9 +64,4 @@ public record ReplayTask(RoutingRequest request, RouteCatalog catalog, OutcomeOr
             }
         }
     }
-
-    /** The decision reference of the request. */
-    public DecisionRef decisionRef() {
-        return DecisionRef.of(request);
-    }
 }

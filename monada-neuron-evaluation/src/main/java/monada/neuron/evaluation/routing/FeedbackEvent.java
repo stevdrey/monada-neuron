@@ -13,7 +13,12 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * One observation delivered to the feedback policy, with an independent learning assessment to audit it against.
+ * One observation delivered to the feedback policy, with what its raw evidence admits as credit to audit it against.
+ *
+ * <p>The {@link #verdict} is the {@code OutcomeEvaluator}'s, the same assessment the feedback policy acts on, so it
+ * is reported for consistency, not as an independent judgement. The independent part of the audit is
+ * {@link #rewardEvidence} and {@link #penaltyEvidence}, read directly from the observation's fields
+ * ({@link RawEvidence}), and the credited cohort, compared whole with the answered decision's own.
  *
  * @param experienceRef sample reference
  * @param revision sample revision
@@ -23,8 +28,10 @@ import java.util.Optional;
  * @param executedRoute the route that actually executed
  * @param decisionBucket the cohort bucket the answered decision recorded; credit must land in this bucket
  * @param replayed whether it answers a replayed decision (synthetic) rather than a logged one (export)
- * @param verdict {@code OutcomeEvaluator} verdict, computed independently of the feedback policy
+ * @param verdict {@code OutcomeEvaluator} verdict, the assessment the feedback policy also acts on
  * @param attribution the outcome's stage attribution
+ * @param rewardEvidence whether the observation's raw fields admit a reward
+ * @param penaltyEvidence whether the observation's raw fields admit a penalty
  * @param rule the derived score rule, if feedback was derived
  * @param noUpdate why nothing was derived, otherwise
  * @param credited the cohort the derived feedback credits, if it carries an entry
@@ -41,6 +48,8 @@ public record FeedbackEvent(
         boolean replayed,
         EligibilityVerdict verdict,
         StageAttribution.Basis attribution,
+        boolean rewardEvidence,
+        boolean penaltyEvidence,
         Optional<ScoreRule> rule,
         Optional<NoUpdateReason> noUpdate,
         Optional<CohortKey> credited,
@@ -78,25 +87,22 @@ public record FeedbackEvent(
     }
 
     /**
-     * Whether the derivation breaks the quality-gated credit rules (ADR 0029): a reward without a positive, stage-local
-     * candidate, a penalty without a negative candidate, or credit for a scope, stage, cohort bucket or route other
-     * than the executed decision's.
+     * Whether the derivation breaks the quality-gated credit rules (ADR 0029): a reward the raw evidence does not
+     * admit or without a positive, stage-local candidate, a penalty likewise, or credit for any cohort other than the
+     * answered decision's (scope, stage kind, cohort bucket and executed route).
      */
     public boolean eligibilityViolation() {
         if (rule.isEmpty()) {
             return false;
         }
         FeedbackDisposition disposition = rule.get().disposition();
-        // every CohortKey component is audited: scope, stage kind, cohort bucket and route
-        boolean wrongTarget = credited.isPresent() && (!credited.get().route().equals(executedRoute)
-                || !credited.get().stageKind().equals(stageKind)
-                || !credited.get().cohortBucket().equals(decisionBucket)
-                || !credited.get().scopeId().equals(decisionRef.scopeId()));
+        // the whole key is compared, so a component added to CohortKey can never escape the audit
+        boolean wrongTarget = credited.isPresent() && !credited.get().equals(
+                new CohortKey(decisionRef.scopeId(), stageKind, decisionBucket, executedRoute));
+        boolean untargeted = attribution != StageAttribution.Basis.STAGE_LOCAL || credited.isEmpty() || wrongTarget;
         return switch (disposition) {
-            case REINFORCE -> verdict != EligibilityVerdict.POSITIVE_CANDIDATE
-                    || attribution != StageAttribution.Basis.STAGE_LOCAL || credited.isEmpty() || wrongTarget;
-            case PENALIZE -> verdict != EligibilityVerdict.NEGATIVE_CANDIDATE
-                    || attribution != StageAttribution.Basis.STAGE_LOCAL || credited.isEmpty() || wrongTarget;
+            case REINFORCE -> !rewardEvidence || verdict != EligibilityVerdict.POSITIVE_CANDIDATE || untargeted;
+            case PENALIZE -> !penaltyEvidence || verdict != EligibilityVerdict.NEGATIVE_CANDIDATE || untargeted;
             case NEUTRAL -> credited.isPresent();
         };
     }

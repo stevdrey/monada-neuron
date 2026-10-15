@@ -5,6 +5,8 @@ import monada.neuron.evaluation.metrics.EvaluationCheck;
 import monada.neuron.evaluation.metrics.EvaluationMetricsCollector;
 import monada.neuron.evaluation.metrics.EvaluationReport.RunConfiguration;
 import monada.neuron.evolution.FeedbackDisposition;
+import monada.neuron.routing.AbstainReason;
+import monada.neuron.routing.Basis;
 import monada.neuron.routing.RoutingDecision;
 import monada.neuron.routing.RoutingPreference;
 import monada.neuron.routing.adaptation.RebuildResult;
@@ -20,9 +22,7 @@ import monada.neuron.routing.outcome.UsageKind;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.EnumMap;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.function.Predicate;
@@ -69,11 +69,6 @@ public final class RoutingReplayEvaluation {
     /** Late correction of task 5 of the improvement scenario, visible six decision slots after the original. */
     static final int LATE_CORRECTION_TASK = 5;
     static final int LATE_CORRECTION_SLOTS = 6;
-    /** What each measured iteration times; recorded on every row. */
-    static final String TIMED_WINDOW = "fresh state construction, cohort binding and the full replay; validation untimed";
-    /** Rough retained bytes of one cohort (Node, key, map entry) and one ledger entry; a model, not a measurement. */
-    static final long MODELED_COHORT_BYTES = 400L;
-    static final long MODELED_LEDGER_ENTRY_BYTES = 350L;
 
     private final boolean quick;
     private final int workloadTasks;
@@ -81,7 +76,7 @@ public final class RoutingReplayEvaluation {
     private final int measurementIterations;
     private final SyntheticRoutingFixtures fixtures = new SyntheticRoutingFixtures();
     private final ReplayDigests digests = new ReplayDigests();
-    private final EvaluationMetricsCollector collector = new EvaluationMetricsCollector();
+    private final ReplayMeasurement measurement;
     private final Map<String, String> metadata = new TreeMap<>();
 
     /** Creates the evaluation; quick mode uses a smaller workload suitable for tests. */
@@ -90,6 +85,8 @@ public final class RoutingReplayEvaluation {
         this.workloadTasks = quick ? 240 : 960;
         this.warmupIterations = quick ? 1 : 3;
         this.measurementIterations = quick ? 3 : 10;
+        this.measurement = new ReplayMeasurement(new EvaluationMetricsCollector(), digests, warmupIterations,
+                measurementIterations);
     }
 
     /**
@@ -98,32 +95,51 @@ public final class RoutingReplayEvaluation {
      */
     public RunConfiguration runConfiguration() {
         return new RunConfiguration(0L, quick, warmupIterations, measurementIterations,
-                "An iteration replays the whole workload fixture under one arm; the timed window includes constructing"
-                        + " and binding the fresh state and the full replay, and only validation of the previous run is"
-                        + " untimed; latency (mean and percentiles) is per replay iteration, while throughput and"
-                        + " allocation are per replayed decision (see each row's latencyScope and meanNanosPerDecision);"
-                        + " fixtures are enumerated, so the seed is unused");
+                "An iteration replays the whole workload fixture under one arm; the timed window includes the full"
+                        + " replay and, for the arms that keep state, constructing and binding a fresh state (see each"
+                        + " row's timedWindow); synthetic observations are generated once and reused, and only"
+                        + " validation of the previous run is untimed; latency (mean and percentiles) is per replay"
+                        + " iteration, while throughput and allocation are per replayed decision (see each row's"
+                        + " latencyScope and meanNanosPerDecision); fixtures are enumerated, so the seed is unused");
     }
 
-    /** Runs every semantic check, then the measurements. */
+    /**
+     * Runs every semantic check, then the measurements of the verified workload runs. A measured run that differs
+     * from its verified run is a failed {@code measurement.<arm>} check, never a crash.
+     */
     public Outcome run() {
         metadata.clear();
-        var checks = verify();
+        Verified verified = verifyAll();
+        var checks = new ArrayList<>(verified.checks());
         var results = new ArrayList<BenchmarkRunResult>();
-        ReplayFixture workload = fixtures.workload(workloadTasks);
         for (ReplayArm arm : ReplayArm.values()) {
-            results.add(measure(workload, arm));
+            try {
+                results.add(measurement.measure(arm.benchmarkName(), verified.workload(), arm,
+                        verified.runs().get(arm)));
+            } catch (IllegalStateException failure) {
+                checks.add(new Check("measurement." + arm.benchmarkName(), false, failure.getMessage()));
+            }
         }
         return new Outcome(checks, results, metadata());
     }
 
     /** Every semantic check; package-private so tests can run it without measuring. */
     List<Check> verify() {
+        return verifyAll().checks();
+    }
+
+    /** The checks, the workload and its verified runs, which the measurements reuse. */
+    private record Verified(List<Check> checks, ReplayFixture workload, Map<ReplayArm, ReplayRun> runs) {
+    }
+
+    private Verified verifyAll() {
         var checks = new ArrayList<Check>();
         ReplayFixture workload = fixtures.workload(workloadTasks);
         Map<ReplayArm, ReplayRun> runs = runAll(workload);
-        Map<ReplayArm, ReplayRun> again = runAll(fixtures.workload(workloadTasks));
-        checks.add(determinismCheck(fingerprint(workload, runs), fingerprint(fixtures.workload(workloadTasks), again)));
+        Map<String, String> fingerprint = fingerprint(workload, runs);
+        // an independently built fixture, replayed and digested itself
+        ReplayFixture rebuiltWorkload = fixtures.workload(workloadTasks);
+        checks.add(determinismCheck(fingerprint, fingerprint(rebuiltWorkload, runAll(rebuiltWorkload))));
 
         ReplayFixture improvement = fixtures.improvement(SCENARIO_TASKS);
         ReplayFixture degradation = fixtures.degradation(SCENARIO_TASKS);
@@ -146,28 +162,17 @@ public final class RoutingReplayEvaluation {
         checks.add(watermarkCheck(all));
 
         checks.add(derivedNotConsumedCheck(List.of(runs, improvementRuns, degradationRuns, caseRuns, chosenRuns)));
-        checks.add(coldStartBaselineCheck(workload, runs.get(ReplayArm.STATIC)));
+        checks.add(staticWiringCheck(workload, runs.get(ReplayArm.STATIC)));
         checks.add(neutralCheck(neutralRuns));
         checks.add(eligibilityCheck(all));
         checks.add(costCompletenessCheck(all));
 
-        var rebuilt = new ArrayList<String>();
-        for (var entry : Map.of("workload", runs, "cases", caseRuns, "improvement", improvementRuns).entrySet()) {
-            ReplayRun adaptive = entry.getValue().get(ReplayArm.ADAPTIVE);
-            RoutingStateStore state = adaptive.state().orElseThrow();
-            ReplayFixture fixture = fixtureOf(entry.getKey(), workload, cases, improvement);
-            String incremental = digests.state(state);
-            String scratch = switch (new TemporalReplay(fixture).rebuildFromScratch(adaptive)) {
-                case RebuildResult.Rebuilt done -> digests.state(done.store());
-                case RebuildResult.Failed failed -> "failed at " + failed.observation().experienceRef();
-            };
-            // the state must also have examined the fixture through its horizon, not only its last observation
-            boolean atHorizon = state.processedCutoff() == fixture.horizon();
-            rebuilt.add(entry.getKey() + ":" + (incremental.equals(scratch) && atHorizon) + ":processedCutoff="
-                    + state.processedCutoff() + "/horizon=" + fixture.horizon() + ":ledger=" + state.ledger().size()
-                    + ":rebuilds=" + count(adaptive, e -> e.update() == FeedbackEvent.Update.REBUILT));
+        var rebuilt = new ArrayList<RebuildEvidence>();
+        for (var scenario : List.of(new Scenario("cases", cases, caseRuns),
+                new Scenario("improvement", improvement, improvementRuns), new Scenario("workload", workload, runs))) {
+            rebuilt.add(rebuildEvidence(scenario));
         }
-        checks.add(rebuildCheck(rebuilt.stream().sorted().toList()));
+        checks.add(rebuildCheck(rebuilt));
 
         checks.add(cheapInvalidCheck(caseRuns));
         checks.add(repairedAcceptedCheck(caseRuns));
@@ -182,19 +187,57 @@ public final class RoutingReplayEvaluation {
                 ReplaySummary.of(degradationRuns.get(ReplayArm.ADAPTIVE))));
         checks.add(boundsCheck(workload, runs.get(ReplayArm.ADAPTIVE)));
 
-        recordMetadata(workload, runs, Map.of("improvement", improvementRuns, "degradation", degradationRuns,
-                "neutral", neutralRuns, "cases", caseRuns, "chosen-route-only", chosenRuns),
+        recordMetadata(workload, runs, fingerprint, Map.of("improvement", improvementRuns, "degradation",
+                degradationRuns, "neutral", neutralRuns, "cases", caseRuns, "chosen-route-only", chosenRuns),
                 List.of(improvement, degradation, neutral, cases, chosen));
-        return checks;
+        return new Verified(checks, workload, runs);
     }
 
-    private ReplayFixture fixtureOf(String name, ReplayFixture workload, ReplayFixture cases,
-            ReplayFixture improvement) {
-        return switch (name) {
-            case "workload" -> workload;
-            case "cases" -> cases;
-            default -> improvement;
-        };
+    /** A named fixture and its runs. */
+    private record Scenario(String name, ReplayFixture fixture, Map<ReplayArm, ReplayRun> runs) {
+    }
+
+    /**
+     * Whether a scenario's incrementally built adaptive state equals a rebuild from scratch and has examined the
+     * fixture through its horizon.
+     *
+     * @param scenario the scenario
+     * @param equal incremental and scratch state digests are equal
+     * @param processedCutoff the incremental state's watermark
+     * @param horizon the fixture's horizon
+     * @param ledger the incremental state's ledger entries
+     * @param rebuilds correction-triggered rebuilds during the run
+     * @param failure why the scratch rebuild failed, if it did
+     */
+    record RebuildEvidence(String scenario, boolean equal, long processedCutoff, long horizon, int ledger,
+            int rebuilds, String failure) {
+
+        boolean passed() {
+            return equal && processedCutoff == horizon;
+        }
+
+        @Override
+        public String toString() {
+            return scenario + ":" + passed() + ":processedCutoff=" + processedCutoff + "/horizon=" + horizon
+                    + ":ledger=" + ledger + ":rebuilds=" + rebuilds + (failure.isEmpty() ? "" : ":" + failure);
+        }
+    }
+
+    private RebuildEvidence rebuildEvidence(Scenario scenario) {
+        ReplayRun adaptive = scenario.runs().get(ReplayArm.ADAPTIVE);
+        RoutingStateStore state = adaptive.state().orElseThrow();
+        String incremental = digests.state(state);
+        boolean equal;
+        String failure = "";
+        switch (new TemporalReplay(scenario.fixture()).rebuildFromScratch(adaptive)) {
+            case RebuildResult.Rebuilt done -> equal = incremental.equals(digests.state(done.store()));
+            case RebuildResult.Failed failed -> {
+                equal = false;
+                failure = "failed at " + failed.observation().experienceRef();
+            }
+        }
+        return new RebuildEvidence(scenario.name(), equal, state.processedCutoff(), scenario.fixture().horizon(),
+                state.ledger().size(), count(adaptive, e -> e.update() == FeedbackEvent.Update.REBUILT), failure);
     }
 
     private Map<ReplayArm, ReplayRun> runAll(ReplayFixture fixture) {
@@ -294,10 +337,13 @@ public final class RoutingReplayEvaluation {
             for (ReplayRun run : runs.values()) {
                 for (ReplaySample sample : run.samples()) {
                     decisions++;
-                    // the cutoff is inclusive: a snapshot may have examined up to, never beyond, the decision cutoff
-                    if (sample.stateCutoff() > sample.cutoff()) {
+                    // the cutoff is inclusive: a snapshot may have examined up to, never beyond, the decision cutoff;
+                    // the adaptive state is the state as of the cutoff, the other arms read no learned state
+                    long expected = run.arm() == ReplayArm.ADAPTIVE ? sample.cutoff() : 0L;
+                    if (sample.stateCutoff() > sample.cutoff() || sample.stateCutoff() != expected) {
                         failures.add(run.arm() + " " + sample.decisionRef().executionId() + ": state watermark "
-                                + sample.stateCutoff() + " is after the decision cutoff " + sample.cutoff());
+                                + sample.stateCutoff() + " for decision cutoff " + sample.cutoff() + ", expected "
+                                + expected);
                     }
                 }
             }
@@ -305,7 +351,7 @@ public final class RoutingReplayEvaluation {
         boolean passed = decisions > 0 && failures.isEmpty();
         return new Check("leakage.snapshot-watermark", passed, passed
                 ? "every one of " + decisions + " decisions read a snapshot that examined nothing after its"
-                        + " (inclusive) cutoff"
+                        + " (inclusive) cutoff; every adaptive snapshot is the state as of its cutoff"
                 : decisions == 0 ? "no decision was replayed" : String.join("; ", failures));
     }
 
@@ -326,7 +372,13 @@ public final class RoutingReplayEvaluation {
                 + ", differing=" + differing + ", derivedFeedback=" + derived);
     }
 
-    static Check coldStartBaselineCheck(ReplayFixture fixture, ReplayRun staticRun) {
+    /**
+     * The static arm is wired as the cold-start control: it makes the decisions the policy makes over an empty
+     * preference, builds and reads no state, delivers and derives nothing, and selects only by cold-start or host
+     * priority. This checks the harness's wiring, not #62's behaviour, which the expected decisions are computed from
+     * and which #62's own tests cover.
+     */
+    static Check staticWiringCheck(ReplayFixture fixture, ReplayRun staticRun) {
         var expected = new ArrayList<String>();
         for (ReplayTask task : fixture.tasks()) {
             var decision = fixture.policy().decide(task.request(), task.catalog(),
@@ -340,10 +392,27 @@ public final class RoutingReplayEvaluation {
             });
         }
         List<String> actual = projections(staticRun.samples());
-        boolean passed = !expected.isEmpty() && expected.equals(actual);
-        return new Check("control.static-equals-cold-start-baseline", passed, passed
-                ? expected.size() + " static decisions equal the #62 rule decision over an empty preference"
-                : "expected " + expected.size() + " decisions, differing at " + firstDifference(expected, actual));
+        var failures = new ArrayList<String>();
+        if (expected.isEmpty() || !expected.equals(actual)) {
+            failures.add("decisions differ at " + firstDifference(expected, actual));
+        }
+        if (staticRun.state().isPresent() || !staticRun.delivered().isEmpty() || !staticRun.feedback().isEmpty()
+                || !staticRun.derivations().equals(Derivations.none())) {
+            failures.add("the static arm kept state, delivered or derived feedback");
+        }
+        if (staticRun.samples().stream().anyMatch(s -> s.stateCutoff() != 0L)) {
+            failures.add("a static snapshot examined something");
+        }
+        if (staticRun.samples().stream().flatMap(s -> s.basis().stream())
+                .anyMatch(b -> b != Basis.COLD_START && b != Basis.HOST_PRIORITY)) {
+            failures.add("a static selection used a basis other than cold start or host priority");
+        }
+        boolean passed = failures.isEmpty();
+        return new Check("control.static-wiring", passed, passed
+                ? expected.size() + " static decisions equal the policy's decisions over an empty preference, with no"
+                        + " state, delivery or derivation and only cold-start or host-priority selections (a wiring"
+                        + " check of the control arm)"
+                : String.join("; ", failures));
     }
 
     Check neutralCheck(Map<ReplayArm, ReplayRun> runs) {
@@ -418,12 +487,13 @@ public final class RoutingReplayEvaluation {
                                 + failures.subList(0, Math.min(5, failures.size())));
     }
 
-    static Check rebuildCheck(List<String> results) {
-        boolean equal = !results.isEmpty() && results.stream().allMatch(r -> r.split(":")[1].equals("true"));
-        boolean exercised = results.stream().anyMatch(r -> !r.endsWith(":rebuilds=0"));
+    static Check rebuildCheck(List<RebuildEvidence> results) {
+        boolean equal = !results.isEmpty() && results.stream().allMatch(RebuildEvidence::passed);
+        boolean exercised = results.stream().anyMatch(r -> r.rebuilds() > 0);
         boolean passed = equal && exercised;
-        return new Check("state.incremental-equals-rebuild", passed, String.join(", ", results)
-                + (exercised ? "" : " (no correction-triggered rebuild was exercised)"));
+        return new Check("state.incremental-equals-rebuild", passed,
+                String.join(", ", results.stream().map(RebuildEvidence::toString).toList())
+                        + (exercised ? "" : " (no correction-triggered rebuild was exercised)"));
     }
 
     static Check cheapInvalidCheck(Map<ReplayArm, ReplayRun> runs) {
@@ -466,7 +536,8 @@ public final class RoutingReplayEvaluation {
                 }
             }
             ReplaySummary summary = ReplaySummary.of(run);
-            long attempts = run.samples().stream().filter(s -> s.coverage() == ReplaySample.Coverage.OBSERVED)
+            // the chain is counted once per execution, however many of its stages were routed
+            long attempts = ReplaySummary.firstObservedPerExecution(run.samples()).stream()
                     .mapToLong(ReplaySample::attempts).sum();
             if (summary.chain().attempts() != attempts || summary.chain().rework() != 1) {
                 failures.add(run.arm() + ": chain attempts " + summary.chain().attempts() + " / rework "
@@ -545,7 +616,7 @@ public final class RoutingReplayEvaluation {
         var failures = new ArrayList<String>();
         for (ReplayRun run : runs.values()) {
             ReplaySummary.StageFigures total = ReplaySummary.of(run).total();
-            if (total.abstained().getOrDefault("POLICY_TRADEOFF_UNRESOLVED", 0) != 1 || total.noEligibleRoute() != 1
+            if (total.abstained(AbstainReason.POLICY_TRADEOFF_UNRESOLVED) != 1 || total.noEligibleRoute() != 1
                     || total.coverage(ReplaySample.Coverage.NOT_EXECUTED) != 2) {
                 failures.add(run.arm() + ": abstained=" + total.abstained() + ", noEligible="
                         + total.noEligibleRoute());
@@ -575,8 +646,9 @@ public final class RoutingReplayEvaluation {
                 failures.add("an outcome was invented for " + sample.decisionRef().executionId());
             }
         }
-        if (adaptive.chain().executions() != adaptive.total().coverage(ReplaySample.Coverage.OBSERVED)) {
-            failures.add("chain figures count unobserved executions");
+        if (adaptive.chain().executions() != ReplaySummary.firstObservedPerExecution(
+                runs.get(ReplayArm.ADAPTIVE).samples()).size()) {
+            failures.add("chain figures do not count each observed execution exactly once");
         }
         if (adaptive.total().coverage(ReplaySample.Coverage.UNOBSERVED) + control.total().coverage(
                 ReplaySample.Coverage.UNOBSERVED) == 0) {
@@ -634,58 +706,7 @@ public final class RoutingReplayEvaluation {
                 + (passed ? "" : ", exceeded: " + failures));
     }
 
-    // ---- measurement ----
-
-    private BenchmarkRunResult measure(ReplayFixture fixture, ReplayArm arm) {
-        var replay = new TemporalReplay(fixture);
-        ReplayRun reference = replay.run(arm, false);
-        // the unrecorded (timed) path must decide exactly as the recorded path the checks verified
-        requireSameReplay(reference, replay.run(arm), digests);
-        int cohorts = reference.state().map(RoutingStateStore::cohortCount).orElse(0);
-        int ledger = reference.state().map(s -> s.ledger().size()).orElse(0);
-        var diagnostics = new LinkedHashMap<String, String>();
-        diagnostics.put("stateDigest", reference.state().map(digests::state).orElse("none"));
-        diagnostics.put("decisionTraceDigest", digests.decisions(reference.decisions()));
-        diagnostics.put("decisionsPerIteration", Integer.toString(fixture.tasks().size()));
-        diagnostics.put("deliveredObservations", Integer.toString(reference.delivered().size()));
-        diagnostics.put("cohorts", Integer.toString(cohorts));
-        diagnostics.put("ledgerEntries", Integer.toString(ledger));
-        diagnostics.put("modeledRetainedStateBytes", Long.toString(
-                cohorts * MODELED_COHORT_BYTES + ledger * MODELED_LEDGER_ENTRY_BYTES));
-        diagnostics.put("stateResetPerIteration", "true");
-        diagnostics.put("timedWindow", TIMED_WINDOW);
-        diagnostics.put("validationInWindow", "false");
-        diagnostics.put("gcTelemetryScope", "includes the untimed validation of the previous run");
-        var pending = new ReplayRun[1];
-        BenchmarkRunResult result = collector.measure(arm.benchmarkName(),
-                "tasks=" + fixture.tasks().size() + ",routes=3,cohorts=" + cohorts, warmupIterations,
-                measurementIterations, fixture.tasks().size(),
-                () -> {
-                    if (pending[0] != null) {
-                        requireSameReplay(pending[0], reference, digests);
-                    }
-                    pending[0] = null;
-                },
-                () -> pending[0] = replay.run(arm, false),
-                diagnostics);
-        // the collector runs no setup after its last iteration, so the final measured run is validated here
-        requireSameReplay(pending[0], reference, digests);
-        return withLatencyScope(result, fixture.tasks().size());
-    }
-
-    /**
-     * The collector's latency distribution holds whole-iteration durations, while its throughput and allocation are
-     * per operation. This labels the row explicitly and adds the derived mean per decision, without changing the shared
-     * metrics types the other evaluations use.
-     */
-    static BenchmarkRunResult withLatencyScope(BenchmarkRunResult result, int decisionsPerIteration) {
-        var diagnostics = new LinkedHashMap<>(result.diagnostics());
-        diagnostics.put("latencyScope", "per replay iteration of " + decisionsPerIteration + " decisions");
-        diagnostics.put("meanNanosPerDecision",
-                String.format(Locale.ROOT, "%.1f", result.latency().meanNanos() / decisionsPerIteration));
-        return new BenchmarkRunResult(result.benchmarkName(), result.workloadScale(), result.iterations(),
-                result.latency(), result.allocation(), diagnostics);
-    }
+    // ---- validation of measured runs ----
 
     /**
      * Requires a replay to equal a reference outside any timed window: the same decision trace (route compared by full
@@ -696,6 +717,11 @@ public final class RoutingReplayEvaluation {
      * @throws IllegalStateException naming the first difference
      */
     static void requireSameReplay(ReplayRun run, ReplayRun reference, ReplayDigests digests) {
+        requireSameReplay(run, reference, reference.state().map(digests::state).orElse("none"), digests);
+    }
+
+    /** As {@link #requireSameReplay(ReplayRun, ReplayRun, ReplayDigests)}, against a precomputed state digest. */
+    static void requireSameReplay(ReplayRun run, ReplayRun reference, String expectedState, ReplayDigests digests) {
         if (run == null) {
             throw new IllegalStateException(reference.arm() + ": no measured replay to validate");
         }
@@ -722,9 +748,8 @@ public final class RoutingReplayEvaluation {
                     + reference.derivations());
         }
         String state = run.state().map(digests::state).orElse("none");
-        String expected = reference.state().map(digests::state).orElse("none");
-        if (!state.equals(expected)) {
-            throw new IllegalStateException(run.arm() + " replay state " + state + " differs from " + expected);
+        if (!state.equals(expectedState)) {
+            throw new IllegalStateException(run.arm() + " replay state " + state + " differs from " + expectedState);
         }
     }
 
@@ -739,9 +764,10 @@ public final class RoutingReplayEvaluation {
     // ---- metadata ----
 
     private void recordMetadata(ReplayFixture workload, Map<ReplayArm, ReplayRun> runs,
-            Map<String, Map<ReplayArm, ReplayRun>> scenarios, List<ReplayFixture> scenarioFixtures) {
+            Map<String, String> fingerprint, Map<String, Map<ReplayArm, ReplayRun>> scenarios,
+            List<ReplayFixture> scenarioFixtures) {
         metadata.put("fixture.version", SyntheticRoutingFixtures.VERSION);
-        metadata.put("fixture.workload.digest", digests.fixture(workload));
+        metadata.put("fixture.workload.digest", fingerprint.get("fixture"));
         metadata.put("fixture.workload.tasks", Integer.toString(workload.tasks().size()));
         metadata.put("fixture.workload.cohorts", Integer.toString(workload.cohortKeys().size()));
         for (ReplayFixture fixture : scenarioFixtures) {
@@ -753,22 +779,23 @@ public final class RoutingReplayEvaluation {
         metadata.put("state.definition", workload.definition().mappingVersion() + " (reference values, untuned)");
         metadata.put("evidence.policy", workload.evidencePolicy().id() + "@" + workload.evidencePolicy().version()
                 + " mandatory=" + workload.evidencePolicy().mandatoryDimensions());
-        metadata.put("replay.ordering", "decisions by (cutoff, DecisionRef); observations delivered before a decision"
-                + " iff ledgerSequence <= cutoff (inclusive cutoff), by (ledgerSequence, experienceRef, revision)");
+        metadata.put("replay.ordering", "decisions by (cutoff, requestOrdinal, then scope, task, execution, attempt and"
+                + " stage ids); observations delivered before a decision iff ledgerSequence <= cutoff (inclusive"
+                + " cutoff), by (ledgerSequence, experienceRef, revision); the adaptive state then examines through the"
+                + " cutoff");
         metadata.put("replay.semantics", "synthetic: outcome known for every route; chosen-route-only: logged route"
                 + " only, other routes reported as missing counterfactuals; figures are counts, not causal claims");
         metadata.put("cost.basis", ReplayCost.BASIS + "; per currency, never summed across currencies; PARTIAL is a"
                 + " lower bound; chain cost counted once per execution, never per stage or route");
-        var summaries = new ArrayList<ReplaySummary>();
         for (ReplayRun run : runs.values()) {
-            ReplaySummary summary = ReplaySummary.of(run);
-            summaries.add(summary);
-            summary.lines().forEach((k, v) -> metadata.put("workload." + k, v));
-            run.state().ifPresent(state -> metadata.put("workload." + run.arm().benchmarkName() + ".stateDigest",
-                    digests.state(state)));
-            metadata.put("workload." + run.arm().benchmarkName() + ".decisionDigest", digests.decisions(run));
+            String arm = run.arm().benchmarkName();
+            ReplaySummary.of(run).lines().forEach((k, v) -> metadata.put("workload." + k, v));
+            if (fingerprint.containsKey(arm + ".state")) {
+                metadata.put("workload." + arm + ".stateDigest", fingerprint.get(arm + ".state"));
+            }
+            metadata.put("workload." + arm + ".decisionDigest", fingerprint.get(arm + ".decisions"));
         }
-        metadata.put("workload.reportDigest", digests.report(summaries));
+        metadata.put("workload.reportDigest", fingerprint.get("report"));
         comparison(runs, "workload");
         scenarios.forEach((name, scenario) -> {
             for (ReplayRun run : scenario.values()) {

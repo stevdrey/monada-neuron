@@ -1,5 +1,7 @@
 package monada.neuron.evaluation.routing;
 
+import monada.neuron.routing.AbstainReason;
+import monada.neuron.routing.Basis;
 import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.feedback.RebuildOrder;
 import monada.neuron.routing.outcome.Money;
@@ -86,7 +88,17 @@ public record ReplaySummary(
 
         /** Selections that fell back to the deterministic baseline ordering. */
         public int baselineFallback() {
-            return basis.getOrDefault("COLD_START", 0) + basis.getOrDefault("HOST_PRIORITY", 0);
+            return basis(Basis.COLD_START) + basis(Basis.HOST_PRIORITY);
+        }
+
+        /** Selections with a given basis. */
+        public int basis(Basis kind) {
+            return basis.getOrDefault(kind.name(), 0);
+        }
+
+        /** Abstentions with a given reason. */
+        public int abstained(AbstainReason reason) {
+            return abstained.getOrDefault(reason.name(), 0);
         }
 
         /** Decisions with a given coverage. */
@@ -132,21 +144,18 @@ public record ReplaySummary(
             available = frozen(available);
             partialLowerBound = frozen(partialLowerBound);
         }
-
-        /** Executions with a given cost status. */
-        public int costStatus(ReplayCost.Status status) {
-            return costStatus.getOrDefault(status.name(), 0);
-        }
     }
 
     /**
-     * Pairs of observed executions of the same task, one pair per unordered pair of different executions. Each
-     * execution is represented by its first observed sample in replay order, so two observations of one execution
-     * (such as two routed attempts) are never paired with each other nor counted twice against another execution.
+     * Pairs of observed executions of the same task, one pair per unordered pair of different executions, so two
+     * observations of one execution (such as two routed stages) are never paired with each other nor counted twice
+     * against another execution. A pair is directly comparable when some routed stage of one and some routed stage of
+     * the other have matching {@link ComparisonKey}s; otherwise it is incomparable, by the fields of its closest stage
+     * pair (fewest differing fields, the first in replay order on a tie).
      *
-     * @param comparable pairs whose {@link ComparisonKey}s match: directly comparable
-     * @param incomparable pairs that differ in some field: observational only
-     * @param incomparableBy incomparable pairs per differing field
+     * @param comparable pairs with a matching stage pair: directly comparable
+     * @param incomparable pairs whose every stage pair differs in some field: observational only
+     * @param incomparableBy incomparable pairs per differing field of their closest stage pair
      */
     public record Pairing(int comparable, int incomparable, SortedMap<String, Integer> incomparableBy) {
 
@@ -165,7 +174,10 @@ public record ReplaySummary(
         Objects.requireNonNull(pairing, "pairing must not be null");
     }
 
-    /** Summarizes a recorded run. {@code O(S + E + Σ g²)} for groups of {@code g} observed samples of one task. */
+    /**
+     * Summarizes a recorded run. {@code O(S + E + Σ n²)} for groups of {@code n} observed samples of one task (every
+     * stage pair of every execution pair).
+     */
     public static ReplaySummary of(ReplayRun run) {
         var total = new StageTally();
         var byStage = new TreeMap<String, StageTally>();
@@ -182,20 +194,34 @@ public record ReplaySummary(
         return new ReplaySummary(run.arm(), total.figures(), stages, chain(run.samples()), pairing(run.samples()));
     }
 
-    private static ChainFigures chain(List<ReplaySample> samples) {
+    /**
+     * The first observed sample of each execution (scope, task and execution), in replay order: the one sample that
+     * carries an execution's whole-chain facts, so they are counted once however many of its stages were routed.
+     */
+    static List<ReplaySample> firstObservedPerExecution(List<ReplaySample> samples) {
         Set<ExecutionKey> seen = new HashSet<>();
+        var first = new ArrayList<ReplaySample>();
+        for (ReplaySample sample : samples) {
+            if (sample.coverage() == ReplaySample.Coverage.OBSERVED && seen.add(executionKey(sample))) {
+                first.add(sample);
+            }
+        }
+        return first;
+    }
+
+    private static ExecutionKey executionKey(ReplaySample sample) {
+        return new ExecutionKey(sample.decisionRef().scopeId(), sample.decisionRef().taskId(),
+                sample.decisionRef().executionId());
+    }
+
+    private static ChainFigures chain(List<ReplaySample> samples) {
         int executions = 0;
         long attempts = 0;
         long rework = 0;
         var status = new TreeMap<String, Integer>();
         var available = new TreeMap<String, BigDecimal>();
         var partial = new TreeMap<String, BigDecimal>();
-        for (ReplaySample sample : samples) {
-            if (sample.coverage() != ReplaySample.Coverage.OBSERVED
-                    || !seen.add(new ExecutionKey(sample.decisionRef().scopeId(), sample.decisionRef().taskId(),
-                            sample.decisionRef().executionId()))) {
-                continue;
-            }
+        for (ReplaySample sample : firstObservedPerExecution(samples)) {
             executions++;
             attempts += sample.attempts();
             rework += sample.attempts() - 1;
@@ -217,33 +243,50 @@ public record ReplaySummary(
 
     private static Pairing pairing(List<ReplaySample> samples) {
         // insertion order follows the samples' replay order, so grouping is deterministic; only counts leave it.
-        // Each execution is represented once, by its first observed sample in replay order, so every unordered pair
-        // of executions is counted exactly once, however many samples (for example routed attempts) each has.
-        var byTask = new LinkedHashMap<TaskKey, LinkedHashMap<String, ReplaySample>>();
+        // Each execution keeps all its observed stages, and every unordered pair of executions is counted once.
+        var byTask = new LinkedHashMap<TaskKey, LinkedHashMap<String, List<ReplaySample>>>();
         for (ReplaySample sample : samples) {
             if (sample.coverage() == ReplaySample.Coverage.OBSERVED) {
                 byTask.computeIfAbsent(new TaskKey(sample.decisionRef().scopeId(), sample.decisionRef().taskId()),
-                        ignored -> new LinkedHashMap<>()).putIfAbsent(sample.decisionRef().executionId(), sample);
+                        ignored -> new LinkedHashMap<>())
+                        .computeIfAbsent(sample.decisionRef().executionId(), ignored -> new ArrayList<>()).add(sample);
             }
         }
         int comparable = 0;
         int incomparable = 0;
         var by = new TreeMap<String, Integer>();
-        for (LinkedHashMap<String, ReplaySample> executions : byTask.values()) {
-            List<ReplaySample> group = List.copyOf(executions.values());
+        for (LinkedHashMap<String, List<ReplaySample>> executions : byTask.values()) {
+            List<List<ReplaySample>> group = List.copyOf(executions.values());
             for (int i = 0; i < group.size(); i++) {
                 for (int j = i + 1; j < group.size(); j++) {
-                    List<String> fields = group.get(i).comparison().differingFields(group.get(j).comparison());
-                    if (fields.isEmpty()) {
+                    List<String> closest = closestStagePair(group.get(i), group.get(j));
+                    if (closest.isEmpty()) {
                         comparable++;
                     } else {
                         incomparable++;
-                        fields.forEach(field -> by.merge(field, 1, Integer::sum));
+                        closest.forEach(field -> by.merge(field, 1, Integer::sum));
                     }
                 }
             }
         }
         return new Pairing(comparable, incomparable, by);
+    }
+
+    /** The differing fields of the closest stage pair of two executions; empty when some pair matches. */
+    private static List<String> closestStagePair(List<ReplaySample> first, List<ReplaySample> second) {
+        List<String> closest = null;
+        for (ReplaySample a : first) {
+            for (ReplaySample b : second) {
+                List<String> fields = a.comparison().differingFields(b.comparison());
+                if (fields.isEmpty()) {
+                    return fields;
+                }
+                if (closest == null || fields.size() < closest.size()) {
+                    closest = fields;
+                }
+            }
+        }
+        return closest;
     }
 
     /**

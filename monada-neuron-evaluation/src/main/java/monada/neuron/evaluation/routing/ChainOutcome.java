@@ -17,9 +17,4 @@ public record ChainOutcome(int attempts, ReplayCost cost) {
         }
         Objects.requireNonNull(cost, "cost must not be null");
     }
-
-    /** Attempts beyond the first: failed tries, repairs and retries. */
-    public int rework() {
-        return attempts - 1;
-    }
 }

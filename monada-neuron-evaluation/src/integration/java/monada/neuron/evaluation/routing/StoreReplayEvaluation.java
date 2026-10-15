@@ -13,7 +13,6 @@ import monada.neuron.routing.outcome.RoutingObservation;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.EnumMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -55,22 +54,25 @@ public final class StoreReplayEvaluation {
     private final int warmupIterations;
     private final int measurementIterations;
     private final ReplayDigests digests = new ReplayDigests();
-    private final EvaluationMetricsCollector collector = new EvaluationMetricsCollector();
+    private final ReplayMeasurement measurement;
 
     /** Creates the evaluation; quick mode measures fewer iterations. */
     public StoreReplayEvaluation(boolean quick) {
         this.quick = quick;
         this.warmupIterations = quick ? 1 : 3;
         this.measurementIterations = quick ? 3 : 10;
+        this.measurement = new ReplayMeasurement(new EvaluationMetricsCollector(), digests, warmupIterations,
+                measurementIterations);
     }
 
     /** Returns the run configuration this evaluation actually uses. */
     public RunConfiguration runConfiguration() {
         return new RunConfiguration(0L, quick, warmupIterations, measurementIterations,
-                "An iteration replays the exported fixture under one arm; the timed window includes constructing and"
-                        + " binding the fresh state and the full replay, and only validation of the previous run is"
-                        + " untimed; latency (mean and percentiles) is per replay iteration, while throughput and"
-                        + " allocation are per replayed decision; recording and export are not timed");
+                "An iteration replays the exported fixture under one arm; the timed window includes the full replay"
+                        + " and, for the arms that keep state, constructing and binding a fresh state (see each row's"
+                        + " timedWindow); only validation of the previous run is untimed; latency (mean and"
+                        + " percentiles) is per replay iteration, while throughput and allocation are per replayed"
+                        + " decision; recording and export are not timed");
     }
 
     /** Records, exports, verifies and measures; never throws for a failing phase. */
@@ -190,7 +192,8 @@ public final class StoreReplayEvaluation {
             metadata.put("store.reportDigest", digests.report(summaries));
             for (ReplayArm arm : ReplayArm.values()) {
                 try {
-                    results.add(measure(exported.fixture(), arm));
+                    results.add(measurement.measure("Store" + arm.benchmarkName(), exported.fixture(), arm,
+                            runs.get(arm)));
                 } catch (RuntimeException failure) {
                     checks.add(new Check("store.measurement." + arm, false, describe(failure)));
                 }
@@ -275,33 +278,6 @@ public final class StoreReplayEvaluation {
         require(available > 0 && unavailable > 0, "both an available and an unavailable cost must be exercised");
         return available + " AVAILABLE (0.0545 USD each) and " + unavailable
                 + " UNAVAILABLE Store costs reach the samples unchanged; unobserved choices carry none";
-    }
-
-    private BenchmarkRunResult measure(ReplayFixture fixture, ReplayArm arm) {
-        var replay = new TemporalReplay(fixture);
-        ReplayRun reference = replay.run(arm, false);
-        RoutingReplayEvaluation.requireSameReplay(reference, replay.run(arm), digests);
-        var diagnostics = new LinkedHashMap<String, String>();
-        diagnostics.put("stateDigest", reference.state().map(digests::state).orElse("none"));
-        diagnostics.put("decisionTraceDigest", digests.decisions(reference.decisions()));
-        diagnostics.put("decisionsPerIteration", Integer.toString(fixture.tasks().size()));
-        diagnostics.put("deliveredObservations", Integer.toString(reference.delivered().size()));
-        diagnostics.put("validationInWindow", "false");
-        diagnostics.put("timedWindow", RoutingReplayEvaluation.TIMED_WINDOW);
-        var pending = new ReplayRun[1];
-        BenchmarkRunResult result = collector.measure("Store" + arm.benchmarkName(), "tasks=" + fixture.tasks().size(),
-                warmupIterations, measurementIterations, fixture.tasks().size(),
-                () -> {
-                    if (pending[0] != null) {
-                        RoutingReplayEvaluation.requireSameReplay(pending[0], reference, digests);
-                    }
-                    pending[0] = null;
-                },
-                () -> pending[0] = replay.run(arm, false),
-                diagnostics);
-        // the collector runs no setup after its last iteration, so the final measured run is validated here
-        RoutingReplayEvaluation.requireSameReplay(pending[0], reference, digests);
-        return RoutingReplayEvaluation.withLatencyScope(result, fixture.tasks().size());
     }
 
     private static void check(List<Check> checks, String name, Verification verification) {

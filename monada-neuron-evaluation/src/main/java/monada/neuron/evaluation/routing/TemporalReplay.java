@@ -15,9 +15,11 @@ import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.feedback.CohortKey;
 import monada.neuron.routing.feedback.FeedbackDerivation;
+import monada.neuron.routing.feedback.NoUpdateReason;
 import monada.neuron.routing.feedback.RebuildOrder;
 import monada.neuron.routing.feedback.RoutingFeedback;
 import monada.neuron.routing.feedback.RoutingFeedbackPolicy;
+import monada.neuron.routing.feedback.ScoreRule;
 import monada.neuron.routing.outcome.LearningAssessment;
 import monada.neuron.routing.outcome.OutcomeEvaluator;
 import monada.neuron.routing.outcome.RoutingObservation;
@@ -317,26 +319,24 @@ public final class TemporalReplay {
             RoutingObservation observation = next.observation();
             LearningAssessment assessment = evaluator.assess(observation, next.decision(), next.request(),
                     fixture.evidencePolicy());
-            return switch (derivation) {
+            RawEvidence raw = RawEvidence.of(observation.outcome(), fixture.evidencePolicy());
+            Optional<ScoreRule> rule = Optional.empty();
+            Optional<NoUpdateReason> noUpdate = Optional.empty();
+            Optional<CohortKey> credited = Optional.empty();
+            switch (derivation) {
                 case FeedbackDerivation.Derived derived -> {
                     RoutingFeedback feedback = derived.feedback();
-                    yield new FeedbackEvent(observation.experienceRef(), observation.revision(),
-                            observation.ledgerSequence(), next.decision().provenance().decisionRef(),
-                            next.request().stageKind(), observation.outcome().executedRoute(),
-                            next.decision().cohortBinding().cohortBucket(), next.replayed(),
-                            assessment.verdict(), observation.outcome().attribution().basis(),
-                            Optional.of(feedback.rule()), Optional.empty(),
-                            feedback.entries().isEmpty() ? Optional.empty() : Optional.of(feedback.cohortKey()),
-                            update);
+                    rule = Optional.of(feedback.rule());
+                    credited = feedback.entries().isEmpty() ? Optional.empty() : Optional.of(feedback.cohortKey());
                 }
-                case FeedbackDerivation.NoUpdate none -> new FeedbackEvent(observation.experienceRef(),
-                        observation.revision(), observation.ledgerSequence(),
-                        next.decision().provenance().decisionRef(), next.request().stageKind(),
-                        observation.outcome().executedRoute(), next.decision().cohortBinding().cohortBucket(),
-                        next.replayed(), assessment.verdict(),
-                        observation.outcome().attribution().basis(), Optional.empty(), Optional.of(none.reason()),
-                        Optional.empty(), update);
-            };
+                case FeedbackDerivation.NoUpdate none -> noUpdate = Optional.of(none.reason());
+            }
+            return new FeedbackEvent(observation.experienceRef(), observation.revision(),
+                    observation.ledgerSequence(), next.decision().provenance().decisionRef(),
+                    next.request().stageKind(), observation.outcome().executedRoute(),
+                    next.decision().cohortBinding().cohortBucket(), next.replayed(), assessment.verdict(),
+                    observation.outcome().attribution().basis(), raw.reward(), raw.penalty(), rule, noUpdate,
+                    credited, update);
         }
 
         private ReplaySample sample(ReplayTask task, RoutingDecision decision, long stateCutoff,

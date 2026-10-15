@@ -1,5 +1,6 @@
 package monada.neuron.evaluation.routing;
 
+import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.outcome.Money;
 import monada.neuron.routing.outcome.UsageDeclaration;
 import org.junit.jupiter.api.BeforeAll;
@@ -41,7 +42,7 @@ class RoutingReplayEvaluationTest {
         var names = checks.stream().map(RoutingReplayEvaluation.Check::name).toList();
         assertTrue(names.containsAll(List.of("replay.deterministic", "leakage.future-outcomes",
                 "leakage.late-correction", "leakage.snapshot-watermark", "control.derived-not-consumed-equals-static",
-                "control.static-equals-cold-start-baseline", "control.neutral-feedback-leaves-state-unchanged",
+                "control.static-wiring", "control.neutral-feedback-leaves-state-unchanged",
                 "eligibility.violations-zero", "state.incremental-equals-rebuild", "cases.cheap-invalid",
                 "cases.repaired-accepted", "cases.unknown-usage", "cases.incomparable-context-and-stage",
                 "cases.currencies-not-summed", "cases.abstention-and-no-eligible-route",
@@ -207,8 +208,17 @@ class RoutingReplayEvaluationTest {
                 // latency is per replay iteration; every row says so and carries the derived per-decision mean
                 () -> assertTrue(report.evaluation().results().stream().allMatch(r -> r.diagnostics()
                         .get("latencyScope").startsWith("per replay iteration of ")
-                        && r.diagnostics().containsKey("meanNanosPerDecision")
-                        && RoutingReplayEvaluation.TIMED_WINDOW.equals(r.diagnostics().get("timedWindow")))),
+                        && r.diagnostics().containsKey("meanNanosPerDecision"))),
+                // each row's window says what that arm does: the static arm builds and binds no state
+                () -> {
+                    for (ReplayArm arm : ReplayArm.values()) {
+                        var row = report.evaluation().results().stream()
+                                .filter(r -> r.benchmarkName().equals(arm.benchmarkName())).findFirst().orElseThrow();
+                        assertEquals(ReplayMeasurement.timedWindow(arm), row.diagnostics().get("timedWindow"));
+                        assertEquals(Boolean.toString(arm != ReplayArm.STATIC),
+                                row.diagnostics().get("stateResetPerIteration"));
+                    }
+                },
                 () -> assertTrue(RoutingReplayRunner.storeArmUnavailable().startsWith("UNAVAILABLE")),
                 () -> assertEquals(3, RoutingReplayRunner.UNAVAILABLE));
     }
@@ -229,6 +239,42 @@ class RoutingReplayEvaluationTest {
                 () -> assertEquals(3, quick.defaultMeasurementIterations()),
                 () -> assertEquals(3, full.defaultWarmupIterations()),
                 () -> assertEquals(10, full.defaultMeasurementIterations()));
+    }
+
+    @Test
+    void aMultiStageExecutionIsCountedOnceAndPairedByItsClosestStage() {
+        var cases = fixtures.cases();
+        var tasks = new ArrayList<ReplayTask>();
+        for (ReplayTask task : cases.tasks()) {
+            RoutingRequest r = task.request();
+            if (r.taskId().equals("task-stages") && r.stageKind().equals(SyntheticRoutingFixtures.REVIEW)) {
+                // exe-11 routes both implement and review; exe-99 routes review only, under identical keys
+                tasks.add(new ReplayTask(withExecution(r, "exe-11", r.requestOrdinal()), task.catalog(),
+                        task.oracle()));
+                tasks.add(new ReplayTask(withExecution(r, "exe-99", 99), task.catalog(), task.oracle()));
+            } else {
+                tasks.add(task);
+            }
+        }
+        var runs = runs(cases.withTasks("multi-stage", tasks), ReplayArm.values());
+        var pairing = ReplaySummary.of(runs.get(ReplayArm.STATIC)).pairing();
+
+        assertAll(
+                () -> assertTrue(RoutingReplayEvaluation.repairedAcceptedCheck(runs).passed(),
+                        RoutingReplayEvaluation.repairedAcceptedCheck(runs).detail()),
+                // the review stages of exe-11 and exe-99 match, so that pair is directly comparable
+                () -> assertEquals(2, pairing.comparable()),
+                () -> assertEquals(1, pairing.incomparable()),
+                () -> assertEquals(Map.of("context", 1), pairing.incomparableBy()),
+                () -> assertEquals(ReplaySummary.firstObservedPerExecution(runs.get(ReplayArm.ADAPTIVE).samples())
+                        .size(), ReplaySummary.of(runs.get(ReplayArm.ADAPTIVE)).chain().executions()));
+    }
+
+    private static RoutingRequest withExecution(RoutingRequest r, String executionId, long ordinal) {
+        return new RoutingRequest(r.contractVersion(), r.scopeId(), r.taskId(), executionId, r.attemptId(),
+                r.stageId(), r.stageKind(), ordinal, r.sourceFingerprint(), r.contextFingerprint(),
+                r.constraintsFingerprint(), r.evaluationPolicyId(), r.evaluationPolicyVersion(), r.features(),
+                r.requirements(), r.overflowPermitted(), r.cutoff());
     }
 
     private static Map<ReplayArm, ReplayRun> runs(ReplayFixture fixture, ReplayArm... arms) {
