@@ -12,7 +12,6 @@ import monada.neuron.routing.adaptation.RebuildResult;
 import monada.neuron.routing.outcome.RoutingObservation;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
@@ -219,11 +218,9 @@ public final class StoreReplayEvaluation {
      * static arm's observed samples, so an execution the Store exported but no sample reached is not counted.
      */
     static String costCheck(StoreReplaySource.Export export, Map<ReplayArm, ReplayRun> runs) {
-        BigDecimal accepted = SyntheticRoutingFixtures.INPUT_PER_THOUSAND
-                .multiply(BigDecimal.valueOf(SyntheticRoutingFixtures.inputTokens(SyntheticRoutingFixtures.SUB_B)))
-                .add(SyntheticRoutingFixtures.OUTPUT_PER_THOUSAND.multiply(
-                        BigDecimal.valueOf(SyntheticRoutingFixtures.outputTokens(SyntheticRoutingFixtures.SUB_B))))
-                .movePointLeft(3).setScale(4, RoundingMode.UNNECESSARY);
+        BigDecimal accepted = SyntheticRoutingFixtures.listPrice(
+                SyntheticRoutingFixtures.inputTokens(SyntheticRoutingFixtures.SUB_B),
+                SyntheticRoutingFixtures.outputTokens(SyntheticRoutingFixtures.SUB_B));
         int available = 0;
         int unavailable = 0;
         for (ReplayRun run : runs.values()) {

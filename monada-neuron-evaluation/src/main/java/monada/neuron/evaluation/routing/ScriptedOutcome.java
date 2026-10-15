@@ -188,7 +188,12 @@ public record ScriptedOutcome(
                 Optional.empty());
     }
 
-    /** The same outcome accepted through a later repair attempt, attributable only to the whole chain. */
+    /**
+     * The same outcome accepted through a later repair attempt. The routed stage's evidence no longer decides it, so it
+     * is attributed to the whole chain ({@code CHAIN_ONLY}) when the chain spans two or more stages and to no stage
+     * ({@code NONE}) otherwise. The chain must hold at least two attempts, the routed one and the repair, or the
+     * constructor rejects it.
+     */
     public ScriptedOutcome repaired() {
         return new ScriptedOutcome(observedAt, invocation, OutcomeStatus.ACCEPTED, origin, quality,
                 chain.stages() >= 2 ? StageAttribution.Basis.CHAIN_ONLY : StageAttribution.Basis.NONE, true, stage,

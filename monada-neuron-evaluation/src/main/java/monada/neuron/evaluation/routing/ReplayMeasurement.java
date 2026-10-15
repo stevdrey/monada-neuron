@@ -14,10 +14,10 @@ import java.util.Objects;
  *
  * <p>Before timing, an unrecorded run must equal the recorded run the checks verified; that run also generates the
  * synthetic observations the timed runs reuse. The arm is then warmed up under its {@link Warmup} budget, so a light
- * arm runs as many replays as a heavy one runs time; every warm-up run is validated too. Every timed iteration replays
- * the whole fixture; the previous iteration's run is validated against the reference in the collector's untimed setup
- * (and the last one after the loop), against a state digest computed once. Latency is per replay iteration;
- * throughput and allocation are per decision.
+ * arm runs as many replays as a heavy one runs time, up to a cap; its first and last runs are validated too. Every
+ * timed iteration replays the whole fixture; the previous iteration's run is validated against the reference in the
+ * collector's untimed setup (and the last one after the loop), against a state digest computed once. Latency is per
+ * replay iteration; throughput and allocation are per decision.
  */
 final class ReplayMeasurement {
 
@@ -27,20 +27,24 @@ final class ReplayMeasurement {
 
     /**
      * How long an arm is warmed up before timing: at least {@code minIterations} replays and at least
-     * {@code budgetMillis} of accumulated replay time, whichever takes more replays. A fixed count cannot fit arms whose
-     * replays differ by two orders of magnitude: a few iterations of a millisecond replay end before the compiler does.
+     * {@code budgetMillis} of accumulated replay time, whichever takes more replays, but never more than
+     * {@code maxIterations}. A fixed count cannot fit arms whose replays differ by two orders of magnitude: a few
+     * iterations of a millisecond replay end before the compiler does; the cap bounds a replay so fast that the budget
+     * would take an unreasonable number of them.
      *
      * @param minIterations the minimum number of warm-up replays
      * @param budgetMillis the minimum accumulated replay time, excluding validation
+     * @param maxIterations the most warm-up replays, at least {@code minIterations}
      */
-    record Warmup(int minIterations, long budgetMillis) {
+    record Warmup(int minIterations, long budgetMillis, int maxIterations) {
         /** Smoke mode: enough to exercise the budgeted loop, not to reach steady state. */
-        static final Warmup QUICK = new Warmup(1, 50L);
-        static final Warmup FULL = new Warmup(3, 2_000L);
+        static final Warmup QUICK = new Warmup(1, 50L, 100);
+        /** The cap stays above what the budget needs for every current row (the Store rows need up to ~40,000). */
+        static final Warmup FULL = new Warmup(3, 2_000L, 100_000);
 
         Warmup {
-            if (minIterations < 0 || budgetMillis < 0L) {
-                throw new IllegalArgumentException("warm-up minimums must be non-negative");
+            if (minIterations < 0 || budgetMillis < 0L || maxIterations < minIterations) {
+                throw new IllegalArgumentException("warm-up minimums must be non-negative and within the maximum");
             }
         }
 
@@ -51,7 +55,8 @@ final class ReplayMeasurement {
         /** States the policy for a run configuration. */
         String describe() {
             return "warm-up per arm runs at least " + minIterations + " replays and at least " + budgetMillis
-                    + " ms of replay time, so the count differs per row (see each row's warmupIterations)";
+                    + " ms of replay time, at most " + maxIterations + " replays, so the count differs per row and"
+                    + " the reported warm-up iterations are the minimum (see each row's warmupIterations)";
         }
     }
 
@@ -122,16 +127,26 @@ final class ReplayMeasurement {
         int warmups = 0;
         long warmupNanos = 0L;
         long budgetNanos = warmup.budgetMillis() * 1_000_000L;
-        while (warmups < warmup.minIterations() || warmupNanos < budgetNanos) {
+        ReplayRun last = null;
+        while (warmups < warmup.maxIterations()
+                && (warmups < warmup.minIterations() || warmupNanos < budgetNanos)) {
             long start = System.nanoTime();
-            ReplayRun run = replay.run(arm, false);
+            last = replay.run(arm, false);
             warmupNanos += System.nanoTime() - start;
-            RoutingReplayEvaluation.requireSameReplay(run, reference, expectedState, digests);
+            // the first warm-up run is validated at once; the rest share one validation of the last, so a fast arm's
+            // warm-up is not dominated by digests (every timed run is still validated)
+            if (warmups == 0) {
+                RoutingReplayEvaluation.requireSameReplay(last, reference, expectedState, digests);
+            }
             warmups++;
+        }
+        if (last != null && warmups > 1) {
+            RoutingReplayEvaluation.requireSameReplay(last, reference, expectedState, digests);
         }
         diagnostics.put("warmupIterations", Integer.toString(warmups));
         diagnostics.put("warmupMinIterations", Integer.toString(warmup.minIterations()));
         diagnostics.put("warmupBudgetMillis", Long.toString(warmup.budgetMillis()));
+        diagnostics.put("warmupMaxIterations", Integer.toString(warmup.maxIterations()));
         diagnostics.put("warmupReplayMillis", millis(warmupNanos));
         var pending = new ReplayRun[1];
         BenchmarkRunResult result = collector.measure(name,

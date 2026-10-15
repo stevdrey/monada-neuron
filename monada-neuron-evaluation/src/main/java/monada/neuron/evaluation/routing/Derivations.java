@@ -18,31 +18,59 @@ import java.util.Objects;
  * <p>{@link #sequence} holds one code per delivery, in delivery order: {@code ((rule ordinal << 1) | credits) + 1}
  * for derived feedback (positive), {@code -(reason ordinal + 1)} for a no-update (negative). Two runs that derive the
  * same rules in a different order, or credit a cohort on a different delivery, therefore differ, even when their
- * per-rule counts agree. The counts per rule and reason are kept for reporting.
+ * per-rule counts agree. The counts per rule and reason are computed from the sequence, its only source, so they can
+ * never contradict it.
  *
- * @param rules derivations per score rule; rules never derived are absent
- * @param noUpdates derivations per no-update reason; reasons never derived are absent
- * @param sequence one code per delivery, in delivery order
+ * @param sequence one valid code per delivery, in delivery order
  */
-public record Derivations(Map<ScoreRule, Integer> rules, Map<NoUpdateReason, Integer> noUpdates, int[] sequence) {
+public record Derivations(int[] sequence) {
 
-    /** Copies the maps in enum order and the sequence. */
+    private static final ScoreRule[] RULES = ScoreRule.values();
+    private static final NoUpdateReason[] REASONS = NoUpdateReason.values();
+
+    /** Validates every code and copies the sequence. */
     public Derivations {
-        rules = Collections.unmodifiableMap(rules.isEmpty() ? new EnumMap<>(ScoreRule.class) : new EnumMap<>(rules));
-        noUpdates = Collections.unmodifiableMap(noUpdates.isEmpty() ? new EnumMap<>(NoUpdateReason.class)
-                : new EnumMap<>(noUpdates));
         sequence = Objects.requireNonNull(sequence, "sequence must not be null").clone();
+        for (int i = 0; i < sequence.length; i++) {
+            int code = sequence[i];
+            boolean valid = code > 0 ? (code - 1) >>> 1 < RULES.length : code < 0 && -code - 1 < REASONS.length;
+            if (!valid) {
+                throw new IllegalArgumentException("delivery " + i + " has no derivation code: " + code);
+            }
+        }
     }
 
     /** No derivation at all: the static arm's. */
     public static Derivations none() {
-        return new Derivations(Map.of(), Map.of(), new int[0]);
+        return new Derivations(new int[0]);
     }
 
     /** A copy of the per-delivery codes. */
     @Override
     public int[] sequence() {
         return sequence.clone();
+    }
+
+    /** Derivations per score rule, in rule order; rules never derived are absent. */
+    public Map<ScoreRule, Integer> rules() {
+        var byRule = new EnumMap<ScoreRule, Integer>(ScoreRule.class);
+        for (int code : sequence) {
+            if (code > 0) {
+                byRule.merge(RULES[(code - 1) >>> 1], 1, Integer::sum);
+            }
+        }
+        return Collections.unmodifiableMap(byRule);
+    }
+
+    /** Derivations per no-update reason, in reason order; reasons never derived are absent. */
+    public Map<NoUpdateReason, Integer> noUpdates() {
+        var byReason = new EnumMap<NoUpdateReason, Integer>(NoUpdateReason.class);
+        for (int code : sequence) {
+            if (code < 0) {
+                byReason.merge(REASONS[-code - 1], 1, Integer::sum);
+            }
+        }
+        return Collections.unmodifiableMap(byReason);
     }
 
     /** Total derivations. */
@@ -57,18 +85,17 @@ public record Derivations(Map<ScoreRule, Integer> rules, Map<NoUpdateReason, Int
 
     @Override
     public boolean equals(Object other) {
-        return other instanceof Derivations that && rules.equals(that.rules) && noUpdates.equals(that.noUpdates)
-                && Arrays.equals(sequence, that.sequence);
+        return other instanceof Derivations that && Arrays.equals(sequence, that.sequence);
     }
 
     @Override
     public int hashCode() {
-        return 31 * (31 * rules.hashCode() + noUpdates.hashCode()) + Arrays.hashCode(sequence);
+        return Arrays.hashCode(sequence);
     }
 
     @Override
     public String toString() {
-        return "Derivations[rules=" + rules + ", noUpdates=" + noUpdates + ", deliveries=" + sequence.length + "]";
+        return "Derivations[rules=" + rules() + ", noUpdates=" + noUpdates() + ", deliveries=" + sequence.length + "]";
     }
 
     /** The mutable recorder of one run: one array write per delivery, growing only past its presized capacity. */
@@ -94,31 +121,7 @@ public record Derivations(Map<ScoreRule, Integer> rules, Map<NoUpdateReason, Int
         }
 
         Derivations build() {
-            ScoreRule[] allRules = ScoreRule.values();
-            NoUpdateReason[] allReasons = NoUpdateReason.values();
-            int[] perRule = new int[allRules.length];
-            int[] perReason = new int[allReasons.length];
-            for (int i = 0; i < size; i++) {
-                int code = sequence[i];
-                if (code > 0) {
-                    perRule[(code - 1) >>> 1]++;
-                } else {
-                    perReason[-code - 1]++;
-                }
-            }
-            var byRule = new EnumMap<ScoreRule, Integer>(ScoreRule.class);
-            for (ScoreRule rule : allRules) {
-                if (perRule[rule.ordinal()] > 0) {
-                    byRule.put(rule, perRule[rule.ordinal()]);
-                }
-            }
-            var byReason = new EnumMap<NoUpdateReason, Integer>(NoUpdateReason.class);
-            for (NoUpdateReason reason : allReasons) {
-                if (perReason[reason.ordinal()] > 0) {
-                    byReason.put(reason, perReason[reason.ordinal()]);
-                }
-            }
-            return new Derivations(byRule, byReason, Arrays.copyOf(sequence, size));
+            return new Derivations(Arrays.copyOf(sequence, size));
         }
     }
 }

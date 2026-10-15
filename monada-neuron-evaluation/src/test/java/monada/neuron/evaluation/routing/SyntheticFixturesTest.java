@@ -11,6 +11,7 @@ import monada.neuron.routing.outcome.StageAttribution;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Optional;
 import java.util.TreeMap;
@@ -151,6 +152,30 @@ class SyntheticFixturesTest {
                         StageAttribution.Basis.CHAIN_ONLY, true, passing.stage(), new ChainOutcome(2, 2, cost),
                         Optional.of(new ScriptedOutcome.Correction(passing.observedAt() + 10, OutcomeStatus.ACCEPTED,
                                 passing.quality(), new ChainOutcome(1, 2, cost))))));
+    }
+
+    @Test
+    void aFlippedOutcomeTakesTheAttributionItsChainAllows() {
+        var base = fixtures.improvement(8);
+        ReplayTask task = base.tasks().get(5);
+        var known = (OutcomeOracle.KnownForEveryRoute) task.oracle();
+        ScriptedOutcome rejected = known.outcomeOf(SyntheticRoutingFixtures.SUB_A).orElseThrow();
+        // a rejection over a two-stage chain, attributed to the whole chain
+        var twoStages = new ScriptedOutcome(rejected.observedAt(), rejected.invocation(), rejected.status(),
+                rejected.origin(), rejected.quality(), StageAttribution.Basis.CHAIN_ONLY, false, rejected.stage(),
+                new ChainOutcome(1, 2, rejected.chain().cost()), Optional.empty());
+        var outcomes = new TreeMap<>(known.outcomes());
+        outcomes.put(SyntheticRoutingFixtures.SUB_A, twoStages);
+        var tasks = new ArrayList<>(base.tasks());
+        tasks.set(5, new ReplayTask(task.request(), task.catalog(), new OutcomeOracle.KnownForEveryRoute(outcomes)));
+        var fixture = base.withTasks("two-stage", tasks);
+
+        // flipping it to an acceptance keeps the chain's two stages, so the acceptance is chain-only, not stage-local
+        ScriptedOutcome flipped = outcomeOf(fixtures.futureFlipped(fixture, 0), 5, SyntheticRoutingFixtures.SUB_A);
+        assertAll(
+                () -> assertEquals(OutcomeStatus.ACCEPTED, flipped.status()),
+                () -> assertEquals(StageAttribution.Basis.CHAIN_ONLY, flipped.attribution()),
+                () -> assertEquals(2, flipped.chain().stages()));
     }
 
     private static ScriptedOutcome outcome(ScriptedOutcome base, StageAttribution.Basis attribution, boolean repair,

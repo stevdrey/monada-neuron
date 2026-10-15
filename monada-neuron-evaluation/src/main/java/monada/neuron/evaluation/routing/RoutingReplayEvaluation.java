@@ -20,7 +20,6 @@ import monada.neuron.routing.outcome.QualityDimension;
 import monada.neuron.routing.outcome.UsageKind;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumMap;
@@ -305,7 +304,9 @@ public final class RoutingReplayEvaluation {
                 failures.add(arm + ": flipping outcomes visible at or after " + cutoff
                         + " changed an earlier decision, its snapshot watermark or what it could see");
             }
-            if (!prefix.equals(before)) {
+            // samples do not carry what each decision could see, so the delivery counts are compared as well
+            if (!prefix.equals(before)
+                    || !visibleBefore(truncated.get(arm), cutoff).equals(visibleBefore(original.get(arm), cutoff))) {
                 failures.add(arm + ": the truncated replay differs from the prefix of the full replay");
             }
             laterChanged |= !projections(base).equals(projections(mutated));
@@ -576,23 +577,16 @@ public final class RoutingReplayEvaluation {
     }
 
     /** One {@code sub-a} attempt at the list prices, calculated from the token table. */
-    private static final BigDecimal SUB_A_ATTEMPT_USD = usd(
+    private static final BigDecimal SUB_A_ATTEMPT_USD = SyntheticRoutingFixtures.listPrice(
             SyntheticRoutingFixtures.inputTokens(SyntheticRoutingFixtures.SUB_A),
             SyntheticRoutingFixtures.outputTokens(SyntheticRoutingFixtures.SUB_A));
     /** One repair attempt at the list prices. */
-    private static final BigDecimal REPAIR_ATTEMPT_USD = usd(SyntheticRoutingFixtures.REPAIR_INPUT_TOKENS,
-            SyntheticRoutingFixtures.REPAIR_OUTPUT_TOKENS);
-
-    private static BigDecimal usd(long input, long output) {
-        return SyntheticRoutingFixtures.INPUT_PER_THOUSAND.multiply(BigDecimal.valueOf(input))
-                .add(SyntheticRoutingFixtures.OUTPUT_PER_THOUSAND.multiply(BigDecimal.valueOf(output)))
-                .movePointLeft(3).setScale(4, RoundingMode.UNNECESSARY);
-    }
+    private static final BigDecimal REPAIR_ATTEMPT_USD = SyntheticRoutingFixtures.listPrice(
+            SyntheticRoutingFixtures.REPAIR_INPUT_TOKENS, SyntheticRoutingFixtures.REPAIR_OUTPUT_TOKENS);
 
     /** The known input tokens of the unknown-usage case at the list prices: the only part of its cost known. */
-    private static final BigDecimal UNKNOWN_USAGE_LOWER_BOUND = SyntheticRoutingFixtures.INPUT_PER_THOUSAND
-            .multiply(BigDecimal.valueOf(SyntheticRoutingFixtures.UNKNOWN_USAGE_INPUT_TOKENS)).movePointLeft(3)
-            .setScale(4, RoundingMode.UNNECESSARY);
+    private static final BigDecimal UNKNOWN_USAGE_LOWER_BOUND = SyntheticRoutingFixtures.listPrice(
+            SyntheticRoutingFixtures.UNKNOWN_USAGE_INPUT_TOKENS, 0);
 
     static Check unknownUsageCheck(Map<ReplayArm, ReplayRun> runs) {
         var failures = new ArrayList<String>();

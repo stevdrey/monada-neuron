@@ -25,6 +25,7 @@ import monada.neuron.routing.outcome.QualityDimension;
 import monada.neuron.routing.outcome.QualityState;
 import monada.neuron.routing.outcome.ResourceSummary;
 import monada.neuron.routing.outcome.RoutingObservation;
+import monada.neuron.routing.outcome.StageAttribution;
 import monada.neuron.routing.outcome.UsageCounter;
 import monada.neuron.routing.outcome.UsageDeclaration;
 import monada.neuron.routing.outcome.UsageKind;
@@ -325,11 +326,11 @@ public final class SyntheticRoutingFixtures {
             ResourceSummary usage = doubled(outcome.stage());
             ScriptedOutcome.Correction opposite = opposite(outcome.status(), outcome.chain(), usage,
                     outcome.observedAt());
-            base = opposite.status() == OutcomeStatus.ACCEPTED
-                    ? ScriptedOutcome.passing(outcome.observedAt(), GATES, usage, opposite.chain())
-                    : new ScriptedOutcome(outcome.observedAt(), InvocationStatus.COMPLETED, opposite.status(),
-                            OutcomeOrigin.VALIDATED, opposite.quality(), outcome.attribution(), false, usage,
-                            opposite.chain(), Optional.empty());
+            // the flipped outcome is a fresh, non-repaired verdict on the same chain, so its attribution follows the
+            // chain (contract "StageAttribution"), not the outcome it replaced
+            base = new ScriptedOutcome(outcome.observedAt(), InvocationStatus.COMPLETED, opposite.status(),
+                    OutcomeOrigin.VALIDATED, opposite.quality(), attributionOf(opposite.chain()), false, usage,
+                    opposite.chain(), Optional.empty());
             if (outcome.correction().isPresent()) {
                 base = base.corrected(outcome.correction().get());
             }
@@ -345,6 +346,17 @@ public final class SyntheticRoutingFixtures {
     /** The opposite verdict of an outcome as a revision visible at {@code at}; the routed stage's usage is unchanged. */
     private ScriptedOutcome.Correction flip(ScriptedOutcome outcome, long at) {
         return opposite(outcome.status(), outcome.chain(), outcome.stage(), at);
+    }
+
+    /**
+     * The attribution a verdict on {@code chain} can carry: stage-local only for one stage with one attempt (no later
+     * attempt exists), chain-only for two or more stages, and none for one stage retried.
+     */
+    private static StageAttribution.Basis attributionOf(ChainOutcome chain) {
+        if (chain.stages() >= 2) {
+            return StageAttribution.Basis.CHAIN_ONLY;
+        }
+        return chain.attempts() == 1 ? StageAttribution.Basis.STAGE_LOCAL : StageAttribution.Basis.NONE;
     }
 
     /**
@@ -375,24 +387,35 @@ public final class SyntheticRoutingFixtures {
 
     /** The known input and output tokens of {@code usage} at the list prices; anything else is not priced. */
     static BigDecimal price(ResourceSummary usage) {
-        BigDecimal amount = BigDecimal.ZERO;
+        long input = 0;
+        long output = 0;
         for (UsageCounter counter : usage.counters()) {
             if (counter.value() instanceof ResourceValue.Known known) {
-                BigDecimal perThousand = switch (counter.kind()) {
-                    case INPUT_TOKENS -> INPUT_PER_THOUSAND;
-                    case OUTPUT_TOKENS -> OUTPUT_PER_THOUSAND;
-                    default -> BigDecimal.ZERO;
-                };
-                amount = amount.add(perThousand.multiply(BigDecimal.valueOf(known.value())));
+                switch (counter.kind()) {
+                    case INPUT_TOKENS -> input += known.value();
+                    case OUTPUT_TOKENS -> output += known.value();
+                    default -> {
+                        // only input and output tokens are priced
+                    }
+                }
             }
         }
-        return amount.movePointLeft(3).setScale(4, RoundingMode.UNNECESSARY);
+        return listPrice(input, output);
+    }
+
+    /**
+     * {@code input} and {@code output} tokens at the list prices, in USD at four decimals: the one pricing formula the
+     * fixtures and every hand-calculated check use. Exact for the token counts used here; any other count that the
+     * scale cannot hold exactly is rejected rather than rounded.
+     */
+    static BigDecimal listPrice(long input, long output) {
+        return INPUT_PER_THOUSAND.multiply(BigDecimal.valueOf(input))
+                .add(OUTPUT_PER_THOUSAND.multiply(BigDecimal.valueOf(output)))
+                .movePointLeft(3).setScale(4, RoundingMode.UNNECESSARY);
     }
 
     private static BigDecimal repairPrice() {
-        return INPUT_PER_THOUSAND.multiply(BigDecimal.valueOf(REPAIR_INPUT_TOKENS))
-                .add(OUTPUT_PER_THOUSAND.multiply(BigDecimal.valueOf(REPAIR_OUTPUT_TOKENS)))
-                .movePointLeft(3).setScale(4, RoundingMode.UNNECESSARY);
+        return listPrice(REPAIR_INPUT_TOKENS, REPAIR_OUTPUT_TOKENS);
     }
 
     /**

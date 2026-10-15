@@ -138,14 +138,19 @@ class RoutingReplayEvaluationTest {
         codes[first] = codes[second];
         codes[second] = swapped;
         var reordered = new ReplayRun(reference.arm(), List.of(), List.of(), reference.delivered(),
-                reference.decisions(), new Derivations(reference.derivations().rules(),
-                        reference.derivations().noUpdates(), codes), reference.state());
+                reference.decisions(), new Derivations(codes), reference.state());
         var digests = new ReplayDigests();
 
         assertAll(
                 () -> RoutingReplayEvaluation.requireSameReplay(replay.run(ReplayArm.DERIVED_NOT_CONSUMED, false),
                         reference, digests),
                 () -> assertEquals(first, reordered.derivations().firstDifference(reference.derivations())),
+                // the per-rule and per-reason counts are computed from the sequence, so a swap keeps them equal
+                () -> assertEquals(reference.derivations().rules(), reordered.derivations().rules()),
+                () -> assertEquals(reference.derivations().noUpdates(), reordered.derivations().noUpdates()),
+                // a code that names no rule or reason is rejected
+                () -> assertThrows(IllegalArgumentException.class, () -> new Derivations(new int[] {0})),
+                () -> assertThrows(IllegalArgumentException.class, () -> new Derivations(new int[] {Integer.MAX_VALUE})),
                 () -> assertThrows(IllegalStateException.class,
                         () -> RoutingReplayEvaluation.requireSameReplay(reordered, reference, digests)));
     }
@@ -185,6 +190,30 @@ class RoutingReplayEvaluationTest {
         return new ReplaySample(s.decisionRef(), s.stageKind(), s.cutoff(), stateCutoff, s.arm(), s.kind(), s.route(),
                 s.basis(), s.abstainReason(), s.coverage(), s.acceptance(), s.verdict(), s.provenFailures(),
                 s.attempts(), s.stageUsage(), s.usageDeclaration(), s.chainCost(), s.comparison());
+    }
+
+    @Test
+    void aTruncatedReplayThatSawDifferentDeliveriesFailsTheLeakageCheck() {
+        var improvement = fixtures.improvement(24);
+        var original = runs(improvement, ReplayArm.values());
+        long cutoff = fixtures.cutoff(RoutingReplayEvaluation.LEAKAGE_TASK);
+        var flipped = runs(fixtures.futureFlipped(improvement, cutoff), ReplayArm.values());
+        var truncated = runs(fixtures.truncated(improvement, cutoff), ReplayArm.values());
+        // the same samples, but the adaptive truncated replay claims decision 0 saw one more delivery
+        ReplayRun adaptive = truncated.get(ReplayArm.ADAPTIVE);
+        DecisionTrace trace = adaptive.decisions();
+        int[] visible = trace.visible();
+        visible[0]++;
+        var altered = new EnumMap<>(truncated);
+        altered.put(ReplayArm.ADAPTIVE, new ReplayRun(adaptive.arm(), adaptive.samples(), adaptive.feedback(),
+                adaptive.delivered(), new DecisionTrace(trace.routes(), trace.codes(), trace.watermarks(), visible),
+                adaptive.derivations(), adaptive.state()));
+
+        assertAll(
+                () -> assertTrue(RoutingReplayEvaluation.futureLeakageCheck(original, flipped, truncated, cutoff)
+                        .passed()),
+                () -> assertFalse(RoutingReplayEvaluation.futureLeakageCheck(original, flipped, altered, cutoff)
+                        .passed()));
     }
 
     @Test
@@ -306,8 +335,12 @@ class RoutingReplayEvaluationTest {
                                 >= quickWarmup.minIterations());
                         assertEquals(Long.toString(quickWarmup.budgetMillis()),
                                 row.diagnostics().get("warmupBudgetMillis"));
-                        assertTrue(Double.parseDouble(row.diagnostics().get("warmupReplayMillis"))
-                                >= quickWarmup.budgetMillis());
+                        int warmups = Integer.parseInt(row.diagnostics().get("warmupIterations"));
+                        // the budget is met unless the cap stopped a very fast arm first
+                        assertTrue(warmups <= quickWarmup.maxIterations());
+                        assertTrue(warmups == quickWarmup.maxIterations()
+                                || Double.parseDouble(row.diagnostics().get("warmupReplayMillis"))
+                                        >= quickWarmup.budgetMillis());
                     }
                 },
                 () -> assertTrue(RoutingReplayRunner.storeArmUnavailable().startsWith("UNAVAILABLE")),
