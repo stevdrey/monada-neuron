@@ -78,7 +78,7 @@ public record DecisionTrace(RouteKey[] routes, int[] codes, long[] watermarks) {
         return size() == other.size() ? -1 : common;
     }
 
-    /** One canonical line for decision {@code index}, for digests and error messages. */
+    /** A readable rendering of decision {@code index}, for error messages; digests use {@link CanonicalEncoder}. */
     String line(int index) {
         return (routes[index] == null ? "-" : routes[index].toString()) + "|" + Integer.toHexString(codes[index]) + "|"
                 + watermarks[index];

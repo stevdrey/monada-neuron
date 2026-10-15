@@ -9,6 +9,7 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -21,10 +22,10 @@ import java.util.TreeMap;
  *
  * <p>Stage figures cover decisions, coverage, quality, the routed stage's own token usage and feedback. Chain
  * figures (attempts, rework and the hypothetical cost to an accepted outcome) are whole-execution facts: they are
- * reported once per execution in {@link #chain()} and never attributed to a stage or route. Token sums add known values
- * only and count unknown and not-measured counters separately; costs are summed per currency and never across
- * currencies, and a partial cost is reported as a separate lower bound. Every figure is a count over the fixture, not
- * a rate estimate and not a causal claim.
+ * reported once per execution, identified by scope, task and execution, in {@link #chain()} and never attributed to
+ * a stage or route. Token sums add known values only and count unknown and not-measured counters separately; costs
+ * are summed per currency and never across currencies, and a partial cost is reported as a separate lower bound.
+ * Every figure is a count over the fixture, not a rate estimate and not a causal claim.
  *
  * @param arm the arm
  * @param total stage figures over every stage kind
@@ -177,7 +178,7 @@ public record ReplaySummary(
     }
 
     private static ChainFigures chain(List<ReplaySample> samples) {
-        Set<String> seen = new HashSet<>();
+        Set<ExecutionKey> seen = new HashSet<>();
         int executions = 0;
         int attempts = 0;
         int rework = 0;
@@ -186,7 +187,8 @@ public record ReplaySummary(
         var partial = new TreeMap<String, BigDecimal>();
         for (ReplaySample sample : samples) {
             if (sample.coverage() != ReplaySample.Coverage.OBSERVED
-                    || !seen.add(sample.decisionRef().scopeId() + "\u0000" + sample.decisionRef().executionId())) {
+                    || !seen.add(new ExecutionKey(sample.decisionRef().scopeId(), sample.decisionRef().taskId(),
+                            sample.decisionRef().executionId()))) {
                 continue;
             }
             executions++;
@@ -209,10 +211,11 @@ public record ReplaySummary(
     }
 
     private static Pairing pairing(List<ReplaySample> samples) {
-        var byTask = new TreeMap<String, List<ReplaySample>>();
+        // insertion order follows the samples' replay order, so grouping is deterministic; only counts leave it
+        var byTask = new LinkedHashMap<TaskKey, List<ReplaySample>>();
         for (ReplaySample sample : samples) {
             if (sample.coverage() == ReplaySample.Coverage.OBSERVED) {
-                byTask.computeIfAbsent(sample.decisionRef().scopeId() + "\u0000" + sample.decisionRef().taskId(),
+                byTask.computeIfAbsent(new TaskKey(sample.decisionRef().scopeId(), sample.decisionRef().taskId()),
                         ignored -> new ArrayList<>()).add(sample);
             }
         }
@@ -275,6 +278,14 @@ public record ReplaySummary(
         figures.tokens().forEach((k, t) -> lines.put(prefix + "tokens." + k, "knownSum=" + t.knownSum() + ",known="
                 + t.known() + ",unknown=" + t.unknown() + ",notMeasured=" + t.notMeasured() + ",absent="
                 + t.absent()));
+    }
+
+    /** One execution: scope, task and execution, compared component by component (no concatenation). */
+    private record ExecutionKey(String scopeId, String taskId, String executionId) {
+    }
+
+    /** One task of one scope. */
+    private record TaskKey(String scopeId, String taskId) {
     }
 
     private static <K, V> SortedMap<K, V> frozen(SortedMap<K, V> map) {

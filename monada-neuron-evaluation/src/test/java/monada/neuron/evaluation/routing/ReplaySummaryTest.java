@@ -1,9 +1,11 @@
 package monada.neuron.evaluation.routing;
 
+import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.outcome.UsageKind;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.Set;
 
@@ -32,6 +34,25 @@ class ReplaySummaryTest {
                 () -> assertEquals(0, chain.partialLowerBound().get("USD").compareTo(new BigDecimal("0.0270"))),
                 // cheap invalid and the corrected security failure have no validated acceptance
                 () -> assertEquals(Map.of("AVAILABLE", 8, "PARTIAL", 1, "UNAVAILABLE", 2), chain.costStatus()));
+    }
+
+    @Test
+    void twoTasksReusingAnExecutionIdAreTwoExecutions() {
+        var base = fixtures.improvement(2);
+        var tasks = new ArrayList<ReplayTask>();
+        for (ReplayTask task : base.tasks()) {
+            RoutingRequest r = task.request();
+            // the second task reuses the first task's execution id; execution identity is (scope, task, execution)
+            tasks.add(new ReplayTask(new RoutingRequest(r.contractVersion(), r.scopeId(), r.taskId(), "exe-shared",
+                    r.attemptId(), r.stageId(), r.stageKind(), r.requestOrdinal(), r.sourceFingerprint(),
+                    r.contextFingerprint(), r.constraintsFingerprint(), r.evaluationPolicyId(),
+                    r.evaluationPolicyVersion(), r.features(), r.requirements(), r.overflowPermitted(), r.cutoff()),
+                    task.catalog(), task.oracle()));
+        }
+        var fixture = new ReplayFixture(base.fixtureId(), base.version(), base.definition(), base.evidencePolicy(),
+                base.policy(), base.partition(), tasks);
+
+        assertEquals(2, ReplaySummary.of(new TemporalReplay(fixture).run(ReplayArm.STATIC)).chain().executions());
     }
 
     @Test

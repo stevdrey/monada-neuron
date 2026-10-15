@@ -4,7 +4,12 @@ import monada.neuron.routing.LexicographicRoutingPolicy;
 import monada.neuron.routing.adaptation.StatePartition;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.outcome.Money;
+import monada.neuron.routing.outcome.OutcomeStatus;
+import monada.neuron.routing.outcome.QualityDimension;
+import monada.neuron.routing.outcome.QualityState;
+import monada.neuron.routing.outcome.RoutingObservation;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -138,6 +143,38 @@ class ReplayFixtureBoundsTest {
 
         assertThrows(IllegalArgumentException.class, () -> new OutcomeOracle.ChosenRouteOnly(
                 first.loggedDecision(), second.observed(), first.chain()));
+    }
+
+    @Test
+    void loggedObservationsMustBeRevisionsOfOneSample() {
+        var fixture = fixtures.chosenRouteOnly(6);
+        ReplayTask task = fixture.tasks().getFirst();
+        var logged = (OutcomeOracle.ChosenRouteOnly) task.oracle();
+        RoutingObservation original = logged.observed().getFirst();
+        var scripted = ScriptedOutcome.passing(original.ledgerSequence(), SyntheticRoutingFixtures.GATES,
+                original.outcome().resources(), logged.chain()).corrected(new ScriptedOutcome.Correction(
+                        original.ledgerSequence() + 4096, OutcomeStatus.REJECTED,
+                        Map.of(QualityDimension.TESTS, QualityState.FAIL, QualityDimension.SECURITY, QualityState.PASS),
+                        new ChainOutcome(1, ReplayCost.unavailable("NO_VALIDATED_ACCEPTANCE"))));
+        var factory = new ObservationFactory();
+        RoutingObservation revision0 = factory.observe(task.request(), logged.loggedDecision(), scripted, 0);
+        RoutingObservation revision1 = factory.observe(task.request(), logged.loggedDecision(), scripted, 1);
+        // another sample reference, at the same position
+        var otherSample = new RoutingObservation(revision0.outcome(), "exp-other", 0, revision0.ledgerSequence(),
+                Feature.unknown());
+        // revision 1 placed at the original's own position
+        var notLater = new RoutingObservation(revision0.outcome(), revision0.experienceRef(), 1,
+                revision0.ledgerSequence(), Feature.known(revision0.ledgerSequence() - 1));
+
+        assertAll(
+                () -> assertEquals(2, new OutcomeOracle.ChosenRouteOnly(logged.loggedDecision(),
+                        List.of(revision1, revision0), logged.chain()).observed().size()),
+                () -> assertThrows(IllegalArgumentException.class, () -> new OutcomeOracle.ChosenRouteOnly(
+                        logged.loggedDecision(), List.of(revision0, otherSample), logged.chain())),
+                () -> assertThrows(IllegalArgumentException.class, () -> new OutcomeOracle.ChosenRouteOnly(
+                        logged.loggedDecision(), List.of(revision0, revision0), logged.chain())),
+                () -> assertThrows(IllegalArgumentException.class, () -> new OutcomeOracle.ChosenRouteOnly(
+                        logged.loggedDecision(), List.of(revision0, notLater), logged.chain())));
     }
 
     @Test

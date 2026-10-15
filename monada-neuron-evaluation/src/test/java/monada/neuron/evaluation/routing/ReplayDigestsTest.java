@@ -1,5 +1,6 @@
 package monada.neuron.evaluation.routing;
 
+import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.outcome.QualityDimension;
 import monada.neuron.routing.outcome.QualityState;
 import org.junit.jupiter.api.Test;
@@ -62,6 +63,30 @@ class ReplayDigestsTest {
                 base.partition(), base.tasks());
 
         assertNotEquals(digests.fixture(first), digests.fixture(second));
+    }
+
+    @Test
+    void separatorsInsideTaskFieldsCannotMergeTwoFixtures() {
+        var base = fixtures.improvement(1);
+        ReplayTask task = base.tasks().getFirst();
+        var first = new ReplayFixture(base.fixtureId(), base.version(), base.definition(), base.evidencePolicy(),
+                base.policy(), base.partition(), List.of(new ReplayTask(identity(task.request(),
+                        "t, executionId=e", "f"), task.catalog(), task.oracle())));
+        var second = new ReplayFixture(base.fixtureId(), base.version(), base.definition(), base.evidencePolicy(),
+                base.policy(), base.partition(), List.of(new ReplayTask(identity(task.request(),
+                        "t", "e, executionId=f"), task.catalog(), task.oracle())));
+
+        assertAll(
+                () -> assertEquals(first.tasks().getFirst().request().toString(),
+                        second.tasks().getFirst().request().toString()),
+                () -> assertNotEquals(digests.fixture(first), digests.fixture(second)));
+    }
+
+    private static RoutingRequest identity(RoutingRequest r, String taskId, String executionId) {
+        return new RoutingRequest(r.contractVersion(), r.scopeId(), taskId, executionId, r.attemptId(), r.stageId(),
+                r.stageKind(), r.requestOrdinal(), r.sourceFingerprint(), r.contextFingerprint(),
+                r.constraintsFingerprint(), r.evaluationPolicyId(), r.evaluationPolicyVersion(), r.features(),
+                r.requirements(), r.overflowPermitted(), r.cutoff());
     }
 
     @Test

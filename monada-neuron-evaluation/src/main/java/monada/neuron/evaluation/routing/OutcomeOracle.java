@@ -2,6 +2,7 @@ package monada.neuron.evaluation.routing;
 
 import monada.neuron.routing.RoutingDecision;
 import monada.neuron.routing.catalog.RouteKey;
+import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.outcome.RoutingObservation;
 
 import java.util.Collections;
@@ -51,17 +52,40 @@ public sealed interface OutcomeOracle {
      *
      * @param loggedDecision the decision that was actually executed
      * @param observed observed revisions of the executed route's outcome, in revision order; empty when none was
-     *        exported
+     *        exported. They are revisions of one sample: one {@code experienceRef}, strictly increasing revisions and
+     *        ledger sequences, and each later revision superseding the one before it
      * @param chain whole-chain attempts and cost of the latest observed revision, as supplied by evaluation tooling
      */
     record ChosenRouteOnly(RoutingDecision.Selected loggedDecision, List<RoutingObservation> observed,
             ChainOutcome chain) implements OutcomeOracle {
 
-        /** Validates that every observation answers the logged decision. */
+        /** Validates that every observation answers the logged decision and that they are revisions of one sample. */
         public ChosenRouteOnly {
             Objects.requireNonNull(loggedDecision, "loggedDecision must not be null");
             observed = observed.stream().sorted(Comparator.comparingLong(RoutingObservation::revision)).toList();
             Objects.requireNonNull(chain, "chain must not be null");
+            for (int i = 1; i < observed.size(); i++) {
+                RoutingObservation earlier = observed.get(i - 1);
+                RoutingObservation later = observed.get(i);
+                if (!later.experienceRef().equals(earlier.experienceRef())) {
+                    throw new IllegalArgumentException("logged observations " + earlier.experienceRef() + " and "
+                            + later.experienceRef() + " are different samples, not revisions of one");
+                }
+                if (later.revision() == earlier.revision()) {
+                    throw new IllegalArgumentException("revision " + later.revision() + " of "
+                            + later.experienceRef() + " appears twice");
+                }
+                if (later.ledgerSequence() <= earlier.ledgerSequence()) {
+                    throw new IllegalArgumentException("revision " + later.revision() + " of " + later.experienceRef()
+                            + " is not after revision " + earlier.revision() + " in the ledger");
+                }
+                if (!(later.supersedesSequence() instanceof Feature.Known<Long> supersedes)
+                        || supersedes.value() != earlier.ledgerSequence()) {
+                    throw new IllegalArgumentException("revision " + later.revision() + " of " + later.experienceRef()
+                            + " does not supersede revision " + earlier.revision() + " at "
+                            + earlier.ledgerSequence());
+                }
+            }
             for (RoutingObservation observation : observed) {
                 if (!observation.outcome().executedRoute().equals(loggedDecision.route())
                         || !observation.outcome().decisionRef().equals(loggedDecision.provenance().decisionRef())) {

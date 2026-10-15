@@ -135,8 +135,13 @@ public final class StoreReplayEvaluation {
                 ReplayRun rerun = again.run(arm);
                 require(digests.decisions(runs.get(arm)).equals(digests.decisions(rerun)), arm + " decisions differ");
                 require(digests.feedback(runs.get(arm)).equals(digests.feedback(rerun)), arm + " feedback differs");
+                String state = runs.get(arm).state().map(digests::state).orElse("none");
+                String repeatedState = rerun.state().map(digests::state).orElse("none");
+                require(state.equals(repeatedState), arm + " learned state differs: " + state + " vs "
+                        + repeatedState);
             }
-            return "decision and feedback digests are identical across both exports for every arm";
+            return "decision, feedback and learned-state digests (and state presence) are identical across both"
+                    + " exports for every arm";
         });
         if (runs.size() == ReplayArm.values().length) {
             check(checks, "store.derived-not-consumed-equals-static", () -> {

@@ -5,7 +5,6 @@ import monada.neuron.routing.adaptation.RoutingStateStore;
 import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.feedback.AppliedRevision;
 
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collection;
@@ -15,14 +14,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * SHA-256 digests over canonical UTF-8 lines, so equal digests mean identical fixtures, decision sequences, learned
- * state or semantic reports.
+ * SHA-256 digests over canonical entries, so equal digests mean identical fixtures, decision sequences, learned state
+ * or semantic reports.
  *
- * <p>Every line is {@code name=<utf8-byte-length>:<value>}, and every identity (fixture id and version, policy id and
- * version) is its own line, so opaque tokens containing a separator cannot make two inputs hash alike. Every rendered
- * value is canonical before it is hashed: records render their components in declaration order,
- * every list and map in the routing API and in this package is kept in a defined order, and Node doubles are rendered
- * as their exact bit patterns. Timings, timestamps and environment data never enter a digest.
+ * <p>Every entry is a length-prefixed name followed by the {@link CanonicalEncoder} encoding of its value: typed,
+ * length-prefixed and walked through record components, never through {@code toString}, so opaque tokens containing
+ * any separator cannot make two inputs hash alike. Identities (fixture id and version, policy id and version) are
+ * separate entries, sets and maps are order-independent, and doubles are encoded as their exact bit patterns. Timings,
+ * timestamps and environment data never enter a digest.
  */
 public final class ReplayDigests {
 
@@ -57,9 +56,7 @@ public final class ReplayDigests {
     /** A decision trace, recorded or not: every decision's route, codes and snapshot watermark in replay order. */
     public String decisions(DecisionTrace trace) {
         var lines = new Lines();
-        for (int i = 0; i < trace.size(); i++) {
-            lines.add("decision", trace.line(i));
-        }
+        lines.add("trace", trace);
         return lines.digest();
     }
 
@@ -76,7 +73,7 @@ public final class ReplayDigests {
         var lines = new Lines();
         cohortLines(lines, state);
         for (AppliedRevision entry : state.ledger()) {
-            lines.add("ledger", entry + " score=" + Long.toHexString(Double.doubleToLongBits(entry.score())));
+            lines.add("ledger", entry);
         }
         lines.add("processedCutoff", state.processedCutoff());
         return lines.digest();
@@ -112,21 +109,16 @@ public final class ReplayDigests {
     }
 
     private static void cohortLines(Lines lines, RoutingStateStore state) {
+        // every cohort is DORMANT against the empty catalog, so the status adds nothing beyond the key
         for (CohortState cohort : state.cohorts(NO_ROUTES)) {
-            lines.add("cohort", cohort.key() + " node=" + cohort.nodeId()
-                    + " amplitude=" + bits(cohort.amplitude()) + " frequency=" + bits(cohort.frequency())
-                    + " phase=" + bits(cohort.phase()) + " energy=" + bits(cohort.energy())
-                    + " support=" + cohort.supportingObservations());
+            lines.add("cohort", cohort);
         }
     }
 
-    private static String bits(double value) {
-        return Long.toHexString(Double.doubleToLongBits(value));
-    }
-
-    /** Line-oriented SHA-256 accumulator. */
+    /** Entry-oriented SHA-256 accumulator. */
     private static final class Lines {
 
+        private final CanonicalEncoder encoder = new CanonicalEncoder();
         private final MessageDigest sha;
 
         Lines() {
@@ -137,12 +129,10 @@ public final class ReplayDigests {
             }
         }
 
-        /** {@code name=<utf8-byte-length>:<value>\n}: the length prefix keeps value boundaries unambiguous. */
+        /** The length-prefixed name, then the canonical encoding of the value. */
         void add(String name, Object value) {
-            byte[] rendered = String.valueOf(value).getBytes(StandardCharsets.UTF_8);
-            sha.update((name + "=" + rendered.length + ":").getBytes(StandardCharsets.UTF_8));
-            sha.update(rendered);
-            sha.update((byte) '\n');
+            sha.update(encoder.encode(name));
+            sha.update(encoder.encode(value));
         }
 
         String digest() {

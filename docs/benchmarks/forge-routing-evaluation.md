@@ -109,6 +109,9 @@ task carries:
 **Construction checks.** These hold before any replay, and an oversized fixture is rejected, never truncated:
 - Every outcome must be visible strictly after its decision.
 - `requestOrdinal` must be strictly increasing in replay order, as the contract requires per scope.
+- The observations of one logged decision must be revisions of one sample: one `experienceRef`, strictly increasing
+  revisions and ledger sequences, and each later revision superseding the one before it. Two separately referenced
+  samples can therefore never credit one execution twice.
 - Cohorts are bounded at ≤ 256.
 - Observations are bounded at ≤ 4096, so a full rebuild stays possible.
 
@@ -257,7 +260,7 @@ The `store.*` checks cover:
 - a complete and explained import: exactly one revision-0 observation per finished execution (`exe-0` to `exe-14`),
   each answering its own logged decision, and the unfinished execution rejected as `MISSING_OUTCOME`;
 - two independent recordings exporting identical fixtures and Store export digests;
-- deterministic replay;
+- deterministic replay, comparing decisions, feedback and learned state (including state presence) for every arm;
 - the derived-not-consumed control, zero eligibility violations and snapshot watermarks;
 - missing counterfactuals;
 - Store costs reaching the samples unchanged, with incremental state equal to a rebuild.
@@ -276,7 +279,8 @@ reported per routed stage kind and in total.
 - routed-stage tokens per kind: the known sum, plus separate counts of known, unknown, not-measured and absent counters;
 - feedback per score rule or no-update reason, state updates, credits and eligibility violations.
 
-**Chain figures** are whole-execution facts, reported once per execution and never per stage or route:
+**Chain figures** are whole-execution facts, reported once per execution, identified by scope, task and execution, and
+never per stage or route:
 - attempts and rework;
 - cost status counts;
 - the per-currency sum of `AVAILABLE` costs;
@@ -320,12 +324,12 @@ mode.
 
 | Benchmark | Scale | Mean | p95 | Alloc / op |
 | :--- | :--- | :--- | :--- | :--- |
-| `RoutingReplay.static` | 960 tasks | 5.82 ms | 6.14 ms | 6.84 KB |
-| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 19.42 ms | 21.87 ms | 27.63 KB |
-| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 413.73 ms | 428.92 ms | 492.87 KB |
-| `StoreRoutingReplay.static` | 16 exported tasks | 0.70 ms | 0.91 ms | 7.84 KB |
-| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 1.63 ms | 1.74 ms | 18.31 KB |
-| `StoreRoutingReplay.adaptive` | 16 exported tasks | 2.52 ms | 2.91 ms | 22.32 KB |
+| `RoutingReplay.static` | 960 tasks | 5.91 ms | 6.38 ms | 7.80 KB |
+| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 20.53 ms | 22.68 ms | 29.99 KB |
+| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 446.51 ms | 460.90 ms | 494.34 KB |
+| `StoreRoutingReplay.static` | 16 exported tasks | 0.98 ms | 1.51 ms | 9.41 KB |
+| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 2.02 ms | 2.56 ms | 19.99 KB |
+| `StoreRoutingReplay.adaptive` | 16 exported tasks | 2.42 ms | 2.99 ms | 19.96 KB |
 
 These are single runs on one machine. Across the full runs made for this PR, adaptive mean latency varied between 397 ms
 and 490 ms. One run reported `static` at 18.38 ms, and two immediate repeats gave 5.72 ms and 5.82 ms with identical
@@ -373,16 +377,23 @@ Observations, not conclusions:
 
 | Digest | Value |
 | :--- | :--- |
-| `fixture.workload.digest` (full) | `d981c8472bbfd6c72776f9abf79f7ac511c1be76ce4c091570a41036cd84fcd7` |
-| `workload.reportDigest` (full) | `32e81a95069d1f3e7ba888b798d1d31e3252abb178e68fe81d8b3daab6bc6444` |
-| `store.fixtureDigest` | `b0dde75c8a5b868f00fc2dbe2e9ca8b8d3d7e7eed14561fc8e821665ff215009` |
+| `fixture.workload.digest` (full) | `72ea902ebd13e7dcae53bf26cab8afb24b192f7ea360bcef9610585e523aba72` |
+| `workload.reportDigest` (full) | `c669bc61a084cbda6685c1518e305e09daf43ee739c75b7b800399877d47c0e7` |
+| `store.fixtureDigest` | `fa55555826108f6a7a0f779e8142de9bf85f689dfaa91bf5cb66de1826c7c2e5` |
 | `store.exportDigest` (Store tooling) | `f11276157baf9565a14ea07a386502ac8c5a8b3656a6744fb2861f00b4ae2ee8` |
-| `store.reportDigest` | `76730b0997e9957a8ef5e803a5b54150267cef95343d6db26464cacd9ba8c990` |
+| `store.reportDigest` | `6025efe9d44a0a8da27d30e15cadf4b90e89bf39788a1639761ee27f0da37030` |
 
-- **Digests.** All are SHA-256 over canonical lines of the form `name=<utf8-byte-length>:<value>`, with every identity
-  (fixture id and version, policy id and version) on its own line: records render in declaration order, every collection in a defined
-  order, and Node doubles as exact bit patterns. The report digest orders summaries by arm, whatever order the caller
-  passes them in, and rejects two summaries of the same arm. They exclude timings, timestamps and environment.
+- **Digests.** All are SHA-256 over a canonical, typed, length-prefixed encoding (`CanonicalEncoder`), never over
+  `toString`:
+  - records are walked component by component, and every text carries its UTF-8 byte length, so a separator inside an
+    opaque token can never make two inputs hash alike;
+  - identities (fixture id and version, policy id and version) are separate entries;
+  - lists and arrays keep their order, while sets and maps are sorted by their elements' own encodings;
+  - doubles are encoded as exact bit patterns;
+  - the report digest orders summaries by arm, whatever order the caller passes them in, and rejects two summaries of
+    the same arm.
+
+  They exclude timings, timestamps and environment.
 - **Stable across runs.** The report embeds every fixture, decision, feedback, state and report digest. Tests assert
   that verdicts and digests are identical across runs (`RoutingReplayEvaluationTest`, `StoreReplayEvaluationTest`).
 - **Mode dependence.** The `workload` digests depend on the mode, because quick mode uses 240 tasks. The scenario
