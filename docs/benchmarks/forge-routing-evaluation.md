@@ -42,7 +42,8 @@ controls those documents asked for, not an effectiveness result.
 ```bash
 ./gradlew :monada-neuron-evaluation:runForgeRoutingEvaluation                              # full (960-task workload)
 ./gradlew :monada-neuron-evaluation:runForgeRoutingEvaluation -PbenchmarkArgs="--quick"     # smoke (240-task workload)
-./gradlew :monada-neuron-evaluation:test                                                   # correctness only, store-free
+./gradlew :monada-neuron-evaluation:test                                                   # correctness; also runs integrationTest when the Store is present
+./gradlew :monada-neuron-evaluation:test -x :monada-neuron-evaluation:integrationTest      # correctness only, store-free
 ./gradlew :monada-neuron-evaluation:runForgeRoutingStoreReplay                             # real Store arm (optional)
 ./gradlew :monada-neuron-evaluation:integrationTest                                        # Store arm correctness (optional)
 ./gradlew test                                                                             # includes integrationTest when the Store is present
@@ -256,8 +257,9 @@ token table shared with the Store arm:
 | Two-currency chain | 1200 / 300 | 0.0420 USD and 0.0390 EUR, never summed together |
 
 A correction keeps its chain's attempts: correcting a repaired acceptance to a rejection leaves two attempts. A scripted
-outcome or correction carries a priced chain only for a (validated) acceptance; anything else is rejected at
-construction, as the Store prices only accepted outcomes.
+outcome or correction carries a priced chain only for an acceptance that can be validated: accepted, of validated origin
+(a correction keeps the original's origin, so an imported claim's correction is never priced), and from a completed
+invocation or a repair. Anything else is rejected at construction, as the Store prices only validated acceptances.
 
 `ReplayCost` mirrors the Store's `CostToAcceptedOutcome` invariants and is never stricter: an unavailable cost has no
 amount, each currency appears at most once and no amount or reason is null, but the number of currencies is not capped
@@ -335,8 +337,9 @@ reported per routed stage kind and in total.
 - feedback per score rule or no-update reason, state updates, credits and eligibility violations.
 
 **Chain figures** are whole-execution facts, reported once per execution, identified by scope, task and execution, and
-never per stage or route. They come from the execution's terminal observed sample, the latest in replay order, which
-knows the most about the chain (a later attempt sees the repair and the acceptance an earlier one could not):
+never per stage or route. They come from the execution's terminal observed sample, the last one issued (greatest
+`requestOrdinal`, not list position, since a later-issued request may be decided at an earlier cutoff), which knows the
+most about the chain (a later attempt sees the repair and the acceptance an earlier one could not):
 - attempts and rework;
 - cost status counts;
 - the per-currency sum of `AVAILABLE` costs;

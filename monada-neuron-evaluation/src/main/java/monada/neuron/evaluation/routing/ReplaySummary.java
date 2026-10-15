@@ -120,8 +120,8 @@ public record ReplaySummary(
     }
 
     /**
-     * Whole-chain figures, counted once per execution from its terminal observed sample (the latest in replay order,
-     * which knows the most about the chain).
+     * Whole-chain figures, counted once per execution from its terminal observed sample (the last issued, which knows
+     * the most about the chain).
      *
      * @param executions observed executions
      * @param attempts attempts over them; a {@code long}, which cannot overflow: at most
@@ -199,16 +199,19 @@ public record ReplaySummary(
     }
 
     /**
-     * The terminal observed sample of each execution (scope, task and execution): the latest in replay order, which
-     * knows the most about the chain (a later attempt sees the repair and the acceptance an earlier one could not).
-     * It alone carries the execution's whole-chain facts, so they are counted once however many of its stages were
-     * routed. Executions are listed in the order they first appear, so iteration is deterministic.
+     * The terminal observed sample of each execution (scope, task and execution): the last one issued, by
+     * {@code requestOrdinal}, which knows the most about the chain (a later attempt sees the repair and the acceptance
+     * an earlier one could not). Replay order is cutoff first and a later-issued request may be decided against an
+     * earlier snapshot, so issuance order, not list position, decides; ordinals are unique per scope, so there is no
+     * tie. It alone carries the execution's whole-chain facts, so they are counted once however many of its stages
+     * were routed. Executions are listed in the order they first appear, so iteration is deterministic.
      */
     static List<ReplaySample> chainSamplePerExecution(List<ReplaySample> samples) {
         var terminal = new LinkedHashMap<ExecutionKey, ReplaySample>();
         for (ReplaySample sample : samples) {
             if (sample.coverage() == ReplaySample.Coverage.OBSERVED) {
-                terminal.put(executionKey(sample), sample);
+                terminal.merge(executionKey(sample), sample, (kept, next) ->
+                        next.decisionRef().requestOrdinal() > kept.decisionRef().requestOrdinal() ? next : kept);
             }
         }
         return List.copyOf(terminal.values());

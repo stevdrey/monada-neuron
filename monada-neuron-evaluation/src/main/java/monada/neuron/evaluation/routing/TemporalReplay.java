@@ -195,7 +195,8 @@ public final class TemporalReplay {
         /** Each delivered observation's derivation, by identity: a rebuild reuses it instead of deriving again. */
         private final Map<RoutingObservation, FeedbackDerivation> derivations = new IdentityHashMap<>();
         /** Derivations by rule and reason, counted whether or not events are recorded. */
-        private final Derivations.Tally tally = new Derivations.Tally();
+        /** Sized for a synthetic fixture's most deliveries (two per task); grows for a longer logged history. */
+        private final Derivations.Tally tally = new Derivations.Tally(2 * fixture.tasks().size());
         private RoutingStateStore store;
         /** Every decision's route, kind, basis, abstention, coverage and snapshot watermark, recorded or not. */
         private final DecisionTrace.Builder trace = new DecisionTrace.Builder(fixture.tasks().size());

@@ -89,14 +89,32 @@ public record ScriptedOutcome(
         Objects.requireNonNull(stage, "stage must not be null");
         Objects.requireNonNull(chain, "chain must not be null");
         // CostToAcceptedOutcome: an amount exists only for a validated acceptance (execution-memory contract v1, §8)
-        if (chain.cost().status() != ReplayCost.Status.UNAVAILABLE
-                && (status != OutcomeStatus.ACCEPTED || origin != OutcomeOrigin.VALIDATED)) {
-            throw new IllegalArgumentException("a cost to an accepted outcome needs a validated acceptance, got "
-                    + status + " " + origin);
+        if (chain.cost().status() != ReplayCost.Status.UNAVAILABLE) {
+            requireValidatedAcceptance(status, origin, invocation, acceptedByRepair, "the outcome");
         }
         Objects.requireNonNull(correction, "correction must not be null");
         if (correction.isPresent() && correction.get().observedAt() <= observedAt) {
             throw new IllegalArgumentException("a correction must be observed after the original");
+        }
+        // a correction keeps the original's origin, invocation and repair, so a priced correction is held to them
+        if (correction.isPresent() && correction.get().chain().cost().status() != ReplayCost.Status.UNAVAILABLE) {
+            requireValidatedAcceptance(correction.get().status(), origin, invocation, acceptedByRepair,
+                    "the correction");
+        }
+    }
+
+    /**
+     * A priced chain needs an acceptance that can be validated: accepted, of validated (not imported) origin, and
+     * either a completed routed invocation or an acceptance won by a later repair attempt. The quality gates depend on
+     * the evidence policy and are checked by the replay's cost-consistency check instead.
+     */
+    private static void requireValidatedAcceptance(OutcomeStatus status, OutcomeOrigin origin,
+            InvocationStatus invocation, boolean acceptedByRepair, String what) {
+        if (status != OutcomeStatus.ACCEPTED || origin != OutcomeOrigin.VALIDATED
+                || (invocation != InvocationStatus.COMPLETED && !acceptedByRepair)) {
+            throw new IllegalArgumentException("a cost to an accepted outcome needs a validated acceptance; "
+                    + what + " is " + status + ", " + origin + ", invocation " + invocation
+                    + (acceptedByRepair ? ", accepted by repair" : ""));
         }
     }
 

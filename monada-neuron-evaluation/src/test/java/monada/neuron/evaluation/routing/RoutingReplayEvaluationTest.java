@@ -105,6 +105,33 @@ class RoutingReplayEvaluationTest {
     }
 
     @Test
+    void aMeasuredRunMustDeriveWhatItsReferenceDerivedDeliveryByDelivery() {
+        var replay = new TemporalReplay(fixtures.workload(120));
+        ReplayRun reference = replay.run(ReplayArm.DERIVED_NOT_CONSUMED);
+        int[] codes = reference.derivations().sequence();
+        // swap two deliveries' derivations that differ: every per-rule and per-reason count stays the same
+        int first = 0;
+        int second = 1;
+        while (codes[second] == codes[first]) {
+            second++;
+        }
+        int swapped = codes[first];
+        codes[first] = codes[second];
+        codes[second] = swapped;
+        var reordered = new ReplayRun(reference.arm(), List.of(), List.of(), reference.delivered(),
+                reference.decisions(), new Derivations(reference.derivations().rules(),
+                        reference.derivations().noUpdates(), codes), reference.state());
+        var digests = new ReplayDigests();
+
+        assertAll(
+                () -> RoutingReplayEvaluation.requireSameReplay(replay.run(ReplayArm.DERIVED_NOT_CONSUMED, false),
+                        reference, digests),
+                () -> assertEquals(first, reordered.derivations().firstDifference(reference.derivations())),
+                () -> assertThrows(IllegalStateException.class,
+                        () -> RoutingReplayEvaluation.requireSameReplay(reordered, reference, digests)));
+    }
+
+    @Test
     void anEarlyDeliveryThatChangesNoRouteStillFailsTheLateCorrectionCheck() {
         var improvement = fixtures.improvement(24);
         var original = runs(improvement, ReplayArm.values());

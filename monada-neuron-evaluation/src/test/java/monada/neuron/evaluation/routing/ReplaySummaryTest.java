@@ -141,6 +141,34 @@ class ReplaySummaryTest {
     }
 
     @Test
+    void theTerminalSampleIsTheLastIssuedNotTheLastReplayed() {
+        ReplayRun run = new TemporalReplay(fixtures.cases()).run(ReplayArm.STATIC);
+        ReplaySample repaired = run.samples().stream().filter(s -> s.decisionRef().taskId().equals("task-repair"))
+                .findFirst().orElseThrow();
+        var ref = repaired.decisionRef();
+        // issued first (ordinal 1) but decided against a later snapshot, before the repair was known
+        var stale = new ReplaySample(new DecisionRef(ref.scopeId(), ref.taskId(), ref.executionId(), "att-0",
+                ref.stageId(), 1), repaired.stageKind(), repaired.cutoff() + 4096, repaired.stateCutoff(),
+                repaired.arm(), repaired.kind(), repaired.route(), repaired.basis(), repaired.abstainReason(),
+                repaired.coverage(), repaired.acceptance(), repaired.verdict(), repaired.provenFailures(), 1,
+                repaired.stageUsage(), repaired.usageDeclaration(),
+                Optional.of(ReplayCost.unavailable("NO_VALIDATED_ACCEPTANCE")), repaired.comparison());
+        // issued later (ordinal 2) with the whole repaired chain, decided at the earlier cutoff, so replayed first
+        var complete = new ReplaySample(new DecisionRef(ref.scopeId(), ref.taskId(), ref.executionId(), ref.attemptId(),
+                ref.stageId(), 2), repaired.stageKind(), repaired.cutoff(), repaired.stateCutoff(), repaired.arm(),
+                repaired.kind(), repaired.route(), repaired.basis(), repaired.abstainReason(), repaired.coverage(),
+                repaired.acceptance(), repaired.verdict(), repaired.provenFailures(), repaired.attempts(),
+                repaired.stageUsage(), repaired.usageDeclaration(), repaired.chainCost(), repaired.comparison());
+        var chain = ReplaySummary.of(new ReplayRun(ReplayArm.STATIC, List.of(complete, stale), List.of(), List.of(),
+                run.decisions(), run.derivations(), run.state())).chain();
+
+        assertAll(
+                () -> assertEquals(1, chain.executions()),
+                () -> assertEquals(2L, chain.attempts()),
+                () -> assertEquals(0, new BigDecimal("0.0735").compareTo(chain.available().get("USD"))));
+    }
+
+    @Test
     void aCostWithoutAValidatedAcceptanceIsReportedButNeverSummed() {
         ReplayRun run = new TemporalReplay(fixtures.cases()).run(ReplayArm.STATIC);
         // the cheap invalid task was not accepted, but this copy claims a complete cost to an accepted outcome

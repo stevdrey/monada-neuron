@@ -1,13 +1,16 @@
 package monada.neuron.evaluation.routing;
 
 import monada.neuron.routing.catalog.RouteKey;
+import monada.neuron.routing.outcome.InvocationStatus;
 import monada.neuron.routing.outcome.Money;
+import monada.neuron.routing.outcome.OutcomeOrigin;
 import monada.neuron.routing.outcome.OutcomeStatus;
 import monada.neuron.routing.outcome.StageAttribution;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.util.Comparator;
+import java.util.Optional;
 import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
@@ -77,6 +80,37 @@ class SyntheticFixturesTest {
         assertThrows(IllegalArgumentException.class, () -> new ScriptedOutcome(passing.observedAt(),
                 passing.invocation(), passing.status(), passing.origin(), passing.quality(),
                 StageAttribution.Basis.STAGE_LOCAL, true, passing.stage(), passing.chain(), passing.correction()));
+    }
+
+    @Test
+    void aPricedChainNeedsAnAcceptanceThatCanBeValidated() {
+        ScriptedOutcome rejected = outcomeOf(fixtures.improvement(8), 5, SyntheticRoutingFixtures.SUB_A);
+        ScriptedOutcome passing = outcomeOf(fixtures.improvement(8), 5, SyntheticRoutingFixtures.SUB_B);
+        var pricedAcceptance = new ScriptedOutcome.Correction(rejected.observedAt() + 10, OutcomeStatus.ACCEPTED,
+                passing.quality(), passing.chain());
+
+        assertAll(
+                // an imported claim corrected to a priced acceptance: the correction keeps the imported origin
+                () -> assertThrows(IllegalArgumentException.class, () -> new ScriptedOutcome(rejected.observedAt(),
+                        rejected.invocation(), rejected.status(), OutcomeOrigin.IMPORTED_CLAIM, rejected.quality(),
+                        rejected.attribution(), false, rejected.stage(), rejected.chain(),
+                        Optional.of(pricedAcceptance))),
+                // a priced acceptance of an invocation that did not complete, with no repair
+                () -> assertThrows(IllegalArgumentException.class, () -> new ScriptedOutcome(passing.observedAt(),
+                        InvocationStatus.FAILED, passing.status(), passing.origin(), passing.quality(),
+                        passing.attribution(), false, passing.stage(), passing.chain(), Optional.empty())),
+                () -> assertThrows(IllegalArgumentException.class, () -> new ScriptedOutcome(rejected.observedAt(),
+                        InvocationStatus.TIMED_OUT, rejected.status(), rejected.origin(), rejected.quality(),
+                        rejected.attribution(), false, rejected.stage(), rejected.chain(),
+                        Optional.of(pricedAcceptance))),
+                // the validated correction of a completed invocation is priced, as the workload's flips are
+                () -> assertEquals(OutcomeStatus.ACCEPTED, rejected.corrected(pricedAcceptance).correction()
+                        .orElseThrow().status()),
+                // a repair may accept the chain although the routed invocation failed
+                () -> assertEquals(ReplayCost.Status.AVAILABLE, new ScriptedOutcome(passing.observedAt(),
+                        InvocationStatus.FAILED, passing.status(), passing.origin(), passing.quality(),
+                        StageAttribution.Basis.CHAIN_ONLY, true, passing.stage(), passing.chain(), Optional.empty())
+                        .chain().cost().status()));
     }
 
     private static ScriptedOutcome outcomeOf(ReplayFixture fixture, int ordinal, RouteKey route) {
