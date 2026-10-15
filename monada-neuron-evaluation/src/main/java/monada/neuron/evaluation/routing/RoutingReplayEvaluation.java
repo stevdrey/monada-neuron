@@ -69,6 +69,8 @@ public final class RoutingReplayEvaluation {
     /** Late correction of task 5 of the improvement scenario, visible six decision slots after the original. */
     static final int LATE_CORRECTION_TASK = 5;
     static final int LATE_CORRECTION_SLOTS = 6;
+    /** What each measured iteration times; recorded on every row. */
+    static final String TIMED_WINDOW = "fresh state construction, cohort binding and the full replay; validation untimed";
     /** Rough retained bytes of one cohort (Node, key, map entry) and one ledger entry; a model, not a measurement. */
     static final long MODELED_COHORT_BYTES = 400L;
     static final long MODELED_LEDGER_ENTRY_BYTES = 350L;
@@ -96,8 +98,9 @@ public final class RoutingReplayEvaluation {
      */
     public RunConfiguration runConfiguration() {
         return new RunConfiguration(0L, quick, warmupIterations, measurementIterations,
-                "An iteration replays the whole workload fixture under one arm from a fresh state (setup excluded from"
-                        + " timing); latency (mean and percentiles) is per replay iteration, while throughput and"
+                "An iteration replays the whole workload fixture under one arm; the timed window includes constructing"
+                        + " and binding the fresh state and the full replay, and only validation of the previous run is"
+                        + " untimed; latency (mean and percentiles) is per replay iteration, while throughput and"
                         + " allocation are per replayed decision (see each row's latencyScope and meanNanosPerDecision);"
                         + " fixtures are enumerated, so the seed is unused");
     }
@@ -646,8 +649,9 @@ public final class RoutingReplayEvaluation {
         diagnostics.put("modeledRetainedStateBytes", Long.toString(
                 cohorts * MODELED_COHORT_BYTES + ledger * MODELED_LEDGER_ENTRY_BYTES));
         diagnostics.put("stateResetPerIteration", "true");
+        diagnostics.put("timedWindow", TIMED_WINDOW);
         diagnostics.put("validationInWindow", "false");
-        diagnostics.put("gcTelemetryScope", "includes per-iteration setup and validation");
+        diagnostics.put("gcTelemetryScope", "includes the untimed validation of the previous run");
         var pending = new ReplayRun[1];
         BenchmarkRunResult result = collector.measure(arm.benchmarkName(),
                 "tasks=" + fixture.tasks().size() + ",routes=3,cohorts=" + cohorts, warmupIterations,

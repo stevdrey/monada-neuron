@@ -139,8 +139,9 @@ public record ReplaySummary(
     }
 
     /**
-     * Pairs of observed executions of the same task. A pair needs two different executions: two observations of one
-     * execution, such as two routed attempts, are never paired.
+     * Pairs of observed executions of the same task, one pair per unordered pair of different executions. Each
+     * execution is represented by its first observed sample in replay order, so two observations of one execution
+     * (such as two routed attempts) are never paired with each other nor counted twice against another execution.
      *
      * @param comparable pairs whose {@link ComparisonKey}s match: directly comparable
      * @param incomparable pairs that differ in some field: observational only
@@ -214,24 +215,23 @@ public record ReplaySummary(
     }
 
     private static Pairing pairing(List<ReplaySample> samples) {
-        // insertion order follows the samples' replay order, so grouping is deterministic; only counts leave it
-        var byTask = new LinkedHashMap<TaskKey, List<ReplaySample>>();
+        // insertion order follows the samples' replay order, so grouping is deterministic; only counts leave it.
+        // Each execution is represented once, by its first observed sample in replay order, so every unordered pair
+        // of executions is counted exactly once, however many samples (for example routed attempts) each has.
+        var byTask = new LinkedHashMap<TaskKey, LinkedHashMap<String, ReplaySample>>();
         for (ReplaySample sample : samples) {
             if (sample.coverage() == ReplaySample.Coverage.OBSERVED) {
                 byTask.computeIfAbsent(new TaskKey(sample.decisionRef().scopeId(), sample.decisionRef().taskId()),
-                        ignored -> new ArrayList<>()).add(sample);
+                        ignored -> new LinkedHashMap<>()).putIfAbsent(sample.decisionRef().executionId(), sample);
             }
         }
         int comparable = 0;
         int incomparable = 0;
         var by = new TreeMap<String, Integer>();
-        for (List<ReplaySample> group : byTask.values()) {
+        for (LinkedHashMap<String, ReplaySample> executions : byTask.values()) {
+            List<ReplaySample> group = List.copyOf(executions.values());
             for (int i = 0; i < group.size(); i++) {
                 for (int j = i + 1; j < group.size(); j++) {
-                    // two observations of one execution (for example two routed attempts) are not two executions
-                    if (group.get(i).decisionRef().executionId().equals(group.get(j).decisionRef().executionId())) {
-                        continue;
-                    }
                     List<String> fields = group.get(i).comparison().differingFields(group.get(j).comparison());
                     if (fields.isEmpty()) {
                         comparable++;

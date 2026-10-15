@@ -67,8 +67,9 @@ public final class StoreReplayEvaluation {
     /** Returns the run configuration this evaluation actually uses. */
     public RunConfiguration runConfiguration() {
         return new RunConfiguration(0L, quick, warmupIterations, measurementIterations,
-                "An iteration replays the exported fixture under one arm from a fresh state (setup excluded from"
-                        + " timing); latency (mean and percentiles) is per replay iteration, while throughput and"
+                "An iteration replays the exported fixture under one arm; the timed window includes constructing and"
+                        + " binding the fresh state and the full replay, and only validation of the previous run is"
+                        + " untimed; latency (mean and percentiles) is per replay iteration, while throughput and"
                         + " allocation are per replayed decision; recording and export are not timed");
     }
 
@@ -286,6 +287,7 @@ public final class StoreReplayEvaluation {
         diagnostics.put("decisionsPerIteration", Integer.toString(fixture.tasks().size()));
         diagnostics.put("deliveredObservations", Integer.toString(reference.delivered().size()));
         diagnostics.put("validationInWindow", "false");
+        diagnostics.put("timedWindow", RoutingReplayEvaluation.TIMED_WINDOW);
         var pending = new ReplayRun[1];
         BenchmarkRunResult result = collector.measure("Store" + arm.benchmarkName(), "tasks=" + fixture.tasks().size(),
                 warmupIterations, measurementIterations, fixture.tasks().size(),

@@ -207,7 +207,8 @@ class RoutingReplayEvaluationTest {
                 // latency is per replay iteration; every row says so and carries the derived per-decision mean
                 () -> assertTrue(report.evaluation().results().stream().allMatch(r -> r.diagnostics()
                         .get("latencyScope").startsWith("per replay iteration of ")
-                        && r.diagnostics().containsKey("meanNanosPerDecision"))),
+                        && r.diagnostics().containsKey("meanNanosPerDecision")
+                        && RoutingReplayEvaluation.TIMED_WINDOW.equals(r.diagnostics().get("timedWindow")))),
                 () -> assertTrue(RoutingReplayRunner.storeArmUnavailable().startsWith("UNAVAILABLE")),
                 () -> assertEquals(3, RoutingReplayRunner.UNAVAILABLE));
     }
@@ -220,6 +221,9 @@ class RoutingReplayEvaluationTest {
         assertAll(
                 () -> assertTrue(quick.operationsPerIterationPolicy().contains("latency (mean and percentiles) is per"
                         + " replay iteration")),
+                // fresh-state construction is timed; only validation is not
+                () -> assertTrue(quick.operationsPerIterationPolicy().contains("only validation of the previous run is"
+                        + " untimed")),
                 () -> assertTrue(quick.quickMode()),
                 () -> assertEquals(1, quick.defaultWarmupIterations()),
                 () -> assertEquals(3, quick.defaultMeasurementIterations()),

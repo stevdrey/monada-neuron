@@ -1591,7 +1591,8 @@ credited-cohort index on every consumption.
 **Measured** (JDK 27, `ThreadMXBean.getThreadAllocatedBytes` via `AllocationProbe`, 20,000 warm-up calls, 36 cohorts):
 a duplicate `consume` with one ledger entry allocated 1,584 bytes and a `snapshot` 18,760 bytes in the recorded run; the
 figures vary with JIT state, the test publishes them through the JUnit report and asserts only 16 KiB and 32 KiB regression
-ceilings. Latency is not measured. **Modeled, not measured**: a cohort retains its Node with four numeric channels and no
+ceilings. Per-operation latency is not measured; the #67 replay reports exploratory, single-machine whole-replay latency
+([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)). **Modeled, not measured**: a cohort retains its Node with four numeric channels and no
 history plus a map entry (order of 150 bytes, about 40 KiB at 256 cohorts); the ledger model of Section 21.4 (about 400 bytes
 per entry, about 1.6 MiB at 4,096) dominates.
 
@@ -1629,7 +1630,10 @@ snapshot through the published artifact.
 - No effectiveness, accuracy or cost claim: the reference values are illustrative and untuned; the #67 replay with controls
   ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)) shows they can follow stale rewards and validates
   nothing about them.
-- Latency and retained memory are unmeasured; the allocation figures above are regression guards, not benchmarks.
+- Per-operation latency and retained memory of the state store are not measured. The #67 replay reports exploratory,
+  single-machine whole-replay latency and allocation and a modeled retained footprint
+  ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)); no production figure exists. The allocation
+  figures above are regression guards, not benchmarks.
 - A removed dormant cohort leaves its ledger entries until the next rebuild, which records them as `NO_TARGET_BINDING`
   markers; the caller decides when to rebuild, and the key cannot be bound again before it.
 - `RoutingStateStore` is single-threaded, like `NeuronRuntime`; the host publishes snapshots to concurrent readers.

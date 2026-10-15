@@ -134,6 +134,31 @@ class ReplaySummaryTest {
     }
 
     @Test
+    void eachPairOfExecutionsIsCountedOnceWhateverItsSampleCount() {
+        var base = fixtures.improvement(3);
+        var tasks = new ArrayList<ReplayTask>();
+        // execution A is routed as two attempts, execution B once; all three share one task and identical keys
+        String[][] identities = {{"exe-a", "att-1"}, {"exe-a", "att-2"}, {"exe-b", "att-1"}};
+        for (int i = 0; i < base.tasks().size(); i++) {
+            ReplayTask task = base.tasks().get(i);
+            RoutingRequest r = task.request();
+            tasks.add(new ReplayTask(new RoutingRequest(r.contractVersion(), r.scopeId(), "task-one",
+                    identities[i][0], identities[i][1], r.stageId(), r.stageKind(), r.requestOrdinal(),
+                    r.sourceFingerprint(), r.contextFingerprint(), r.constraintsFingerprint(), r.evaluationPolicyId(),
+                    r.evaluationPolicyVersion(), r.features(), r.requirements(), r.overflowPermitted(), r.cutoff()),
+                    task.catalog(), task.oracle()));
+        }
+        var fixture = new ReplayFixture(base.fixtureId(), base.version(), base.definition(), base.evidencePolicy(),
+                base.policy(), base.partition(), tasks);
+        var pairing = ReplaySummary.of(new TemporalReplay(fixture).run(ReplayArm.STATIC)).pairing();
+
+        // one pair of executions (A, B), not the two sample cross-products A1/B and A2/B
+        assertAll(
+                () -> assertEquals(1, pairing.comparable()),
+                () -> assertEquals(0, pairing.incomparable()));
+    }
+
+    @Test
     void stageFiguresNeverCarryChainCost() {
         var summary = ReplaySummary.of(new TemporalReplay(fixtures.workload(120)).run(ReplayArm.ADAPTIVE));
 

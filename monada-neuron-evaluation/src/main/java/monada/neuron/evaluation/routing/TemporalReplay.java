@@ -12,6 +12,7 @@ import monada.neuron.routing.adaptation.RoutingStateStore;
 import monada.neuron.routing.adaptation.StateUpdate;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.feedback.FeedbackDerivation;
+import monada.neuron.routing.feedback.RebuildOrder;
 import monada.neuron.routing.feedback.RoutingFeedback;
 import monada.neuron.routing.feedback.RoutingFeedbackPolicy;
 import monada.neuron.routing.outcome.LearningAssessment;
@@ -45,7 +46,10 @@ import java.util.PriorityQueue;
  * logged one is reported as a missing counterfactual and gets no invented outcome.
  *
  * <p>Data structures: tasks are already sorted by the fixture; pending observations arrive while the replay runs, so
- * they sit in a binary heap ({@code O(log P)} per insertion and removal for {@code P <= 2 * tasks} pending items).
+ * they sit in a binary heap ({@code O(log P)} per insertion and removal). {@code P} is bounded by the fixture's
+ * observation limit, {@value RebuildOrder#MAX_OBSERVATIONS}, not by its task count: a synthetic task adds at most two
+ * observations when it executes, but a chosen-route-only fixture queues every logged revision before the first
+ * decision.
  * Time {@code O(T (R log R + C) + P log P)} for {@code T} tasks, {@code R <= 32} routes and {@code C <= 256} cohorts,
  * plus {@code O(N log N + N L)} per rebuild after a correction. Retained: the state ({@code O(C + L)}), the delivered
  * observations ({@code O(P)}) and, when recording, one sample per task and one event per delivery.

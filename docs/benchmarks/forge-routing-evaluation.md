@@ -149,7 +149,9 @@ task carries:
 **Data structures.**
 - Tasks are sorted once.
 - Pending observations arrive while the replay runs, so they sit in a binary heap: `O(log P)` per insertion or
-  removal, with `P ≤ 2·tasks`.
+  removal. `P` is bounded by the fixture's observation limit, 4,096, not by its task count: a synthetic task adds at
+  most two observations when it executes, but a chosen-route-only fixture queues every logged revision before the first
+  decision.
 - The outcome oracle is a `TreeMap` keyed by route: deterministic order, `R ≤ 32`.
 - There is no cache, parallelism or SIMD. The workload is small and the reference algorithm is the point.
 
@@ -308,7 +310,9 @@ task. It reports changed decisions, gained and lost validated acceptances, and c
   distribution (mean and percentiles) is **per replay iteration**, while throughput and allocation are **per replayed
   decision**. Each row states this as `latencyScope` and adds the derived `meanNanosPerDecision`.
 - **Iterations.** Quick: 1 warmup and 3 measured. Full: 3 warmup and 10 measured.
-- **Timed window.** The replay runs without recording samples or events.
+- **Timed window.** Each iteration times `replay.run` without recording samples or events. That includes constructing
+  and binding the fresh state; only the validation of the previous run is untimed. Every row records this as
+  `timedWindow`.
 - **Validation.** Each run replays without recording samples, but it still keeps a collision-free `DecisionTrace` of
   every decision: the advised `RouteKey`, compared by full id and version and never by hash, plus packed kind, basis,
   abstention and coverage, and the snapshot watermark. The arrays are sized once per run, so filling them allocates
@@ -318,7 +322,7 @@ task. It reports changed decisions, gained and lost validated acceptances, and c
   learned-state digest. The comparison runs outside the timed window (`validationInWindow=false`): in the next iteration's untimed setup, and once more after the
   collector returns, because the collector runs no setup after its last iteration.
 - **Setup.** Fixture construction, the reference run and all semantic checks run before measurement.
-- **GC telemetry.** JVM-wide, so it includes setup and validation.
+- **GC telemetry.** JVM-wide, so it includes the untimed validation.
 - **Retained memory** (`modeledRetainedStateBytes`) is a **model**:
   - 400 B per cohort and 350 B per ledger entry;
   - not a measurement;
@@ -331,15 +335,16 @@ mode.
 
 | Benchmark | Scale | Mean per iteration | p95 per iteration | Mean per decision (derived) | Alloc per decision |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `RoutingReplay.static` | 960 tasks | 8.55 ms | 13.22 ms | 8.9 µs | 7.34 KB |
-| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 26.32 ms | 33.99 ms | 27.4 µs | 30.18 KB |
-| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 470.17 ms | 496.78 ms | 489.8 µs | 498.49 KB |
-| `StoreRoutingReplay.static` | 16 exported tasks | 1.03 ms | 1.39 ms | 64.3 µs | 9.43 KB |
-| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 2.10 ms | 2.28 ms | 131.5 µs | 18.91 KB |
-| `StoreRoutingReplay.adaptive` | 16 exported tasks | 2.07 ms | 3.02 ms | 129.1 µs | 20.05 KB |
+| `RoutingReplay.static` | 960 tasks | 4.09 ms | 5.88 ms | 4.3 µs | 6.71 KB |
+| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 36.64 ms (median 20.91 ms) | 81.26 ms | 38.2 µs | 30.99 KB |
+| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 482.27 ms | 538.87 ms | 502.4 µs | 503.60 KB |
+| `StoreRoutingReplay.static` | 16 exported tasks | 1.08 ms | 1.28 ms | 67.3 µs | 9.43 KB |
+| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 2.12 ms | 2.52 ms | 132.2 µs | 20.01 KB |
+| `StoreRoutingReplay.adaptive` | 16 exported tasks | 3.07 ms | 4.17 ms | 192.0 µs | 22.59 KB |
 
 These are single runs on one machine. Across the full runs made for this PR, adaptive mean latency per iteration varied
-between 397 ms and 490 ms, and `static` between 3.27 ms and 18.38 ms; the outlier was immediately followed by 5.72 ms and
+between 397 ms and 490 ms, `static` between 3.27 ms and 18.38 ms, and `derived-not-consumed` between 16.7 ms and
+36.6 ms (this run's mean is pulled up by a few slow iterations; its median is 20.9 ms); the `static` outlier was immediately followed by 5.72 ms and
 5.82 ms with identical digests. Differences of this size are noise, not a trend. The Store per-decision figures include a
 fixed per-iteration cost (a fresh state and bindings) spread over only 16 decisions.
 

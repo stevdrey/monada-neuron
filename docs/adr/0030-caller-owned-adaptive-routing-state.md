@@ -32,7 +32,8 @@ scores join the cohort mapping under one composite `mappingVersion`.
 - Cohorts and ledger are `TreeMap`s in canonical order: point lookups, deterministic iteration, no hash-order dependence;
   `C <= 256` and `L <= 4,096` do not justify a primitive layout.
 - Provide `AdaptiveStateDefinition.reference()` (`adaptive-routing-state/1`) with documented, illustrative, untuned values.
-- Defer `RoutingStateCheckpoint` and compaction to #67, which verifies checkpoint-versus-scratch equivalence.
+- Defer `RoutingStateCheckpoint` and compaction to #89. #67 verified the incremental-versus-rebuild equivalence a
+  checkpoint must satisfy.
 
 ## Alternatives
 
@@ -43,13 +44,15 @@ scores join the cohort mapping under one composite `mappingVersion`.
 - **Patch Nodes in place on reset or subtract superseded effects**: rejected, adaptation is clamped and not invertible.
 - **Hash maps keyed by cohort and sample**: rejected, iteration order would need a separate sort for every snapshot and
   diagnostics, with no measurable benefit at these bounds.
-- **Implement checkpoints now**: deferred; they need a ledger digest format and equivalence evidence that #67 owns.
+- **Implement checkpoints now**: deferred; they need a core ledger digest format, owned by #89, and the equivalence
+  evidence, which #67 supplied.
 
 ## Consequences
 
 - Hosts can now learn route preferences from validated outcomes and route from the resulting snapshots, entirely opt-in.
 - Equal definitions, partitions and ordered deliveries give equal states and decisions; scopes cannot contaminate each other.
-- A full ledger blocks learning in that store until a rebuild into a new scope or the #67 compaction; this is explicit.
+- A full ledger blocks learning in that store until a rebuild into a new scope or the ledger compaction tracked in #89;
+  this is explicit.
 - `NodeType.MEMORY` is used for preference Nodes in the reference definition as Neuron-local adaptive state; long-term memory
   remains in the Resonance Store (ADR 0001).
 
