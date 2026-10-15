@@ -109,8 +109,33 @@ class SyntheticFixturesTest {
                 // a repair may accept the chain although the routed invocation failed
                 () -> assertEquals(ReplayCost.Status.AVAILABLE, new ScriptedOutcome(passing.observedAt(),
                         InvocationStatus.FAILED, passing.status(), passing.origin(), passing.quality(),
-                        StageAttribution.Basis.CHAIN_ONLY, true, passing.stage(), passing.chain(), Optional.empty())
-                        .chain().cost().status()));
+                        StageAttribution.Basis.CHAIN_ONLY, true, passing.stage(),
+                        new ChainOutcome(2, passing.chain().cost()), Optional.empty()).chain().cost().status()));
+    }
+
+    @Test
+    void aRepairOrChainOnlyAttributionNeedsTwoAttemptsInEveryRevision() {
+        ScriptedOutcome passing = outcomeOf(fixtures.improvement(8), 5, SyntheticRoutingFixtures.SUB_B);
+        var single = new ChainOutcome(1, passing.chain().cost());
+        var twoAttempts = new ChainOutcome(2, passing.chain().cost());
+        var reAccepted = new ScriptedOutcome.Correction(passing.observedAt() + 10, OutcomeStatus.ACCEPTED,
+                passing.quality(), single);
+
+        assertAll(
+                // the reported case: a passing single-attempt chain marked as accepted by a repair
+                () -> assertThrows(IllegalArgumentException.class, () -> passing.repaired()),
+                // a chain-only attribution without a repair also spans more than one attempt
+                () -> assertThrows(IllegalArgumentException.class, () -> new ScriptedOutcome(passing.observedAt(),
+                        passing.invocation(), passing.status(), passing.origin(), passing.quality(),
+                        StageAttribution.Basis.CHAIN_ONLY, false, passing.stage(), single, Optional.empty())),
+                // a correction inherits the repair, so an accepted correction is held to it too
+                () -> assertThrows(IllegalArgumentException.class, () -> new ScriptedOutcome(passing.observedAt(),
+                        passing.invocation(), passing.status(), passing.origin(), passing.quality(),
+                        StageAttribution.Basis.CHAIN_ONLY, true, passing.stage(), twoAttempts,
+                        Optional.of(reAccepted))),
+                () -> assertEquals(2, new ScriptedOutcome(passing.observedAt(), passing.invocation(),
+                        passing.status(), passing.origin(), passing.quality(), StageAttribution.Basis.CHAIN_ONLY, true,
+                        passing.stage(), twoAttempts, Optional.empty()).chain().attempts()));
     }
 
     private static ScriptedOutcome outcomeOf(ReplayFixture fixture, int ordinal, RouteKey route) {

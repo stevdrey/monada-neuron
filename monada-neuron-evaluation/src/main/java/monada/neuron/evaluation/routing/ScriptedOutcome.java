@@ -101,6 +101,11 @@ public record ScriptedOutcome(
             requireValidatedAcceptance(correction.get().status(), origin, invocation, acceptedByRepair,
                     "the correction");
         }
+        // a repair is a later attempt, and a chain-only attribution spans more than one: either way the chain has at
+        // least two attempts, in every revision that keeps them (a correction inherits the repair and attribution)
+        requireChainOfTwo(chain, status, acceptedByRepair, attribution, "the outcome");
+        correction.ifPresent(c -> requireChainOfTwo(c.chain(), c.status(), acceptedByRepair, attribution,
+                "the correction"));
     }
 
     /**
@@ -115,6 +120,20 @@ public record ScriptedOutcome(
             throw new IllegalArgumentException("a cost to an accepted outcome needs a validated acceptance; "
                     + what + " is " + status + ", " + origin + ", invocation " + invocation
                     + (acceptedByRepair ? ", accepted by repair" : ""));
+        }
+    }
+
+    /**
+     * An acceptance won by a repair, or any chain-only attribution, needs a chain of at least two attempts: the routed
+     * one and a later one. A single-attempt chain would report no rework while the observation names a second
+     * attempt (contract "StageAttribution": a repair chain spans the routed and the accepted attempt).
+     */
+    private static void requireChainOfTwo(ChainOutcome chain, OutcomeStatus status, boolean acceptedByRepair,
+            StageAttribution.Basis attribution, String what) {
+        boolean repaired = acceptedByRepair && status == OutcomeStatus.ACCEPTED;
+        if ((repaired || attribution == StageAttribution.Basis.CHAIN_ONLY) && chain.attempts() < 2) {
+            throw new IllegalArgumentException((repaired ? "an acceptance won by a repair" : "a chain-only attribution")
+                    + " needs at least two attempts; " + what + " has " + chain.attempts());
         }
     }
 

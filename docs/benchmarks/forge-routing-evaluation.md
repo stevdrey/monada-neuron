@@ -126,7 +126,9 @@ task carries:
   export cutoff is the same claim, as core `RebuildOrder` treats it: the copies are merged into the one read later, and
   two different claims of one revision are rejected.
 - A scripted repair chain is never attributed `STAGE_LOCAL` (contract `StageAttribution`), so a repair's evidence
-  cannot credit the routed route.
+  cannot credit the routed route. An acceptance won by a repair, and any `CHAIN_ONLY` attribution, has a chain of at
+  least two attempts in every revision, so the reported attempts and rework never contradict the observation's
+  second attempt.
 - Cohorts are bounded at ≤ 256.
 - Observations are bounded at ≤ 4096, so a full rebuild stays possible. A synthetic task counts as the most it can
   deliver (one, or two when a route's outcome has a correction); a logged task counts its listed revisions.

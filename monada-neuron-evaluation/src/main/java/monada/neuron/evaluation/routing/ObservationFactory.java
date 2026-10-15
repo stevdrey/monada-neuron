@@ -116,7 +116,8 @@ public final class ObservationFactory {
         StageAttribution attribution = switch (outcome.attribution()) {
             case STAGE_LOCAL -> new StageAttribution(StageAttribution.Basis.STAGE_LOCAL, 1,
                     List.of(new EvidenceRef("stage-log", ref, Feature.unknown())));
-            case CHAIN_ONLY -> new StageAttribution(StageAttribution.Basis.CHAIN_ONLY, Math.max(2, chain.attempts()),
+            // ScriptedOutcome guarantees a chain-only chain has at least two attempts, so its count is reported as is
+            case CHAIN_ONLY -> new StageAttribution(StageAttribution.Basis.CHAIN_ONLY, chain.attempts(),
                     List.of());
             case NONE -> StageAttribution.none();
         };
