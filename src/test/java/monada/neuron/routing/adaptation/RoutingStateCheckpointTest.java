@@ -221,6 +221,100 @@ class RoutingStateCheckpointTest {
     }
 
     @Test
+    void aCorrectionAtOrBelowTheHorizonOfACompactedRevisionIsNotCovered() {
+        var live = bound();
+        var first = sample("exp-1", "sub-a", 20, Kind.PASS);
+        var other = sample("exp-2", "sub-b", 100, Kind.PASS);
+        deliverTo(live, first);
+        deliverTo(live, other);
+        assertEquals(new CompactionResult.Compacted(2, 100), live.compact(live.checkpoint(policy())));
+        var cohorts = live.cohorts(demo());
+
+        // a correction never delivered before, at a sequence the horizon already passed
+        var correction = corrected(first, 50, Kind.FAIL);
+        assertEquals(new StateUpdate.BeyondCheckpoint(StateUpdate.BeyondCheckpoint.Kind.SUPERSEDES_COMPACTED, 100, 20),
+                deliverTo(live, correction));
+        assertEquals(cohorts, live.cohorts(demo()));
+        assertEquals(List.of(), live.ledger());
+        assertEquals(100L, live.processedCutoff());
+        // ignoring it would have kept the obsolete reward that a rebuild from scratch does not have
+        var expected = scratch(List.of(first, other, correction), 100);
+        assertEquals(3.2, expected.cohorts(demo()).getFirst().amplitude(), 1e-12);
+        assertNotEquals(expected.cohorts(demo()), live.cohorts(demo()));
+    }
+
+    @Test
+    void aRebuildFromACheckpointSkipsTheHistoryItContainsIncludingCorrections() {
+        var first = sample("exp-1", "sub-a", 20, Kind.PASS);
+        var correction = corrected(first, 50, Kind.FAIL);
+        var other = sample("exp-2", "sub-b", 100, Kind.PASS);
+        var live = scratch(List.of(first, correction, other), 100);
+        var checkpoint = live.checkpoint(policy());
+        var later = sample("exp-3", "sub-a", 150, Kind.PASS);
+
+        // the whole export: the examined correction at 50 lies below the cutoff and is part of the checkpoint
+        var all = List.of(first, correction, other, later);
+        var restored = assertInstanceOf(RebuildResult.Rebuilt.class, rebuildFrom(live, checkpoint, all, 150)).store();
+        assertSameState(scratch(all, 150), restored);
+    }
+
+    @Test
+    void aPersistedCheckpointRestoresAFreshStore() {
+        var live = bound();
+        var first = sample("exp-1", "sub-a", 20, Kind.PASS);
+        var second = sample("exp-2", "sub-b", 30, Kind.FAIL);
+        deliverTo(live, first);
+        deliverTo(live, second);
+        var checkpoint = live.checkpoint(policy());
+        var later = sample("exp-3", "sub-a", 40, Kind.PASS);
+
+        // after a restart the host holds only the checkpoint; the new store has examined nothing and binds nothing
+        var fresh = new RoutingStateStore(AdaptationFixtures.DEFINITION, AdaptationFixtures.PARTITION);
+        var restored = assertInstanceOf(RebuildResult.Rebuilt.class, rebuildFrom(fresh, checkpoint, List.of(later), 40))
+                .store();
+        assertSameState(scratch(List.of(first, second, later), 40), restored);
+        assertEquals(0L, fresh.processedCutoff());
+        assertEquals("exportCutoff 25 is below the checkpoint's cutoff 30", assertThrows(
+                IllegalArgumentException.class, () -> rebuildFrom(fresh, checkpoint, List.of(), 25)).getMessage());
+    }
+
+    @Test
+    void aReconstructedCheckpointMustBeConsistent() {
+        var live = bound();
+        deliverTo(live, sample("exp-1", "sub-a", 20, Kind.PASS));
+        deliverTo(live, sample("exp-2", "sub-b", 30, Kind.FAIL));
+        var valid = live.checkpoint(policy());
+        var base = sample("exp-m", "sub-a", 10, Kind.PASS);
+        List<AppliedRevision> tooMany = new ArrayList<>();
+        for (int i = 0; i <= RoutingStateStore.MAX_LEDGER; i++) {
+            tooMany.add(AppliedRevision.ofNoUpdate(new RoutingObservation(base.outcome(), "m-" + i, 0,
+                    base.ledgerSequence(), Feature.unknown()), NoUpdateReason.NO_TARGET_BINDING));
+        }
+        assertEquals("a checkpoint retains at most 4096 markers, got: 4097", assertThrows(
+                IllegalArgumentException.class, () -> withMarkers(valid, tooMany,
+                        new LedgerDigest(10_000, LedgerDigest.EMPTY.sum()))).getMessage());
+
+        var foreignRequest = request("scope-other", "implement", Feature.unknown(), "exec-f", 7L);
+        var foreign = observation(foreignRequest, decide(foreignRequest, "sub-a"), "exp-f", 10, Kind.PASS);
+        assertEquals("marker exp-f belongs to another partition or definition", assertThrows(
+                IllegalArgumentException.class, () -> withMarkers(valid,
+                        List.of(AppliedRevision.ofNoUpdate(foreign, NoUpdateReason.NO_TARGET_BINDING)),
+                        valid.ledgerDigest())).getMessage());
+
+        // two support units cannot come from a digest of one entry
+        assertThrows(IllegalArgumentException.class, () -> withMarkers(valid, List.of(),
+                new LedgerDigest(1, valid.ledgerDigest().sum())));
+    }
+
+    private static RoutingStateCheckpoint withMarkers(RoutingStateCheckpoint checkpoint, List<AppliedRevision> markers,
+            LedgerDigest digest) {
+        return new RoutingStateCheckpoint(checkpoint.scopeId(), checkpoint.featureSchemaVersion(),
+                checkpoint.evaluationPolicyId(), checkpoint.evaluationPolicyVersion(), checkpoint.mappingVersion(),
+                checkpoint.policyId(), checkpoint.policyVersion(), checkpoint.processedCutoff(),
+                checkpoint.preferenceSnapshot(), digest, markers);
+    }
+
+    @Test
     void aStaleCheckpointIsRefused() {
         var live = bound();
         deliverTo(live, sample("exp-1", "sub-a", 20, Kind.PASS));

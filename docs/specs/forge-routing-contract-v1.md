@@ -1648,7 +1648,7 @@ automatically. Decision record: [ADR 0031](../adr/0031-routing-state-checkpoint-
 
 | Type | Role |
 | --- | --- |
-| `RoutingStateCheckpoint(scopeId, featureSchemaVersion, evaluationPolicyId, evaluationPolicyVersion, mappingVersion, policyId, policyVersion, processedCutoff, preferenceSnapshot, ledgerDigest, retainedMarkers)` | The Section 7 checkpoint. `preferenceSnapshot` holds **every** cohort, active and dormant, in canonical order. `retainedMarkers` are the retryable markers (`NO_TARGET_BINDING`, `PROVENANCE_MISMATCH`) it covers, kept as entries because their redelivery can still become a first application. |
+| `RoutingStateCheckpoint(scopeId, featureSchemaVersion, evaluationPolicyId, evaluationPolicyVersion, mappingVersion, policyId, policyVersion, processedCutoff, preferenceSnapshot, ledgerDigest, retainedMarkers)` | The Section 7 checkpoint. `preferenceSnapshot` holds **every** cohort, active and dormant, in canonical order (at most 256). `retainedMarkers` are the retryable markers (`NO_TARGET_BINDING`, `PROVENANCE_MISMATCH`) it covers, kept as entries because their redelivery can still become a first application. A host may persist a checkpoint and build it again, so the constructor rejects more than 4,096 markers, a marker of another partition or definition, a marker beyond the cutoff, and a digest that counts fewer entries than the markers plus every support unit. |
 | `CheckpointCohort(key, amplitude, frequency, phase, energy, supportingObservations)` | One cohort's four Node channels and support. A restored Node is built like a reset one (deterministic identity, the definition's `NodeType`, `historyLimit = 0`) with these channels. |
 | `LedgerDigest(entries, sum)` | `routing-ledger-digest/1` (Section 23.2). `of(entries)`, `plus`, `minus`, `EMPTY`. |
 | `CompactionResult` | Sealed: `Compacted(removed, horizon)` or `Refused(STALE \| BEHIND_HORIZON \| CREDITS_UNBOUND_COHORT)`. |
@@ -1694,8 +1694,11 @@ data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value
   - The Nodes, support counts, watermark and `ledgerDigest()` do not change.
   - Compacting with an older checkpoint keeps newer entries reconcilable; compacting with the newest empties the ledger.
 - **Horizon rules (compacted stores only)**, after the partition checks of Section 22.2:
-  - a sample whose entry was compacted is `COVERED` when delivered at or below the horizon, and `SUPERSEDES_COMPACTED`
-    when a newer revision's `supersedesSequence` is at or below it;
+  - for a sample whose entry was compacted, a revision whose `supersedesSequence` is at or below the horizon is
+    `SUPERSEDES_COMPACTED`, wherever its own sequence lies. The compacted ledger cannot tell a correction examined before
+    the checkpoint from one never delivered, so a re-read of an examined correction asks for a rebuild too: never wrong,
+    only more work;
+  - any other delivery of such a sample at or below the horizon is `COVERED`;
   - a delivery at or below the horizon that the reconciler would apply or record is `BEFORE_HORIZON`, because the
     compacted entries after it are invisible to the order rule;
   - all three change nothing, including the watermark. `COVERED` needs no action. The other two tell the caller to
@@ -1710,11 +1713,21 @@ data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value
   - the retained markers as its ledger;
   - the checkpoint's digest, and its cutoff as both watermark and horizon.
 
-  It then replays `RebuildOrder.order(observations)` under the horizon rules. Applied, recorded, not-recorded, repeated
-  markers and `COVERED` deliveries continue the replay; an observation that invalidates the checkpoint ends it as
-  `RebuildResult.Failed`. It throws when the checkpoint holds a Node channel outside the definition's bounds, the cohort
-  union exceeds 256, or a cohort bound after the checkpoint is named by one of its retained `NO_TARGET_BINDING` markers.
-  The live store is never modified.
+  It orders the observations with `RebuildOrder` (the latest revision of each sample) and skips those at or below the
+  cutoff whose sample the checkpoint does not retain. That history is already in the checkpoint, so a whole export may
+  be passed. It replays the rest under the horizon rules:
+  - applied, recorded, not-recorded and repeated-marker deliveries continue the replay;
+  - an observation that invalidates the checkpoint ends it as `RebuildResult.Failed`.
+
+  It throws when:
+  - the export cutoff is below the checkpoint's cutoff or the receiver's watermark;
+  - the checkpoint holds a Node channel outside the definition's bounds;
+  - the cohort union exceeds 256;
+  - a cohort bound after the checkpoint is named by one of its retained `NO_TARGET_BINDING` markers.
+
+  The receiver is never modified and need not be the store the checkpoint came from. A host restores a persisted
+  checkpoint into a new, empty store this way, and only `compact` requires the checkpoint not to lie beyond the
+  receiver's watermark.
 - **Equivalence.** Starting from a valid checkpoint gives, over the same cohort set:
   - the same cohort channels (bit for bit), support counts, `ledgerDigest()`, watermark and snapshot as a rebuild from
     scratch;
@@ -1768,6 +1781,11 @@ Both rows reach the same decision trace, deliveries, derivations and state diges
 - a correction of a compacted revision refused as `SUPERSEDES_COMPACTED`, a rebuild from either checkpoint at or after
   its `supersedesSequence` failing, and a rebuild from scratch succeeding;
 - checkpoint-then-replay equal to scratch after a correction;
+- a never-delivered correction at or below the horizon of a compacted revision reported as `SUPERSEDES_COMPACTED`, not
+  `COVERED`;
+- a rebuild from a checkpoint over a whole export whose history includes an examined correction;
+- a persisted checkpoint restored into a fresh store, and an export cutoff below the checkpoint rejected;
+- a reconstructed checkpoint with too many markers, a foreign marker, or more support than its digest counts rejected;
 - `STALE`, `BEHIND_HORIZON` and `CREDITS_UNBOUND_COHORT`;
 - a rebind of a compacted cohort refused until a rebuild from the checkpoint;
 - retained retryable markers with a conservative bind refusal and `BEFORE_HORIZON`;

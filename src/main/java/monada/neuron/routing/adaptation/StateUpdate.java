@@ -155,9 +155,16 @@ public sealed interface StateUpdate {
 
         /** Why an observation is beyond the checkpoint. */
         public enum Kind {
-            /** A delivery at or below the horizon of a sample whose entry was compacted: a repeat or an older one. */
+            /**
+             * A delivery at or below the horizon of a sample whose entry was compacted, replacing nothing compacted: a
+             * repeat or an older one.
+             */
             COVERED,
-            /** A newer revision replaces one whose entry was compacted; its old effect is part of the checkpoint. */
+            /**
+             * A newer revision replaces one whose entry was compacted; its old effect is part of the checkpoint. This is
+             * checked first, wherever the revision's own sequence lies: a compacted ledger cannot tell a correction
+             * examined before the checkpoint from one never delivered.
+             */
             SUPERSEDES_COMPACTED,
             /**
              * A delivery at or below the horizon that would apply or record something there (a retried marker), which

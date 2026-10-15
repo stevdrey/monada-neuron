@@ -30,6 +30,9 @@ a valid checkpoint gives a state identical to a rebuild from scratch).
   `CheckpointCohort(key, amplitude, frequency, phase, energy, support)` for **every** cohort, active and dormant: a
   `RoutingPreference` omits dormant cohorts and the Node channels. `RoutingStateStore.checkpoint(policy)` takes one at
   the store's watermark; it is in-memory and caller-owned.
+  - A host may persist a checkpoint and build it again, so the constructor rejects more than 4,096 retained markers, a
+    marker of another partition or definition, and a digest that counts fewer entries than the markers plus every
+    support unit.
 - **`routing-ledger-digest/1`** (`LedgerDigest`): each `AppliedRevision` is encoded canonically (tag, length-prefixed
   UTF-8, big-endian fixed-width numbers, presence bytes, enum names, the score's IEEE-754 bits), mirroring `equals` and
   therefore **excluding `cutoff`**. The SHA-256 of each encoding is summed modulo 2^256, with the entry count. The sum is
@@ -42,8 +45,11 @@ a valid checkpoint gives a state identical to a rebuild from scratch).
   become a first application. The cutoff becomes the **compaction horizon**. Compaction is refused, as a value, when an
   entry it would drop credits a cohort the checkpoint does not hold.
 - **Horizon rules in `consume`** apply only to a compacted store:
-  - A sample whose entry was compacted is `COVERED` when delivered at or below the horizon. It is
-    `SUPERSEDES_COMPACTED` when a newer revision replaces it.
+  - For a sample whose entry was compacted, a revision that replaces a revision at or below the horizon is
+    `SUPERSEDES_COMPACTED`, checked first and wherever its own sequence lies. A compacted ledger cannot tell a correction
+    examined before the checkpoint from one never delivered. A re-read of an examined correction therefore asks for a
+    rebuild too: never wrong, only more work.
+  - Any other delivery of such a sample at or below the horizon is `COVERED`.
   - A delivery at or below the horizon that would apply or record something is `BEFORE_HORIZON`.
   - All three are reported by one new `StateUpdate.BeyondCheckpoint(kind, horizon, affectedFromSequence)` and change
     nothing. The caller rebuilds from a checkpoint strictly below `affectedFromSequence`, or from scratch.
@@ -53,6 +59,10 @@ a valid checkpoint gives a state identical to a rebuild from scratch).
   later observations:
   - The checkpoint's cohorts get its Node channels and support; this store's other cohorts start at the baseline.
   - The ledger starts as the retained markers, and the checkpoint's cutoff is both the watermark and the horizon.
+  - Observations at or below the cutoff whose sample the checkpoint does not retain are history it already contains,
+    and are skipped, so a whole export may be passed.
+  - The receiver need not be the store the checkpoint came from. A persisted checkpoint restores a new, empty store; only
+    the export cutoff must reach the checkpoint's cutoff.
   - An observation that invalidates the checkpoint ends the replay as `RebuildResult.Failed`, so no new result type is
     needed.
   - The from-scratch `rebuild` overloads are unchanged.

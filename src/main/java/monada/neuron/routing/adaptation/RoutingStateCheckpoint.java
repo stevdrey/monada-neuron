@@ -2,6 +2,8 @@ package monada.neuron.routing.adaptation;
 
 import monada.neuron.routing.feedback.AppliedRevision;
 import monada.neuron.routing.feedback.CohortKey;
+import monada.neuron.routing.feedback.EntryBasis;
+import monada.neuron.routing.feedback.FeedbackIdentity;
 import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.ArrayList;
@@ -23,7 +25,13 @@ import java.util.Objects;
  *
  * <p>Retryable markers ({@code NO_TARGET_BINDING}, {@code PROVENANCE_MISMATCH}) are carried as entries, not only in
  * the digest: their redelivery can still become a first application, so a compacted store must still recognize them.
- * Footprint: {@code O(C + M)} for {@code C <= 256} cohorts and {@code M} retained markers.
+ * Footprint: {@code O(C + M)} for {@code C <= 256} cohorts and {@code M <= }{@value RoutingStateStore#MAX_LEDGER}
+ * retained markers.
+ *
+ * <p>A host may persist a checkpoint and build it again, so the constructor checks everything a store will rely on:
+ * the bounds, the cohort scope, that every marker is a retryable marker of this partition and definition at or below
+ * the cutoff, and that the digest counts at least the retained markers plus every support unit (each a distinct entry
+ * that moved a Node).
  *
  * @param scopeId scope of the partition
  * @param featureSchemaVersion feature schema of the definition
@@ -84,11 +92,25 @@ public record RoutingStateCheckpoint(
         preferenceSnapshot = List.copyOf(cohorts);
         Objects.requireNonNull(ledgerDigest, "ledgerDigest must not be null");
         Objects.requireNonNull(retainedMarkers, "retainedMarkers must not be null");
+        // the markers become a restored store's ledger, so they must fit it before any is inspected
+        if (retainedMarkers.size() > RoutingStateStore.MAX_LEDGER) {
+            throw new IllegalArgumentException("a checkpoint retains at most " + RoutingStateStore.MAX_LEDGER
+                    + " markers, got: " + retainedMarkers.size());
+        }
         var markers = new ArrayList<AppliedRevision>(retainedMarkers.size());
         for (AppliedRevision marker : retainedMarkers) {
             Objects.requireNonNull(marker, "retainedMarkers must not contain null");
-            if (!marker.retryable()) {
+            if (!(marker.basis() instanceof EntryBasis.NoUpdateMarker basis) || !marker.retryable()) {
                 throw new IllegalArgumentException("only retryable markers are retained, got: " + marker.basis());
+            }
+            FeedbackIdentity identity = marker.identity();
+            if (!identity.decisionRef().scopeId().equals(scopeId)
+                    || !identity.evaluationPolicyId().equals(evaluationPolicyId)
+                    || !identity.evaluationPolicyVersion().equals(evaluationPolicyVersion)
+                    || !identity.mappingVersion().equals(mappingVersion)
+                    || !basis.cohortBinding().featureSchemaVersion().equals(featureSchemaVersion)) {
+                throw new IllegalArgumentException("marker " + marker.experienceRef()
+                        + " belongs to another partition or definition");
             }
             if (marker.ledgerSequence() > processedCutoff) {
                 throw new IllegalArgumentException("marker " + marker.experienceRef() + " at sequence "
@@ -102,9 +124,14 @@ public record RoutingStateCheckpoint(
                 throw new IllegalArgumentException("marker " + markers.get(i).experienceRef() + " appears twice");
             }
         }
-        if (markers.size() > ledgerDigest.entries()) {
-            throw new IllegalArgumentException("the digest covers " + ledgerDigest.entries() + " entries, fewer than "
-                    + markers.size() + " retained markers");
+        // every support unit is a distinct entry that moved a Node, and every marker a distinct neutral entry
+        long accounted = markers.size();
+        for (CheckpointCohort cohort : cohorts) {
+            accounted += cohort.supportingObservations();
+        }
+        if (accounted > ledgerDigest.entries()) {
+            throw new IllegalArgumentException("the digest covers " + ledgerDigest.entries() + " entries, fewer than the "
+                    + markers.size() + " retained markers and the support counts account for (" + accounted + ")");
         }
         retainedMarkers = List.copyOf(markers);
     }

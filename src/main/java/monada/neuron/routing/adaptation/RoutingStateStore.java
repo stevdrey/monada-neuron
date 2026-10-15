@@ -274,9 +274,12 @@ public final class RoutingStateStore {
      * ledger sequence, because the watermark records what was examined. {@code RebuildRequired}, a conflict, a stale
      * cost peer and a full ledger change nothing at all.
      *
-     * <p>A compacted store first applies the horizon rules: a sample whose entry was compacted is {@code COVERED} when
-     * delivered at or below the horizon and {@code SUPERSEDES_COMPACTED} when a newer revision replaces it; a delivery
-     * at or below the horizon that would apply or record something is {@code BEFORE_HORIZON}. All three are
+     * <p>A compacted store first applies the horizon rules. For a sample whose entry was compacted, a revision whose
+     * {@code supersedesSequence} is at or below the horizon is {@code SUPERSEDES_COMPACTED}, wherever its own sequence
+     * lies: the compacted ledger cannot tell a correction examined before the checkpoint from one never delivered, so a
+     * re-read of an examined correction asks for a rebuild too, which is never wrong. Any other delivery of such a
+     * sample at or below the horizon is {@code COVERED}. A delivery at or below the horizon that would apply or record
+     * something is {@code BEFORE_HORIZON}. All three are
      * {@link StateUpdate.BeyondCheckpoint} and change nothing. A cost-refined derivation whose peer revision was
      * compacted is trusted to have been derived from the same export as the observation, which is later than the
      * horizon; the compacted ledger cannot re-check an older view of that peer.
@@ -299,13 +302,15 @@ public final class RoutingStateStore {
         }
         long horizon = compactedTo == null ? -1 : compactedTo.processedCutoff();
         if (horizon >= 0 && !ledger.containsKey(observation.experienceRef())) {
-            if (observation.ledgerSequence() <= horizon) {
-                return new StateUpdate.BeyondCheckpoint(StateUpdate.BeyondCheckpoint.Kind.COVERED, horizon,
-                        observation.ledgerSequence());
-            }
+            // a correction first, wherever it lies: a revision that replaces a compacted one may itself sit at or below
+            // the horizon, and only the ledger, now compacted, could tell an examined correction from a new one
             if (observation.supersedesSequence() instanceof Feature.Known<Long> known && known.value() <= horizon) {
                 return new StateUpdate.BeyondCheckpoint(StateUpdate.BeyondCheckpoint.Kind.SUPERSEDES_COMPACTED,
                         horizon, known.value());
+            }
+            if (observation.ledgerSequence() <= horizon) {
+                return new StateUpdate.BeyondCheckpoint(StateUpdate.BeyondCheckpoint.Kind.COVERED, horizon,
+                        observation.ledgerSequence());
             }
         }
         Reconciliation advice = reconciler.reconcile(ledgerView, observation, derivation);
@@ -532,8 +537,12 @@ public final class RoutingStateStore {
      *         this store's watermark
      */
     public CompactionResult compact(RoutingStateCheckpoint checkpoint) {
-        requireLineage(checkpoint);
+        requireSamePartition(checkpoint);
         long cutoff = checkpoint.processedCutoff();
+        if (cutoff > processedCutoff) {
+            throw new IllegalArgumentException("the checkpoint at " + cutoff + " lies beyond processedCutoff "
+                    + processedCutoff);
+        }
         if (compactedTo != null && cutoff < compactedTo.processedCutoff()) {
             return new CompactionResult.Refused(CompactionResult.Reason.BEHIND_HORIZON);
         }
@@ -574,11 +583,14 @@ public final class RoutingStateStore {
      * Rebuilds the state on a staged store that starts from a checkpoint instead of the baseline, replaying only what
      * follows it. The staged store holds the checkpoint's cohorts with their Node channels and support plus this
      * store's other cohorts at the baseline, the checkpoint's retained markers as its ledger, the checkpoint's digest
-     * and its cutoff as both watermark and compaction horizon. Observations are ordered by {@link RebuildOrder} and
-     * consumed under the horizon rules: one at or below the cutoff whose entry was compacted is skipped
-     * ({@code COVERED}), and one that supersedes a compacted revision ends the replay as {@link RebuildResult.Failed}
-     * with {@code SUPERSEDES_COMPACTED}: the checkpoint is not valid for it, so the caller uses one whose cutoff is
-     * strictly below its {@code supersedesSequence}, or rebuilds from scratch. This store is never modified.
+     * and its cutoff as both watermark and compaction horizon. Observations are ordered by {@link RebuildOrder} (the
+     * latest revision of each sample). One at or below the cutoff whose sample the checkpoint does not retain is
+     * history the checkpoint already contains, because it was taken after examining it, and is skipped; the rest are
+     * consumed under the horizon rules. One that supersedes a compacted revision ends the replay as
+     * {@link RebuildResult.Failed} with {@code SUPERSEDES_COMPACTED}: the checkpoint is not valid for it, so the caller
+     * uses one whose cutoff is strictly below its {@code supersedesSequence}, or rebuilds from scratch. This store is
+     * never modified, and it need not be the store the checkpoint was taken from: a host restores a persisted
+     * checkpoint into a new, empty store this way.
      *
      * <p>Starting from a valid checkpoint gives a state identical to a rebuild from scratch over the same cohort set:
      * equal cohort channels and support, an equal ledger after the cutoff, an equal {@link #ledgerDigest()} and an
@@ -586,30 +598,44 @@ public final class RoutingStateStore {
      * entries ({@code M} retained markers) and {@code C} cohorts.
      *
      * @param checkpoint the checkpoint to start from; it may be older than this store's horizon
-     * @param observations the effective observations after the checkpoint (earlier ones are allowed and skipped), at
-     *         most {@value RebuildOrder#MAX_OBSERVATIONS}
-     * @param exportCutoff the export's high-watermark the rebuilt state has examined, not below this store's
-     *         {@link #processedCutoff()}
+     * @param observations the effective observations after the checkpoint, at most
+     *         {@value RebuildOrder#MAX_OBSERVATIONS}; a whole export is allowed, its history up to the cutoff is skipped
+     * @param exportCutoff the export's high-watermark the rebuilt state has examined, not below the checkpoint's cutoff
+     *         nor this store's {@link #processedCutoff()}
      * @param derive derives one observation against the staged bindings; called once per replayed observation
      * @return the rebuilt store or where the replay stopped
-     * @throws IllegalArgumentException if the checkpoint belongs to another partition or definition, lies beyond this
-     *         store's watermark, holds a Node channel outside the definition's bounds, the union of cohorts is
-     *         oversized, a cohort bound after the checkpoint is named by one of its retained {@code NO_TARGET_BINDING}
-     *         markers, or as {@link #rebuild(Collection, long, Collection, BiFunction)}
+     * @throws IllegalArgumentException if the checkpoint belongs to another partition or definition, the export cutoff
+     *         is below the checkpoint's cutoff or this store's watermark, the checkpoint holds a Node channel outside
+     *         the definition's bounds, the union of cohorts is oversized, a cohort bound after the checkpoint is named by
+     *         one of its retained {@code NO_TARGET_BINDING} markers, or as
+     *         {@link #rebuild(Collection, long, Collection, BiFunction)}
      */
     public RebuildResult rebuildFrom(RoutingStateCheckpoint checkpoint, Collection<RoutingObservation> observations,
             long exportCutoff, BiFunction<RoutingObservation, TargetBindings, FeedbackDerivation> derive) {
-        requireLineage(checkpoint);
+        requireSamePartition(checkpoint);
         Objects.requireNonNull(observations, "observations must not be null");
         Objects.requireNonNull(derive, "derive must not be null");
+        if (exportCutoff < checkpoint.processedCutoff()) {
+            throw new IllegalArgumentException("exportCutoff " + exportCutoff + " is below the checkpoint's cutoff "
+                    + checkpoint.processedCutoff());
+        }
         if (exportCutoff < processedCutoff) {
             throw new IllegalArgumentException("exportCutoff " + exportCutoff + " is below processedCutoff "
                     + processedCutoff + ": the rebuilt state would forget examined observations");
         }
-        List<RoutingObservation> ordered = new RebuildOrder().order(observations);
+        var retained = new TreeSet<String>(OpaqueTokens.CODE_POINT_ORDER);
+        checkpoint.retainedMarkers().forEach(marker -> retained.add(marker.experienceRef()));
+        var later = new ArrayList<RoutingObservation>();
+        for (RoutingObservation observation : new RebuildOrder().order(observations)) {
+            // history the checkpoint contains; a retained marker's sample is still reconciled against it
+            if (observation.ledgerSequence() > checkpoint.processedCutoff()
+                    || retained.contains(observation.experienceRef())) {
+                later.add(observation);
+            }
+        }
         var staged = new RoutingStateStore(definition, partition);
         staged.restore(checkpoint, cohorts.keySet());
-        return staged.replay(ordered, exportCutoff, derive);
+        return staged.replay(later, exportCutoff, derive);
     }
 
     /** Sets this new, empty store to a checkpoint plus the given extra cohorts at the baseline. */
@@ -682,7 +708,8 @@ public final class RoutingStateStore {
         return new RebuildResult.Rebuilt(this);
     }
 
-    private void requireLineage(RoutingStateCheckpoint checkpoint) {
+    /** The checkpoint must be of this partition and definition; its cutoff is checked by each caller. */
+    private void requireSamePartition(RoutingStateCheckpoint checkpoint) {
         Objects.requireNonNull(checkpoint, "checkpoint must not be null");
         if (!checkpoint.scopeId().equals(partition.scopeId())
                 || !checkpoint.evaluationPolicyId().equals(partition.evaluationPolicyId())
@@ -690,10 +717,6 @@ public final class RoutingStateStore {
                 || !checkpoint.mappingVersion().equals(definition.mappingVersion())
                 || !checkpoint.featureSchemaVersion().equals(definition.featureSchemaVersion())) {
             throw new IllegalArgumentException("the checkpoint belongs to another partition or definition");
-        }
-        if (checkpoint.processedCutoff() > processedCutoff) {
-            throw new IllegalArgumentException("the checkpoint at " + checkpoint.processedCutoff()
-                    + " lies beyond processedCutoff " + processedCutoff);
         }
     }
 
