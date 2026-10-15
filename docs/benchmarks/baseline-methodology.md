@@ -441,6 +441,19 @@ The runner writes `feedback-loop.json` and `feedback-loop.md` (default `build/re
 
 Results and the interpretation limits are recorded in ADR 0021.
 
+### Run the Forge Routing Temporal Replay Evaluation (Issue #67)
+
+```bash
+./gradlew :monada-neuron-evaluation:runForgeRoutingEvaluation
+./gradlew :monada-neuron-evaluation:runForgeRoutingEvaluation -PbenchmarkArgs="--quick --output-dir /tmp/forge-routing"
+./gradlew :monada-neuron-evaluation:runForgeRoutingStoreReplay   # optional, requires ../monada-resonance-store
+```
+
+The runner writes `forge-routing-replay.json` and `.md` and exits 1 only when a semantic check fails (3 when `--store-arm`
+asks for the unavailable Store arm). It compares static, derived-not-consumed and adaptive routing on identical synthetic
+fixtures and on a chosen-route-only Store export; figures are counts over fixtures, not effectiveness claims. Method,
+checks, digests and limits are in [forge-routing-evaluation.md](forge-routing-evaluation.md).
+
 ## Full-Cycle Validity (Issue #48)
 
 **Defect.** `DeterministicWorkloadGenerator.generateFullCycleSetup(...)` hard-coded

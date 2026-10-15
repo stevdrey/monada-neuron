@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (contract; implemented so far: `TaskFeatures` and its signal encoder, issue #60, the route catalog and eligibility filter, issue #61, and the routing policy, decision types and composition seam, issue #62, with its decision verification split into focused validators by issue #76 and host-trusted extensible verification added by issue #78; outcome evidence and quality-gated learning eligibility added by issue #63; Store experience export translation by issue #64; routing feedback with executed-route credit assignment and caller-owned applied-revision rules by issue #65; the bounded caller-owned adaptive state by issue #66, [ADR 0030](0030-caller-owned-adaptive-routing-state.md); the rest is pending issues #67 and #68)
+Accepted (contract; implemented so far: `TaskFeatures` and its signal encoder, issue #60, the route catalog and eligibility filter, issue #61, and the routing policy, decision types and composition seam, issue #62, with its decision verification split into focused validators by issue #76 and host-trusted extensible verification added by issue #78; outcome evidence and quality-gated learning eligibility added by issue #63; Store experience export translation by issue #64; routing feedback with executed-route credit assignment and caller-owned applied-revision rules by issue #65; the bounded caller-owned adaptive state by issue #66, [ADR 0030](0030-caller-owned-adaptive-routing-state.md); the offline temporal replay evaluation by issue #67, in the evaluation module only ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)); the published consumer loop is pending issue #68, and `RoutingStateCheckpoint` with ledger compaction issue #89)
 
 ## Context
 
@@ -123,9 +123,11 @@ Rejected as a non-goal: persistence belongs to the Store (ADR 0001, ADR 0018).
   Section 20), and routing feedback and its applied-revision rules by issue #65 (Section 21). The published API and the
   consumer loop over real exports remain unverified until #68. The contract names those dependencies and does not claim
   the types or Store capabilities it has not yet implemented exist.
-- Routing quality, cost and adaptation effect are unmeasured. Footprint numbers are a model. No improvement claim is made until
-  the replay evaluation (#67) provides a reproducible workload and controls, and replay on observed exports cannot prove
-  counterfactual or online improvement.
+- Routing quality, cost and adaptation effect are measured only offline: the replay evaluation (#67,
+  [forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)) provides a reproducible workload with static,
+  derived-not-consumed and adaptive controls, and its figures are counts over constructed fixtures and chosen-route-only
+  exports. No online or causal improvement claim is made: replay on observed exports cannot prove counterfactual or online
+  improvement. The footprint numbers above are a model; the replay's latency and allocation figures are exploratory.
 - Rebuilding after a correction costs a replay bounded by 4,096 observations per call; callers must page the Store export.
 - A wrong or stale catalog yields wrong advice; Forge's revalidation before execution is the safety boundary.
 

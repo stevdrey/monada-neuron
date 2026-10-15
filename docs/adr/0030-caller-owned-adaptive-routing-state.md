@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (implemented by issue #66; checkpoints and ledger compaction deferred to #67)
+Accepted (implemented by issue #66; replay evaluation and the full-rebuild baseline by issue #67; checkpoint-then-replay equivalence, the core checkpoint type and ledger compaction are tracked in #89)
 
 ## Context
 
@@ -32,7 +32,9 @@ scores join the cohort mapping under one composite `mappingVersion`.
 - Cohorts and ledger are `TreeMap`s in canonical order: point lookups, deterministic iteration, no hash-order dependence;
   `C <= 256` and `L <= 4,096` do not justify a primitive layout.
 - Provide `AdaptiveStateDefinition.reference()` (`adaptive-routing-state/1`) with documented, illustrative, untuned values.
-- Defer `RoutingStateCheckpoint` and compaction to #67, which verifies checkpoint-versus-scratch equivalence.
+- Defer `RoutingStateCheckpoint` and compaction to #89. #67 shows only that the incrementally built state equals a full
+  rebuild from scratch; the equivalence a checkpoint needs, a rebuild started from an intermediate checkpoint and
+  replaying only later observations, is still #89's to verify.
 
 ## Alternatives
 
@@ -43,18 +45,26 @@ scores join the cohort mapping under one composite `mappingVersion`.
 - **Patch Nodes in place on reset or subtract superseded effects**: rejected, adaptation is clamped and not invertible.
 - **Hash maps keyed by cohort and sample**: rejected, iteration order would need a separate sort for every snapshot and
   diagnostics, with no measurable benefit at these bounds.
-- **Implement checkpoints now**: deferred; they need a ledger digest format and equivalence evidence that #67 owns.
+- **Implement checkpoints now**: deferred; they need a core ledger digest format and checkpoint-then-replay equivalence
+  evidence, both owned by #89. #67 supplies the full-rebuild baseline that evidence will be compared against.
 
 ## Consequences
 
 - Hosts can now learn route preferences from validated outcomes and route from the resulting snapshots, entirely opt-in.
 - Equal definitions, partitions and ordered deliveries give equal states and decisions; scopes cannot contaminate each other.
-- A full ledger blocks learning in that store until a rebuild into a new scope or the #67 compaction; this is explicit.
+- A full ledger blocks learning in that store until a rebuild into a new scope or the ledger compaction tracked in #89;
+  this is explicit.
 - `NodeType.MEMORY` is used for preference Nodes in the reference definition as Neuron-local adaptive state; long-term memory
   remains in the Resonance Store (ADR 0001).
 
 ## Follow-Up Work
 
-- #67: `RoutingStateCheckpoint`, ledger digest and compaction, checkpoint-versus-scratch equivalence, replay evaluation and
-  latency/retained-memory measurements; revisit the reference values only with that evidence.
+- #67 (implemented in the evaluation module only, [forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)):
+  replay evaluation with controls, an evaluation-side canonical digest of cohort Nodes and the ledger, the full-rebuild
+  baseline (incremental state equals a rebuild from scratch, digest for digest, including after corrections), and measured
+  latency/allocation beside a modeled retained footprint. Its allowed scope excludes core changes, so the core
+  `RoutingStateCheckpoint` type, a core ledger digest format, ledger compaction and checkpoint-then-replay equivalence
+  remain open follow-up work (#89); the replay's
+  rebuild-dominated adaptive cost is the evidence to weigh when they are scheduled. The reference values are not revisited:
+  the drift fixture shows they can follow stale rewards, and nothing validates them.
 - #68: published consumer loop over real Store exports.

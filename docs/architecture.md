@@ -507,9 +507,13 @@ adapter, so its executions supply a host context and no signals.
 
 Monada Forge needs vendor-neutral, stage-level recommendations of which authorized worker/model route to use, learned
 from validated outcomes. [Forge Routing Contract v1](specs/forge-routing-contract-v1.md) and
-[ADR 0026](adr/0026-forge-routing-ownership.md) define that extension. **Only `TaskFeatures` and its signal encoder (`monada.neuron.routing.features`, issue #60), the route catalog and eligibility filter (`monada.neuron.routing.catalog`, issue #61) and the routing policy, decision types, preference snapshot value and optional reasoning-stage adapter (`monada.neuron.routing`, issue #62), with its decision verification split into a mandatory validator and a policy-specific verifier (issue #76) and extended by the host-configured `RoutingDecisionVerifier` and `TrustedRoutingProfile` (issue #78), the outcome evidence records with the learning-eligibility `OutcomeEvaluator` (`monada.neuron.routing.outcome`, issue #63), and the `RoutingFeedback` artifact with its executed-route credit-assignment policy and caller-owned applied-revision rules (`monada.neuron.routing.feedback`, issue #65, [ADR 0029](adr/0029-routing-feedback-credit-assignment.md)) and the neutral translation of bounded Resonance Store experience exports into `RoutingObservation` (`StoreExperienceTranslator` in `monada-neuron-resonance-adapter`, issue #64), and the bounded caller-owned `RoutingStateStore` that consumes `RoutingFeedback` through `DeterministicBaselineAdaptationPolicy` and publishes `RoutingPreference` snapshots (`monada.neuron.routing.adaptation`, issue #66, [ADR 0030](adr/0030-caller-owned-adaptive-routing-state.md)), exist**; the other names
-below are proposals that issues #67 and #68 implement in dependency order, and the Store capabilities it depends on (Store
-issues #94 to #101 are implemented on the Store's `main`, #102 is informational) are available; the Neuron side of that integration is delivered by #64 and #66 and the rest by #67 and #68.
+[ADR 0026](adr/0026-forge-routing-ownership.md) define that extension. **Only `TaskFeatures` and its signal encoder (`monada.neuron.routing.features`, issue #60), the route catalog and eligibility filter (`monada.neuron.routing.catalog`, issue #61) and the routing policy, decision types, preference snapshot value and optional reasoning-stage adapter (`monada.neuron.routing`, issue #62), with its decision verification split into a mandatory validator and a policy-specific verifier (issue #76) and extended by the host-configured `RoutingDecisionVerifier` and `TrustedRoutingProfile` (issue #78), the outcome evidence records with the learning-eligibility `OutcomeEvaluator` (`monada.neuron.routing.outcome`, issue #63), and the `RoutingFeedback` artifact with its executed-route credit-assignment policy and caller-owned applied-revision rules (`monada.neuron.routing.feedback`, issue #65, [ADR 0029](adr/0029-routing-feedback-credit-assignment.md)) and the neutral translation of bounded Resonance Store experience exports into `RoutingObservation` (`StoreExperienceTranslator` in `monada-neuron-resonance-adapter`, issue #64), and the bounded caller-owned `RoutingStateStore` that consumes `RoutingFeedback` through `DeterministicBaselineAdaptationPolicy` and publishes `RoutingPreference` snapshots (`monada.neuron.routing.adaptation`, issue #66, [ADR 0030](adr/0030-caller-owned-adaptive-routing-state.md)), exist**, together with the
+offline temporal replay evaluation of issue #67, which lives in the evaluation module only
+([forge-routing-evaluation.md](benchmarks/forge-routing-evaluation.md)) and adds no routing API; the remaining names below
+are proposals that issue #68 implements, and the Store capabilities it depends on (Store issues #94 to #101 are implemented
+on the Store's `main`, #102 is informational) are available; the Neuron side of that integration is delivered by #64 and
+#66, its evaluation by #67, and the published consumer loop by #68. `RoutingStateCheckpoint` and ledger compaction are
+tracked in #89.
 
 ```text
 Forge (host)
@@ -533,8 +537,11 @@ whose inputs come from a host resolver and whose typed result retains the full d
 acceptance. Learning reuses the existing Node-bound `AdaptationPolicy` path through a separate `RoutingFeedback` artifact
 (`OutcomeFeedback` is unchanged), with caller-owned bounded state and an explicit reset-and-replay (optionally from a checkpoint) when corrected evidence
 supersedes any applied reward or penalty. Unknown resource values are never zero, and hypothetical API cost, actual billing and
-subscription activity stay distinct. No routing quality, cost or accuracy claim is made until the replay evaluation (#67)
-supplies a reproducible workload with controls.
+subscription activity stay distinct. The temporal replay evaluation (#67,
+[forge-routing-evaluation.md](benchmarks/forge-routing-evaluation.md)) now supplies a reproducible offline workload with
+static, derived-not-consumed and adaptive controls in the evaluation module only; it shows leakage-free, gate-respecting
+adaptation on synthetic fixtures and coverage gaps on chosen-route-only Store exports, and makes no online routing quality,
+cost or accuracy claim.
 
 ## Target Module Boundaries
 

@@ -63,10 +63,13 @@ Add a separate, opt-in package `monada.neuron.routing.feedback` (Contract Sectio
   never recorded it derives no update, so a request cannot move credit to another stage cohort of the same bucket.
 - The export cutoff is the as-of context of a read, not part of a sample's claim: ledger entries and rebuild inputs
   compare equal across cutoffs, and a rebuild keeps the later snapshot of a sample revision.
-- No effectiveness claim: this ADR makes none, and #67 must supply a reproducible workload with controls.
+- No effectiveness claim: this ADR makes none. #67 supplies a reproducible offline workload with controls in the evaluation
+  module only ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)); it reports counts, not an online
+  or causal improvement.
 
 ## Follow-Up Work
 
-- #66 (implemented, [ADR 0030](0030-caller-owned-adaptive-routing-state.md)): caller-owned state store, Node baseline and identity, snapshots and the composite state definition; checkpoints and ledger compaction are deferred to #67.
-- #67: temporal replay evaluation and measurements.
+- #66 (implemented, [ADR 0030](0030-caller-owned-adaptive-routing-state.md)): caller-owned state store, Node baseline and identity, snapshots and the composite state definition; checkpoints and ledger compaction are tracked in #89 (the #67 replay shows incremental state equals a full rebuild from scratch; checkpoint-then-replay equivalence remains #89's to verify).
+- #67 (implemented, evaluation module only, [forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)): temporal
+  replay evaluation with controls and exploratory measurements.
 - Cost refinement over hypothetical API cost or actual billing once outcomes carry directly comparable amounts.
