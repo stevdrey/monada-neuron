@@ -39,6 +39,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.UUID;
@@ -91,8 +92,13 @@ public final class RoutingStateStore {
     private final TreeMap<String, AppliedRevision> ledger = new TreeMap<>(OpaqueTokens.CODE_POINT_ORDER);
     private final List<AppliedRevision> ledgerView = new LedgerView();
     private long processedCutoff;
-    /** The last watermark the caller confirmed complete; {@link #consume} never moves it. */
-    private long confirmedCutoff;
+    /**
+     * The last watermark the caller confirmed complete, or {@value #UNCONFIRMED}; {@link #consume} never moves it. Not 0:
+     * sequence 0 is a valid position, so a fresh store must not count as confirmed through it.
+     */
+    private long confirmedCutoff = UNCONFIRMED;
+
+    private static final long UNCONFIRMED = -1;
     private TargetBindings bindings;
     /** The checkpoint the ledger is compacted to; {@code null} until the first compaction or restore. */
     private RoutingStateCheckpoint compactedTo;
@@ -132,10 +138,12 @@ public final class RoutingStateStore {
     /**
      * The watermark the caller confirmed complete, through {@link #advanceCutoff} or a rebuild's export cutoff: every
      * observation at or below it was delivered. {@link #consume} never moves it, because observations may arrive out of
-     * order, so {@code processedCutoff} can run ahead of it. A checkpoint needs the two to be equal.
+     * order, so {@code processedCutoff} can run ahead of it. A checkpoint needs the two to be equal. Empty until the
+     * first confirmation, including on a new store: sequence 0 is a valid position, so even an empty export is confirmed
+     * explicitly, with {@code advanceCutoff(0)}.
      */
-    public long confirmedCutoff() {
-        return confirmedCutoff;
+    public OptionalLong confirmedCutoff() {
+        return confirmedCutoff == UNCONFIRMED ? OptionalLong.empty() : OptionalLong.of(confirmedCutoff);
     }
 
     /** Number of bound cohorts, active and dormant. */
@@ -182,7 +190,8 @@ public final class RoutingStateStore {
      * <p>A compacted store refuses the same way a new key whose effects were compacted, and a new key that a retained
      * {@code NO_TARGET_BINDING} marker at or below the horizon names by scope, bucket and route (the marker records no
      * stage kind, so the match is conservative): binding it in place would leave that sample unapplied where a replay
-     * from before the horizon would apply it.
+     * from before the horizon would apply it. Its capacity also counts the cohorts its latest checkpoint holds but it no
+     * longer binds: a rebuild from that checkpoint restores them, so binding past them would make it unrestorable.
      *
      * <p>{@code O(k log k + k log C + L log k + C log C)} for {@code k} keys, {@code C} cohorts and {@code L} ledger
      * entries: the ledger is scanned only when a key is new, and binding is rare, so no credited-cohort index is kept.
@@ -229,7 +238,16 @@ public final class RoutingStateStore {
         if (!credited.isEmpty()) {
             return new BindResult.RebuildRequired(List.copyOf(credited));
         }
-        int available = MAX_COHORTS - cohorts.size();
+        // a compacted store's checkpoint may hold cohorts no longer bound here; a rebuild from it restores them, so they
+        // keep their slots, and a new key that is one of them takes none
+        Set<CohortKey> reserved = reservedByCheckpoint();
+        int reclaimed = 0;
+        for (CohortKey key : added) {
+            if (reserved.contains(key)) {
+                reclaimed++;
+            }
+        }
+        int available = MAX_COHORTS - cohorts.size() - reserved.size() + reclaimed;
         if (added.size() > available) {
             return new BindResult.CapacityExhausted(added.size(), available);
         }
@@ -524,10 +542,14 @@ public final class RoutingStateStore {
      *
      * @param policyId routing policy the checkpoint is taken for (provenance only)
      * @param policyVersion version of that routing policy
-     * @throws IllegalStateException if observations were consumed beyond the confirmed watermark; call
-     *         {@link #advanceCutoff} with the export's high-watermark first
+     * @throws IllegalStateException if the watermark was never confirmed, or observations were consumed beyond the
+     *         confirmed one; call {@link #advanceCutoff} with the export's high-watermark first
      */
     public RoutingStateCheckpoint checkpoint(String policyId, String policyVersion) {
+        if (confirmedCutoff == UNCONFIRMED) {
+            throw new IllegalStateException("the watermark was never confirmed: call advanceCutoff with the export's"
+                    + " high-watermark (advanceCutoff(0) for an empty one) before a checkpoint");
+        }
         if (processedCutoff > confirmedCutoff) {
             throw new IllegalStateException("processedCutoff " + processedCutoff + " is beyond the confirmed watermark "
                     + confirmedCutoff + ": confirm the export's high-watermark with advanceCutoff before a checkpoint");
@@ -565,14 +587,14 @@ public final class RoutingStateStore {
      *
      * <p>Refused, changing nothing, when the ledger at or below the cutoff changed since the checkpoint was taken
      * ({@code STALE}), when the cutoff is below the current horizon ({@code BEHIND_HORIZON}), or when a dropped or already
-     * compacted entry credits a cohort the checkpoint does not hold ({@code CREDITS_UNBOUND_COHORT}).
-     * {@code O(L log L + C log C)}.
+     * compacted entry credits a cohort the checkpoint does not hold ({@code CREDITS_UNBOUND_COHORT}), or when a rebuild
+     * could not start from it on this store as it is now ({@code UNRESTORABLE}). {@code O(L log L + C log C)}.
      *
      * @param checkpoint the checkpoint
      * @return what happened
      * @throws IllegalArgumentException if the checkpoint belongs to another partition or definition, retains a marker of
-     *         another bucket mapping, or lies beyond
-     *         this store's watermark
+     *         another bucket mapping, holds a Node channel outside the definition's bounds, or lies beyond this
+     *         store's watermark
      */
     public CompactionResult compact(RoutingStateCheckpoint checkpoint) {
         requireSamePartition(checkpoint);
@@ -607,6 +629,10 @@ public final class RoutingStateStore {
         checkpoint.preferenceSnapshot().forEach(cohort -> held.add(cohort.key()));
         if (!held.containsAll(credits)) {
             return new CompactionResult.Refused(CompactionResult.Reason.CREDITS_UNBOUND_COHORT);
+        }
+        // compaction drops what the checkpoint covers, so a rebuild must be able to start from it afterwards
+        if (unrestorable(checkpoint)) {
+            return new CompactionResult.Refused(CompactionResult.Reason.UNRESTORABLE);
         }
         // everything that can fail is computed before the first mutation, so compaction stays all-or-nothing
         LedgerDigest folded = compacted.plus(LedgerDigest.of(dropped));
@@ -686,14 +712,8 @@ public final class RoutingStateStore {
 
     /** Sets this new, empty store to a checkpoint plus the given extra cohorts at the baseline. */
     private void restore(RoutingStateCheckpoint checkpoint, Collection<CohortKey> extra) {
-        AdaptationConfig bounds = definition.adaptation();
+        // the channel bounds were checked by requireSamePartition, before anything else
         for (CheckpointCohort value : checkpoint.preferenceSnapshot()) {
-            if (value.amplitude() < bounds.minAmplitude() || value.amplitude() > bounds.maxAmplitude()
-                    || value.energy() < bounds.minEnergy() || value.energy() > bounds.maxEnergy()
-                    || value.frequency() < bounds.minFrequency() || value.frequency() > bounds.maxFrequency()) {
-                throw new IllegalArgumentException("cohort " + value.key()
-                        + " holds a Node channel outside the definition's adaptation bounds");
-            }
             var cohort = new Cohort(node(value.key(),
                     new FrequencyState(value.amplitude(), value.frequency(), value.phase()), value.energy()));
             cohort.support = value.supportingObservations();
@@ -778,6 +798,57 @@ public final class RoutingStateStore {
                         + basis.cohortBinding().bucketMappingVersion() + ", not " + bucketMapping);
             }
         }
+        // the definition's bounds too, so compact never accepts a checkpoint that a rebuild could not start from
+        AdaptationConfig bounds = definition.adaptation();
+        for (CheckpointCohort value : checkpoint.preferenceSnapshot()) {
+            if (value.amplitude() < bounds.minAmplitude() || value.amplitude() > bounds.maxAmplitude()
+                    || value.energy() < bounds.minEnergy() || value.energy() > bounds.maxEnergy()
+                    || value.frequency() < bounds.minFrequency() || value.frequency() > bounds.maxFrequency()) {
+                throw new IllegalArgumentException("cohort " + value.key()
+                        + " holds a Node channel outside the definition's adaptation bounds");
+            }
+        }
+    }
+
+    /**
+     * True when {@link #rebuildFrom} on this store could not start from the checkpoint as the store is now: its cohorts
+     * and this store's together exceed {@value #MAX_COHORTS}, or a cohort bound here but not held by the checkpoint is
+     * named by one of its retained {@code NO_TARGET_BINDING} markers.
+     */
+    private boolean unrestorable(RoutingStateCheckpoint checkpoint) {
+        var held = new TreeSet<CohortKey>();
+        checkpoint.preferenceSnapshot().forEach(cohort -> held.add(cohort.key()));
+        int union = held.size();
+        for (CohortKey key : cohorts.keySet()) {
+            if (held.contains(key)) {
+                continue;
+            }
+            union++;
+            for (AppliedRevision marker : checkpoint.retainedMarkers()) {
+                if (marker.basis() instanceof EntryBasis.NoUpdateMarker basis
+                        && basis.reason() == NoUpdateReason.NO_TARGET_BINDING && names(basis, marker, key)) {
+                    return true;
+                }
+            }
+        }
+        return union > MAX_COHORTS;
+    }
+
+    /**
+     * Cohorts the latest checkpoint holds that this store no longer binds: a rebuild from it restores them, so they
+     * keep their cohort slots.
+     */
+    private Set<CohortKey> reservedByCheckpoint() {
+        if (compactedTo == null) {
+            return Set.of();
+        }
+        var reserved = new TreeSet<CohortKey>();
+        for (CheckpointCohort cohort : compactedTo.preferenceSnapshot()) {
+            if (!cohorts.containsKey(cohort.key())) {
+                reserved.add(cohort.key());
+            }
+        }
+        return reserved;
     }
 
     /** True when a {@code NO_TARGET_BINDING} marker's sample would credit the cohort, ignoring its stage kind. */

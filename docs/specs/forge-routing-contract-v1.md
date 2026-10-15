@@ -1652,7 +1652,7 @@ automatically. Decision record: [ADR 0031](../adr/0031-routing-state-checkpoint-
 | `RoutingStateCheckpoint(scopeId, featureSchemaVersion, evaluationPolicyId, evaluationPolicyVersion, mappingVersion, policyId, policyVersion, processedCutoff, preferenceSnapshot, ledgerDigest, retainedMarkers)` | The Section 7 checkpoint. `preferenceSnapshot` holds **every** cohort, active and dormant, in canonical order (at most 256). `retainedMarkers` are the retryable markers (`NO_TARGET_BINDING`, `PROVENANCE_MISMATCH`) it covers, kept as entries because their redelivery can still become a first application. A host may persist a checkpoint and build it again, so the constructor rejects more than 4,096 markers, a marker of another partition or definition, a marker beyond the cutoff, and a digest that counts fewer entries than the markers plus every support unit. |
 | `CheckpointCohort(key, amplitude, frequency, phase, energy, supportingObservations)` | One cohort's four Node channels and support. A restored Node is built like a reset one (deterministic identity, the definition's `NodeType`, `historyLimit = 0`) with these channels. |
 | `LedgerDigest(entries, sum)` | `routing-ledger-digest/1` (Section 23.2). `of(entries)`, `plus`, `minus`, `EMPTY`. |
-| `CompactionResult` | Sealed: `Compacted(removed, horizon)` or `Refused(STALE \| BEHIND_HORIZON \| CREDITS_UNBOUND_COHORT)`. |
+| `CompactionResult` | Sealed: `Compacted(removed, horizon)` or `Refused(STALE \| BEHIND_HORIZON \| CREDITS_UNBOUND_COHORT \| UNRESTORABLE)`. |
 | `StateUpdate.BeyondCheckpoint(kind, horizon, affectedFromSequence)` | New permitted subtype: `COVERED`, `SUPERSEDES_COMPACTED` or `BEFORE_HORIZON` (Section 23.3). |
 
 `RoutingStateStore` gains `checkpoint(policy)`, `compact(checkpoint)`, `rebuildFrom(checkpoint, observations, exportCutoff,
@@ -1684,7 +1684,9 @@ data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value
 - **Confirmed watermark.** `consume` advances `processedCutoff` to the highest sequence it examined, but observations may
   arrive out of order, so that does not prove everything below was delivered. `advanceCutoff(watermark)` (and a
   rebuild's export cutoff) is the caller's assertion that every observation at or below the watermark was delivered;
-  the store keeps it as `confirmedCutoff()`, and `consume` never moves it.
+  the store keeps it as `confirmedCutoff()`, and `consume` never moves it. A new store, or a reset copy, is unconfirmed
+  (`confirmedCutoff()` is empty), not confirmed through 0: sequence 0 is a valid position, so even an empty export is
+  confirmed explicitly with `advanceCutoff(0)`.
 - **Checkpoint.** `checkpoint(policy)` captures the state at its `processedCutoff`; every ledger entry lies at or below it.
   The watermark must be confirmed: `checkpoint` throws `IllegalStateException` when `processedCutoff` is beyond
   `confirmedCutoff()`. A checkpoint stands for everything at or below its cutoff, and compaction and `rebuildFrom` skip
@@ -1697,7 +1699,12 @@ data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value
     - `STALE` when the ledger at or below the cutoff changed since the checkpoint was taken (its digest or markers no
       longer match);
     - `BEHIND_HORIZON` below the current horizon;
-    - `CREDITS_UNBOUND_COHORT` when a dropped or already compacted entry credits a cohort the checkpoint does not hold.
+    - `CREDITS_UNBOUND_COHORT` when a dropped or already compacted entry credits a cohort the checkpoint does not hold;
+    - `UNRESTORABLE` when a rebuild could not start from the checkpoint on the store as it is now: the checkpoint's
+      cohorts and the store's together exceed 256, or a cohort bound after the checkpoint is named by one of its
+      retained `NO_TARGET_BINDING` markers.
+  - A checkpoint whose Node channels lie outside the definition's bounds is host data that `rebuildFrom` would reject,
+    so `compact` throws for it before changing anything.
   - Otherwise every covered entry except retryable markers is folded into the digest and dropped, and the cutoff becomes
     the **compaction horizon**.
   - The Nodes, support counts, watermark and `ledgerDigest()` do not change.
@@ -1720,7 +1727,8 @@ data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value
     rebuild from a checkpoint strictly below `affectedFromSequence`, or from scratch.
 - **Binding** in a compacted store also refuses (`BindResult.RebuildRequired`) a new key that a compacted entry credited,
   or that a retained `NO_TARGET_BINDING` marker at or below the horizon names. The marker records no stage kind, so the
-  match by scope, bucket and route is conservative.
+  match by scope, bucket and route is conservative. Its capacity also counts the latest checkpoint's cohorts that it no
+  longer binds: a rebuild from that checkpoint restores them, so binding past them would make it unrestorable.
 - **Cost peers.** A cost-refined derivation whose peer revision was compacted is trusted to come from the same export as
   the observation, which is later than the horizon. The compacted ledger cannot re-check an older peer view.
 - **Rebuild from a checkpoint.** `rebuildFrom` stages a store with:
@@ -1817,6 +1825,9 @@ change a decision. A rebuild from scratch, at most 4,096 observations, never rea
 - a whole export of 4,097 observations restored from a checkpoint, only its tail counted against the rebuild bound;
 - a covered delivery whose derivation answers another sample rejected, as in an uncompacted store;
 - a restored support count of `Integer.MAX_VALUE` that saturates on the next reward;
+- a fresh store that refuses a checkpoint until `advanceCutoff(0)`;
+- compaction that throws for out-of-bounds Node channels, refuses `UNRESTORABLE` for a cohort a retained marker names,
+  and a compacted store whose `bind` keeps slots for the checkpoint's unbound cohorts;
 - `STALE`, `BEHIND_HORIZON` and `CREDITS_UNBOUND_COHORT`;
 - a rebind of a compacted cohort refused until a rebuild from the checkpoint;
 - retained retryable markers with a conservative bind refusal and `BEFORE_HORIZON`;

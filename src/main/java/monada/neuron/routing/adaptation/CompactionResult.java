@@ -48,6 +48,13 @@ public sealed interface CompactionResult {
          * An entry it would drop, or one already compacted, credits a cohort the checkpoint does not hold, so that
          * effect could never be restored; a rebuild without the cohort first turns its entries into markers.
          */
-        CREDITS_UNBOUND_COHORT
+        CREDITS_UNBOUND_COHORT,
+        /**
+         * A rebuild from the checkpoint could not start on this store as it is now, so compaction would drop entries no
+         * rebuild could recover: the checkpoint's cohorts and the store's together exceed the cohort bound, or a cohort
+         * bound after the checkpoint is named by one of its retained {@code NO_TARGET_BINDING} markers. A newer
+         * checkpoint describes the store as it is.
+         */
+        UNRESTORABLE
     }
 }

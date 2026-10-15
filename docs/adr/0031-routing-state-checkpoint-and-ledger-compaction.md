@@ -34,7 +34,9 @@ a valid checkpoint gives a state identical to a rebuild from scratch).
     observations may arrive out of order. The store therefore keeps `confirmedCutoff()`: the last watermark the caller
     asserted complete through `advanceCutoff`, or a rebuild's export cutoff. `checkpoint` throws
     `IllegalStateException` while `processedCutoff` is beyond it. Without that, a sample still missing below the
-    watermark would be lost by compaction and by `rebuildFrom`'s skip of covered history.
+    watermark would be lost by compaction and by `rebuildFrom`'s skip of covered history. A new store starts
+    unconfirmed, not confirmed through 0, because sequence 0 is a valid position; even an empty export is confirmed
+    explicitly with `advanceCutoff(0)`.
   - A host may persist a checkpoint and build it again, so the constructor rejects more than 4,096 retained markers, a
     marker of another partition or definition, and a digest that counts fewer entries than the markers plus every
     support unit.
@@ -47,8 +49,13 @@ a valid checkpoint gives a state identical to a rebuild from scratch).
   definition, must not be behind the current horizon, and must still describe the ledger at or below its cutoff (its
   digest and markers are checked). Every covered entry except **retryable markers** (`NO_TARGET_BINDING`,
   `PROVENANCE_MISMATCH`) is folded into the digest and dropped. Retryable markers are kept because a redelivery can still
-  become a first application. The cutoff becomes the **compaction horizon**. Compaction is refused, as a value, when an
-  entry it would drop credits a cohort the checkpoint does not hold.
+  become a first application. The cutoff becomes the **compaction horizon**.
+  - Compaction is refused, as a value, when an entry it would drop credits a cohort the checkpoint does not hold.
+  - It is also refused (`UNRESTORABLE`) when a rebuild could not start from the checkpoint on the store as it is now.
+    Compaction drops entries only a rebuild from that checkpoint could recover.
+  - It throws for a checkpoint whose Node channels lie outside the definition's bounds, as `rebuildFrom` does.
+  - Once compacted, `bind` keeps cohort slots for the checkpoint's cohorts that are no longer bound, so a later bind
+    cannot make the checkpoint unrestorable.
 - **Horizon rules in `consume`** apply only to a compacted store:
   - A revision that replaces a revision at or below the horizon is `SUPERSEDES_COMPACTED`, checked first and wherever
     its own sequence lies. This applies when its sample's entry was compacted, or when it is newer than the sample's

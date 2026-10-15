@@ -5,6 +5,7 @@ import monada.neuron.routing.CohortBinding;
 import monada.neuron.routing.ResourceObjective;
 import monada.neuron.routing.RoutingDecision;
 import monada.neuron.routing.RoutingStateDefinition;
+import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.feedback.AppliedRevision;
@@ -235,29 +236,98 @@ class RoutingStateCheckpointTest {
     }
 
     @Test
+    void aFreshStoreIsUnconfirmedUntilAnExplicitAdvance() {
+        // sequence 0 is a valid position, so an empty store is not confirmed through it
+        var fresh = bound();
+        assertEquals(OptionalLong.empty(), fresh.confirmedCutoff());
+        assertEquals("the watermark was never confirmed: call advanceCutoff with the export's high-watermark"
+                + " (advanceCutoff(0) for an empty one) before a checkpoint",
+                assertThrows(IllegalStateException.class, () -> fresh.checkpoint(policy())).getMessage());
+        assertEquals(OptionalLong.empty(), fresh.resetCopy().confirmedCutoff());
+        fresh.advanceCutoff(0);
+        assertEquals(OptionalLong.of(0), fresh.confirmedCutoff());
+        assertEquals(0L, fresh.checkpoint(policy()).processedCutoff());
+    }
+
+    @Test
+    void compactionRejectsACheckpointNoRebuildCouldStartFrom() {
+        var live = bound();
+        deliverTo(live, sample("exp-1", "sub-a", 20, Kind.PASS));
+        var valid = confirmedCheckpoint(live);
+        // a reconstructed checkpoint whose amplitude lies beyond the definition's bounds is host data that restore rejects
+        var outside = new ArrayList<CheckpointCohort>();
+        for (CheckpointCohort cohort : valid.preferenceSnapshot()) {
+            outside.add(new CheckpointCohort(cohort.key(), AdaptationFixtures.ADAPTATION.maxAmplitude() + 1,
+                    cohort.frequency(), cohort.phase(), cohort.energy(), cohort.supportingObservations()));
+        }
+        var unbounded = new RoutingStateCheckpoint(valid.scopeId(), valid.featureSchemaVersion(),
+                valid.evaluationPolicyId(), valid.evaluationPolicyVersion(), valid.mappingVersion(), valid.policyId(),
+                valid.policyVersion(), valid.processedCutoff(), outside, valid.ledgerDigest(), valid.retainedMarkers());
+        var ledger = live.ledger();
+        assertThrows(IllegalArgumentException.class, () -> live.compact(unbounded));
+        assertEquals(ledger, live.ledger());
+        assertEquals(OptionalLong.empty(), live.compactionHorizon());
+    }
+
+    @Test
+    void compactionRefusesWhenACohortBoundSinceIsNamedByARetainedMarker() {
+        var live = store();
+        live.bind(List.of(KEY_A));
+        deliverTo(live, sample("exp-b", "sub-b", 20, Kind.PASS));
+        var checkpoint = confirmedCheckpoint(live);
+        // binding before any compaction is allowed; afterwards a rebuild from the checkpoint would have to refuse it
+        assertEquals(new BindResult.Bound(List.of(KEY_B)), live.bind(List.of(KEY_B)));
+        var ledger = live.ledger();
+        assertEquals(new CompactionResult.Refused(CompactionResult.Reason.UNRESTORABLE), live.compact(checkpoint));
+        assertEquals(ledger, live.ledger());
+        assertEquals(OptionalLong.empty(), live.compactionHorizon());
+    }
+
+    @Test
+    void aCompactedStoreKeepsCohortSlotsForTheCheckpointsCohorts() {
+        var live = store();
+        List<CohortKey> keys = new ArrayList<>();
+        for (int i = 0; i < RoutingStateStore.MAX_COHORTS; i++) {
+            keys.add(new CohortKey("scope-demo", "implement", "UNKNOWN", new RouteKey("route-" + i, 1)));
+        }
+        live.bind(keys);
+        assertEquals(new CompactionResult.Compacted(0, 0), live.compact(confirmedCheckpoint(live)));
+        assertTrue(live.unbindDormant(keys.getFirst(), demo()));
+        // the checkpoint still holds route-0, which a rebuild from it would restore beside a new cohort: 257 in all
+        assertEquals(new BindResult.CapacityExhausted(1, 0), live.bind(List.of(KEY_A)));
+        // rebinding the checkpoint's own cohort takes no new slot
+        assertEquals(new BindResult.Bound(List.of(keys.getFirst())), live.bind(List.of(keys.getFirst())));
+    }
+
+    @Test
     void aCheckpointNeedsAConfirmedWatermarkSoALateSampleIsNeverLost() {
         var live = bound();
         // observations may arrive out of order: the neutral sample at 100 moves the watermark past a missing one at 50
         var later = sample("exp-2", "sub-b", 100, Kind.PENDING);
         assertInstanceOf(StateUpdate.Applied.class, deliverTo(live, later));
         assertEquals(100L, live.processedCutoff());
-        assertEquals(0L, live.confirmedCutoff());
-        assertEquals("processedCutoff 100 is beyond the confirmed watermark 0: confirm the export's high-watermark"
+        assertEquals(OptionalLong.empty(), live.confirmedCutoff());
+        assertThrows(IllegalStateException.class, () -> live.checkpoint(policy()));
+        // once a watermark is confirmed, consuming past it unconfirms the checkpoint again
+        var confirmed = bound();
+        confirmed.advanceCutoff(60);
+        deliverTo(confirmed, sample("exp-3", "sub-b", 100, Kind.PENDING));
+        assertEquals("processedCutoff 100 is beyond the confirmed watermark 60: confirm the export's high-watermark"
                 + " with advanceCutoff before a checkpoint",
-                assertThrows(IllegalStateException.class, () -> live.checkpoint(policy())).getMessage());
+                assertThrows(IllegalStateException.class, () -> confirmed.checkpoint(policy())).getMessage());
 
         // the late sample is applied in place, then the caller confirms the export's high-watermark
         var late = sample("exp-1", "sub-a", 50, Kind.PASS);
         assertInstanceOf(StateUpdate.Applied.class, deliverTo(live, late));
         live.advanceCutoff(100);
-        assertEquals(100L, live.confirmedCutoff());
+        assertEquals(OptionalLong.of(100), live.confirmedCutoff());
         var checkpoint = live.checkpoint(policy());
         assertEquals(new CompactionResult.Compacted(2, 100), live.compact(checkpoint));
         assertSameState(scratch(List.of(late, later), 100), live);
         // a restored store starts confirmed at the checkpoint, so it can take a checkpoint at once
         var restored = assertInstanceOf(RebuildResult.Rebuilt.class,
                 rebuildFrom(live, checkpoint, List.of(late, later), 100)).store();
-        assertEquals(100L, restored.confirmedCutoff());
+        assertEquals(OptionalLong.of(100), restored.confirmedCutoff());
         assertEquals(checkpoint, restored.checkpoint(policy()));
     }
 
