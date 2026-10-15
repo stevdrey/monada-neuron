@@ -15,7 +15,6 @@ import monada.neuron.routing.outcome.RoutingObservation;
 import monada.neuron.routing.outcome.RoutingOutcome;
 import monada.neuron.routing.outcome.StageAttribution;
 
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -40,20 +39,19 @@ public final class ObservationFactory {
     /** Prefix of every synthetic sample reference. */
     static final String REF_PREFIX = "exp-sha256:";
 
+    private final CanonicalEncoder encoder = new CanonicalEncoder();
+
     /**
-     * The sample reference of a decision: SHA-256 over a length-prefixed UTF-8 encoding of every {@link DecisionRef}
-     * field. Opaque tokens may contain any separator, so plain concatenation could map two decisions to one reference;
-     * the length prefixes make the encoding injective and the digest keeps the reference within the 512 code points a
-     * reference allows, whatever the fields' lengths.
+     * The sample reference of a decision: SHA-256 over the {@link CanonicalEncoder} encoding of every
+     * {@link DecisionRef} field, as a list. That encoding is length-prefixed per field and lossless (opaque tokens may
+     * contain any separator and even unpaired surrogates), so two decisions never share a reference; the digest keeps
+     * the reference within the 512 code points a reference allows, whatever the fields' lengths. The fields are listed
+     * explicitly rather than walked by reflection, because this runs for every observation inside the measured replay.
      */
     public String experienceRef(RoutingRequest request) {
         DecisionRef ref = DecisionRef.of(request);
-        var encoded = new StringBuilder();
-        for (String field : List.of(ref.scopeId(), ref.taskId(), ref.executionId(), ref.attemptId(), ref.stageId(),
-                Long.toString(ref.requestOrdinal()))) {
-            encoded.append(field.getBytes(StandardCharsets.UTF_8).length).append(':').append(field).append('|');
-        }
-        return REF_PREFIX + sha256Hex(encoded.toString());
+        return REF_PREFIX + sha256Hex(encoder.encode(List.of(ref.scopeId(), ref.taskId(), ref.executionId(),
+                ref.attemptId(), ref.stageId(), ref.requestOrdinal())));
     }
 
     /**
@@ -64,17 +62,16 @@ public final class ObservationFactory {
      * @throws IllegalStateException if it would equal the routed attempt id
      */
     String repairAttemptId(String routedAttemptId) {
-        String repair = "repair-" + sha256Hex(routedAttemptId).substring(0, 32);
+        String repair = "repair-" + sha256Hex(encoder.encode(routedAttemptId)).substring(0, 32);
         if (repair.equals(routedAttemptId)) {
             throw new IllegalStateException("the repair attempt id would equal the routed attempt id " + repair);
         }
         return repair;
     }
 
-    private static String sha256Hex(String text) {
+    private static String sha256Hex(byte[] encoded) {
         try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(text.getBytes(StandardCharsets.UTF_8)));
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(encoded));
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is required of every Java platform", e);
         }

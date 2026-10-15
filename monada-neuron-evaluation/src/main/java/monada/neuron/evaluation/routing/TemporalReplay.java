@@ -285,7 +285,8 @@ public final class TemporalReplay {
                     RoutingFeedback feedback = derived.feedback();
                     yield new FeedbackEvent(observation.experienceRef(), observation.revision(),
                             observation.ledgerSequence(), next.decision().provenance().decisionRef(),
-                            next.request().stageKind(), observation.outcome().executedRoute(), next.replayed(),
+                            next.request().stageKind(), observation.outcome().executedRoute(),
+                            next.decision().cohortBinding().cohortBucket(), next.replayed(),
                             assessment.verdict(), observation.outcome().attribution().basis(),
                             Optional.of(feedback.rule()), Optional.empty(),
                             feedback.entries().isEmpty() ? Optional.empty() : Optional.of(feedback.cohortKey()),
@@ -294,7 +295,8 @@ public final class TemporalReplay {
                 case FeedbackDerivation.NoUpdate none -> new FeedbackEvent(observation.experienceRef(),
                         observation.revision(), observation.ledgerSequence(),
                         next.decision().provenance().decisionRef(), next.request().stageKind(),
-                        observation.outcome().executedRoute(), next.replayed(), assessment.verdict(),
+                        observation.outcome().executedRoute(), next.decision().cohortBinding().cohortBucket(),
+                        next.replayed(), assessment.verdict(),
                         observation.outcome().attribution().basis(), Optional.empty(), Optional.of(none.reason()),
                         Optional.empty(), update);
             };

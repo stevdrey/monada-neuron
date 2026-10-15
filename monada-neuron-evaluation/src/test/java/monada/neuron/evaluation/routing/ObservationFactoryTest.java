@@ -34,6 +34,15 @@ class ObservationFactoryTest {
     }
 
     @Test
+    void anUnpairedSurrogateNeverSharesAReferenceWithItsReplacement() {
+        assertAll(
+                () -> assertNotEquals(observations.experienceRef(request("exe-\uD800", "att")),
+                        observations.experienceRef(request("exe-?", "att"))),
+                () -> assertNotEquals(observations.repairAttemptId("att-\uD800"),
+                        observations.repairAttemptId("att-?")));
+    }
+
+    @Test
     void theReferenceStaysShortForMaximumLengthFields() {
         String longest = "x".repeat(128);
         assertTrue(observations.experienceRef(request(longest, longest)).length()

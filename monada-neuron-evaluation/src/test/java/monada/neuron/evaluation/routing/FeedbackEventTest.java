@@ -52,6 +52,10 @@ class FeedbackEventTest {
                 () -> assertTrue(event(ScoreRule.PENALIZE_PROVEN_MANDATORY_FAILURE,
                         EligibilityVerdict.NOT_ELIGIBLE, StageAttribution.Basis.STAGE_LOCAL, Optional.of(OWN))
                         .eligibilityViolation()),
+                // credit for another cohort bucket of the same route, stage and scope
+                () -> assertTrue(event(ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL,
+                        EligibilityVerdict.POSITIVE_CANDIDATE, StageAttribution.Basis.STAGE_LOCAL,
+                        Optional.of(new CohortKey("scope", "implement", "L", EXECUTED))).eligibilityViolation()),
                 // a neutral rule that moves a Node
                 () -> assertTrue(event(ScoreRule.NEUTRAL_ENVIRONMENTAL, EligibilityVerdict.NOT_ELIGIBLE,
                         StageAttribution.Basis.STAGE_LOCAL, Optional.of(OWN)).eligibilityViolation()));
@@ -61,10 +65,10 @@ class FeedbackEventTest {
     void exactlyOneOfRuleAndNoUpdateIsPresent() {
         assertAll(
                 () -> assertThrows(IllegalArgumentException.class, () -> new FeedbackEvent("exp", 0, 1, REF,
-                        "implement", EXECUTED, true, EligibilityVerdict.NOT_ELIGIBLE,
+                        "implement", EXECUTED, "M", true, EligibilityVerdict.NOT_ELIGIBLE,
                         StageAttribution.Basis.STAGE_LOCAL, Optional.empty(), Optional.empty(), Optional.empty(),
                         FeedbackEvent.Update.NOT_CONSUMED)),
-                () -> assertFalse(new FeedbackEvent("exp", 0, 1, REF, "implement", EXECUTED, true,
+                () -> assertFalse(new FeedbackEvent("exp", 0, 1, REF, "implement", EXECUTED, "M", true,
                         EligibilityVerdict.NOT_ELIGIBLE, StageAttribution.Basis.CHAIN_ONLY, Optional.empty(),
                         Optional.of(NoUpdateReason.NO_STAGE_ATTRIBUTION), Optional.empty(),
                         FeedbackEvent.Update.RECORDED).eligibilityViolation()));
@@ -72,7 +76,7 @@ class FeedbackEventTest {
 
     private static FeedbackEvent event(ScoreRule rule, EligibilityVerdict verdict, StageAttribution.Basis basis,
             Optional<CohortKey> credited) {
-        return new FeedbackEvent("exp", 0, 1, REF, "implement", EXECUTED, true, verdict, basis, Optional.of(rule),
+        return new FeedbackEvent("exp", 0, 1, REF, "implement", EXECUTED, "M", true, verdict, basis, Optional.of(rule),
                 Optional.empty(), credited, FeedbackEvent.Update.APPLIED);
     }
 }

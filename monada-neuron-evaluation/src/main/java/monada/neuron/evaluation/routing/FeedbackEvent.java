@@ -21,6 +21,7 @@ import java.util.Optional;
  * @param decisionRef the decision it answers
  * @param stageKind the routed stage kind
  * @param executedRoute the route that actually executed
+ * @param decisionBucket the cohort bucket the answered decision recorded; credit must land in this bucket
  * @param replayed whether it answers a replayed decision (synthetic) rather than a logged one (export)
  * @param verdict {@code OutcomeEvaluator} verdict, computed independently of the feedback policy
  * @param attribution the outcome's stage attribution
@@ -36,6 +37,7 @@ public record FeedbackEvent(
         DecisionRef decisionRef,
         String stageKind,
         RouteKey executedRoute,
+        String decisionBucket,
         boolean replayed,
         EligibilityVerdict verdict,
         StageAttribution.Basis attribution,
@@ -63,6 +65,7 @@ public record FeedbackEvent(
         Objects.requireNonNull(decisionRef, "decisionRef must not be null");
         Objects.requireNonNull(stageKind, "stageKind must not be null");
         Objects.requireNonNull(executedRoute, "executedRoute must not be null");
+        Objects.requireNonNull(decisionBucket, "decisionBucket must not be null");
         Objects.requireNonNull(verdict, "verdict must not be null");
         Objects.requireNonNull(attribution, "attribution must not be null");
         Objects.requireNonNull(rule, "rule must not be null");
@@ -76,15 +79,18 @@ public record FeedbackEvent(
 
     /**
      * Whether the derivation breaks the quality-gated credit rules (ADR 0029): a reward without a positive, stage-local
-     * candidate, a penalty without a negative candidate, or credit for a route or stage other than the executed one.
+     * candidate, a penalty without a negative candidate, or credit for a scope, stage, cohort bucket or route other
+     * than the executed decision's.
      */
     public boolean eligibilityViolation() {
         if (rule.isEmpty()) {
             return false;
         }
         FeedbackDisposition disposition = rule.get().disposition();
+        // every CohortKey component is audited: scope, stage kind, cohort bucket and route
         boolean wrongTarget = credited.isPresent() && (!credited.get().route().equals(executedRoute)
                 || !credited.get().stageKind().equals(stageKind)
+                || !credited.get().cohortBucket().equals(decisionBucket)
                 || !credited.get().scopeId().equals(decisionRef.scopeId()));
         return switch (disposition) {
             case REINFORCE -> verdict != EligibilityVerdict.POSITIVE_CANDIDATE

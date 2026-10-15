@@ -66,6 +66,18 @@ class CanonicalEncoderTest {
     }
 
     @Test
+    void textIsEncodedLosslesslyEvenWithUnpairedSurrogates() {
+        // a UTF-8 encoder would replace the unpaired surrogate with '?'
+        assertAll(
+                () -> assertFalse(Arrays.equals(encoder.encode("\uD800"), encoder.encode("?"))),
+                () -> assertFalse(Arrays.equals(encoder.encode("\uD800"), encoder.encode("\uDC00"))),
+                // a valid pair differs from either half and from the halves reversed
+                () -> assertFalse(Arrays.equals(encoder.encode("\uD83D\uDE00"), encoder.encode("\uDE00\uD83D"))),
+                () -> assertFalse(Arrays.equals(encoder.encode(request("\uD800", "f")), encoder.encode(request("?",
+                        "f")))));
+    }
+
+    @Test
     void anUnsupportedTypeIsRejectedRatherThanRenderedAsText() {
         assertThrows(IllegalArgumentException.class, () -> encoder.encode(new StringBuilder("x")));
     }

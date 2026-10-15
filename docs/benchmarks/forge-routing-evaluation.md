@@ -112,8 +112,9 @@ task carries:
 - The evidence policy must be the partition's evaluation policy (same id and version), so feedback is never assessed
   under a policy the requests do not name.
 - The observations of one logged decision must be revisions of one sample: one `experienceRef`, strictly increasing
-  revisions and ledger sequences, and each later revision superseding the one before it. Two separately referenced
-  samples can therefore never credit one execution twice.
+  revisions (gaps allowed) and ledger sequences, and every corrected revision superseding the same original position,
+  which is revision 0's ledger sequence when revision 0 is listed. That is how the Store translator versions a sample.
+  Two separately referenced samples can therefore never credit one execution twice.
 - Cohorts are bounded at ≤ 256.
 - Observations are bounded at ≤ 4096, so a full rebuild stays possible.
 
@@ -222,6 +223,10 @@ The `cases` scenario holds:
 | Unknown-usage chain, including one later corrected to accepted | `PARTIAL` lower bound 0.0270 |
 | Two-currency chain | 0.0420 USD and 0.0390 EUR, never summed together |
 
+`ReplayCost` mirrors the Store's `CostToAcceptedOutcome` invariants and is never stricter: an unavailable cost has no
+amount and each currency appears at most once, but the number of currencies is not capped and a partial or
+unavailable cost may come without reasons, as the Store allows.
+
 **Store arm.** [`StoreReplaySource`](../../monada-neuron-evaluation/src/integration/java/monada/neuron/evaluation/routing/StoreReplaySource.java)
 records the `chosen-route-only` truth into a real temporary execution memory:
 - Each of the 16 tasks is decided at the Store's high-watermark before it is recorded, and its routing envelope is
@@ -246,7 +251,7 @@ derived, and unchanged earlier decisions are rejected as evidence when the mutat
 | `control.derived-not-consumed-equals-static` | Same decision sequence on every fixture, with feedback derived. |
 | `control.static-equals-cold-start-baseline` | Static decisions equal `decide` over `RoutingPreference.empty`: #62 behavior is unchanged. |
 | `control.neutral-feedback-leaves-state-unchanged` | Neutral-only consumption leaves cohort Nodes and support equal to the reset baseline, and decisions equal static. |
-| `eligibility.violations-zero` | Across all arms and stages, none of the following occurs: a reward without a positive, stage-local candidate; a penalty without a negative candidate; credit for a route, stage or scope other than the executed one; a neutral rule that moves a Node. |
+| `eligibility.violations-zero` | Across all arms and stages, none of the following occurs: a reward without a positive, stage-local candidate; a penalty without a negative candidate; credit for a scope, stage, cohort bucket or route other than the executed decision's; a neutral rule that moves a Node. |
 | `state.incremental-equals-rebuild` | The final adaptive state digest equals a reset copy rebuilt from every delivered observation, including after correction-triggered rebuilds, and its watermark equals the fixture horizon. |
 | `cases.cheap-invalid` | Few tokens with a proven security failure: gate failure, `NOT_ACCEPTED`, cost `UNAVAILABLE`, penalized and never rewarded. |
 | `cases.repaired-accepted` | 2 attempts, validated acceptance, 0.0735 USD counted once; chain-only attribution earns no credit. |
@@ -335,17 +340,19 @@ mode.
 
 | Benchmark | Scale | Mean per iteration | p95 per iteration | Mean per decision (derived) | Alloc per decision |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `RoutingReplay.static` | 960 tasks | 4.09 ms | 5.88 ms | 4.3 µs | 6.71 KB |
-| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 36.64 ms (median 20.91 ms) | 81.26 ms | 38.2 µs | 30.99 KB |
-| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 482.27 ms | 538.87 ms | 502.4 µs | 503.60 KB |
-| `StoreRoutingReplay.static` | 16 exported tasks | 1.08 ms | 1.28 ms | 67.3 µs | 9.43 KB |
-| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 2.12 ms | 2.52 ms | 132.2 µs | 20.01 KB |
-| `StoreRoutingReplay.adaptive` | 16 exported tasks | 3.07 ms | 4.17 ms | 192.0 µs | 22.59 KB |
+| `RoutingReplay.static` | 960 tasks | 5.88 ms | 9.85 ms | 6.1 µs | 6.51 KB |
+| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 20.48 ms | 25.63 ms | 21.3 µs | 32.00 KB |
+| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 502.32 ms | 599.29 ms | 523.2 µs | 513.08 KB |
+| `StoreRoutingReplay.static` | 16 exported tasks | 1.66 ms | 2.27 ms | 104.0 µs | 9.43 KB |
+| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 3.16 ms | 4.20 ms | 197.6 µs | 17.78 KB |
+| `StoreRoutingReplay.adaptive` | 16 exported tasks | 3.18 ms | 3.98 ms | 198.9 µs | 20.23 KB |
 
-These are single runs on one machine. Across the full runs made for this PR, adaptive mean latency per iteration varied
-between 397 ms and 490 ms, `static` between 3.27 ms and 18.38 ms, and `derived-not-consumed` between 16.7 ms and
-36.6 ms (this run's mean is pulled up by a few slow iterations; its median is 20.9 ms); the `static` outlier was immediately followed by 5.72 ms and
-5.82 ms with identical digests. Differences of this size are noise, not a trend. The Store per-decision figures include a
+These are single runs on one machine, and this one ran under a load average of about 4 from other work on the
+machine. Across the full runs made for this PR, adaptive mean latency per iteration varied between 397 ms and 578 ms,
+`static` between 3.27 ms and 18.38 ms, and `derived-not-consumed` between 16.7 ms and 48.0 ms. The 48.0 ms run was
+traced to a real regression, not noise: a reflective encoding in the per-observation sample reference. It was removed
+before this run, which measured 20.5 ms. The `static` outlier was immediately followed by 5.72 ms and 5.82 ms with
+identical digests. Differences of this size are noise, not a trend. The Store per-decision figures include a
 fixed per-iteration cost (a fresh state and bindings) spread over only 16 decisions.
 
 Modeled retained state at the end of the workload: 0 B for static, 8,000 B for derived-not-consumed (20 cohorts) and
@@ -390,16 +397,18 @@ Observations, not conclusions:
 
 | Digest | Value |
 | :--- | :--- |
-| `fixture.workload.digest` (full) | `72ea902ebd13e7dcae53bf26cab8afb24b192f7ea360bcef9610585e523aba72` |
-| `workload.reportDigest` (full) | `c669bc61a084cbda6685c1518e305e09daf43ee739c75b7b800399877d47c0e7` |
-| `store.fixtureDigest` | `fa55555826108f6a7a0f779e8142de9bf85f689dfaa91bf5cb66de1826c7c2e5` |
+| `fixture.workload.digest` (full) | `61bfa1c50c0d1174a312ac12380e628ebaaade95ec6c7720d8947b725b26b62b` |
+| `workload.reportDigest` (full) | `143fed9a218acd70a74dd4ae0affc2395cfc379e49cd851c20205e9d7ced052f` |
+| `store.fixtureDigest` | `a5408e2dd889eaad33a97ecd3f9d7c1a0a610caef31d31f9fe09be0e2e6753b8` |
 | `store.exportDigest` (Store tooling) | `f11276157baf9565a14ea07a386502ac8c5a8b3656a6744fb2861f00b4ae2ee8` |
-| `store.reportDigest` | `6025efe9d44a0a8da27d30e15cadf4b90e89bf39788a1639761ee27f0da37030` |
+| `store.reportDigest` | `954d5e7a0882298746c160fdf1001a5b0469d75d3fc6bc88bdf7ee22b8cb4d74` |
 
 - **Digests.** All are SHA-256 over a canonical, typed, length-prefixed encoding (`CanonicalEncoder`), never over
   `toString`:
-  - records are walked component by component, and every text carries its UTF-8 byte length, so a separator inside an
-    opaque token can never make two inputs hash alike;
+  - records are walked component by component, and every text is written as its UTF-16 code units prefixed by
+    their count. A separator inside an opaque token can therefore never make two inputs hash alike, and no charset
+    replacement can merge two texts: an unpaired surrogate stays distinct from `?`. Synthetic sample references and
+    repair attempt ids are SHA-256 over the same encoding;
   - identities (fixture id and version, policy id and version) are separate entries;
   - lists and arrays keep their order, while sets and maps are sorted by their elements' own encodings;
   - doubles are encoded as exact bit patterns;
@@ -424,8 +433,7 @@ Observations, not conclusions:
   Store.
 - **No actual billing.** Actual billing is never populated by the #64 translator. Only hypothetical API-equivalent cost
   is reported.
-- **Checkpoint deferred.** ADR 0030 deferred `RoutingStateCheckpoint` and ledger compaction to #67, but the issue's
-  allowed scope excludes core changes. This harness instead verifies the equivalence such a checkpoint must satisfy:
-  incremental state equals a rebuild from scratch, digest for digest. The core checkpoint type and compaction remain
-  follow-up work (see ADR 0030).
+- **Checkpoint deferred.** `RoutingStateCheckpoint` and ledger compaction are core work tracked in #89 (ADR 0030); #67's
+  scope excluded core changes. This harness supplies the evidence such a checkpoint must satisfy: incremental state
+  equals a rebuild from scratch, digest for digest.
 - **No core change.** The reference adaptive values are not revisited, and nothing in the core is tuned.

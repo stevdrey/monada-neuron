@@ -1,7 +1,6 @@
 package monada.neuron.evaluation.routing;
 
 import monada.neuron.routing.outcome.Money;
-import monada.neuron.routing.outcome.ResourceSummary;
 
 import java.util.Comparator;
 import java.util.HashSet;
@@ -18,10 +17,15 @@ import java.util.Objects;
  * currency and are never summed across currencies. The cost covers the whole attempt chain up to acceptance, so it is
  * attributed once per execution and never split among stages or routes.
  *
+ * <p>The invariants mirror the Store's, never stricter, so every cost the Store tooling produces can be carried: an
+ * unavailable cost has no amount, and the Store aggregates per currency, so each currency appears at most once. The
+ * Store bounds neither the number of currencies nor requires reasons, so neither does this mirror.
+ *
  * @param status completeness of the amount
- * @param amounts one amount per currency in currency order, at most {@value ResourceSummary#MAX_CURRENCIES}; empty
- *        when unavailable, and possibly empty for a partial cost with no priced stage
- * @param reasons why the cost is partial or unavailable (Store {@code CostReason} codes or fixture notes), sorted
+ * @param amounts one amount per currency in currency order; empty when unavailable, and possibly empty for a partial
+ *        cost with no priced stage
+ * @param reasons why the cost is partial or unavailable (Store {@code CostReason} codes or fixture notes), sorted;
+ *        possibly empty
  */
 public record ReplayCost(Status status, List<Money> amounts, List<String> reasons) {
 
@@ -40,10 +44,6 @@ public record ReplayCost(Status status, List<Money> amounts, List<String> reason
         Objects.requireNonNull(status, "status must not be null");
         amounts = amounts.stream().sorted(Comparator.comparing(Money::currency)).toList();
         reasons = reasons.stream().sorted().toList();
-        if (amounts.size() > ResourceSummary.MAX_CURRENCIES) {
-            throw new IllegalArgumentException(
-                    "at most " + ResourceSummary.MAX_CURRENCIES + " currencies, got: " + amounts.size());
-        }
         var currencies = new HashSet<String>();
         for (Money amount : amounts) {
             if (!currencies.add(amount.currency())) {
@@ -52,9 +52,6 @@ public record ReplayCost(Status status, List<Money> amounts, List<String> reason
         }
         if (status == Status.UNAVAILABLE && !amounts.isEmpty()) {
             throw new IllegalArgumentException("an unavailable cost carries no amount");
-        }
-        if (status != Status.AVAILABLE && reasons.isEmpty()) {
-            throw new IllegalArgumentException("a " + status + " cost must say why");
         }
     }
 

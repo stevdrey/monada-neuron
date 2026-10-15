@@ -33,7 +33,7 @@ Inspected `main` at `d1dd569` (Java 27). Already implemented and **reused unchan
 - `RuntimeBackendSelector`, which selects *internal computational backends* (SCALAR/VECTOR_API, object/CSR graph, ...). It
   never selects external workers or models.
 
-At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 22 describe what has been added since. Still absent: `RoutingStateCheckpoint` and ledger compaction, and the published consumer loop (#68); the replay evaluation (#67) exists in the evaluation module only ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)). `ActionRequest` carries Signals and an
+At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 22 describe what has been added since. Still absent: `RoutingStateCheckpoint` and ledger compaction (tracked in #89), and the published consumer loop (#68); the replay evaluation (#67) exists in the evaluation module only ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)). `ActionRequest` carries Signals and an
 opaque host context, not a route. `Signal` carries no identity (ADR 0005).
 
 ## Goal

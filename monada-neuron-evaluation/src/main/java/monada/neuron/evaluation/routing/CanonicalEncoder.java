@@ -20,9 +20,9 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * A deterministic, injective byte encoding of a value tree for digests: every value is a one-byte type tag followed by
- * its content, and every text is prefixed by its UTF-8 byte length, so no opaque token can run into its neighbour
- * whatever separators it contains.
+ * A deterministic, injective byte encoding of a value tree for digests and identity hashes: every value is a one-byte
+ * type tag followed by its content, and every text is its UTF-16 code units prefixed by their count, so no opaque token
+ * can run into its neighbour whatever separators it contains, and no text is altered by a charset replacement.
  *
  * <p>Records are walked through their components (class name, component count, then each component's name and
  * value), never through {@code toString}. Lists and arrays keep their order. Sets and maps are encoded with their
@@ -174,11 +174,18 @@ final class CanonicalEncoder {
         text(content, out);
     }
 
-    /** {@code <utf8-byte-length>:<bytes>}. */
+    /**
+     * {@code <code-unit-count>:<code units>}, each UTF-16 code unit as two big-endian bytes. Lossless for every Java
+     * {@code String}: unlike a charset encoder, it never replaces an unpaired surrogate, so {@code "\uD800"} and
+     * {@code "?"} stay distinct.
+     */
     private void text(String content, ByteArrayOutputStream out) {
-        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
-        out.writeBytes(Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII));
+        out.writeBytes(Integer.toString(content.length()).getBytes(StandardCharsets.US_ASCII));
         out.write(':');
-        out.writeBytes(bytes);
+        for (int i = 0; i < content.length(); i++) {
+            char unit = content.charAt(i);
+            out.write(unit >>> 8);
+            out.write(unit & 0xff);
+        }
     }
 }

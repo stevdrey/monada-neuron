@@ -11,6 +11,7 @@ import monada.neuron.routing.outcome.OutcomeStatus;
 import monada.neuron.routing.outcome.QualityDimension;
 import monada.neuron.routing.outcome.QualityState;
 import monada.neuron.routing.outcome.RoutingObservation;
+import monada.neuron.routing.outcome.RoutingOutcome;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -159,9 +160,12 @@ class ReplayFixtureBoundsTest {
                         () -> new ReplayCost(ReplayCost.Status.UNAVAILABLE, List.of(usd), List.of("X"))),
                 // one amount per currency
                 () -> assertThrows(IllegalArgumentException.class, () -> ReplayCost.available(usd, usd)),
-                // a partial or unavailable cost says why
-                () -> assertThrows(IllegalArgumentException.class,
-                        () -> new ReplayCost(ReplayCost.Status.PARTIAL, List.of(usd), List.of())),
+                // never stricter than the Store: a partial cost needs no reason, and currencies are not capped
+                () -> assertEquals(ReplayCost.Status.PARTIAL,
+                        new ReplayCost(ReplayCost.Status.PARTIAL, List.of(usd), List.of()).status()),
+                () -> assertEquals(5, ReplayCost.available(usd, new Money(BigDecimal.ONE, "EUR"),
+                        new Money(BigDecimal.ONE, "GBP"), new Money(BigDecimal.ONE, "JPY"),
+                        new Money(BigDecimal.ONE, "CHF")).amounts().size()),
                 () -> assertThrows(IllegalArgumentException.class, () -> new ChainOutcome(0,
                         ReplayCost.available(usd))),
                 () -> assertEquals(List.of("EUR", "USD"), ReplayCost.available(usd,
@@ -208,6 +212,48 @@ class ReplayFixtureBoundsTest {
                         logged.loggedDecision(), List.of(revision0, revision0), logged.chain())),
                 () -> assertThrows(IllegalArgumentException.class, () -> new OutcomeOracle.ChosenRouteOnly(
                         logged.loggedDecision(), List.of(revision0, notLater), logged.chain())));
+    }
+
+    @Test
+    void everyCorrectionSupersedesTheOriginalPositionAsTheStoreTranslatorWritesIt() {
+        var fixture = fixtures.chosenRouteOnly(6);
+        ReplayTask task = fixture.tasks().getFirst();
+        var logged = (OutcomeOracle.ChosenRouteOnly) task.oracle();
+        RoutingObservation revision0 = logged.observed().getFirst();
+        long l0 = revision0.ledgerSequence();
+        // the translator gives every corrected revision the sample's first position, and revisions may skip
+        RoutingObservation revision1 = revision(revision0, 1, l0 + 10, l0);
+        RoutingObservation revision2 = revision(revision0, 2, l0 + 20, l0);
+        RoutingObservation revision3 = revision(revision0, 3, l0 + 30, l0);
+        RoutingObservation revision2OnRevision1 = revision(revision0, 2, l0 + 20, l0 + 10);
+
+        assertAll(
+                () -> assertEquals(3, chosen(logged, revision0, revision1, revision2).observed().size()),
+                () -> assertEquals(2, chosen(logged, revision0, revision3).observed().size()),
+                // an export that no longer lists revision 0
+                () -> assertEquals(2, chosen(logged, revision1, revision2).observed().size()),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> chosen(logged, revision0, revision1, revision2OnRevision1)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> chosen(logged, revision1, revision2OnRevision1)));
+    }
+
+    private static OutcomeOracle.ChosenRouteOnly chosen(OutcomeOracle.ChosenRouteOnly logged,
+            RoutingObservation... observed) {
+        return new OutcomeOracle.ChosenRouteOnly(logged.loggedDecision(), List.of(observed), logged.chain());
+    }
+
+    /** A later revision of {@code original} at {@code position}, exported as of that position. */
+    private static RoutingObservation revision(RoutingObservation original, long revision, long position,
+            long supersedes) {
+        RoutingOutcome o = original.outcome();
+        var outcome = new RoutingOutcome(o.contractVersion(), o.decisionRef(), o.executedRoute(), o.cohortBinding(),
+                o.catalogVersion(), o.routingPolicyId(), o.routingPolicyVersion(), o.sourceFingerprint(),
+                o.contextFingerprint(), o.constraintsFingerprint(), o.evaluationPolicyId(), o.evaluationPolicyVersion(),
+                position, o.invocation(), o.outcomeStatus(), o.outcomeOrigin(), o.acceptedAttemptId(),
+                o.acceptedAttemptStatus(), o.outcomeSequence(), o.observations(), o.judgedRevisions(), o.resources(),
+                o.attribution());
+        return new RoutingObservation(outcome, original.experienceRef(), revision, position, Feature.known(supersedes));
     }
 
     @Test

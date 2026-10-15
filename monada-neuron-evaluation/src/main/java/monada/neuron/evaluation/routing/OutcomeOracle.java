@@ -52,8 +52,10 @@ public sealed interface OutcomeOracle {
      *
      * @param loggedDecision the decision that was actually executed
      * @param observed observed revisions of the executed route's outcome, in revision order; empty when none was
-     *        exported. They are revisions of one sample: one {@code experienceRef}, strictly increasing revisions and
-     *        ledger sequences, and each later revision superseding the one before it
+     *        exported. They are revisions of one sample: one {@code experienceRef}, strictly increasing revisions (gaps
+     *        allowed) and ledger sequences, and every corrected revision superseding the same original position, which
+     *        is revision 0's ledger sequence when revision 0 is listed. This is how the Store translator versions a
+     *        sample: every revision after the first carries the sample's first translatable sequence
      * @param chain whole-chain attempts and cost of the latest observed revision, as supplied by evaluation tooling
      */
     record ChosenRouteOnly(RoutingDecision.Selected loggedDecision, List<RoutingObservation> observed,
@@ -79,11 +81,20 @@ public sealed interface OutcomeOracle {
                     throw new IllegalArgumentException("revision " + later.revision() + " of " + later.experienceRef()
                             + " is not after revision " + earlier.revision() + " in the ledger");
                 }
-                if (!(later.supersedesSequence() instanceof Feature.Known<Long> supersedes)
-                        || supersedes.value() != earlier.ledgerSequence()) {
-                    throw new IllegalArgumentException("revision " + later.revision() + " of " + later.experienceRef()
-                            + " does not supersede revision " + earlier.revision() + " at "
-                            + earlier.ledgerSequence());
+            }
+            // every corrected revision replaces the same original position; revision 0, when listed, is that position
+            Long original = observed.isEmpty() || observed.getFirst().revision() > 0 ? null
+                    : observed.getFirst().ledgerSequence();
+            for (RoutingObservation observation : observed) {
+                if (!(observation.supersedesSequence() instanceof Feature.Known<Long> supersedes)) {
+                    continue;
+                }
+                if (original == null) {
+                    original = supersedes.value();
+                } else if (!original.equals(supersedes.value())) {
+                    throw new IllegalArgumentException("revision " + observation.revision() + " of "
+                            + observation.experienceRef() + " supersedes " + supersedes.value()
+                            + ", not the original position " + original);
                 }
             }
             for (RoutingObservation observation : observed) {

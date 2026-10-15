@@ -1,6 +1,7 @@
 package monada.neuron.evaluation.routing;
 
 import monada.neuron.routing.catalog.ResourceValue;
+import monada.neuron.routing.feedback.RebuildOrder;
 import monada.neuron.routing.outcome.Money;
 import monada.neuron.routing.outcome.UsageCounter;
 import monada.neuron.routing.outcome.UsageKind;
@@ -299,7 +300,10 @@ public record ReplaySummary(
         return Collections.unmodifiableSortedMap(new TreeMap<>(map));
     }
 
-    /** Mutable accumulator of one stage kind; never escapes {@link #of}. */
+    /**
+     * Mutable accumulator of one stage kind; never escapes {@link #of}. Its {@code int} counters cannot overflow: they
+     * count at most {@value ReplayFixture#MAX_TASKS} decisions and {@value RebuildOrder#MAX_OBSERVATIONS} deliveries.
+     */
     private static final class StageTally {
 
         private int decisions;
