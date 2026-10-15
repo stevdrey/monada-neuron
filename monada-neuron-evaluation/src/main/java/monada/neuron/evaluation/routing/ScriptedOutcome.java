@@ -61,6 +61,9 @@ public record ScriptedOutcome(
             Objects.requireNonNull(status, "status must not be null");
             quality = canonical(quality);
             Objects.requireNonNull(chain, "chain must not be null");
+            if (chain.cost().status() != ReplayCost.Status.UNAVAILABLE && status != OutcomeStatus.ACCEPTED) {
+                throw new IllegalArgumentException("a cost to an accepted outcome needs an acceptance, got " + status);
+            }
         }
     }
 
@@ -85,6 +88,12 @@ public record ScriptedOutcome(
         }
         Objects.requireNonNull(stage, "stage must not be null");
         Objects.requireNonNull(chain, "chain must not be null");
+        // CostToAcceptedOutcome: an amount exists only for a validated acceptance (execution-memory contract v1, §8)
+        if (chain.cost().status() != ReplayCost.Status.UNAVAILABLE
+                && (status != OutcomeStatus.ACCEPTED || origin != OutcomeOrigin.VALIDATED)) {
+            throw new IllegalArgumentException("a cost to an accepted outcome needs a validated acceptance, got "
+                    + status + " " + origin);
+        }
         Objects.requireNonNull(correction, "correction must not be null");
         if (correction.isPresent() && correction.get().observedAt() <= observedAt) {
             throw new IllegalArgumentException("a correction must be observed after the original");

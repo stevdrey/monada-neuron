@@ -22,6 +22,7 @@ import monada.neuron.routing.outcome.UsageKind;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -155,12 +156,16 @@ public final class RoutingReplayEvaluation {
         var all = List.of(runs, improvementRuns, degradationRuns, neutralRuns, caseRuns, chosenRuns);
 
         long leakageCutoff = fixtures.cutoff(LEAKAGE_TASK);
-        checks.add(futureLeakageCheck(improvementRuns,
-                runAll(fixtures.futureFlipped(improvement, leakageCutoff)),
-                runAll(fixtures.truncated(improvement, leakageCutoff)), leakageCutoff));
+        Map<ReplayArm, ReplayRun> flippedRuns = runAll(fixtures.futureFlipped(improvement, leakageCutoff));
+        Map<ReplayArm, ReplayRun> truncatedRuns = runAll(fixtures.truncated(improvement, leakageCutoff));
+        checks.add(futureLeakageCheck(improvementRuns, flippedRuns, truncatedRuns, leakageCutoff));
         ReplayFixture corrected = fixtures.lateCorrection(improvement, LATE_CORRECTION_TASK, LATE_CORRECTION_SLOTS);
-        checks.add(lateCorrectionCheck(improvementRuns, runAll(corrected), correctionPosition(corrected)));
-        checks.add(watermarkCheck(all));
+        Map<ReplayArm, ReplayRun> correctedRuns = runAll(corrected);
+        checks.add(lateCorrectionCheck(improvementRuns, correctedRuns, correctionPosition(corrected)));
+        // the mutated replays are held to the same watermark rule as the scenarios they were derived from
+        var watermarked = new ArrayList<>(all);
+        watermarked.addAll(List.of(flippedRuns, truncatedRuns, correctedRuns));
+        checks.add(watermarkCheck(watermarked));
 
         checks.add(derivedNotConsumedCheck(List.of(runs, improvementRuns, degradationRuns, caseRuns, chosenRuns)));
         checks.add(staticWiringCheck(workload, runs.get(ReplayArm.STATIC)));
@@ -291,9 +296,10 @@ public final class RoutingReplayEvaluation {
             List<ReplaySample> before = base.stream().filter(s -> s.cutoff() < cutoff).toList();
             if (!projections(before).equals(projections(mutated.stream().filter(s -> s.cutoff() < cutoff).toList()))
                     || !watermarks(before).equals(watermarks(mutated.stream().filter(s -> s.cutoff() < cutoff)
-                            .toList()))) {
+                            .toList()))
+                    || !visibleBefore(original.get(arm), cutoff).equals(visibleBefore(flipped.get(arm), cutoff))) {
                 failures.add(arm + ": flipping outcomes visible at or after " + cutoff
-                        + " changed an earlier decision");
+                        + " changed an earlier decision, its snapshot watermark or what it could see");
             }
             if (!prefix.equals(before)) {
                 failures.add(arm + ": the truncated replay differs from the prefix of the full replay");
@@ -305,8 +311,8 @@ public final class RoutingReplayEvaluation {
             failures.add("the mutation changed no later decision, so the comparison proves nothing");
         }
         return new Check("leakage.future-outcomes", failures.isEmpty(), failures.isEmpty()
-                ? "decisions and snapshot watermarks before " + cutoff + " are unchanged by flipped future outcomes and"
-                        + " equal a replay truncated there; later adaptive decisions did change"
+                ? "decisions, snapshot watermarks and visible deliveries before " + cutoff + " are unchanged by flipped"
+                        + " future outcomes and equal a replay truncated there; later adaptive decisions did change"
                 : String.join("; ", failures));
     }
 
@@ -316,8 +322,12 @@ public final class RoutingReplayEvaluation {
         for (ReplayArm arm : ReplayArm.values()) {
             var before = original.get(arm).samples().stream().filter(s -> s.cutoff() < position).toList();
             var after = corrected.get(arm).samples().stream().filter(s -> s.cutoff() < position).toList();
-            if (!projections(before).equals(projections(after))) {
-                failures.add(arm + ": a correction visible at " + position + " changed an earlier decision");
+            // an early delivery may leave every route unchanged, so what each decision saw is compared as well
+            if (!projections(before).equals(projections(after)) || !watermarks(before).equals(watermarks(after))
+                    || !visibleBefore(original.get(arm), position).equals(visibleBefore(corrected.get(arm),
+                            position))) {
+                failures.add(arm + ": a correction visible at " + position + " changed an earlier decision, its"
+                        + " snapshot watermark or what it could see");
             }
         }
         // The correction must actually have been processed, or nothing was tested.
@@ -326,7 +336,8 @@ public final class RoutingReplayEvaluation {
             failures.add("the adaptive arm never rebuilt, so the correction was not processed");
         }
         return new Check("leakage.late-correction", failures.isEmpty(), failures.isEmpty()
-                ? "decisions before the correction at " + position + " are unchanged; the adaptive arm rebuilt "
+                ? "decisions, snapshot watermarks and visible deliveries before the correction at " + position
+                        + " are unchanged; the adaptive arm rebuilt "
                         + rebuilds + " time(s) when it arrived"
                 : String.join("; ", failures));
     }
@@ -457,35 +468,43 @@ public final class RoutingReplayEvaluation {
     }
 
     /**
-     * No observed sample whose routed stage usage is incomplete ({@link ReplaySample#stageUsageIncomplete()}: unknown,
-     * not-measured or unrecorded {@code MEASURED} usage) reports a complete cost: the routed stage is part of the chain,
-     * so the chain cannot be fully covered (execution-memory contract v1 section 8). {@code NO_BILLABLE_USAGE} is
-     * complete.
+     * Cost reports are consistent with what was observed. No observed sample whose routed stage usage is incomplete
+     * ({@link ReplaySample#stageUsageIncomplete()}: unknown, not-measured or unrecorded {@code MEASURED} usage) reports a
+     * complete cost: the routed stage is part of the chain, so the chain cannot be fully covered (execution-memory
+     * contract v1 section 8). {@code NO_BILLABLE_USAGE} is complete. And no sample reports an {@code AVAILABLE} or
+     * {@code PARTIAL} cost to an accepted outcome without a validated acceptance: such a cost cannot exist.
      */
     static Check costCompletenessCheck(List<Map<ReplayArm, ReplayRun>> all) {
         int uncovered = 0;
         var failures = new ArrayList<String>();
+        var unaccepted = new ArrayList<String>();
         for (var runs : all) {
             for (ReplayRun run : runs.values()) {
                 for (ReplaySample sample : run.samples()) {
+                    ReplayCost.Status status = sample.chainCost().map(ReplayCost::status).orElse(null);
+                    if (status != null && status != ReplayCost.Status.UNAVAILABLE && !sample.validatedAccepted()) {
+                        unaccepted.add(run.arm() + " " + sample.decisionRef().executionId());
+                    }
                     if (!sample.stageUsageIncomplete()) {
                         continue;
                     }
                     uncovered++;
-                    if (sample.chainCost().map(ReplayCost::status).orElse(null) == ReplayCost.Status.AVAILABLE) {
+                    if (status == ReplayCost.Status.AVAILABLE) {
                         failures.add(run.arm() + " " + sample.decisionRef().executionId());
                     }
                 }
             }
         }
         // Consistency is vacuous if no sample with incomplete usage was ever observed.
-        boolean passed = uncovered > 0 && failures.isEmpty();
+        boolean passed = uncovered > 0 && failures.isEmpty() && unaccepted.isEmpty();
         return new Check("cost.completeness-consistent", passed, passed
                 ? uncovered + " observed samples with unknown, not-measured or unrecorded stage usage, none with an"
-                        + " AVAILABLE cost"
+                        + " AVAILABLE cost; no cost to an accepted outcome without a validated acceptance"
                 : uncovered == 0 ? "no observed sample had incomplete usage, so nothing was checked"
-                        : failures.size() + " complete costs despite incomplete usage: "
-                                + failures.subList(0, Math.min(5, failures.size())));
+                        : (failures.isEmpty() ? "" : failures.size() + " complete costs despite incomplete usage: "
+                                + failures.subList(0, Math.min(5, failures.size())) + "; ")
+                                + (unaccepted.isEmpty() ? "" : unaccepted.size() + " costs without a validated"
+                                        + " acceptance: " + unaccepted.subList(0, Math.min(5, unaccepted.size()))));
     }
 
     static Check rebuildCheck(List<RebuildEvidence> results) {
@@ -538,7 +557,7 @@ public final class RoutingReplayEvaluation {
             }
             ReplaySummary summary = ReplaySummary.of(run);
             // the chain is counted once per execution, however many of its stages were routed
-            long attempts = ReplaySummary.firstObservedPerExecution(run.samples()).stream()
+            long attempts = ReplaySummary.chainSamplePerExecution(run.samples()).stream()
                     .mapToLong(ReplaySample::attempts).sum();
             if (summary.chain().attempts() != attempts || summary.chain().rework() != 1) {
                 failures.add(run.arm() + ": chain attempts " + summary.chain().attempts() + " / rework "
@@ -648,7 +667,7 @@ public final class RoutingReplayEvaluation {
                 failures.add("an outcome was invented for " + sample.decisionRef().executionId());
             }
         }
-        if (adaptive.chain().executions() != ReplaySummary.firstObservedPerExecution(
+        if (adaptive.chain().executions() != ReplaySummary.chainSamplePerExecution(
                 runs.get(ReplayArm.ADAPTIVE).samples()).size()) {
             failures.add("chain figures do not count each observed execution exactly once");
         }
@@ -851,7 +870,7 @@ public final class RoutingReplayEvaluation {
 
     // ---- helpers ----
 
-    private static long correctionPosition(ReplayFixture fixture) {
+    static long correctionPosition(ReplayFixture fixture) {
         return fixture.tasks().stream()
                 .filter(t -> t.request().requestOrdinal() == LATE_CORRECTION_TASK)
                 .map(t -> ((OutcomeOracle.KnownForEveryRoute) t.oracle()).outcomes().values())
@@ -865,6 +884,15 @@ public final class RoutingReplayEvaluation {
 
     private static List<Long> watermarks(List<ReplaySample> samples) {
         return samples.stream().map(ReplaySample::stateCutoff).toList();
+    }
+
+    /**
+     * How many observations each decision decided before {@code cutoff} could see: the trace is index-aligned with
+     * the samples, which are in replay order, so these are its first entries.
+     */
+    private static List<Integer> visibleBefore(ReplayRun run, long cutoff) {
+        int decisions = (int) run.samples().stream().filter(s -> s.cutoff() < cutoff).count();
+        return Arrays.stream(run.decisions().visible()).limit(decisions).boxed().toList();
     }
 
     private static int count(ReplayRun run, Predicate<FeedbackEvent> predicate) {

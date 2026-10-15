@@ -244,6 +244,10 @@ public final class StoreReplayEvaluation {
                 require(reported.reasons().equals(store.reasons().stream().map(r -> r.code().name()).distinct()
                         .sorted().toList()), run.arm() + " " + execution + " reports reasons " + reported.reasons()
                         + ", the Store " + store.reasons());
+                // the Store and the replay must agree that a priced chain ended in a validated acceptance
+                require(reported.status() == ReplayCost.Status.UNAVAILABLE || sample.validatedAccepted(),
+                        run.arm() + " " + execution + " has a " + reported.status()
+                                + " cost but no validated acceptance");
                 if (run.arm() != ReplayArm.STATIC) {
                     continue;
                 }

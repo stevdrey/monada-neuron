@@ -105,6 +105,43 @@ class RoutingReplayEvaluationTest {
     }
 
     @Test
+    void anEarlyDeliveryThatChangesNoRouteStillFailsTheLateCorrectionCheck() {
+        var improvement = fixtures.improvement(24);
+        var original = runs(improvement, ReplayArm.values());
+        var corrected = fixtures.lateCorrection(improvement, RoutingReplayEvaluation.LATE_CORRECTION_TASK,
+                RoutingReplayEvaluation.LATE_CORRECTION_SLOTS);
+        var correctedRuns = runs(corrected, ReplayArm.values());
+        long position = RoutingReplayEvaluation.correctionPosition(corrected);
+        // the same decisions and watermarks, but decision 0 claims to have seen one more delivery
+        ReplayRun adaptive = correctedRuns.get(ReplayArm.ADAPTIVE);
+        DecisionTrace trace = adaptive.decisions();
+        int[] visible = trace.visible();
+        visible[0]++;
+        var early = new EnumMap<>(correctedRuns);
+        early.put(ReplayArm.ADAPTIVE, new ReplayRun(adaptive.arm(), adaptive.samples(), adaptive.feedback(),
+                adaptive.delivered(), new DecisionTrace(trace.routes(), trace.codes(), trace.watermarks(), visible),
+                adaptive.derivations(), adaptive.state()));
+        // and a snapshot watermark moved past an earlier decision's cutoff, again with every route unchanged
+        var moved = new EnumMap<>(correctedRuns);
+        moved.put(ReplayArm.ADAPTIVE, new ReplayRun(adaptive.arm(), adaptive.samples().stream()
+                .map(s -> s.cutoff() < position ? withStateCutoff(s, s.stateCutoff() + 1) : s).toList(),
+                adaptive.feedback(), adaptive.delivered(), trace, adaptive.derivations(), adaptive.state()));
+
+        assertAll(
+                () -> assertTrue(RoutingReplayEvaluation.lateCorrectionCheck(original, correctedRuns, position)
+                        .passed()),
+                () -> assertFalse(RoutingReplayEvaluation.lateCorrectionCheck(original, early, position).passed()),
+                () -> assertFalse(RoutingReplayEvaluation.lateCorrectionCheck(original, moved, position).passed()),
+                () -> assertFalse(RoutingReplayEvaluation.watermarkCheck(List.of(moved)).passed()));
+    }
+
+    private static ReplaySample withStateCutoff(ReplaySample s, long stateCutoff) {
+        return new ReplaySample(s.decisionRef(), s.stageKind(), s.cutoff(), stateCutoff, s.arm(), s.kind(), s.route(),
+                s.basis(), s.abstainReason(), s.coverage(), s.acceptance(), s.verdict(), s.provenFailures(),
+                s.attempts(), s.stageUsage(), s.usageDeclaration(), s.chainCost(), s.comparison());
+    }
+
+    @Test
     void theVisibilityCheckDoesNotPassOnANullEffect() {
         var flat = ReplaySummary.of(runs(fixtures.neutral(16), ReplayArm.STATIC).get(ReplayArm.STATIC));
         var improvement = runs(fixtures.improvement(24), ReplayArm.STATIC, ReplayArm.ADAPTIVE);
@@ -266,7 +303,7 @@ class RoutingReplayEvaluationTest {
                 () -> assertEquals(2, pairing.comparable()),
                 () -> assertEquals(1, pairing.incomparable()),
                 () -> assertEquals(Map.of("context", 1), pairing.incomparableBy()),
-                () -> assertEquals(ReplaySummary.firstObservedPerExecution(runs.get(ReplayArm.ADAPTIVE).samples())
+                () -> assertEquals(ReplaySummary.chainSamplePerExecution(runs.get(ReplayArm.ADAPTIVE).samples())
                         .size(), ReplaySummary.of(runs.get(ReplayArm.ADAPTIVE)).chain().executions()));
     }
 

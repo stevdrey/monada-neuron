@@ -120,7 +120,8 @@ public record ReplaySummary(
     }
 
     /**
-     * Whole-chain figures, counted once per execution.
+     * Whole-chain figures, counted once per execution from its terminal observed sample (the latest in replay order,
+     * which knows the most about the chain).
      *
      * @param executions observed executions
      * @param attempts attempts over them; a {@code long}, which cannot overflow: at most
@@ -129,6 +130,8 @@ public record ReplaySummary(
      * @param costStatus executions per cost status
      * @param available sum of complete costs per currency
      * @param partialLowerBound sum of partial costs per currency; a lower bound, never mixed with {@code available}
+     * @param costWithoutValidatedAcceptance executions reporting an {@code AVAILABLE} or {@code PARTIAL} cost to an
+     *        accepted outcome without a validated acceptance: an inconsistent cost, counted here and never summed
      */
     public record ChainFigures(
             int executions,
@@ -136,7 +139,8 @@ public record ReplaySummary(
             long rework,
             SortedMap<String, Integer> costStatus,
             SortedMap<String, BigDecimal> available,
-            SortedMap<String, BigDecimal> partialLowerBound) {
+            SortedMap<String, BigDecimal> partialLowerBound,
+            int costWithoutValidatedAcceptance) {
 
         /** Copies the maps. */
         public ChainFigures {
@@ -195,18 +199,19 @@ public record ReplaySummary(
     }
 
     /**
-     * The first observed sample of each execution (scope, task and execution), in replay order: the one sample that
-     * carries an execution's whole-chain facts, so they are counted once however many of its stages were routed.
+     * The terminal observed sample of each execution (scope, task and execution): the latest in replay order, which
+     * knows the most about the chain (a later attempt sees the repair and the acceptance an earlier one could not).
+     * It alone carries the execution's whole-chain facts, so they are counted once however many of its stages were
+     * routed. Executions are listed in the order they first appear, so iteration is deterministic.
      */
-    static List<ReplaySample> firstObservedPerExecution(List<ReplaySample> samples) {
-        Set<ExecutionKey> seen = new HashSet<>();
-        var first = new ArrayList<ReplaySample>();
+    static List<ReplaySample> chainSamplePerExecution(List<ReplaySample> samples) {
+        var terminal = new LinkedHashMap<ExecutionKey, ReplaySample>();
         for (ReplaySample sample : samples) {
-            if (sample.coverage() == ReplaySample.Coverage.OBSERVED && seen.add(executionKey(sample))) {
-                first.add(sample);
+            if (sample.coverage() == ReplaySample.Coverage.OBSERVED) {
+                terminal.put(executionKey(sample), sample);
             }
         }
-        return first;
+        return List.copyOf(terminal.values());
     }
 
     private static ExecutionKey executionKey(ReplaySample sample) {
@@ -221,7 +226,8 @@ public record ReplaySummary(
         var status = new TreeMap<String, Integer>();
         var available = new TreeMap<String, BigDecimal>();
         var partial = new TreeMap<String, BigDecimal>();
-        for (ReplaySample sample : firstObservedPerExecution(samples)) {
+        int withoutAcceptance = 0;
+        for (ReplaySample sample : chainSamplePerExecution(samples)) {
             executions++;
             attempts += sample.attempts();
             rework += sample.attempts() - 1;
@@ -232,13 +238,16 @@ public record ReplaySummary(
                 case PARTIAL -> partial;
                 case UNAVAILABLE -> null;
             };
-            if (target != null) {
+            if (target != null && !sample.validatedAccepted()) {
+                // a cost to an accepted outcome exists only once there is one: reported, never summed
+                withoutAcceptance++;
+            } else if (target != null) {
                 for (Money amount : cost.amounts()) {
                     target.merge(amount.currency(), amount.amount(), BigDecimal::add);
                 }
             }
         }
-        return new ChainFigures(executions, attempts, rework, status, available, partial);
+        return new ChainFigures(executions, attempts, rework, status, available, partial, withoutAcceptance);
     }
 
     private static Pairing pairing(List<ReplaySample> samples) {
@@ -303,6 +312,8 @@ public record ReplaySummary(
         lines.put(prefix + "chain.rework", Long.toString(chain.rework()));
         chain.costStatus().forEach((k, v) -> lines.put(prefix + "chain.cost.status." + k, Integer.toString(v)));
         chain.available().forEach((k, v) -> lines.put(prefix + "chain.cost.available." + k, v.toPlainString()));
+        lines.put(prefix + "chain.cost.withoutValidatedAcceptance",
+                Integer.toString(chain.costWithoutValidatedAcceptance()));
         chain.partialLowerBound().forEach((k, v) -> lines.put(prefix + "chain.cost.partialLowerBound." + k,
                 v.toPlainString()));
         lines.put(prefix + "pairs.comparable", Integer.toString(pairing.comparable()));

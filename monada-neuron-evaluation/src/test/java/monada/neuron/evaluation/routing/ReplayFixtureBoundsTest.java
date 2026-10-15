@@ -4,6 +4,7 @@ import monada.neuron.routing.LexicographicRoutingPolicy;
 import monada.neuron.routing.adaptation.StatePartition;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.routing.feedback.RebuildOrder;
 import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.outcome.EvidencePolicy;
 import monada.neuron.routing.outcome.Money;
@@ -20,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -271,6 +273,43 @@ class ReplayFixtureBoundsTest {
                 () -> assertEquals(List.of(reread), chosen(logged, revision0, reread).observed()),
                 () -> assertEquals(List.of(reread), chosen(logged, reread, revision0).observed()),
                 () -> assertThrows(IllegalArgumentException.class, () -> chosen(logged, revision0, otherClaim)));
+    }
+
+    @Test
+    void theObservationBoundCountsWhatATaskCanActuallyDeliver() {
+        var logged = fixtures.chosenRouteOnly(2);
+        ReplayTask first = logged.tasks().getFirst();
+        var oracle = (OutcomeOracle.ChosenRouteOnly) first.oracle();
+        RoutingObservation revision0 = oracle.observed().getFirst();
+        long l0 = revision0.ledgerSequence();
+        // 4,095 logged revisions of one sample
+        var revisions = new ArrayList<RoutingObservation>();
+        revisions.add(revision0);
+        for (int r = 1; r < RebuildOrder.MAX_OBSERVATIONS - 1; r++) {
+            revisions.add(revision(revision0, r, l0 + r, l0));
+        }
+        var tasks = new ArrayList<>(logged.tasks());
+        tasks.set(0, new ReplayTask(first.request(), first.catalog(),
+                new OutcomeOracle.ChosenRouteOnly(oracle.loggedDecision(), revisions, oracle.chain())));
+        // plus one synthetic task whose outcomes have no correction: it can deliver one observation, not two
+        ReplayTask synthetic = fixtures.improvement(3).tasks().get(2);
+        tasks.add(synthetic);
+        var known = (OutcomeOracle.KnownForEveryRoute) synthetic.oracle();
+        var corrected = new TreeMap<RouteKey, ScriptedOutcome>();
+        known.outcomes().forEach((route, outcome) -> corrected.put(route, outcome.corrected(
+                new ScriptedOutcome.Correction(outcome.observedAt() + 10, OutcomeStatus.REJECTED,
+                        Map.of(QualityDimension.TESTS, QualityState.FAIL, QualityDimension.SECURITY, QualityState.PASS),
+                        new ChainOutcome(1, ReplayCost.unavailable("NO_VALIDATED_ACCEPTANCE"))))));
+        var withCorrection = new ArrayList<>(tasks);
+        withCorrection.set(withCorrection.size() - 1, new ReplayTask(synthetic.request(), synthetic.catalog(),
+                new OutcomeOracle.KnownForEveryRoute(corrected)));
+
+        assertAll(
+                // exactly 4,096 possible observations
+                () -> assertEquals(3, logged.withTasks("at-bound", tasks).tasks().size()),
+                // a correction makes it 4,097
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> logged.withTasks("over-bound", withCorrection)));
     }
 
     @Test

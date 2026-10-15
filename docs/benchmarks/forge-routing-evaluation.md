@@ -127,7 +127,8 @@ task carries:
 - A scripted repair chain is never attributed `STAGE_LOCAL` (contract `StageAttribution`), so a repair's evidence
   cannot credit the routed route.
 - Cohorts are bounded at ≤ 256.
-- Observations are bounded at ≤ 4096, so a full rebuild stays possible.
+- Observations are bounded at ≤ 4096, so a full rebuild stays possible. A synthetic task counts as the most it can
+  deliver (one, or two when a route's outcome has a correction); a logged task counts its listed revisions.
 
 **Order and timing.**
 - **Decision order.** Tasks are decided in total order: cutoff first, then `requestOrdinal` (the caller's issuance
@@ -254,7 +255,9 @@ token table shared with the Store arm:
 | Unknown-usage chain repaired | 900 / unknown, plus repair | `PARTIAL` lower bound 0.0450 (the repair attempt's known cost is kept) |
 | Two-currency chain | 1200 / 300 | 0.0420 USD and 0.0390 EUR, never summed together |
 
-A correction keeps its chain's attempts: correcting a repaired acceptance to a rejection leaves two attempts.
+A correction keeps its chain's attempts: correcting a repaired acceptance to a rejection leaves two attempts. A scripted
+outcome or correction carries a priced chain only for a (validated) acceptance; anything else is rejected at
+construction, as the Store prices only accepted outcomes.
 
 `ReplayCost` mirrors the Store's `CostToAcceptedOutcome` invariants and is never stricter: an unavailable cost has no
 amount, each currency appears at most once and no amount or reason is null, but the number of currencies is not capped
@@ -278,9 +281,9 @@ derived, and unchanged earlier decisions are rejected as evidence when the mutat
 | Check | Verified |
 | :--- | :--- |
 | `replay.deterministic` | Two replays of freshly built fixtures give identical fixture, decision, feedback, learned-state and report digests and sample order. |
-| `leakage.future-outcomes` | Flipping every outcome or correction visible at or after task 6's cutoff, including usage and cost, leaves every earlier decision and snapshot watermark unchanged. A replay truncated there equals the prefix of the full replay. Later adaptive decisions do change. |
-| `leakage.late-correction` | A correction visible six slots later changes no earlier decision; the adaptive arm rebuilt when it arrived. |
-| `leakage.snapshot-watermark` | Every decision read a snapshot that examined nothing after its inclusive cutoff, and every adaptive snapshot is the state as of its cutoff (the other arms read none). |
+| `leakage.future-outcomes` | Flipping every outcome or correction visible at or after task 6's cutoff, including usage and cost, leaves every earlier decision, snapshot watermark and count of visible deliveries unchanged. A replay truncated there equals the prefix of the full replay. Later adaptive decisions do change. |
+| `leakage.late-correction` | A correction visible six slots later changes no earlier decision, snapshot watermark or count of visible deliveries, so an early delivery that leaves every route unchanged still fails; the adaptive arm rebuilt when it arrived. |
+| `leakage.snapshot-watermark` | Every decision, in the scenarios and in their flipped, truncated and late-corrected replays, read a snapshot that examined nothing after its inclusive cutoff, and every adaptive snapshot is the state as of its cutoff (the other arms read none). |
 | `control.derived-not-consumed-equals-static` | Same decision sequence on every fixture, with feedback derived. |
 | `control.static-wiring` | The control arm is wired as one: its decisions equal the policy's over `RoutingPreference.empty`, it keeps no state, delivers and derives nothing, and selects only by `COLD_START` or `HOST_PRIORITY`. The expected decisions come from the same policy, so this checks the harness, not #62's behavior, which #62's own tests cover. |
 | `control.neutral-feedback-leaves-state-unchanged` | Neutral-only consumption leaves cohort Nodes and support equal to the reset baseline, and decisions equal static. |
@@ -291,7 +294,7 @@ derived, and unchanged earlier decisions are rejected as evidence when the mutat
 | `cases.unknown-usage` | Unknown and not-measured counters are counted as such, not as zero; the cost is a separate `PARTIAL` lower bound of 0.0135 USD. |
 | `cases.incomparable-context-and-stage` | The same task under two context fingerprints, and the same task routed for two stages, are incomparable pairs (`context`, `stageKind`); identical keys form the only comparable pair. |
 | `cases.currencies-not-summed` | Complete costs are summed per currency only. |
-| `cost.completeness-consistent` | Across every fixture and arm, no observed sample whose routed-stage usage is incomplete reports an `AVAILABLE` cost (252 such samples in the full run). Incomplete means `MEASURED` with an unknown or not-measured counter, or with no counter at all (unrecorded); a declared `NO_BILLABLE_USAGE` is complete. |
+| `cost.completeness-consistent` | Across every fixture and arm, no observed sample whose routed-stage usage is incomplete reports an `AVAILABLE` cost (252 such samples in the full run), and no sample reports an `AVAILABLE` or `PARTIAL` cost to an accepted outcome without a validated acceptance. Incomplete means `MEASURED` with an unknown or not-measured counter, or with no counter at all (unrecorded); a declared `NO_BILLABLE_USAGE` is complete. |
 | `cases.abstention-and-no-eligible-route` | A tier-capped stage abstains, an unserved stage has no eligible route, and both are `NOT_EXECUTED`. |
 | `cases.missing-counterfactual` | Adaptive choices of a route the log never executed are reported as coverage gaps with no outcome; an executed but unexported outcome is `UNOBSERVED`; chain figures count each observed execution exactly once. |
 | `adaptation.improvement-and-degradation-visible` | On fixtures whose direction is known, the report shows both an improvement (+16 validated acceptances) and a degradation (−5). This tests the harness's sensitivity. No improvement is required on the measured workload. |
@@ -310,8 +313,8 @@ The `store.*` checks cover:
 - missing counterfactuals;
 - Store costs reaching every observed sample unchanged, compared field by field (status, each currency amount and each
   reason code) with the Store's own `CostToAcceptedOutcome`, not through the export's mapping, and the accepted amount
-  recomputed from the token table and prices; counts are over observed samples only (4 `AVAILABLE`, 11
-  `UNAVAILABLE`);
+  recomputed from the token table and prices; a priced cost only on a sample the replay also found validated-accepted;
+  counts are over observed samples only (4 `AVAILABLE`, 11 `UNAVAILABLE`);
 - incremental state equal to a rebuild.
 
 The Store report records the Neuron and Store commits (`neuron.commit`, `store.commit`) beside its export digest.
@@ -332,11 +335,14 @@ reported per routed stage kind and in total.
 - feedback per score rule or no-update reason, state updates, credits and eligibility violations.
 
 **Chain figures** are whole-execution facts, reported once per execution, identified by scope, task and execution, and
-never per stage or route:
+never per stage or route. They come from the execution's terminal observed sample, the latest in replay order, which
+knows the most about the chain (a later attempt sees the repair and the acceptance an earlier one could not):
 - attempts and rework;
 - cost status counts;
 - the per-currency sum of `AVAILABLE` costs;
-- the per-currency `PARTIAL` lower bound.
+- the per-currency `PARTIAL` lower bound;
+- `withoutValidatedAcceptance`: executions reporting an `AVAILABLE` or `PARTIAL` cost to an accepted outcome without a
+  validated acceptance. Such a cost cannot exist, so it is counted here and never summed; it is 0 on every fixture.
 
 **Pairing** reports directly comparable versus incomparable pairs of observed executions of one task, with the
 differing fields named. A pair needs two different executions: two observations of one execution, such as two routed
@@ -389,21 +395,32 @@ mode.
 
 | Benchmark | Scale | Mean per iteration | p95 per iteration | Mean per decision (derived) | Alloc per decision |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `RoutingReplay.static` | 960 tasks | 6.75 ms | 7.19 ms | 7.0 µs | 6.54 KB |
-| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 19.49 ms | 22.16 ms | 20.3 µs | 18.63 KB |
-| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 358.12 ms | 382.92 ms | 373.0 µs | 358.05 KB |
-| `StoreRoutingReplay.static` | 16 exported tasks | 1.08 ms | 1.46 ms | 67.2 µs | 8.78 KB |
-| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks, 2 cohorts | 2.62 ms | 3.91 ms | 163.6 µs | 16.97 KB |
-| `StoreRoutingReplay.adaptive` | 16 exported tasks, 2 cohorts | 3.92 ms | 4.61 ms | 245.3 µs | 20.99 KB |
+| `RoutingReplay.static` | 960 tasks | 20.91 ms | 22.41 ms | 21.8 µs | 6.89 KB |
+| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 30.24 ms | 45.25 ms | 31.5 µs | 17.10 KB |
+| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 341.51 ms | 363.03 ms | 355.7 µs | 352.37 KB |
+| `StoreRoutingReplay.static` | 16 exported tasks | 0.79 ms | 0.99 ms | 49.5 µs | 8.37 KB |
+| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks, 2 cohorts | 1.71 ms | 2.25 ms | 106.7 µs | 15.24 KB |
+| `StoreRoutingReplay.adaptive` | 16 exported tasks, 2 cohorts | 2.39 ms | 2.86 ms | 149.3 µs | 18.97 KB |
 
-These are single runs on one machine under a load average of about 5 from other work on it. Earlier runs of this
-harness are not comparable with these rows: they timed the generation of synthetic observations (a SHA-256 per
-observation) in the derived-not-consumed and adaptive windows only, and re-derived every delivered observation on each
-adaptive rebuild. Every arm now reuses generated observations, and a rebuild reuses each observation's delivery-time
-derivation, so the derived-not-consumed and adaptive rows measure deriving and consuming feedback, not the harness's
-hashing. The static row now includes the same observation lookups the other arms make. Differences of a few
-milliseconds between runs are noise, not a trend. The Store per-decision figures include a fixed per-iteration cost (a
-fresh state and bindings, for the arms that keep state) spread over only 16 decisions.
+These are single runs on one machine. **The static and derived-not-consumed rows are dominated by JIT warm-up, not by
+the replay.** Three warm-up iterations of a 10–30 ms replay are not enough for the compiler to finish, so these rows
+move by a factor of two between runs and between builds that do not change the timed path:
+- in five interleaved runs against the previous head, static ranged from 7.4 to 20.9 ms and derived-not-consumed from
+  13.7 to 35.1 ms;
+- a steady-state probe (200 unrecorded replays after one reference run, median of the last 50) put both builds in the
+  same range: static 2.6–6.3 ms and derived-not-consumed 8.5–14.2 ms.
+
+Read them as an upper bound on the harness cost of those arms, not as their steady-state cost. The adaptive row
+(hundreds of milliseconds per iteration) is far less sensitive.
+
+Earlier runs of this harness are not comparable with these rows either:
+- they timed the generation of synthetic observations (a SHA-256 per observation) in the derived-not-consumed and
+  adaptive windows only;
+- they re-derived every delivered observation on each adaptive rebuild.
+
+Every arm now reuses generated observations, and a rebuild reuses each observation's delivery-time derivation. The
+Store per-decision figures include a fixed per-iteration cost (a fresh state and bindings, for the arms that keep
+state) spread over only 16 decisions.
 
 Modeled retained state at the end of the workload: 0 B for static, 8,000 B for derived-not-consumed (20 cohorts) and
 326,500 B for adaptive (20 cohorts plus 910 ledger entries). This is a model, not a measurement.
@@ -443,18 +460,18 @@ Observations, not conclusions:
   (below), not a claim that they are needed at production scale.
 - **Unvalidated reference values.** The reference adaptive values (`adaptive-routing-state/1`) are untuned. The drift
   scenario shows they can follow stale rewards for five tasks. Nothing here validates them.
-- **Measurement noise.** Latency and allocation are single-machine figures over small fixtures. RSS deltas are dominated
-  by JIT and GC noise.
+- **Measurement noise.** Latency and allocation are single-machine figures over small fixtures, with a fixed and short
+  warm-up that the light arms outrun (see above). RSS deltas are dominated by JIT and GC noise.
 
 ## Reproducibility
 
 | Digest | Value |
 | :--- | :--- |
 | `fixture.workload.digest` (full) | `ee12cd4011940977f6ca2e3281463f56c97af47d35bf3a7b9a0375c119f682e0` |
-| `workload.reportDigest` (full) | `81c677feac6715e3ae7bfed2b0cc214c5de7b057bff7bc6a93362a0dc21fa2ef` |
+| `workload.reportDigest` (full) | `b6576ce929214606a9a5c4905a73ca44b98a7322877721190cea52021c59a6aa` |
 | `store.fixtureDigest` | `f5bf198512de8f50749858b30d3c53784e3c222fd7851e32f9355d0f95b73302` |
 | `store.exportDigest` (Store tooling) | `f11276157baf9565a14ea07a386502ac8c5a8b3656a6744fb2861f00b4ae2ee8` |
-| `store.reportDigest` | `954d5e7a0882298746c160fdf1001a5b0469d75d3fc6bc88bdf7ee22b8cb4d74` |
+| `store.reportDigest` | `2ce3cca46803be0e404ea5d696888c893e24648fec12bac7692f76c6e644d72e` |
 
 - **Digests.** All are SHA-256 over a canonical, typed, length-prefixed encoding (`CanonicalEncoder`), never over
   `toString`:

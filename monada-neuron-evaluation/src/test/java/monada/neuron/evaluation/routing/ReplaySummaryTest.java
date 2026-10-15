@@ -1,7 +1,11 @@
 package monada.neuron.evaluation.routing;
 
+import monada.neuron.routing.DecisionRef;
 import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.routing.outcome.Money;
+import monada.neuron.routing.outcome.QualityDimension;
+import monada.neuron.routing.outcome.ResourceSummary;
 import monada.neuron.routing.outcome.UsageCounter;
 import monada.neuron.routing.outcome.UsageKind;
 import org.junit.jupiter.api.Test;
@@ -11,10 +15,13 @@ import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ReplaySummaryTest {
@@ -108,6 +115,56 @@ class ReplaySummaryTest {
         assertAll(
                 () -> assertEquals(2L * Integer.MAX_VALUE, chain.attempts()),
                 () -> assertEquals(2L * (Integer.MAX_VALUE - 1), chain.rework()));
+    }
+
+    @Test
+    void anExecutionsChainFactsComeFromItsTerminalSample() {
+        ReplayRun run = new TemporalReplay(fixtures.cases()).run(ReplayArm.STATIC);
+        ReplaySample repaired = run.samples().stream().filter(s -> s.decisionRef().taskId().equals("task-repair"))
+                .findFirst().orElseThrow();
+        // an earlier routed attempt of the same execution, before its repair was accepted: one attempt, no cost yet
+        var ref = repaired.decisionRef();
+        var earlier = new ReplaySample(new DecisionRef(ref.scopeId(), ref.taskId(), ref.executionId(), "att-0",
+                ref.stageId(), ref.requestOrdinal() - 1), repaired.stageKind(), repaired.cutoff(),
+                repaired.stateCutoff(), repaired.arm(), repaired.kind(), repaired.route(), repaired.basis(),
+                repaired.abstainReason(), repaired.coverage(), repaired.acceptance(), repaired.verdict(),
+                repaired.provenFailures(), 1, repaired.stageUsage(), repaired.usageDeclaration(),
+                Optional.of(ReplayCost.unavailable("NO_VALIDATED_ACCEPTANCE")), repaired.comparison());
+        var chain = ReplaySummary.of(new ReplayRun(ReplayArm.STATIC, List.of(earlier, repaired), List.of(), List.of(),
+                run.decisions(), run.derivations(), run.state())).chain();
+
+        assertAll(
+                () -> assertEquals(1, chain.executions()),
+                () -> assertEquals(2L, chain.attempts()),
+                () -> assertEquals(Map.of("AVAILABLE", 1), chain.costStatus()),
+                () -> assertEquals(0, new BigDecimal("0.0735").compareTo(chain.available().get("USD"))));
+    }
+
+    @Test
+    void aCostWithoutAValidatedAcceptanceIsReportedButNeverSummed() {
+        ReplayRun run = new TemporalReplay(fixtures.cases()).run(ReplayArm.STATIC);
+        // the cheap invalid task was not accepted, but this copy claims a complete cost to an accepted outcome
+        var samples = run.samples().stream().map(s -> !s.decisionRef().taskId().equals("task-cheap") ? s
+                : new ReplaySample(s.decisionRef(), s.stageKind(), s.cutoff(), s.stateCutoff(), s.arm(), s.kind(),
+                        s.route(), s.basis(), s.abstainReason(), s.coverage(), s.acceptance(), s.verdict(),
+                        s.provenFailures(), s.attempts(), s.stageUsage(), s.usageDeclaration(),
+                        Optional.of(ReplayCost.available(new Money(new BigDecimal("9.0000"), "USD"))),
+                        s.comparison())).toList();
+        var inconsistent = new ReplayRun(ReplayArm.STATIC, samples, List.of(), List.of(), run.decisions(),
+                run.derivations(), run.state());
+        var original = ReplaySummary.of(run).chain();
+        var chain = ReplaySummary.of(inconsistent).chain();
+
+        assertAll(
+                () -> assertEquals(0, original.costWithoutValidatedAcceptance()),
+                () -> assertEquals(1, chain.costWithoutValidatedAcceptance()),
+                () -> assertEquals(original.available(), chain.available()),
+                () -> assertFalse(RoutingReplayEvaluation.costCompletenessCheck(
+                        List.of(Map.of(ReplayArm.STATIC, inconsistent))).passed()),
+                // the producer never builds one: a rejected scripted outcome cannot carry a priced chain
+                () -> assertThrows(IllegalArgumentException.class, () -> ScriptedOutcome.failing(10,
+                        SyntheticRoutingFixtures.GATES, QualityDimension.TESTS, ResourceSummary.unrecorded(),
+                        new ChainOutcome(1, ReplayCost.available(new Money(BigDecimal.ONE, "USD"))))));
     }
 
     @Test

@@ -103,8 +103,11 @@ public record ReplayFixture(
                     || !request.evaluationPolicyVersion().equals(partition.evaluationPolicyVersion())) {
                 throw new IllegalArgumentException(request.executionId() + " is outside partition " + partition);
             }
+            // the most a task can deliver: a synthetic task executes one route, an original plus its correction if any
+            // route's outcome has one; a logged task delivers exactly its listed revisions
             observations += switch (task.oracle()) {
-                case OutcomeOracle.KnownForEveryRoute known -> known.outcomes().isEmpty() ? 0 : 2;
+                case OutcomeOracle.KnownForEveryRoute known -> known.outcomes().isEmpty() ? 0
+                        : known.outcomes().values().stream().anyMatch(o -> o.correction().isPresent()) ? 2 : 1;
                 case OutcomeOracle.ChosenRouteOnly logged -> logged.observed().size();
             };
         }
