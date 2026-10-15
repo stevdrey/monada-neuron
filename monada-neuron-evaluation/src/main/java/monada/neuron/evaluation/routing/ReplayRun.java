@@ -43,12 +43,16 @@ public record ReplayRun(
      * @param checkpoints checkpoints taken
      * @param compactions compactions that dropped at least one entry
      * @param compactedEntries ledger entries dropped by compaction
+     * @param keptCheckpoints checkpoints still kept when the run ended
+     * @param keptCheckpointCohorts cohorts held by those checkpoints together
+     * @param keptCheckpointMarkers retained markers held by those checkpoints together
      */
     public record RebuildStats(RebuildStrategy strategy, int rebuilds, int fromCheckpoint, long replayedObservations,
-            int checkpoints, int compactions, int compactedEntries) {
+            int checkpoints, int compactions, int compactedEntries, int keptCheckpoints, int keptCheckpointCohorts,
+            int keptCheckpointMarkers) {
 
         /** No rebuild work: a run that never rebuilt from scratch. */
-        public static final RebuildStats NONE = new RebuildStats(RebuildStrategy.SCRATCH, 0, 0, 0L, 0, 0, 0);
+        public static final RebuildStats NONE = new RebuildStats(RebuildStrategy.SCRATCH, 0, 0, 0L, 0, 0, 0, 0, 0, 0);
 
         /** Requires the strategy. */
         public RebuildStats {

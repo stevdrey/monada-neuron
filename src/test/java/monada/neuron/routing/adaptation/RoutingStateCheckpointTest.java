@@ -191,6 +191,50 @@ class RoutingStateCheckpointTest {
     }
 
     @Test
+    void aCoveredDeliveryIsStillValidatedAgainstItsDerivation() {
+        var live = bound();
+        var first = sample("exp-1", "sub-a", 20, Kind.PASS);
+        var second = sample("exp-2", "sub-b", 30, Kind.PASS);
+        deliverTo(live, first);
+        deliverTo(live, second);
+        live.compact(confirmedCheckpoint(live));
+
+        // a derivation of another sample is inconsistent caller data, compacted or not
+        var mismatched = AdaptationFixtures.derive(live, second, decisions.get("exp-2"), requests.get("exp-2"));
+        assertThrows(IllegalArgumentException.class, () -> live.consume(first, mismatched));
+        assertEquals(new StateUpdate.BeyondCheckpoint(StateUpdate.BeyondCheckpoint.Kind.COVERED, 30, 20),
+                deliverTo(live, first));
+    }
+
+    @Test
+    void aRestoredSupportCountSaturatesInsteadOfWrapping() {
+        var live = bound();
+        deliverTo(live, sample("exp-1", "sub-a", 20, Kind.PASS));
+        var valid = confirmedCheckpoint(live);
+        // a persisted checkpoint may legally hold the largest count its digest accounts for
+        var saturated = new ArrayList<CheckpointCohort>();
+        for (CheckpointCohort cohort : valid.preferenceSnapshot()) {
+            saturated.add(cohort.key().equals(KEY_A) ? new CheckpointCohort(cohort.key(), cohort.amplitude(),
+                    cohort.frequency(), cohort.phase(), cohort.energy(), Integer.MAX_VALUE) : cohort);
+        }
+        var checkpoint = new RoutingStateCheckpoint(valid.scopeId(), valid.featureSchemaVersion(),
+                valid.evaluationPolicyId(), valid.evaluationPolicyVersion(), valid.mappingVersion(), valid.policyId(),
+                valid.policyVersion(), valid.processedCutoff(), saturated,
+                new LedgerDigest(Integer.MAX_VALUE, valid.ledgerDigest().sum()), valid.retainedMarkers());
+
+        var later = sample("exp-2", "sub-a", 40, Kind.PASS);
+        var restored = assertInstanceOf(RebuildResult.Rebuilt.class, rebuildFrom(live, checkpoint, List.of(later), 40))
+                .store();
+        var cohort = restored.cohorts(demo()).getFirst();
+        assertEquals(Integer.MAX_VALUE, cohort.supportingObservations());
+        // the reward was applied: 5.6 moves toward 7.84 and is clamped at the definition's maximum amplitude
+        assertEquals(6.0, cohort.amplitude(), 1e-12);
+        assertEquals(Integer.MAX_VALUE, restored.snapshot(policy(), demo()).cohorts().getFirst().supportingObservations());
+        assertEquals(Integer.MAX_VALUE, restored.checkpoint(policy()).preferenceSnapshot().getFirst()
+                .supportingObservations());
+    }
+
+    @Test
     void aCheckpointNeedsAConfirmedWatermarkSoALateSampleIsNeverLost() {
         var live = bound();
         // observations may arrive out of order: the neutral sample at 100 moves the watermark past a missing one at 50

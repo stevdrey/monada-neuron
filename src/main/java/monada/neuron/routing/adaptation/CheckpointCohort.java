@@ -15,7 +15,8 @@ import java.util.Objects;
  * @param frequency Node frequency, finite
  * @param phase Node phase, finite
  * @param energy Node energy, finite
- * @param supportingObservations applied observations that moved the Node, non-negative
+ * @param supportingObservations applied observations that moved the Node, non-negative; a store saturates the count at
+ *        {@code Integer.MAX_VALUE} rather than wrapping
  */
 public record CheckpointCohort(
         CohortKey key, double amplitude, double frequency, double phase, double energy, int supportingObservations) {

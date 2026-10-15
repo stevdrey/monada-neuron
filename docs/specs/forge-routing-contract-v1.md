@@ -1702,7 +1702,9 @@ data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value
     the **compaction horizon**.
   - The Nodes, support counts, watermark and `ledgerDigest()` do not change.
   - Compacting with an older checkpoint keeps newer entries reconcilable; compacting with the newest empties the ledger.
-- **Horizon rules (compacted stores only)**, after the partition checks of Section 22.2:
+- **Horizon rules (compacted stores only)**, after the partition checks of Section 22.2 and after the reconciler has
+  validated the derivation against the observation and the ledger, so inconsistent caller data is rejected exactly as in
+  an uncompacted store. A horizon rule then overrides the reconciler's advice:
   - a revision whose `supersedesSequence` is at or below the horizon is `SUPERSEDES_COMPACTED`, wherever its own
     sequence lies, when its sample's entry was compacted or when it is newer than the sample's retained marker. This is
     Section 7's rule that a superseded revision at or before the cutoff invalidates the checkpoint. The compacted ledger
@@ -1773,7 +1775,12 @@ Both rows reach the same decision trace, deliveries, derivations and state diges
 - starts 50 of the 51 rebuilds from a checkpoint;
 - compacts 31 entries explicitly; restores also shrink the ledger.
 
-**Modeled, not measured**: a checkpoint is about 64 bytes per cohort plus its markers and digest.
+**Modeled, not measured**: a checkpoint is about 64 bytes per cohort plus its markers (modeled like ledger entries,
+about 350 bytes each) and its digest.
+
+**Support saturates.** A cohort's support count stops at `Integer.MAX_VALUE` instead of wrapping. A persisted
+checkpoint may legally hold that value, and support is only compared against small minimums, so a full count cannot
+change a decision. A rebuild from scratch, at most 4,096 observations, never reaches it.
 
 ### 23.5 Verification
 
@@ -1808,6 +1815,8 @@ Both rows reach the same decision trace, deliveries, derivations and state diges
 - a checkpoint refused while an out-of-order sample is still missing below the watermark, and taken once the late
   sample is applied and the watermark is confirmed;
 - a whole export of 4,097 observations restored from a checkpoint, only its tail counted against the rebuild bound;
+- a covered delivery whose derivation answers another sample rejected, as in an uncompacted store;
+- a restored support count of `Integer.MAX_VALUE` that saturates on the next reward;
 - `STALE`, `BEHIND_HORIZON` and `CREDITS_UNBOUND_COHORT`;
 - a rebind of a compacted cohort refused until a rebuild from the checkpoint;
 - retained retryable markers with a conservative bind refusal and `BEFORE_HORIZON`;

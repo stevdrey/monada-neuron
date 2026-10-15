@@ -314,6 +314,9 @@ public final class RoutingStateStore {
         if (!foreign.isEmpty()) {
             return new StateUpdate.ForeignPartition(foreign);
         }
+        // reconciled first even when a horizon rule answers: it validates that the derivation answers the observation
+        // and agrees with the ledger, so inconsistent caller data is rejected exactly as in an uncompacted store
+        Reconciliation advice = reconciler.reconcile(ledgerView, observation, derivation);
         long horizon = compactedTo == null ? -1 : compactedTo.processedCutoff();
         if (horizon >= 0) {
             AppliedRevision retained = ledger.get(observation.experienceRef());
@@ -332,7 +335,6 @@ public final class RoutingStateStore {
                         observation.ledgerSequence());
             }
         }
-        Reconciliation advice = reconciler.reconcile(ledgerView, observation, derivation);
         // the compacted entries after this position are invisible to the reconciler, so it cannot place it in order
         if (observation.ledgerSequence() <= horizon
                 && (advice instanceof Reconciliation.Apply || advice instanceof Reconciliation.RecordOnly)) {
@@ -348,7 +350,9 @@ public final class RoutingStateStore {
                 for (FeedbackInput input : feedback.toFeedbackInputs()) {
                     adaptation.adapt(target.node, input);
                 }
-                if (target != null) {
+                if (target != null && target.support < Integer.MAX_VALUE) {
+                    // saturates instead of wrapping: a restored checkpoint may legally hold the maximum, and support
+                    // is only compared against small minimums, so a full count cannot change a decision
                     target.support++;
                 }
                 AppliedRevision entry = AppliedRevision.of(feedback);
@@ -604,10 +608,12 @@ public final class RoutingStateStore {
         if (!held.containsAll(credits)) {
             return new CompactionResult.Refused(CompactionResult.Reason.CREDITS_UNBOUND_COHORT);
         }
+        // everything that can fail is computed before the first mutation, so compaction stays all-or-nothing
+        LedgerDigest folded = compacted.plus(LedgerDigest.of(dropped));
         for (AppliedRevision entry : dropped) {
             ledger.remove(entry.experienceRef());
         }
-        compacted = compacted.plus(LedgerDigest.of(dropped));
+        compacted = folded;
         compactedCredits.addAll(credits);
         compactedTo = checkpoint;
         return new CompactionResult.Compacted(dropped.size(), cutoff);

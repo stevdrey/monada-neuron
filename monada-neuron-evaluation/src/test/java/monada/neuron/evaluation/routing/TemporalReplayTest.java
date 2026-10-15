@@ -270,7 +270,13 @@ class TemporalReplayTest {
                 () -> assertTrue(checkpointed.rebuilds().compactedEntries() > 0),
                 () -> assertTrue(state.ledger().size() < state.ledgerDigest().entries()),
                 () -> assertTrue(checkpointed.rebuilds().replayedObservations()
-                        < scratch.rebuilds().replayedObservations()));
+                        < scratch.rebuilds().replayedObservations()),
+                // the memory model counts the checkpoints actually kept, with their cohorts and retained markers
+                () -> assertTrue(checkpointed.rebuilds().keptCheckpoints() > 0
+                        && checkpointed.rebuilds().keptCheckpoints() <= RebuildStrategy.RETAINED_CHECKPOINTS),
+                () -> assertEquals(checkpointed.rebuilds().keptCheckpoints() * state.cohortCount(),
+                        checkpointed.rebuilds().keptCheckpointCohorts()),
+                () -> assertEquals(0, scratch.rebuilds().keptCheckpoints()));
     }
 
     @Test

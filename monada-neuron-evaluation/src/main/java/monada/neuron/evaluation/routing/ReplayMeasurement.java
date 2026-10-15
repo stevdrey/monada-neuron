@@ -145,8 +145,11 @@ final class ReplayMeasurement {
         diagnostics.put("replayedObservations", Long.toString(rebuilds.replayedObservations()));
         diagnostics.put("checkpoints", Integer.toString(rebuilds.checkpoints()));
         diagnostics.put("compactedEntries", Integer.toString(rebuilds.compactedEntries()));
-        long retainedCheckpointBytes = strategy == RebuildStrategy.CHECKPOINT
-                ? RebuildStrategy.RETAINED_CHECKPOINTS * cohorts * MODELED_CHECKPOINT_COHORT_BYTES : 0L;
+        diagnostics.put("keptCheckpoints", Integer.toString(rebuilds.keptCheckpoints()));
+        diagnostics.put("keptCheckpointMarkers", Integer.toString(rebuilds.keptCheckpointMarkers()));
+        // the checkpoints the run still holds: each cohort entry, and each retained marker as a ledger entry
+        long retainedCheckpointBytes = (long) rebuilds.keptCheckpointCohorts() * MODELED_CHECKPOINT_COHORT_BYTES
+                + (long) rebuilds.keptCheckpointMarkers() * MODELED_LEDGER_ENTRY_BYTES;
         diagnostics.put("modeledRetainedStateBytes", Long.toString(
                 cohorts * MODELED_COHORT_BYTES + ledger * MODELED_LEDGER_ENTRY_BYTES + retainedCheckpointBytes));
         diagnostics.put("stateResetPerIteration", Boolean.toString(arm != ReplayArm.STATIC));

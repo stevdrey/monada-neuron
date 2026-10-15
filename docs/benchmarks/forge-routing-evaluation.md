@@ -429,8 +429,9 @@ task. It reports changed decisions, gained and lost validated acceptances, and c
     `compactedEntries`, the live `ledgerEntries` and the `ledgerDigestEntries` the state has accounted for.
 - **GC telemetry.** JVM-wide, so it includes the untimed validation.
 - **Retained memory** (`modeledRetainedStateBytes`) is a **model**:
-  - 400 B per cohort and 350 B per ledger entry, plus 64 B per cohort for each of the 4 kept checkpoints in the
-    checkpointed row;
+  - 400 B per cohort and 350 B per ledger entry;
+  - in the checkpointed row, also the checkpoints the run still keeps (at most 4): 64 B per checkpoint cohort and
+    350 B per retained marker, counted from the actual kept checkpoints (`keptCheckpoints`, `keptCheckpointMarkers`);
   - not a measurement;
   - kept apart from measured allocation per op and measured latency.
 

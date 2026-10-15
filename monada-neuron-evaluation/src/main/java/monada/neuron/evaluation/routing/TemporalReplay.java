@@ -156,10 +156,17 @@ public final class TemporalReplay {
             // the state has examined the export through its horizon, not only through its last observation
             run.store.advanceCutoff(fixture.horizon());
         }
+        int keptCohorts = 0;
+        int keptMarkers = 0;
+        for (RoutingStateCheckpoint kept : run.checkpoints) {
+            keptCohorts += kept.preferenceSnapshot().size();
+            keptMarkers += kept.retainedMarkers().size();
+        }
         return new ReplayRun(arm, run.samples, run.events, run.delivered, run.trace.build(),
                 run.tally.build(), Optional.ofNullable(run.store),
                 new ReplayRun.RebuildStats(strategy, run.rebuilds, run.fromCheckpoint, run.replayed,
-                        run.checkpointsTaken, run.compactions, run.compactedEntries));
+                        run.checkpointsTaken, run.compactions, run.compactedEntries, run.checkpoints.size(),
+                        keptCohorts, keptMarkers));
     }
 
     /**
