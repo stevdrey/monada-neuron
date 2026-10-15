@@ -98,7 +98,7 @@ final class StoreReplaySource implements AutoCloseable {
     private final Path root;
     private final ExecutionMemory memory;
     private final ScopeId scope = ScopeId.of(SyntheticRoutingFixtures.SCOPE);
-    private final Map<String, RoutingEnvelope> envelopes = new HashMap<>();
+    private final Map<EnvelopeKey, RoutingEnvelope> envelopes = new HashMap<>();
     private int tick;
     private int counter;
 
@@ -114,7 +114,12 @@ final class StoreReplaySource implements AutoCloseable {
             try {
                 return new StoreReplaySource(root);
             } catch (RuntimeException failure) {
-                delete(root);
+                // a failed cleanup must not hide why opening failed
+                try {
+                    delete(root);
+                } catch (RuntimeException cleanup) {
+                    failure.addSuppressed(cleanup);
+                }
                 throw failure;
             }
         } catch (IOException e) {
@@ -150,7 +155,7 @@ final class StoreReplaySource implements AutoCloseable {
         }
         long cutoff = memory.history(scope).highWatermark();
         ExperienceImport imported = new StoreExperienceTranslator(memory,
-                (scopeId, ref) -> Optional.ofNullable(envelopes.get(scopeId + "/" + ref)))
+                (scopeId, ref) -> Optional.ofNullable(envelopes.get(new EnvelopeKey(scopeId, ref))))
                 .importSamples(ExperienceExportRequest.of(scope.value(), cutoff, 100, 1000));
         ExperienceExportReport report = ExperienceExportReport.build(memory,
                 ExportRequest.first(scope, ExportCutoff.atSequence(cutoff), 100, ExportView.ADAPTER_READY,
@@ -197,11 +202,34 @@ final class StoreReplaySource implements AutoCloseable {
         return Files.exists(root);
     }
 
-    /** Closes the memory and deletes the temporary directory. */
+    /**
+     * Closes the memory and deletes the temporary directory, attempting the deletion even when closing fails; the first
+     * failure is thrown with any later one attached as suppressed.
+     */
     @Override
     public void close() {
-        memory.close();
-        delete(root);
+        RuntimeException failure = null;
+        try {
+            memory.close();
+        } catch (RuntimeException e) {
+            failure = e;
+        }
+        try {
+            delete(root);
+        } catch (RuntimeException e) {
+            if (failure == null) {
+                failure = e;
+            } else {
+                failure.addSuppressed(e);
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
+    }
+
+    /** A routing envelope's address: its scope and artifact reference, compared component by component. */
+    private record EnvelopeKey(String scopeId, String ref) {
     }
 
     private void record(RoutingRequest request, RoutingDecision.Selected decision, boolean unfinished) {
@@ -228,7 +256,7 @@ final class StoreReplaySource implements AutoCloseable {
         Instant t = advance();
         EventId stage = id("stage");
         String ref = "env-" + stage.value();
-        envelopes.put(scope.value() + "/" + ref, envelope);
+        envelopes.put(new EnvelopeKey(scope.value(), ref), envelope);
         long input = SyntheticRoutingFixtures.inputTokens(decision.route());
         long output = SyntheticRoutingFixtures.outputTokens(decision.route());
         append(StageRecorded.measured(EventEnvelope.original(stage, scope, task, execution, A1, t, t),

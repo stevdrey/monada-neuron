@@ -1,5 +1,6 @@
 package monada.neuron.evaluation.routing;
 
+import monada.neuron.evaluation.integration.StoreMetadata;
 import monada.neuron.evaluation.metrics.EnvironmentMetadata;
 import monada.neuron.evaluation.metrics.EvaluationCheck;
 import monada.neuron.evaluation.metrics.EvaluationReport;
@@ -12,8 +13,9 @@ import java.util.TreeMap;
 /**
  * CLI for the routing replay over a real Resonance Store export (optional integration arm).
  *
- * <p>Options: {@code --quick}, {@code --output-dir <dir>}. The exit status is non-zero when any check fails,
- * including a setup failure: an unavailable Store is reported, never silently passed.
+ * <p>Options: {@code --quick}, {@code --output-dir <dir>}. Exit status, as for {@link RoutingReplayRunner}: 0 when
+ * every check passes, 1 when one fails (including a setup failure: an unavailable Store is reported, never silently
+ * passed), 2 for invalid arguments and 4 when the harness itself failed.
  */
 public final class RoutingStoreReplayRunner {
 
@@ -23,8 +25,16 @@ public final class RoutingStoreReplayRunner {
     private RoutingStoreReplayRunner() {
     }
 
-    /** CLI entrypoint. */
+    /** CLI entrypoint; exits with {@link #execute}'s status when it is not 0. */
     public static void main(String[] args) {
+        int status = execute(args);
+        if (status != 0) {
+            System.exit(status);
+        }
+    }
+
+    /** Parses the arguments, runs, prints and writes the report; returns the exit status. */
+    static int execute(String[] args) {
         var quick = false;
         var outputDir = Path.of("build/reports/benchmarks");
         try {
@@ -43,15 +53,11 @@ public final class RoutingStoreReplayRunner {
         } catch (IllegalArgumentException e) {
             System.err.println(e.getMessage());
             System.err.println("Usage: [--quick] [--output-dir <dir>]");
-            System.exit(2);
+            return RoutingReplayRunner.INVALID_ARGUMENTS;
         }
-        var report = run(quick);
-        System.out.println(report.toMarkdown());
-        RoutingReplayRunner.write(report, outputDir, "forge-routing-store-replay");
-        if (!report.allPassed()) {
-            System.err.println("Store routing-replay checks failed.");
-            System.exit(1);
-        }
+        boolean quickMode = quick;
+        return RoutingReplayRunner.report(() -> run(quickMode), outputDir, "forge-routing-store-replay",
+                "Store routing-replay checks failed.");
     }
 
     /** Runs the evaluation and assembles the report. */
@@ -60,7 +66,11 @@ public final class RoutingStoreReplayRunner {
         var outcome = store.run();
         var metadata = new TreeMap<>(outcome.metadata());
         metadata.put("neuron.version", System.getProperty(NEURON_VERSION_PROPERTY, "unknown"));
-        metadata.put("store.directory", System.getProperty(STORE_DIRECTORY_PROPERTY, "unknown"));
+        // the export digest depends on both checkouts' code, so each report names the revisions that produced it
+        metadata.put("neuron.commit", StoreMetadata.gitCommit(Path.of(".").toAbsolutePath().normalize()));
+        String storeDirectory = System.getProperty(STORE_DIRECTORY_PROPERTY);
+        metadata.put("store.directory", storeDirectory == null ? "unknown" : storeDirectory);
+        metadata.put("store.commit", StoreMetadata.gitCommit(storeDirectory == null ? null : Path.of(storeDirectory)));
         var evaluation = new EvaluationReport(Instant.now(), EnvironmentMetadata.current(), store.runConfiguration(),
                 outcome.results(), RoutingReplayReport.STORE_TITLE);
         return new RoutingReplayReport(RoutingReplayReport.STORE_TITLE, evaluation,

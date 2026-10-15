@@ -2,9 +2,10 @@ package monada.neuron.evaluation.routing;
 
 import com.monada.evaluation.execution.CostToAcceptedOutcome;
 import monada.neuron.evaluation.metrics.BenchmarkRunResult;
-import monada.neuron.evaluation.metrics.EvaluationCheck;
 import monada.neuron.evaluation.metrics.EvaluationMetricsCollector;
 import monada.neuron.evaluation.metrics.EvaluationReport.RunConfiguration;
+import monada.neuron.evaluation.routing.RoutingReplayEvaluation.Check;
+import monada.neuron.evaluation.routing.RoutingReplayEvaluation.Outcome;
 import monada.neuron.resonance.adapter.experience.ExperienceRejection;
 import monada.neuron.resonance.adapter.experience.RejectionReason;
 import monada.neuron.routing.adaptation.RebuildResult;
@@ -16,6 +17,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.Supplier;
 
 /**
  * The routing replay over a real Resonance Store export (Issue #67, optional integration arm).
@@ -28,24 +30,6 @@ import java.util.TreeMap;
  * failed check, so a diagnosable report is always produced and a missing prerequisite is never a silent pass.
  */
 public final class StoreReplayEvaluation {
-
-    /** One named semantic verdict. */
-    public record Check(String name, boolean passed, String detail) implements EvaluationCheck {
-    }
-
-    /** Complete evaluation output. */
-    public record Outcome(List<Check> checks, List<BenchmarkRunResult> results, Map<String, String> metadata) {
-        public Outcome {
-            checks = List.copyOf(checks);
-            results = List.copyOf(results);
-            metadata = Map.copyOf(metadata);
-        }
-
-        /** Returns whether every semantic check passed. */
-        public boolean allPassed() {
-            return checks.stream().allMatch(Check::passed);
-        }
-    }
 
     /** Logged executions; the last one never finishes. */
     static final int TASKS = 16;
@@ -86,26 +70,19 @@ public final class StoreReplayEvaluation {
                 + ", output " + StoreReplaySource.OUTPUT_PER_THOUSAND);
         StoreReplaySource.Export export = null;
         StoreReplaySource.Export second = null;
-        StoreReplaySource first = null;
+        // two independent temporary stores; each is closed and its directory checked, whatever failed before
+        var stores = new ArrayList<StoreReplaySource>(2);
         try {
-            first = StoreReplaySource.open();
+            StoreReplaySource first = StoreReplaySource.open();
+            stores.add(first);
             export = first.recordAndExport(TASKS);
-            try (StoreReplaySource again = StoreReplaySource.open()) {
-                second = again.recordAndExport(TASKS);
-            }
-        } catch (RuntimeException failure) {
+            StoreReplaySource again = StoreReplaySource.open();
+            stores.add(again);
+            second = again.recordAndExport(TASKS);
+        } catch (RuntimeException | AssertionError failure) {
             checks.add(new Check("store.setup", false, describe(failure)));
         } finally {
-            if (first != null) {
-                try {
-                    first.close();
-                    boolean deleted = !first.exists();
-                    checks.add(new Check("store.temporary-store-cleanup", deleted,
-                            deleted ? "temporary execution memory deleted" : "directory still exists"));
-                } catch (RuntimeException failure) {
-                    checks.add(new Check("store.temporary-store-cleanup", false, describe(failure)));
-                }
-            }
+            checks.add(cleanupCheck(stores));
         }
         if (export == null || second == null) {
             return new Outcome(checks, results, metadata);
@@ -114,7 +91,6 @@ public final class StoreReplayEvaluation {
         StoreReplaySource.Export repeated = second;
         metadata.put("store.exportCutoff", Long.toString(exported.cutoff()));
         metadata.put("store.exportDigest", exported.exportDigest());
-        metadata.put("store.fixtureDigest", digests.fixture(exported.fixture()));
         metadata.put("store.observations", Integer.toString(exported.imported().observations().size()));
         metadata.put("store.rejections", exported.imported().rejections().stream()
                 .map(r -> r.executionRef() + ":" + r.reason()).sorted().toList().toString());
@@ -125,6 +101,7 @@ public final class StoreReplayEvaluation {
         check(checks, "store.export-reproducible", () -> {
             String a = digests.fixture(exported.fixture());
             String b = digests.fixture(repeated.fixture());
+            metadata.put("store.fixtureDigest", a);
             require(a.equals(b), "two recordings exported different fixtures: " + a + " vs " + b);
             require(exported.exportDigest().equals(repeated.exportDigest()), "Store export digests differ");
             return "two independent temporary stores export the same fixture " + a + " and Store export digest "
@@ -149,26 +126,13 @@ public final class StoreReplayEvaluation {
                     + " exports for every arm";
         });
         if (runs.size() == ReplayArm.values().length) {
-            check(checks, "store.derived-not-consumed-equals-static", () -> {
-                var control = RoutingReplayEvaluation.derivedNotConsumedCheck(List.of(runs));
-                require(control.passed(), control.detail());
-                return control.detail();
-            });
-            check(checks, "store.eligibility-violations-zero", () -> {
-                var eligibility = RoutingReplayEvaluation.eligibilityCheck(List.of(runs));
-                require(eligibility.passed(), eligibility.detail());
-                return eligibility.detail();
-            });
-            check(checks, "store.snapshot-watermark", () -> {
-                var watermark = RoutingReplayEvaluation.watermarkCheck(List.of(runs));
-                require(watermark.passed(), watermark.detail());
-                return watermark.detail();
-            });
-            check(checks, "store.missing-counterfactual", () -> {
-                var missing = RoutingReplayEvaluation.missingCounterfactualCheck(runs);
-                require(missing.passed(), missing.detail());
-                return missing.detail();
-            });
+            shared(checks, "store.derived-not-consumed-equals-static",
+                    () -> RoutingReplayEvaluation.derivedNotConsumedCheck(List.of(runs)));
+            shared(checks, "store.eligibility-violations-zero",
+                    () -> RoutingReplayEvaluation.eligibilityCheck(List.of(runs)));
+            shared(checks, "store.snapshot-watermark", () -> RoutingReplayEvaluation.watermarkCheck(List.of(runs)));
+            shared(checks, "store.missing-counterfactual",
+                    () -> RoutingReplayEvaluation.missingCounterfactualCheck(runs));
             check(checks, "store.cost-from-store-tooling", () -> costCheck(exported, runs));
             check(checks, "store.incremental-equals-rebuild", () -> {
                 ReplayRun adaptive = runs.get(ReplayArm.ADAPTIVE);
@@ -194,7 +158,7 @@ public final class StoreReplayEvaluation {
                 try {
                     results.add(measurement.measure("Store" + arm.benchmarkName(), exported.fixture(), arm,
                             runs.get(arm)));
-                } catch (RuntimeException failure) {
+                } catch (RuntimeException | AssertionError failure) {
                     checks.add(new Check("store.measurement." + arm, false, describe(failure)));
                 }
             }
@@ -243,41 +207,90 @@ public final class StoreReplayEvaluation {
     }
 
     /**
-     * The Store's cost reaches every observed sample unchanged: an accepted {@code sub-b} execution costs
-     * {@code 1500 x 0.015 / 1000 + 400 x 0.080 / 1000 = 0.0545 USD}, a rejection is unavailable for lack of a validated
-     * acceptance, and a missing counterfactual carries no cost at all.
+     * The Store's cost reaches every observed sample unchanged, compared field by field with the Store's own
+     * {@code CostToAcceptedOutcome} (status, every currency amount and every reason code), not through the mapping the
+     * export used: an accepted {@code sub-b} execution costs {@code 1500 x 0.015 / 1000 + 400 x 0.080 / 1000 =
+     * 0.0545 USD}, recomputed here from the token table and list prices, a rejection is unavailable for lack of a
+     * validated acceptance, and a choice without an observed outcome carries no cost at all. Counts are over the
+     * static arm's observed samples, so an execution the Store exported but no sample reached is not counted.
      */
     static String costCheck(StoreReplaySource.Export export, Map<ReplayArm, ReplayRun> runs) {
-        var expected = new BigDecimal("0.0545");
+        BigDecimal accepted = SyntheticRoutingFixtures.INPUT_PER_THOUSAND
+                .multiply(BigDecimal.valueOf(SyntheticRoutingFixtures.inputTokens(SyntheticRoutingFixtures.SUB_B)))
+                .add(SyntheticRoutingFixtures.OUTPUT_PER_THOUSAND.multiply(
+                        BigDecimal.valueOf(SyntheticRoutingFixtures.outputTokens(SyntheticRoutingFixtures.SUB_B))))
+                .movePointLeft(3);
         int available = 0;
         int unavailable = 0;
-        for (Map.Entry<String, CostToAcceptedOutcome> entry : new TreeMap<>(export.costs()).entrySet()) {
-            CostToAcceptedOutcome cost = entry.getValue();
-            switch (cost.status()) {
-                case AVAILABLE -> {
-                    require(cost.amounts().size() == 1 && cost.amounts().getFirst().amount().compareTo(expected) == 0,
-                            entry.getKey() + " costs " + cost.amounts() + ", expected 0.0545 USD");
-                    available++;
-                }
-                case UNAVAILABLE -> unavailable++;
-                case PARTIAL -> throw new IllegalStateException(entry.getKey() + " has a partial cost: " + cost);
-            }
-        }
         for (ReplayRun run : runs.values()) {
             for (ReplaySample sample : run.samples()) {
+                String execution = sample.decisionRef().executionId();
                 if (sample.coverage() != ReplaySample.Coverage.OBSERVED) {
-                    require(sample.chainCost().isEmpty(), run.arm() + " " + sample.decisionRef().executionId()
+                    require(sample.chainCost().isEmpty(), run.arm() + " " + execution
                             + " reports a cost without an observed outcome");
                     continue;
                 }
-                CostToAcceptedOutcome store = export.costs().get(sample.decisionRef().executionId());
-                require(store != null && StoreReplaySource.replayCost(store).equals(sample.chainCost().orElseThrow()),
-                        run.arm() + " " + sample.decisionRef().executionId() + " cost differs from the Store's");
+                CostToAcceptedOutcome store = export.costs().get(execution);
+                require(store != null, run.arm() + " " + execution + " has no Store cost");
+                ReplayCost reported = sample.chainCost().orElseThrow();
+                require(reported.status().name().equals(store.status().name()), run.arm() + " " + execution
+                        + " reports " + reported.status() + ", the Store " + store.status());
+                require(reported.amounts().size() == store.amounts().size() && store.amounts().stream()
+                        .allMatch(c -> reported.amounts().stream().anyMatch(m -> m.currency()
+                                .equals(c.currency().getCurrencyCode()) && m.amount().compareTo(c.amount()) == 0)),
+                        run.arm() + " " + execution + " reports " + reported.amounts() + ", the Store "
+                                + store.amounts());
+                require(reported.reasons().equals(store.reasons().stream().map(r -> r.code().name()).distinct()
+                        .sorted().toList()), run.arm() + " " + execution + " reports reasons " + reported.reasons()
+                        + ", the Store " + store.reasons());
+                if (run.arm() != ReplayArm.STATIC) {
+                    continue;
+                }
+                switch (reported.status()) {
+                    case AVAILABLE -> {
+                        require(reported.amounts().size() == 1
+                                && reported.amounts().getFirst().amount().compareTo(accepted) == 0,
+                                execution + " costs " + reported.amounts() + ", expected " + accepted + " USD");
+                        available++;
+                    }
+                    case UNAVAILABLE -> unavailable++;
+                    case PARTIAL -> throw new IllegalStateException(execution + " has a partial cost: " + store);
+                }
             }
         }
-        require(available > 0 && unavailable > 0, "both an available and an unavailable cost must be exercised");
-        return available + " AVAILABLE (0.0545 USD each) and " + unavailable
-                + " UNAVAILABLE Store costs reach the samples unchanged; unobserved choices carry none";
+        require(available > 0 && unavailable > 0,
+                "both an available and an unavailable cost must reach an observed sample");
+        return available + " AVAILABLE (" + accepted.toPlainString() + " USD each) and " + unavailable
+                + " UNAVAILABLE Store costs reach the observed samples unchanged in every arm; unobserved choices"
+                + " carry none";
+    }
+
+    /** Both temporary stores closed and their directories deleted; a store never opened is not reported. */
+    private static Check cleanupCheck(List<StoreReplaySource> stores) {
+        var failures = new ArrayList<String>();
+        for (int i = 0; i < stores.size(); i++) {
+            try {
+                stores.get(i).close();
+                if (stores.get(i).exists()) {
+                    failures.add("store " + (i + 1) + ": directory still exists");
+                }
+            } catch (RuntimeException | AssertionError failure) {
+                failures.add("store " + (i + 1) + ": " + describe(failure));
+            }
+        }
+        boolean passed = failures.isEmpty();
+        return new Check("store.temporary-store-cleanup", passed, passed
+                ? stores.size() + " temporary execution memories closed and deleted" : String.join("; ", failures));
+    }
+
+    /** Records a shared check under this arm's name, with its own verdict and detail; a crash is a failed check. */
+    private static void shared(List<Check> checks, String name, Supplier<Check> check) {
+        try {
+            Check verdict = check.get();
+            checks.add(new Check(name, verdict.passed(), verdict.detail()));
+        } catch (RuntimeException | AssertionError failure) {
+            checks.add(new Check(name, false, describe(failure)));
+        }
     }
 
     private static void check(List<Check> checks, String name, Verification verification) {

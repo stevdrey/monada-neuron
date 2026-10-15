@@ -34,6 +34,16 @@ application {
     applicationDefaultJvmArgs = listOf("--add-modules", "jdk.incubator.vector")
 }
 
+/**
+ * The `benchmarkArgs` property split into arguments, quote-aware so `--output-dir "/tmp/benchmark reports"` stays one
+ * argument; empty when the property is absent. One definition for every evaluation runner task.
+ */
+fun quotedBenchmarkArgs(): List<String> =
+    if (!project.hasProperty("benchmarkArgs")) emptyList()
+    else Regex("\"([^\"]*)\"|(\\S+)").findAll(project.property("benchmarkArgs").toString())
+        .map { it.groups[1]?.value ?: it.groups[2]!!.value }
+        .toList()
+
 tasks.register<JavaExec>("runCognitiveBaseline") {
     group = "benchmark"
     description = "Runs the deterministic Monada Neuron end-to-end cognitive baseline suite"
@@ -51,12 +61,7 @@ tasks.register<JavaExec>("runFeedbackLoop") {
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("monada.neuron.evaluation.feedback.FeedbackLoopRunner")
     jvmArgs("--add-modules", "jdk.incubator.vector")
-    if (project.hasProperty("benchmarkArgs")) {
-        // Quote-aware so `--output-dir "/tmp/benchmark reports"` stays one argument.
-        args(Regex("\"([^\"]*)\"|(\\S+)").findAll(project.property("benchmarkArgs").toString())
-            .map { it.groups[1]?.value ?: it.groups[2]!!.value }
-            .toList())
-    }
+    args(quotedBenchmarkArgs())
 }
 
 tasks.register<JavaExec>("runForgeRoutingEvaluation") {
@@ -64,12 +69,7 @@ tasks.register<JavaExec>("runForgeRoutingEvaluation") {
     description = "Runs the Forge routing temporal replay evaluation over synthetic fixtures (Issue #67)"
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("monada.neuron.evaluation.routing.RoutingReplayRunner")
-    if (project.hasProperty("benchmarkArgs")) {
-        // Quote-aware so `--output-dir "/tmp/benchmark reports"` stays one argument.
-        args(Regex("\"([^\"]*)\"|(\\S+)").findAll(project.property("benchmarkArgs").toString())
-            .map { it.groups[1]?.value ?: it.groups[2]!!.value }
-            .toList())
-    }
+    args(quotedBenchmarkArgs())
 }
 
 tasks.register<JavaExec>("jmh") {
@@ -127,12 +127,7 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
         mainClass.set("monada.neuron.evaluation.integration.ResonanceStoreIntegrationRunner")
         systemProperty("monada.neuron.version", project.version.toString())
         systemProperty("monada.resonance.store.dir", rootProject.file("../monada-resonance-store").absolutePath)
-        if (project.hasProperty("benchmarkArgs")) {
-            // Quote-aware so `--output-dir "/tmp/benchmark reports"` stays one argument.
-            args(Regex("\"([^\"]*)\"|(\\S+)").findAll(project.property("benchmarkArgs").toString())
-                .map { it.groups[1]?.value ?: it.groups[2]!!.value }
-                .toList())
-        }
+        args(quotedBenchmarkArgs())
     }
 
     // Routing replay over a real Store export (Issue #67). Registered only with the optional adapter; the store-free
@@ -144,12 +139,7 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
         mainClass.set("monada.neuron.evaluation.routing.RoutingStoreReplayRunner")
         systemProperty("monada.neuron.version", project.version.toString())
         systemProperty("monada.resonance.store.dir", rootProject.file("../monada-resonance-store").absolutePath)
-        if (project.hasProperty("benchmarkArgs")) {
-            // Quote-aware so `--output-dir "/tmp/benchmark reports"` stays one argument.
-            args(Regex("\"([^\"]*)\"|(\\S+)").findAll(project.property("benchmarkArgs").toString())
-                .map { it.groups[1]?.value ?: it.groups[2]!!.value }
-                .toList())
-        }
+        args(quotedBenchmarkArgs())
     }
 
     // Adapter-boundary JMH (Issue #49). Lives with the integration source set because it needs the

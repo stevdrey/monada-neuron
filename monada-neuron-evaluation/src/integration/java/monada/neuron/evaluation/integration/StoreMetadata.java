@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 /** Best-effort version and configuration metadata for reports; never influences a verdict. */
-final class StoreMetadata {
+public final class StoreMetadata {
 
     private static final Pattern FIELD = Pattern.compile("\"(\\w+)\"\\s*:\\s*(?:\"([^\"]*)\"|([\\w.\\-]+))");
     private static final Set<String> REPORTED = Set.of(
@@ -35,7 +35,7 @@ final class StoreMetadata {
     }
 
     /** Returns the short git commit, suffixed {@code +dirty} for uncommitted changes, or {@code unknown}. */
-    static String gitCommit(Path checkout) {
+    public static String gitCommit(Path checkout) {
         if (checkout == null || !Files.isDirectory(checkout)) {
             return "unknown";
         }
