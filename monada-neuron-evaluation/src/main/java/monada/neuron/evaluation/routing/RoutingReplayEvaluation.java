@@ -716,6 +716,11 @@ public final class RoutingReplayEvaluation {
                     + " observations against " + reference.delivered().size() + "; first difference at index " + index
                     + ": " + describe(run.delivered(), index) + " vs " + describe(reference.delivered(), index));
         }
+        if (!run.derivations().equals(reference.derivations())) {
+            // the measured run must have derived what its reference derived, even where nothing consumes it
+            throw new IllegalStateException(run.arm() + " replay derived " + run.derivations() + " against "
+                    + reference.derivations());
+        }
         String state = run.state().map(digests::state).orElse("none");
         String expected = reference.state().map(digests::state).orElse("none");
         if (!state.equals(expected)) {

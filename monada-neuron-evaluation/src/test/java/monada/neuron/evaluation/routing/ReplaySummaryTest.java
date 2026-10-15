@@ -86,7 +86,7 @@ class ReplaySummaryTest {
                         s.provenFailures(), s.attempts(), huge, s.usageDeclaration(), s.chainCost(), s.comparison()))
                 .toList();
         var summary = ReplaySummary.of(new ReplayRun(ReplayArm.STATIC, samples, List.of(), List.of(),
-                run.decisions(), run.state()));
+                run.decisions(), run.derivations(), run.state()));
 
         assertEquals(BigInteger.valueOf(Long.MAX_VALUE).multiply(BigInteger.TWO),
                 summary.total().tokens().get(UsageKind.OUTPUT_TOKENS.name()).knownSum());
@@ -103,7 +103,7 @@ class ReplaySummaryTest {
                         s.comparison()))
                 .toList();
         var chain = ReplaySummary.of(new ReplayRun(ReplayArm.STATIC, samples, List.of(), List.of(), run.decisions(),
-                run.state())).chain();
+                run.derivations(), run.state())).chain();
 
         assertAll(
                 () -> assertEquals(2L * Integer.MAX_VALUE, chain.attempts()),

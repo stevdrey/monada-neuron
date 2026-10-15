@@ -18,6 +18,7 @@ import java.util.Optional;
  * @param delivered every observation delivered to the feedback policy, in delivery order
  * @param decisions every decision's route, kind, basis, abstention, coverage and snapshot watermark, kept whether or
  *        not samples are recorded, so an unrecorded (measured) run can be checked against its reference
+ * @param derivations every delivery's derivation by rule and reason, counted whether or not events are recorded
  * @param state the final caller-owned state; absent for the static arm, which keeps none. The run hands it over:
  *        nothing else holds it
  */
@@ -27,6 +28,7 @@ public record ReplayRun(
         List<FeedbackEvent> feedback,
         List<Delivered> delivered,
         DecisionTrace decisions,
+        Derivations derivations,
         Optional<RoutingStateStore> state) {
 
     /**
@@ -55,6 +57,7 @@ public record ReplayRun(
         feedback = List.copyOf(feedback);
         delivered = List.copyOf(delivered);
         Objects.requireNonNull(decisions, "decisions must not be null");
+        Objects.requireNonNull(derivations, "derivations must not be null");
         Objects.requireNonNull(state, "state must not be null");
     }
 }

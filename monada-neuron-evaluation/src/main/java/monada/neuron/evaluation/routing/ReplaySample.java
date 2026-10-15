@@ -24,8 +24,10 @@ import java.util.Optional;
  * @param decisionRef the decision identity
  * @param stageKind the routed stage kind
  * @param cutoff the decision cutoff
- * @param stateCutoff the {@code processedCutoff} of the preference snapshot the decision read: below {@code cutoff},
- *        or 0 when nothing was examined yet, so no outcome visible at or after the decision reached it
+ * @param stateCutoff the {@code processedCutoff} of the preference snapshot the decision read. The cutoff is inclusive,
+ *        so it is at most {@code cutoff}: the adaptive arm's state is the state as of the cutoff (it equals
+ *        {@code cutoff}), while the static and derived-not-consumed arms read no learned state (0). No outcome
+ *        observed after the cutoff reached the decision
  * @param arm the arm
  * @param kind decision kind
  * @param route the advised route, when selected
@@ -97,10 +99,26 @@ public record ReplaySample(
         Objects.requireNonNull(usageDeclaration, "usageDeclaration must not be null");
         Objects.requireNonNull(chainCost, "chainCost must not be null");
         Objects.requireNonNull(comparison, "comparison must not be null");
-        if ((coverage == Coverage.OBSERVED) != acceptance.isPresent()
-                || (coverage == Coverage.OBSERVED) != usageDeclaration.isPresent()) {
-            throw new IllegalArgumentException("an acceptance and a usage declaration are reported exactly for an"
-                    + " observed outcome");
+        boolean selected = kind == DecisionKind.SELECTED;
+        if (selected != route.isPresent() || selected != basis.isPresent()) {
+            throw new IllegalArgumentException("a route and a basis are reported exactly for a selection");
+        }
+        if ((kind == DecisionKind.ABSTAINED) != abstainReason.isPresent()) {
+            throw new IllegalArgumentException("an abstention reason is reported exactly for an abstention");
+        }
+        if (selected == (coverage == Coverage.NOT_EXECUTED)) {
+            throw new IllegalArgumentException("only a selection executes, and every selection executes");
+        }
+        boolean observed = coverage == Coverage.OBSERVED;
+        if (observed != acceptance.isPresent() || observed != verdict.isPresent()
+                || observed != usageDeclaration.isPresent() || observed != chainCost.isPresent()) {
+            throw new IllegalArgumentException("an acceptance, a verdict, a usage declaration and a chain cost are"
+                    + " reported exactly for an observed outcome");
+        }
+        if (observed ? attempts < 1
+                : attempts != 0 || !provenFailures.isEmpty() || !stageUsage.isEmpty()) {
+            throw new IllegalArgumentException("an observed outcome has at least one attempt; anything else has no"
+                    + " attempt, failure or usage");
         }
     }
 

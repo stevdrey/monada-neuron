@@ -31,7 +31,10 @@ import java.util.UUID;
  * type is rejected rather than rendered as text.
  *
  * <p>Time and space are linear in the size of the encoding, plus {@code O(n log n)} per set or map of {@code n}
- * elements. Stateless; used only outside measured windows.
+ * elements. A record class's components are reflected once per class and cached ({@link ClassValue}), so encoding a
+ * large ledger does not re-reflect every entry. Otherwise stateless and thread-safe. Digests run outside the measured
+ * windows; synthetic sample references use it too, once per generated observation, and the replay reuses generated
+ * observations across runs, so the measured windows do not pay for it either.
  */
 final class CanonicalEncoder {
 
@@ -133,24 +136,40 @@ final class CanonicalEncoder {
     }
 
     private void record(Record record, ByteArrayOutputStream out) {
-        RecordComponent[] components = record.getClass().getRecordComponents();
+        Component[] components = COMPONENTS.get(record.getClass());
         out.write('R');
         text(record.getClass().getName(), out);
         text(Integer.toString(components.length), out);
-        for (RecordComponent component : components) {
-            text(component.getName(), out);
-            write(read(record, component.getAccessor()), out);
+        for (Component component : components) {
+            text(component.name(), out);
+            write(component.read(record), out);
         }
     }
 
-    private Object read(Record record, Method accessor) {
-        try {
-            if (!accessor.canAccess(record)) {
+    /** Each record class's components in declaration order, with accessors made accessible once. */
+    private static final ClassValue<Component[]> COMPONENTS = new ClassValue<>() {
+        @Override
+        protected Component[] computeValue(Class<?> type) {
+            RecordComponent[] components = type.getRecordComponents();
+            var result = new Component[components.length];
+            for (int i = 0; i < components.length; i++) {
+                Method accessor = components[i].getAccessor();
                 accessor.setAccessible(true);
+                result[i] = new Component(components[i].getName(), accessor);
             }
-            return accessor.invoke(record);
-        } catch (IllegalAccessException | InvocationTargetException e) {
-            throw new IllegalStateException("cannot read " + accessor, e);
+            return result;
+        }
+    };
+
+    /** A record component's name and accessible accessor. */
+    private record Component(String name, Method accessor) {
+
+        Object read(Record record) {
+            try {
+                return accessor.invoke(record);
+            } catch (IllegalAccessException | InvocationTargetException e) {
+                throw new IllegalStateException("cannot read " + accessor, e);
+            }
         }
     }
 

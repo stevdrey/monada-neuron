@@ -2,6 +2,7 @@ package monada.neuron.evaluation.routing;
 
 import monada.neuron.evaluation.routing.ReplayRun.Delivered;
 import monada.neuron.routing.AbstainReason;
+import monada.neuron.routing.CohortBinding;
 import monada.neuron.routing.DecisionRef;
 import monada.neuron.routing.LexicographicRoutingPolicy;
 import monada.neuron.routing.RoutingDecision;
@@ -10,7 +11,9 @@ import monada.neuron.routing.adaptation.BindResult;
 import monada.neuron.routing.adaptation.RebuildResult;
 import monada.neuron.routing.adaptation.RoutingStateStore;
 import monada.neuron.routing.adaptation.StateUpdate;
+import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.routing.feedback.CohortKey;
 import monada.neuron.routing.feedback.FeedbackDerivation;
 import monada.neuron.routing.feedback.RebuildOrder;
 import monada.neuron.routing.feedback.RoutingFeedback;
@@ -23,11 +26,13 @@ import monada.neuron.routing.token.OpaqueTokens;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.PriorityQueue;
+import java.util.SortedSet;
 
 /**
  * Chronological, leakage-free replay of one {@link ReplayFixture} under one {@link ReplayArm}.
@@ -36,12 +41,17 @@ import java.util.PriorityQueue;
  * cutoff"): before the decision at cutoff {@code c}, exactly the pending observations with {@code ledgerSequence <= c}
  * are delivered, in {@code (ledgerSequence, experienceRef, revision)} order, and an outcome, acceptance, correction or
  * usage observed after {@code c} cannot reach that decision. A decision's own outcome is visible strictly after its
- * cutoff ({@link ReplayTask}), so it is never delivered before the decision. After the last decision every remaining
- * observation is delivered and the adaptive state's watermark is advanced to {@link ReplayFixture#horizon()}, so the
- * final state is the state as of the export's examined horizon, not only of its last observation.
+ * cutoff ({@link ReplayTask}), so it is never delivered before the decision. The adaptive state then examines through
+ * the cutoff itself ({@code processedCutoff = c}, contract "State must not be newer than the request": a replay
+ * rebuilds the state as of each request's cutoff), so its snapshot is the state as of that cutoff whether or not an
+ * observation sits exactly there. After the last decision every remaining observation is delivered and the watermark
+ * is advanced to {@link ReplayFixture#horizon()}, so the final state is the state as of the export's examined horizon,
+ * not only of its last observation.
  *
  * <p>Synthetic outcomes ({@link OutcomeOracle.KnownForEveryRoute}) are generated for the replayed decision's route
- * and answer that decision. Exported outcomes ({@link OutcomeOracle.ChosenRouteOnly}) answer the logged decision and
+ * and answer that decision. An observation depends only on its task, the route and the decision's cohort binding,
+ * catalog version and routing policy, so it is generated once per such key and reused by every later run, in every
+ * arm: it stands for a ledger read, and the measured windows time the replay, not the harness's hashing. Exported outcomes ({@link OutcomeOracle.ChosenRouteOnly}) answer the logged decision and
  * are delivered whatever the replay advises, because they were really observed; a replayed route other than the
  * logged one is reported as a missing counterfactual and gets no invented outcome.
  *
@@ -51,10 +61,13 @@ import java.util.PriorityQueue;
  * observations when it executes, but a chosen-route-only fixture queues every logged revision before the first
  * decision.
  * Time {@code O(T (R log R + C) + P log P)} for {@code T} tasks, {@code R <= 32} routes and {@code C <= 256} cohorts,
- * plus {@code O(N log N + N L)} per rebuild after a correction. Retained: the state ({@code O(C + L)}), the delivered
- * observations ({@code O(P)}) and, when recording, one sample per task and one event per delivery.
+ * plus {@code O(N log N + N L)} per rebuild after a correction, which reuses each observation's derivation from its
+ * delivery (the bindings never change during a run). Retained: the state ({@code O(C + L)}), the delivered
+ * observations and their derivations ({@code O(P)}) and, when recording, one sample per task and one event per
+ * delivery.
  *
- * <p>Not thread-safe; a replay owns its state for its whole run and keeps nothing between runs.
+ * <p>Not thread-safe. A run owns its state for its whole run; between runs the replay keeps only the generated
+ * synthetic observations, a pure function of the fixture.
  */
 public final class TemporalReplay {
 
@@ -68,17 +81,16 @@ public final class TemporalReplay {
     private final RoutingFeedbackPolicy feedbackPolicy;
     private final OutcomeEvaluator evaluator = new OutcomeEvaluator();
     private final ObservationFactory observations = new ObservationFactory();
+    private final SortedSet<CohortKey> cohortKeys;
+    /** Generated synthetic observations by task and decision provenance; filled by the first run that needs one. */
+    private final Map<GenerationKey, Generated> generated = new HashMap<>();
 
     /** Creates a replay of a fixture. */
     public TemporalReplay(ReplayFixture fixture) {
         this.fixture = Objects.requireNonNull(fixture, "fixture must not be null");
         this.policy = fixture.policy();
         this.feedbackPolicy = fixture.definition().feedbackPolicy(fixture.evidencePolicy());
-    }
-
-    /** The fixture. */
-    public ReplayFixture fixture() {
-        return fixture;
+        this.cohortKeys = fixture.cohortKeys();
     }
 
     /** Replays one arm and records every sample and feedback event. */
@@ -109,6 +121,10 @@ public final class TemporalReplay {
             while (!run.pending.isEmpty() && run.pending.peek().observation().ledgerSequence() <= cutoff) {
                 run.deliver(run.pending.poll());
             }
+            if (arm == ReplayArm.ADAPTIVE && run.store.processedCutoff() < cutoff) {
+                // everything at or before the cutoff has been delivered: the state is the state as of the cutoff
+                run.store.advanceCutoff(cutoff);
+            }
             run.decide(task);
         }
         while (!run.pending.isEmpty()) {
@@ -119,20 +135,25 @@ public final class TemporalReplay {
             run.store.advanceCutoff(fixture.horizon());
         }
         return new ReplayRun(arm, run.samples, run.events, run.delivered, run.trace.build(),
-                Optional.ofNullable(run.store));
+                run.tally.build(), Optional.ofNullable(run.store));
     }
 
     /**
      * Rebuilds the final adaptive state from scratch: a reset copy of the same cohorts replays every delivered
      * observation in rebuild order. Equality with the incrementally built state is the checkpoint-versus-scratch
-     * equivalence the replay can show without a core checkpoint type.
+     * equivalence the replay can show without a core checkpoint type. Every observation is derived again, so a wrong
+     * reuse of a delivery-time derivation in the incremental run shows up as a difference.
      *
      * @param run an adaptive run
      * @return the rebuild result
+     * @throws IllegalArgumentException if the run is not adaptive: only the adaptive arm consumes what it derives
      */
     public RebuildResult rebuildFromScratch(ReplayRun run) {
-        RoutingStateStore state = run.state().orElseThrow(
-                () -> new IllegalArgumentException("the " + run.arm() + " arm keeps no state"));
+        if (run.arm() != ReplayArm.ADAPTIVE) {
+            throw new IllegalArgumentException("only an adaptive run consumes its observations; the " + run.arm()
+                    + " arm's state is not built from them");
+        }
+        RoutingStateStore state = run.state().orElseThrow();
         Map<String, Delivered> answers = answers(run.delivered());
         List<RoutingObservation> delivered = run.delivered().stream().map(Delivered::observation).toList();
         RoutingStateStore scratch = state.resetCopy();
@@ -154,7 +175,7 @@ public final class TemporalReplay {
 
     private RoutingStateStore boundStore() {
         var store = new RoutingStateStore(fixture.definition(), fixture.partition());
-        if (!(store.bind(fixture.cohortKeys()) instanceof BindResult.Bound)) {
+        if (!(store.bind(cohortKeys) instanceof BindResult.Bound)) {
             throw new IllegalStateException("the fixture's cohorts could not be bound");
         }
         return store;
@@ -169,6 +190,10 @@ public final class TemporalReplay {
         private final List<Delivered> delivered = new ArrayList<>();
         private final List<ReplaySample> samples = new ArrayList<>();
         private final List<FeedbackEvent> events = new ArrayList<>();
+        /** Each delivered observation's derivation, by identity: a rebuild reuses it instead of deriving again. */
+        private final Map<RoutingObservation, FeedbackDerivation> derivations = new IdentityHashMap<>();
+        /** Derivations by rule and reason, counted whether or not events are recorded. */
+        private final Derivations.Tally tally = new Derivations.Tally();
         private RoutingStateStore store;
         /** Every decision's route, kind, basis, abstention, coverage and snapshot watermark, recorded or not. */
         private final DecisionTrace.Builder trace = new DecisionTrace.Builder(fixture.tasks().size());
@@ -195,7 +220,7 @@ public final class TemporalReplay {
                         Optional<ScriptedOutcome> scripted = known.outcomeOf(selected.route());
                         coverage = scripted.isPresent() ? ReplaySample.Coverage.OBSERVED
                                 : ReplaySample.Coverage.UNOBSERVED;
-                        if (scripted.isPresent() && (arm != ReplayArm.STATIC || record)) {
+                        if (scripted.isPresent()) {
                             outcome = Optional.of(execute(task, selected, scripted.get()));
                         }
                     }
@@ -212,34 +237,38 @@ public final class TemporalReplay {
                     }
                 }
             }
-            trace.record(decisions++, decision, coverage, preference.processedCutoff());
+            trace.record(decisions++, decision, coverage, preference.processedCutoff(), delivered.size());
             if (record) {
                 samples.add(sample(task, decision, preference.processedCutoff(), coverage, outcome));
             }
         }
 
-        /** Generates the replayed route's observations, queues them for delivery and returns the latest one. */
+        /**
+         * The replayed route's observations, generated once per task and decision provenance; queues them for
+         * delivery (unless the arm keeps no state) and returns the latest one.
+         */
         private Outcome execute(ReplayTask task, RoutingDecision.Selected selected, ScriptedOutcome scripted) {
             RoutingRequest request = task.request();
-            RoutingObservation original = observations.observe(request, selected, scripted, 0);
-            RoutingObservation latest = original;
-            int revision = 0;
+            var key = new GenerationKey(decisions, selected.route(), selected.cohortBinding(),
+                    selected.provenance().catalogVersion(), selected.provenance().policyId(),
+                    selected.provenance().policyVersion());
+            Generated observed = generated.computeIfAbsent(key, ignored -> new Generated(
+                    observations.observe(request, selected, scripted, 0),
+                    scripted.correction().map(c -> observations.observe(request, selected, scripted, 1)),
+                    observations.chainOf(scripted, scripted.correction().isPresent() ? 1 : 0)));
             if (arm != ReplayArm.STATIC) {
-                pending.add(new Delivered(original, selected, request, true));
+                pending.add(new Delivered(observed.original(), selected, request, true));
+                observed.correction().ifPresent(c -> pending.add(new Delivered(c, selected, request, true)));
             }
-            if (scripted.correction().isPresent()) {
-                latest = observations.observe(request, selected, scripted, 1);
-                revision = 1;
-                if (arm != ReplayArm.STATIC) {
-                    pending.add(new Delivered(latest, selected, request, true));
-                }
-            }
-            return new Outcome(latest, selected, request, observations.chainOf(scripted, revision));
+            return new Outcome(observed.correction().orElse(observed.original()), selected, request,
+                    observed.chain());
         }
 
         void deliver(Delivered next) {
             RoutingObservation observation = next.observation();
             FeedbackDerivation derivation = derive(next, observation, store);
+            derivations.put(observation, derivation);
+            tally.count(derivation);
             delivered.add(next);
             FeedbackEvent.Update update = FeedbackEvent.Update.NOT_CONSUMED;
             if (arm == ReplayArm.ADAPTIVE) {
@@ -260,14 +289,22 @@ public final class TemporalReplay {
             }
         }
 
-        /** Stages a rebuild over everything delivered so far and swaps it in; a fixture that cannot is invalid. */
+        /**
+         * Stages a rebuild over everything delivered so far and swaps it in; a fixture that cannot is invalid. Each
+         * observation's derivation is the one made at its delivery: the bindings it read never change during a run.
+         */
         private void rebuild(RoutingObservation trigger) {
-            Map<String, Delivered> answers = answers(delivered);
             List<RoutingObservation> replayed = delivered.stream().map(Delivered::observation).toList();
             RoutingStateStore live = store;
             RebuildResult result = live.rebuild(replayed,
-                    Math.max(live.processedCutoff(), trigger.ledgerSequence()),
-                    observation -> derive(answers.get(observation.experienceRef()), observation, live));
+                    Math.max(live.processedCutoff(), trigger.ledgerSequence()), observation -> {
+                        FeedbackDerivation derivation = derivations.get(observation);
+                        if (derivation == null) {
+                            throw new IllegalStateException("no derivation was made for " + observation.experienceRef()
+                                    + " revision " + observation.revision());
+                        }
+                        return derivation;
+                    });
             store = switch (result) {
                 case RebuildResult.Rebuilt rebuilt -> rebuilt.store();
                 case RebuildResult.Failed failed -> throw new IllegalStateException("rebuild after "
@@ -334,6 +371,16 @@ public final class TemporalReplay {
                     Optional.empty(), Optional.empty(), reason, ReplaySample.Coverage.NOT_EXECUTED, Optional.empty(),
                     Optional.empty(), List.of(), 0, List.of(), Optional.empty(), Optional.empty(), comparison);
         }
+    }
+
+    /** What identifies a generated synthetic observation: the task index and every decision field it reads. */
+    private record GenerationKey(int task, RouteKey route, CohortBinding binding, String catalogVersion,
+            String policyId, String policyVersion) {
+    }
+
+    /** A generated original, its correction if scripted, and the latest revision's chain. */
+    private record Generated(RoutingObservation original, Optional<RoutingObservation> correction,
+            ChainOutcome chain) {
     }
 
     /** The latest known revision of an executed route's outcome and the decision it answers. */

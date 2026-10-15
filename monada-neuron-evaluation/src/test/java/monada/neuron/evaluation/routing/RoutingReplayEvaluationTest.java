@@ -140,7 +140,7 @@ class RoutingReplayEvaluationTest {
                     var delivered = new ArrayList<>(derivedOnly.delivered());
                     delivered.set(1, delivered.get(0));
                     RoutingReplayEvaluation.requireSameReplay(new ReplayRun(derivedOnly.arm(), List.of(), List.of(),
-                            delivered, derivedOnly.decisions(), derivedOnly.state()), derivedOnly, digests);
+                            delivered, derivedOnly.decisions(), derivedOnly.derivations(), derivedOnly.state()), derivedOnly, digests);
                 }),
                 // a missing final run is an error, not a silent pass
                 () -> assertThrows(IllegalStateException.class,
@@ -161,7 +161,7 @@ class RoutingReplayEvaluationTest {
         }
         var corrupted = new EnumMap<ReplayArm, ReplayRun>(ReplayArm.class);
         corrupted.put(ReplayArm.STATIC, new ReplayRun(ReplayArm.STATIC, overstated, control.feedback(),
-                control.delivered(), control.decisions(), control.state()));
+                control.delivered(), control.decisions(), control.derivations(), control.state()));
 
         // an unrecorded MEASURED stage (no counters at all) with a complete cost must fail too
         var unrecorded = new ArrayList<ReplaySample>();
@@ -174,7 +174,7 @@ class RoutingReplayEvaluationTest {
         }
         var empty = new EnumMap<ReplayArm, ReplayRun>(ReplayArm.class);
         empty.put(ReplayArm.STATIC, new ReplayRun(ReplayArm.STATIC, unrecorded, control.feedback(),
-                control.delivered(), control.decisions(), control.state()));
+                control.delivered(), control.decisions(), control.derivations(), control.state()));
         ReplaySample observed = control.samples().stream()
                 .filter(s -> s.coverage() == ReplaySample.Coverage.OBSERVED).findFirst().orElseThrow();
         var declaredNone = new ReplaySample(observed.decisionRef(), observed.stageKind(), observed.cutoff(),

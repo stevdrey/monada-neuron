@@ -3,17 +3,21 @@ package monada.neuron.evaluation.routing;
 import monada.neuron.routing.Basis;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.adaptation.RebuildResult;
+import monada.neuron.routing.feedback.ScoreRule;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TemporalReplayTest {
@@ -24,15 +28,18 @@ class TemporalReplayTest {
     void anOutcomeReachesOnlyDecisionsAfterItBecomesVisible() {
         // task i's outcome is visible one slot later, between decisions i + 1 and i + 2
         var run = new TemporalReplay(fixtures.improvement(8)).run(ReplayArm.ADAPTIVE);
-        var samples = run.samples();
+        int[] visible = run.decisions().visible();
 
         assertAll(
-                () -> assertEquals(0L, samples.get(0).stateCutoff()),
-                () -> assertEquals(0L, samples.get(1).stateCutoff()),
-                // decision 2 sees exactly task 0's outcome
-                () -> assertEquals(run.delivered().getFirst().observation().ledgerSequence(),
-                        samples.get(2).stateCutoff()),
-                () -> assertTrue(samples.stream().allMatch(s -> s.stateCutoff() < s.cutoff())));
+                () -> assertEquals(0, visible[0]),
+                () -> assertEquals(0, visible[1]),
+                // decision 2 sees exactly task 0's outcome, decision 3 also task 1's
+                () -> assertEquals(1, visible[2]),
+                () -> assertEquals(2, visible[3]),
+                () -> assertTrue(run.delivered().stream().limit(1).allMatch(d -> d.observation().ledgerSequence()
+                        > fixtures.cutoff(1) && d.observation().ledgerSequence() <= fixtures.cutoff(2))),
+                // the state is the state as of each cutoff
+                () -> assertTrue(run.samples().stream().allMatch(s -> s.stateCutoff() == s.cutoff())));
     }
 
     @Test
@@ -50,14 +57,16 @@ class TemporalReplayTest {
             known.outcomes().forEach((route, outcome) -> outcomes.put(route, outcome.observedAt(atDecisionTwo)));
             shifted.add(new ReplayTask(task.request(), task.catalog(), new OutcomeOracle.KnownForEveryRoute(outcomes)));
         }
-        var samples = new TemporalReplay(new ReplayFixture(fixture.fixtureId(), fixture.version(), fixture.definition(),
-                fixture.evidencePolicy(), fixture.policy(), fixture.partition(), shifted)).run(ReplayArm.ADAPTIVE)
-                .samples();
+        var run = new TemporalReplay(new ReplayFixture(fixture.fixtureId(), fixture.version(), fixture.definition(),
+                fixture.evidencePolicy(), fixture.policy(), fixture.partition(), shifted)).run(ReplayArm.ADAPTIVE);
+        int[] visible = run.decisions().visible();
 
         assertAll(
-                () -> assertEquals(0L, samples.get(1).stateCutoff()),
+                () -> assertEquals(0, visible[1]),
                 // visible at sequence c, so the decision at cutoff c has examined it
-                () -> assertEquals(atDecisionTwo, samples.get(2).stateCutoff()));
+                () -> assertEquals(1, visible[2]),
+                () -> assertEquals(atDecisionTwo, run.delivered().getFirst().observation().ledgerSequence()),
+                () -> assertEquals(atDecisionTwo, run.samples().get(2).stateCutoff()));
     }
 
     @Test
@@ -67,24 +76,30 @@ class TemporalReplayTest {
         assertAll(
                 () -> assertEquals(replay.run(ReplayArm.ADAPTIVE).decisions(),
                         replay.run(ReplayArm.ADAPTIVE, false).decisions()),
-                () -> assertEquals(replay.run(ReplayArm.STATIC).decisions(),
-                        replay.run(ReplayArm.DERIVED_NOT_CONSUMED, false).decisions()),
+                // derived-not-consumed sees deliveries but decides exactly as static
+                () -> assertArrayEquals(replay.run(ReplayArm.STATIC).decisions().routes(),
+                        replay.run(ReplayArm.DERIVED_NOT_CONSUMED, false).decisions().routes()),
+                () -> assertArrayEquals(replay.run(ReplayArm.STATIC).decisions().codes(),
+                        replay.run(ReplayArm.DERIVED_NOT_CONSUMED, false).decisions().codes()),
                 () -> assertEquals(-1, replay.run(ReplayArm.STATIC).decisions()
                         .firstDifference(replay.run(ReplayArm.STATIC, false).decisions())),
-                // decision 2 is the first whose adaptive snapshot has examined an outcome (static stays at 0)
-                () -> assertEquals(2, replay.run(ReplayArm.STATIC, false).decisions()
-                        .firstDifference(replay.run(ReplayArm.ADAPTIVE, false).decisions())));
+                // the adaptive snapshot is the state as of each cutoff from the first decision on; static stays at 0
+                () -> assertEquals(0, replay.run(ReplayArm.STATIC, false).decisions()
+                        .firstDifference(replay.run(ReplayArm.ADAPTIVE, false).decisions())),
+                () -> assertEquals(fixtures.cutoff(0), replay.run(ReplayArm.ADAPTIVE, false).decisions()
+                        .watermarks()[0]));
     }
 
     @Test
     void aFinishedDecisionTraceCannotBeChanged() {
         var trace = new TemporalReplay(fixtures.improvement(8)).run(ReplayArm.ADAPTIVE).decisions();
-        var copy = new DecisionTrace(trace.routes(), trace.codes(), trace.watermarks());
+        var copy = new DecisionTrace(trace.routes(), trace.codes(), trace.watermarks(), trace.visible());
         String digest = new ReplayDigests().decisions(trace);
 
         trace.routes()[0] = new RouteKey("tampered", 1);
         trace.codes()[0] = -1;
         trace.watermarks()[0] = -1;
+        trace.visible()[0] = -1;
 
         assertAll(
                 () -> assertEquals(copy, trace),
@@ -97,8 +112,8 @@ class TemporalReplayTest {
         // "Aa" and "BB" share String.hashCode(), so a hash-folded checksum could not tell them apart
         var aa = new RouteKey("Aa", 1);
         var bb = new RouteKey("BB", 1);
-        var first = new DecisionTrace(new RouteKey[] {aa}, new int[] {0x1000000}, new long[] {0});
-        var second = new DecisionTrace(new RouteKey[] {bb}, new int[] {0x1000000}, new long[] {0});
+        var first = new DecisionTrace(new RouteKey[] {aa}, new int[] {0x1000000}, new long[] {0}, new int[] {0});
+        var second = new DecisionTrace(new RouteKey[] {bb}, new int[] {0x1000000}, new long[] {0}, new int[] {0});
 
         assertAll(
                 () -> assertEquals("Aa".hashCode(), "BB".hashCode()),
@@ -190,5 +205,49 @@ class TemporalReplayTest {
                 () -> assertEquals(digests.state(recorded.state().orElseThrow()),
                         digests.state(bare.state().orElseThrow())),
                 () -> assertFalse(recorded.samples().isEmpty()));
+    }
+
+    @Test
+    void onlyAnAdaptiveRunCanBeRebuiltFromScratch() {
+        var replay = new TemporalReplay(fixtures.cases());
+
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> replay.rebuildFromScratch(replay.run(ReplayArm.STATIC))),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> replay.rebuildFromScratch(replay.run(ReplayArm.DERIVED_NOT_CONSUMED))));
+    }
+
+    @Test
+    void everyDeliveryIsCountedRecordedOrNot() {
+        var replay = new TemporalReplay(fixtures.workload(120));
+        var recorded = replay.run(ReplayArm.DERIVED_NOT_CONSUMED);
+        var bare = replay.run(ReplayArm.DERIVED_NOT_CONSUMED, false);
+        var byRule = new EnumMap<ScoreRule, Integer>(ScoreRule.class);
+        recorded.feedback().forEach(e -> e.rule().ifPresent(r -> byRule.merge(r, 1, Integer::sum)));
+
+        assertAll(
+                () -> assertEquals(recorded.feedback().size(), recorded.derivations().total()),
+                () -> assertEquals(byRule, recorded.derivations().rules()),
+                () -> assertEquals(recorded.derivations(), bare.derivations()),
+                () -> assertEquals(Derivations.none(), replay.run(ReplayArm.STATIC).derivations()));
+    }
+
+    @Test
+    void reusedObservationsEqualFreshlyGeneratedOnes() {
+        var fixture = fixtures.workload(120);
+        var reused = new TemporalReplay(fixture);
+        reused.run(ReplayArm.ADAPTIVE);
+        reused.run(ReplayArm.STATIC, false);
+        var digests = new ReplayDigests();
+
+        for (ReplayArm arm : ReplayArm.values()) {
+            var again = reused.run(arm);
+            var fresh = new TemporalReplay(fixture).run(arm);
+            assertAll(
+                    () -> assertEquals(fresh.delivered(), again.delivered()),
+                    () -> assertEquals(fresh.samples(), again.samples()),
+                    () -> assertEquals(digests.feedback(fresh), digests.feedback(again)));
+        }
     }
 }
