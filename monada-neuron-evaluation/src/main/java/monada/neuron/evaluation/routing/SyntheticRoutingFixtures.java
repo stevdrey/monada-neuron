@@ -61,7 +61,7 @@ import java.util.TreeMap;
 public final class SyntheticRoutingFixtures {
 
     /** Fixture family version; any content change bumps it. */
-    public static final String VERSION = "forge-routing-replay-v1";
+    public static final String VERSION = "forge-routing-replay-v2";
 
     static final String SCOPE = "forge-replay";
     static final String IMPLEMENT = "implement";
@@ -148,7 +148,9 @@ public final class SyntheticRoutingFixtures {
      *   <li>7: two currencies ({@code 0.0420 USD}, {@code 0.0390 EUR}), never summed together;</li>
      *   <li>8: a {@code qa} stage only the tier-2 route serves: the tier cap abstains;</li>
      *   <li>9: a {@code deploy} stage no route serves: no eligible route;</li>
-     *   <li>10: a pass corrected to a security failure two slots later, which requires a rebuild.</li>
+     *   <li>10: a pass corrected to a security failure two slots later, which requires a rebuild;</li>
+     *   <li>11 and 12: the same task and fingerprints routed for {@code implement} and for {@code review}: different
+     *       stages are never a direct pair.</li>
      * </ol>
      */
     public ReplayFixture cases() {
@@ -183,6 +185,8 @@ public final class SyntheticRoutingFixtures {
                 OutcomeStatus.REJECTED, failQuality(QualityDimension.SECURITY),
                 new ChainOutcome(1, ReplayCost.unavailable("NO_VALIDATED_ACCEPTANCE"))));
         list.add(task(10, IMPLEMENT, 20L, "ctx-1", "task-corrected", FULL, Map.of(SUB_A, corrected)));
+        list.add(task(11, IMPLEMENT, 20L, "ctx-1", "task-stages", FULL, Map.of(SUB_A, passing(11, 1, SUB_A))));
+        list.add(task(12, REVIEW, 20L, "ctx-1", "task-stages", FULL, Map.of(SUB_A, passing(12, 1, SUB_A))));
         return fixture("cases", list);
     }
 

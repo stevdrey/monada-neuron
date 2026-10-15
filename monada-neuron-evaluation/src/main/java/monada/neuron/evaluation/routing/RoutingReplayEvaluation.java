@@ -471,15 +471,15 @@ public final class RoutingReplayEvaluation {
         var failures = new ArrayList<String>();
         for (ReplayRun run : runs.values()) {
             ReplaySummary.Pairing pairing = ReplaySummary.of(run).pairing();
-            if (pairing.comparable() != 1 || pairing.incomparable() != 1
-                    || pairing.incomparableBy().getOrDefault("context", 0) != 1) {
+            if (pairing.comparable() != 1 || pairing.incomparable() != 2
+                    || !pairing.incomparableBy().equals(Map.of("context", 1, "stageKind", 1))) {
                 failures.add(run.arm() + ": " + pairing);
             }
         }
         boolean passed = failures.isEmpty();
-        return new Check("cases.incomparable-context", passed, passed
-                ? "the same task under two context fingerprints is reported as incomparable (context); identical keys"
-                        + " form the only directly comparable pair"
+        return new Check("cases.incomparable-context-and-stage", passed, passed
+                ? "the same task under two context fingerprints (context) and routed for two stages (stageKind) is"
+                        + " reported as incomparable; identical keys form the only directly comparable pair"
                 : String.join("; ", failures));
     }
 

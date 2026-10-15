@@ -152,7 +152,7 @@ task carries:
   task and one event per delivery.
 - Nothing is retained between runs. There is no clock, no randomness, no background task and no session.
 
-## Fixtures (`forge-routing-replay-v1`)
+## Fixtures (`forge-routing-replay-v2`)
 
 [`SyntheticRoutingFixtures`](../../monada-neuron-evaluation/src/main/java/monada/neuron/evaluation/routing/SyntheticRoutingFixtures.java)
 builds every fixture by index arithmetic. Any content change must bump `VERSION`.
@@ -181,7 +181,7 @@ an observed consequence of the #62 rule, not a fixture accident.
 | `improvement` | 24 | `sub-a` always fails tests and `sub-b` always passes. |
 | `degradation` | 24 | Drift: `sub-b` passes during a six-task outage, then fails; `sub-a` always passes. |
 | `neutral` | 16 | Environmental, cancelled, pending and imported-claim outcomes only. |
-| `cases` | 11 | Named edge cases (listed below). |
+| `cases` | 13 | Named edge cases (listed below). |
 | `chosen-route-only` | 16 | A store-like log written by the static policy; the last execution is never exported. |
 
 The `workload` scenario has:
@@ -196,7 +196,8 @@ The `cases` scenario holds:
 - a cheap invalid route;
 - a repaired acceptance;
 - unknown usage;
-- an incomparable context pair and a comparable pair;
+- an incomparable context pair, an incomparable stage pair (one task routed for `implement` and for `review`) and a
+  comparable pair;
 - two currencies;
 - a tier-cap abstention;
 - a stage with no eligible route;
@@ -241,7 +242,7 @@ derived, and unchanged earlier decisions are rejected as evidence when the mutat
 | `cases.cheap-invalid` | Few tokens with a proven security failure: gate failure, `NOT_ACCEPTED`, cost `UNAVAILABLE`, penalized and never rewarded. |
 | `cases.repaired-accepted` | 2 attempts, validated acceptance, 0.0735 USD counted once; chain-only attribution earns no credit. |
 | `cases.unknown-usage` | Unknown and not-measured counters are counted as such, not as zero; the cost is a separate `PARTIAL` lower bound. |
-| `cases.incomparable-context` | The same task under two context fingerprints is an incomparable pair; identical keys form the only comparable pair. |
+| `cases.incomparable-context-and-stage` | The same task under two context fingerprints, and the same task routed for two stages, are incomparable pairs (`context`, `stageKind`); identical keys form the only comparable pair. |
 | `cases.currencies-not-summed` | Complete costs are summed per currency only. |
 | `cases.abstention-and-no-eligible-route` | A tier-capped stage abstains, an unserved stage has no eligible route, and both are `NOT_EXECUTED`. |
 | `cases.missing-counterfactual` | Adaptive choices of a route the log never executed are reported as coverage gaps with no outcome; an executed but unexported outcome is `UNOBSERVED`. |
@@ -280,7 +281,10 @@ reported per routed stage kind and in total.
 - the per-currency `PARTIAL` lower bound.
 
 **Pairing** reports directly comparable versus incomparable pairs of observed executions of one task, with the
-differing fields named. Cohort summaries are observational.
+differing fields named. The key is the contract's ("Direct comparable pairs"): scope, task, `stageKind`, the three
+fingerprints and the evaluation policy id and version. The replay adds the routing policy id and version and the policy's
+`ResourceObjective` binding. Every identity is a separate component, never a concatenation, because opaque tokens may
+contain any separator. Cohort summaries are observational.
 
 **Comparison with the static arm.** Each `vsStatic` line compares the same task's decision to the static decision, per
 task. It reports changed decisions, gained and lost validated acceptances, and changes that cannot be scored
@@ -314,15 +318,15 @@ mode.
 
 | Benchmark | Scale | Mean | p95 | Alloc / op |
 | :--- | :--- | :--- | :--- | :--- |
-| `RoutingReplay.static` | 960 tasks | 5.17 ms | 5.68 ms | 6.85 KB |
-| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 22.28 ms | 23.98 ms | 27.03 KB |
-| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 460.13 ms | 595.85 ms | 484.79 KB |
-| `StoreRoutingReplay.static` | 16 exported tasks | 0.82 ms | 1.20 ms | 7.48 KB |
-| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 2.22 ms | 3.33 ms | 16.16 KB |
-| `StoreRoutingReplay.adaptive` | 16 exported tasks | 3.58 ms | 5.93 ms | 19.96 KB |
+| `RoutingReplay.static` | 960 tasks | 6.20 ms | 7.03 ms | 6.88 KB |
+| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 22.60 ms | 23.92 ms | 27.13 KB |
+| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 489.93 ms | 533.35 ms | 489.56 KB |
+| `StoreRoutingReplay.static` | 16 exported tasks | 0.86 ms | 1.03 ms | 7.48 KB |
+| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 1.82 ms | 2.27 ms | 16.16 KB |
+| `StoreRoutingReplay.adaptive` | 16 exported tasks | 2.54 ms | 3.16 ms | 19.96 KB |
 
-These rows are noisier than the earlier runs: the adaptive p95 rose about 30% above its median. Another build was
-running on the same machine, so read these as one sample, not a trend.
+These are single runs on one machine. Across the four full runs made for this PR, adaptive mean latency varied between
+397 ms and 490 ms, so differences within that range are noise, not a trend.
 
 Modeled retained state at the end of the workload: 0 B for static, 8,000 B for derived-not-consumed (20 cohorts) and
 326,500 B for adaptive (20 cohorts plus 910 ledger entries). This is a model, not a measurement.
@@ -366,9 +370,9 @@ Observations, not conclusions:
 
 | Digest | Value |
 | :--- | :--- |
-| `fixture.workload.digest` (full) | `4bd25a0cccb898d453981d6fe904185fa83b5947a88a87e93025ba3eac802ec6` |
+| `fixture.workload.digest` (full) | `1b9f63e350be74de2594d0f982e2b10a5357d6c03f5e645387fbd343ea5f6f1c` |
 | `workload.reportDigest` (full) | `35d9fae2a2b52d64b9ad8c35feba473f23fa9f46c471cbad73232d51e8b97914` |
-| `store.fixtureDigest` | `39228acc68b0c712f87823e54d7418fc6b64af53dc0ac467d7838d45322c3730` |
+| `store.fixtureDigest` | `2c8ad462aa292c92a9c1311f85966f6c4e428db73fa91690c78c92087873ca66` |
 | `store.exportDigest` (Store tooling) | `f11276157baf9565a14ea07a386502ac8c5a8b3656a6744fb2861f00b4ae2ee8` |
 | `store.reportDigest` | `df6bee795f6240561ed91a73a32de3abd3c1e3bbd92f00893055c3a1787ff151` |
 

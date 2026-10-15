@@ -38,7 +38,7 @@ class RoutingReplayEvaluationTest {
                 "leakage.late-correction", "leakage.snapshot-watermark", "control.derived-not-consumed-equals-static",
                 "control.static-equals-cold-start-baseline", "control.neutral-feedback-leaves-state-unchanged",
                 "eligibility.violations-zero", "state.incremental-equals-rebuild", "cases.cheap-invalid",
-                "cases.repaired-accepted", "cases.unknown-usage", "cases.incomparable-context",
+                "cases.repaired-accepted", "cases.unknown-usage", "cases.incomparable-context-and-stage",
                 "cases.currencies-not-summed", "cases.abstention-and-no-eligible-route",
                 "cases.missing-counterfactual", "adaptation.improvement-and-degradation-visible",
                 "bounds.respected")), names.toString());
