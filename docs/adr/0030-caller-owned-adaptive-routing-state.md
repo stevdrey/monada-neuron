@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (implemented by issue #66; checkpoints and ledger compaction deferred to #67)
+Accepted (implemented by issue #66; replay evaluation and checkpoint-equivalence evidence by issue #67; the core checkpoint type and ledger compaction remain follow-up work)
 
 ## Context
 
@@ -55,6 +55,11 @@ scores join the cohort mapping under one composite `mappingVersion`.
 
 ## Follow-Up Work
 
-- #67: `RoutingStateCheckpoint`, ledger digest and compaction, checkpoint-versus-scratch equivalence, replay evaluation and
-  latency/retained-memory measurements; revisit the reference values only with that evidence.
+- #67 (implemented in the evaluation module only, [forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)):
+  replay evaluation with controls, an evaluation-side canonical digest of cohort Nodes and the ledger, the equivalence a
+  checkpoint must satisfy (incremental state equals a rebuild from scratch, digest for digest, including after corrections),
+  and measured latency/allocation beside a modeled retained footprint. Its allowed scope excludes core changes, so the core
+  `RoutingStateCheckpoint` type, a core ledger digest format and ledger compaction remain open follow-up work; the replay's
+  rebuild-dominated adaptive cost is the evidence to weigh when they are scheduled. The reference values are not revisited:
+  the drift fixture shows they can follow stale rewards, and nothing validates them.
 - #68: published consumer loop over real Store exports.

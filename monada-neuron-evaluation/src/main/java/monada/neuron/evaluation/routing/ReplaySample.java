@@ -1,0 +1,110 @@
+package monada.neuron.evaluation.routing;
+
+import monada.neuron.routing.AbstainReason;
+import monada.neuron.routing.Basis;
+import monada.neuron.routing.DecisionRef;
+import monada.neuron.routing.catalog.RouteKey;
+import monada.neuron.routing.outcome.DerivedAcceptance;
+import monada.neuron.routing.outcome.EligibilityVerdict;
+import monada.neuron.routing.outcome.QualityDimension;
+import monada.neuron.routing.outcome.UsageCounter;
+
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+
+/**
+ * One replayed decision and, when its outcome is known, that outcome as of the replay horizon (latest revision).
+ *
+ * <p>Stage facts ({@link #stageUsage}) and whole-chain facts ({@link #attempts}, {@link #chainCost}) stay separate.
+ * Unknown and not-measured usage counters are kept as they are and never read as zero.
+ *
+ * @param decisionRef the decision identity
+ * @param stageKind the routed stage kind
+ * @param cutoff the decision cutoff
+ * @param stateCutoff the {@code processedCutoff} of the preference snapshot the decision read: below {@code cutoff},
+ *        or 0 when nothing was examined yet, so no outcome visible at or after the decision reached it
+ * @param arm the arm
+ * @param kind decision kind
+ * @param route the advised route, when selected
+ * @param basis the selection basis, when selected
+ * @param abstainReason why the policy abstained, when it did
+ * @param coverage whether an outcome is known for the advised route
+ * @param acceptance derived acceptance, when observed
+ * @param verdict learning eligibility, when observed
+ * @param provenFailures mandatory dimensions proven to fail, when observed
+ * @param attempts whole-chain attempts, 0 when not observed
+ * @param stageUsage the routed stage's usage counters, when observed
+ * @param chainCost the whole chain's hypothetical cost to acceptance, when observed
+ * @param comparison what a direct comparison requires to match
+ */
+public record ReplaySample(
+        DecisionRef decisionRef,
+        String stageKind,
+        long cutoff,
+        long stateCutoff,
+        ReplayArm arm,
+        DecisionKind kind,
+        Optional<RouteKey> route,
+        Optional<Basis> basis,
+        Optional<AbstainReason> abstainReason,
+        Coverage coverage,
+        Optional<DerivedAcceptance> acceptance,
+        Optional<EligibilityVerdict> verdict,
+        List<QualityDimension> provenFailures,
+        int attempts,
+        List<UsageCounter> stageUsage,
+        Optional<ReplayCost> chainCost,
+        ComparisonKey comparison) {
+
+    /** What the policy returned. */
+    public enum DecisionKind {
+        SELECTED,
+        ABSTAINED,
+        NO_ELIGIBLE_ROUTE
+    }
+
+    /** Whether an outcome is known for the advised route. */
+    public enum Coverage {
+        /** The advised route's outcome is known. */
+        OBSERVED,
+        /** Only the logged route's outcome exists and the replay advised another: no counterfactual is invented. */
+        MISSING_COUNTERFACTUAL,
+        /** The advised route executed in the fixture, but no outcome was observed or exported for it. */
+        UNOBSERVED,
+        /** The policy abstained or nothing was eligible, so nothing executed. */
+        NOT_EXECUTED
+    }
+
+    /** Validates the fields. */
+    public ReplaySample {
+        Objects.requireNonNull(decisionRef, "decisionRef must not be null");
+        Objects.requireNonNull(stageKind, "stageKind must not be null");
+        Objects.requireNonNull(arm, "arm must not be null");
+        Objects.requireNonNull(kind, "kind must not be null");
+        Objects.requireNonNull(route, "route must not be null");
+        Objects.requireNonNull(basis, "basis must not be null");
+        Objects.requireNonNull(abstainReason, "abstainReason must not be null");
+        Objects.requireNonNull(coverage, "coverage must not be null");
+        Objects.requireNonNull(acceptance, "acceptance must not be null");
+        Objects.requireNonNull(verdict, "verdict must not be null");
+        provenFailures = List.copyOf(provenFailures);
+        stageUsage = List.copyOf(stageUsage);
+        Objects.requireNonNull(chainCost, "chainCost must not be null");
+        Objects.requireNonNull(comparison, "comparison must not be null");
+        if ((coverage == Coverage.OBSERVED) != acceptance.isPresent()) {
+            throw new IllegalArgumentException("an acceptance is reported exactly for an observed outcome");
+        }
+    }
+
+    /** Whether the advised route reached a validated acceptance. */
+    public boolean validatedAccepted() {
+        return acceptance.orElse(null) == DerivedAcceptance.VALIDATED_ACCEPTED;
+    }
+
+    /** The decision projection two arms are compared by: kind, route, basis and abstention reason. */
+    public String decisionProjection() {
+        return kind + "|" + route.map(RouteKey::toString).orElse("-") + "|" + basis.map(Enum::name).orElse("-") + "|"
+                + abstainReason.map(Enum::name).orElse("-");
+    }
+}

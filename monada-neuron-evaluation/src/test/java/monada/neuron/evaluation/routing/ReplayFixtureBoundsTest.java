@@ -1,0 +1,109 @@
+package monada.neuron.evaluation.routing;
+
+import monada.neuron.routing.LexicographicRoutingPolicy;
+import monada.neuron.routing.adaptation.StatePartition;
+import monada.neuron.routing.catalog.RouteKey;
+import monada.neuron.routing.outcome.Money;
+import org.junit.jupiter.api.Test;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+class ReplayFixtureBoundsTest {
+
+    private final SyntheticRoutingFixtures fixtures = new SyntheticRoutingFixtures();
+
+    @Test
+    void anOversizedFixtureIsRejectedNotTruncated() {
+        assertThrows(IllegalArgumentException.class, () -> fixtures.workload(ReplayFixture.MAX_TASKS + 1));
+    }
+
+    @Test
+    void duplicateDecisionsAndForeignPartitionsAreRejected() {
+        var fixture = fixtures.improvement(4);
+        var duplicated = new ArrayList<>(fixture.tasks());
+        duplicated.add(fixture.tasks().getFirst());
+
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class, () -> new ReplayFixture("f", "1",
+                        fixture.definition(), fixture.evidencePolicy(), fixture.policy(), fixture.partition(),
+                        duplicated)),
+                () -> assertThrows(IllegalArgumentException.class, () -> new ReplayFixture("f", "1",
+                        fixture.definition(), fixture.evidencePolicy(), fixture.policy(),
+                        new StatePartition("other-scope", "forge-gates", "1"), fixture.tasks())));
+    }
+
+    @Test
+    void thePolicyMustRouteOverTheAdaptiveDefinitionsState() {
+        var fixture = fixtures.improvement(4);
+        // the reference policy routes over routing-state/1, the reference definition is adaptive-routing-state/1
+        assertThrows(IllegalArgumentException.class, () -> new ReplayFixture("f", "1", fixture.definition(),
+                fixture.evidencePolicy(), LexicographicRoutingPolicy.reference(), fixture.partition(),
+                fixture.tasks()));
+    }
+
+    @Test
+    void anOutcomeMustBecomeVisibleStrictlyAfterItsDecision() {
+        var task = fixtures.improvement(1).tasks().getFirst();
+        var known = (OutcomeOracle.KnownForEveryRoute) task.oracle();
+        ScriptedOutcome atCutoff = known.outcomes().get(SyntheticRoutingFixtures.SUB_B)
+                .observedAt(task.request().cutoff());
+
+        assertThrows(IllegalArgumentException.class, () -> new ReplayTask(task.request(), task.catalog(),
+                OutcomeOracle.KnownForEveryRoute.of(Map.of(SyntheticRoutingFixtures.SUB_B, atCutoff))));
+    }
+
+    @Test
+    void tasksAreStoredInTotalReplayOrder() {
+        var fixture = fixtures.improvement(6);
+        var reversed = new ArrayList<>(fixture.tasks()).reversed();
+        var resorted = new ReplayFixture(fixture.fixtureId(), fixture.version(), fixture.definition(),
+                fixture.evidencePolicy(), fixture.policy(), fixture.partition(), reversed);
+
+        assertEquals(fixture.tasks(), resorted.tasks());
+    }
+
+    @Test
+    void costInvariantsMirrorTheStore() {
+        var usd = new Money(new BigDecimal("0.01"), "USD");
+        assertAll(
+                // an unavailable cost carries no amount
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new ReplayCost(ReplayCost.Status.UNAVAILABLE, List.of(usd), List.of("X"))),
+                // one amount per currency
+                () -> assertThrows(IllegalArgumentException.class, () -> ReplayCost.available(usd, usd)),
+                // a partial or unavailable cost says why
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new ReplayCost(ReplayCost.Status.PARTIAL, List.of(usd), List.of())),
+                () -> assertThrows(IllegalArgumentException.class, () -> new ChainOutcome(0,
+                        ReplayCost.available(usd))),
+                () -> assertEquals(List.of("EUR", "USD"), ReplayCost.available(usd,
+                        new Money(BigDecimal.ONE, "EUR")).amounts().stream().map(Money::currency).toList()));
+    }
+
+    @Test
+    void aLoggedObservationMustAnswerTheLoggedDecision() {
+        var fixture = fixtures.chosenRouteOnly(6);
+        var first = (OutcomeOracle.ChosenRouteOnly) fixture.tasks().get(0).oracle();
+        var second = (OutcomeOracle.ChosenRouteOnly) fixture.tasks().get(1).oracle();
+
+        assertThrows(IllegalArgumentException.class, () -> new OutcomeOracle.ChosenRouteOnly(
+                first.loggedDecision(), second.observed(), first.chain()));
+    }
+
+    @Test
+    void cohortsCoverEveryServedRouteOfEveryBucket() {
+        var cohorts = fixtures.workload(240).cohortKeys();
+        // two learned stages x four buckets x two subscription routes, plus qa x four buckets x api-x
+        assertAll(
+                () -> assertEquals(20, cohorts.size()),
+                () -> assertEquals(4, cohorts.stream().filter(k -> k.route().equals(new RouteKey("api-x", 1)))
+                        .count()));
+    }
+}

@@ -533,8 +533,11 @@ whose inputs come from a host resolver and whose typed result retains the full d
 acceptance. Learning reuses the existing Node-bound `AdaptationPolicy` path through a separate `RoutingFeedback` artifact
 (`OutcomeFeedback` is unchanged), with caller-owned bounded state and an explicit reset-and-replay (optionally from a checkpoint) when corrected evidence
 supersedes any applied reward or penalty. Unknown resource values are never zero, and hypothetical API cost, actual billing and
-subscription activity stay distinct. No routing quality, cost or accuracy claim is made until the replay evaluation (#67)
-supplies a reproducible workload with controls.
+subscription activity stay distinct. The temporal replay evaluation (#67,
+[forge-routing-evaluation.md](benchmarks/forge-routing-evaluation.md)) now supplies a reproducible offline workload with
+static, derived-not-consumed and adaptive controls in the evaluation module only; it shows leakage-free, gate-respecting
+adaptation on synthetic fixtures and coverage gaps on chosen-route-only Store exports, and makes no online routing quality,
+cost or accuracy claim.
 
 ## Target Module Boundaries
 
