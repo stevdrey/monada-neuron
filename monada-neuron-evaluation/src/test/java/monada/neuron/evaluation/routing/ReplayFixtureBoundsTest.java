@@ -3,6 +3,7 @@ package monada.neuron.evaluation.routing;
 import monada.neuron.routing.LexicographicRoutingPolicy;
 import monada.neuron.routing.adaptation.StatePartition;
 import monada.neuron.routing.catalog.RouteKey;
+import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.outcome.Money;
 import org.junit.jupiter.api.Test;
 
@@ -71,6 +72,34 @@ class ReplayFixtureBoundsTest {
                 () -> assertEquals(latest + 10, new ReplayFixture("f", "1", fixture.definition(),
                         fixture.evidencePolicy(), fixture.policy(), fixture.partition(), fixture.tasks(), latest + 10)
                         .horizon()));
+    }
+
+    @Test
+    void requestOrdinalsMustStrictlyIncreaseInReplayOrder() {
+        var fixture = fixtures.improvement(2);
+        ReplayTask first = fixture.tasks().get(0);
+        ReplayTask second = fixture.tasks().get(1);
+        // another task and execution, but the first task's ordinal
+        var sameOrdinal = new ReplayTask(withIdentity(second.request(), "task-other", "exe-other", 0L),
+                second.catalog(), second.oracle());
+        // decided later but numbered earlier
+        var reordered = new ReplayTask(withIdentity(first.request(), first.request().taskId(),
+                first.request().executionId(), 5L), first.catalog(), first.oracle());
+
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class, () -> new ReplayFixture("f", "1",
+                        fixture.definition(), fixture.evidencePolicy(), fixture.policy(), fixture.partition(),
+                        List.of(first, sameOrdinal))),
+                () -> assertThrows(IllegalArgumentException.class, () -> new ReplayFixture("f", "1",
+                        fixture.definition(), fixture.evidencePolicy(), fixture.policy(), fixture.partition(),
+                        List.of(reordered, second))));
+    }
+
+    private static RoutingRequest withIdentity(RoutingRequest r, String taskId, String executionId, long ordinal) {
+        return new RoutingRequest(r.contractVersion(), r.scopeId(), taskId, executionId, r.attemptId(), r.stageId(),
+                r.stageKind(), ordinal, r.sourceFingerprint(), r.contextFingerprint(), r.constraintsFingerprint(),
+                r.evaluationPolicyId(), r.evaluationPolicyVersion(), r.features(), r.requirements(),
+                r.overflowPermitted(), r.cutoff());
     }
 
     @Test

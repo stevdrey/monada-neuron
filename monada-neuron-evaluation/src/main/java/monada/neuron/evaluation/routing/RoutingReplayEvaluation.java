@@ -143,6 +143,7 @@ public final class RoutingReplayEvaluation {
         checks.add(coldStartBaselineCheck(workload, runs.get(ReplayArm.STATIC)));
         checks.add(neutralCheck(neutralRuns));
         checks.add(eligibilityCheck(all));
+        checks.add(costCompletenessCheck(all));
 
         var rebuilt = new ArrayList<String>();
         for (var entry : Map.of("workload", runs, "cases", caseRuns, "improvement", improvementRuns).entrySet()) {
@@ -377,6 +378,36 @@ public final class RoutingReplayEvaluation {
         boolean passed = violations.isEmpty() && credited > 0;
         return new Check("eligibility.violations-zero", passed, "events=" + events + ", adaptiveCredits=" + credited
                 + ", violationsByArmAndStage=" + violations);
+    }
+
+    /**
+     * No observed sample whose routed stage has an unknown or not-measured usage counter reports a complete cost: the
+     * routed stage is part of the chain, so the chain cannot be fully covered (execution-memory contract v1 section 8).
+     */
+    static Check costCompletenessCheck(List<Map<ReplayArm, ReplayRun>> all) {
+        int uncovered = 0;
+        var failures = new ArrayList<String>();
+        for (var runs : all) {
+            for (ReplayRun run : runs.values()) {
+                for (ReplaySample sample : run.samples()) {
+                    if (sample.coverage() != ReplaySample.Coverage.OBSERVED || sample.stageUsage().stream()
+                            .allMatch(c -> c.value() instanceof ResourceValue.Known)) {
+                        continue;
+                    }
+                    uncovered++;
+                    if (sample.chainCost().map(ReplayCost::status).orElse(null) == ReplayCost.Status.AVAILABLE) {
+                        failures.add(run.arm() + " " + sample.decisionRef().executionId());
+                    }
+                }
+            }
+        }
+        // Consistency is vacuous if no sample with unknown usage was ever observed.
+        boolean passed = uncovered > 0 && failures.isEmpty();
+        return new Check("cost.completeness-consistent", passed, passed
+                ? uncovered + " observed samples with unknown or not-measured stage usage, none with an AVAILABLE cost"
+                : uncovered == 0 ? "no observed sample had unknown usage, so nothing was checked"
+                        : failures.size() + " complete costs despite unknown usage: "
+                                + failures.subList(0, Math.min(5, failures.size())));
     }
 
     static Check rebuildCheck(List<String> results) {
@@ -631,8 +662,9 @@ public final class RoutingReplayEvaluation {
 
     /**
      * Requires a replay to equal a reference outside any timed window: the same decision trace (route compared by full
-     * id and version, kind, basis, abstention, coverage and snapshot watermark of every decision), the same deliveries
-     * and the same learned state.
+     * id and version, kind, basis, abstention, coverage and snapshot watermark of every decision), the same delivered
+     * observations in the same order (compared by value, with the decision and request each answers) and the same
+     * learned state. {@code O(T + P)} outside the timed window.
      *
      * @throws IllegalStateException naming the first difference
      */
@@ -646,15 +678,30 @@ public final class RoutingReplayEvaluation {
                     + (differs < run.decisions().size() ? run.decisions().line(differs) : "none") + " vs "
                     + (differs < reference.decisions().size() ? reference.decisions().line(differs) : "none"));
         }
-        if (run.delivered().size() != reference.delivered().size()) {
+        if (!run.delivered().equals(reference.delivered())) {
+            // value equality of every delivered observation and the decision and request it answers, not only a count
+            int index = 0;
+            int common = Math.min(run.delivered().size(), reference.delivered().size());
+            while (index < common && run.delivered().get(index).equals(reference.delivered().get(index))) {
+                index++;
+            }
             throw new IllegalStateException(run.arm() + " replay delivered " + run.delivered().size()
-                    + " observations, its reference " + reference.delivered().size());
+                    + " observations against " + reference.delivered().size() + "; first difference at index " + index
+                    + ": " + describe(run.delivered(), index) + " vs " + describe(reference.delivered(), index));
         }
         String state = run.state().map(digests::state).orElse("none");
         String expected = reference.state().map(digests::state).orElse("none");
         if (!state.equals(expected)) {
             throw new IllegalStateException(run.arm() + " replay state " + state + " differs from " + expected);
         }
+    }
+
+    private static String describe(List<ReplayRun.Delivered> delivered, int index) {
+        if (index >= delivered.size()) {
+            return "none";
+        }
+        var observation = delivered.get(index).observation();
+        return observation.experienceRef() + "@" + observation.revision();
     }
 
     // ---- metadata ----

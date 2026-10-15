@@ -18,7 +18,9 @@ import java.util.Map;
  * SHA-256 digests over canonical UTF-8 lines, so equal digests mean identical fixtures, decision sequences, learned
  * state or semantic reports.
  *
- * <p>Every rendered value is canonical before it is hashed: records render their components in declaration order,
+ * <p>Every line is {@code name=<utf8-byte-length>:<value>}, and every identity (fixture id and version, policy id and
+ * version) is its own line, so opaque tokens containing a separator cannot make two inputs hash alike. Every rendered
+ * value is canonical before it is hashed: records render their components in declaration order,
  * every list and map in the routing API and in this package is kept in a defined order, and Node doubles are rendered
  * as their exact bit patterns. Timings, timestamps and environment data never enter a digest.
  */
@@ -29,11 +31,13 @@ public final class ReplayDigests {
     /** Fixture identity, definitions, policy and every task with its outcome oracle. */
     public String fixture(ReplayFixture fixture) {
         var lines = new Lines();
-        lines.add("fixture", fixture.fixtureId() + "@" + fixture.version());
+        lines.add("fixtureId", fixture.fixtureId());
+        lines.add("version", fixture.version());
         lines.add("definition", fixture.definition());
         lines.add("evidencePolicy", fixture.evidencePolicy());
-        lines.add("policy", fixture.policy().policyId() + "@" + fixture.policy().policyVersion() + " "
-                + fixture.policy().parameters());
+        lines.add("policyId", fixture.policy().policyId());
+        lines.add("policyVersion", fixture.policy().policyVersion());
+        lines.add("policyParameters", fixture.policy().parameters());
         lines.add("partition", fixture.partition());
         lines.add("horizon", fixture.horizon());
         for (ReplayTask task : fixture.tasks()) {
@@ -133,8 +137,12 @@ public final class ReplayDigests {
             }
         }
 
+        /** {@code name=<utf8-byte-length>:<value>\n}: the length prefix keeps value boundaries unambiguous. */
         void add(String name, Object value) {
-            sha.update((name + "=" + value + "\n").getBytes(StandardCharsets.UTF_8));
+            byte[] rendered = String.valueOf(value).getBytes(StandardCharsets.UTF_8);
+            sha.update((name + "=" + rendered.length + ":").getBytes(StandardCharsets.UTF_8));
+            sha.update(rendered);
+            sha.update((byte) '\n');
         }
 
         String digest() {

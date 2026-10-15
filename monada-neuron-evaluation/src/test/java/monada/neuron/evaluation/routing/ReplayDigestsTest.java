@@ -53,6 +53,18 @@ class ReplayDigestsTest {
     }
 
     @Test
+    void separatorsInsideTheFixtureIdentityCannotMergeTwoFixtures() {
+        var base = fixtures.improvement(4);
+        // "a@b" + "c" and "a" + "b@c" would read the same if concatenated with "@"
+        var first = new ReplayFixture("a@b", "c", base.definition(), base.evidencePolicy(), base.policy(),
+                base.partition(), base.tasks());
+        var second = new ReplayFixture("a", "b@c", base.definition(), base.evidencePolicy(), base.policy(),
+                base.partition(), base.tasks());
+
+        assertNotEquals(digests.fixture(first), digests.fixture(second));
+    }
+
+    @Test
     void digestsSeparateArmsAndFixtures() {
         var replay = new TemporalReplay(fixtures.improvement(24));
         var adaptive = replay.run(ReplayArm.ADAPTIVE);

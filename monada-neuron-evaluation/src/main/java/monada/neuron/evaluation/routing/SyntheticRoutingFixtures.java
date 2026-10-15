@@ -61,7 +61,7 @@ import java.util.TreeMap;
 public final class SyntheticRoutingFixtures {
 
     /** Fixture family version; any content change bumps it. */
-    public static final String VERSION = "forge-routing-replay-v2";
+    public static final String VERSION = "forge-routing-replay-v3";
 
     static final String SCOPE = "forge-replay";
     static final String IMPLEMENT = "implement";
@@ -84,6 +84,8 @@ public final class SyntheticRoutingFixtures {
     static final BigDecimal SUB_A_ATTEMPT = new BigDecimal("0.0420");
     /** Per-attempt hypothetical cost of one {@code sub-b} attempt: 1500 input and 400 output tokens. */
     static final BigDecimal SUB_B_ATTEMPT = new BigDecimal("0.0525");
+    /** Lower bound of a chain whose routed stage has unknown usage: only its 900 known input tokens are priced. */
+    static final BigDecimal UNKNOWN_USAGE_LOWER_BOUND = new BigDecimal("0.0270");
     /** A repair attempt after a failed {@code sub-a} attempt. */
     static final BigDecimal REPAIR_ATTEMPT = new BigDecimal("0.0315");
 
@@ -171,7 +173,7 @@ public final class SyntheticRoutingFixtures {
                 List.of(), List.of());
         list.add(task(2, IMPLEMENT, 20L, "ctx-1", "task-unknown-usage", FULL, Map.of(SUB_A,
                 ScriptedOutcome.passing(observedAt(2, 1), GATES, unknown, new ChainOutcome(1,
-                        ReplayCost.partial(List.of(usd(new BigDecimal("0.0270"))), "UNKNOWN_USAGE"))))));
+                        ReplayCost.partial(List.of(usd(UNKNOWN_USAGE_LOWER_BOUND)), "UNKNOWN_USAGE"))))));
         list.add(task(3, IMPLEMENT, 20L, "ctx-1", "task-context", FULL, Map.of(SUB_A, passing(3, 1, SUB_A))));
         list.add(task(4, IMPLEMENT, 20L, "ctx-2", "task-context", FULL, Map.of(SUB_A, passing(4, 1, SUB_A))));
         list.add(task(5, IMPLEMENT, 20L, "ctx-1", "task-pair", FULL, Map.of(SUB_A, passing(5, 1, SUB_A))));
@@ -328,18 +330,28 @@ public final class SyntheticRoutingFixtures {
                     accepted ? OutcomeStatus.REJECTED : OutcomeStatus.ACCEPTED,
                     accepted ? failQuality(QualityDimension.TESTS) : passQuality(),
                     accepted ? new ChainOutcome(1, ReplayCost.unavailable("NO_VALIDATED_ACCEPTANCE"))
-                            : new ChainOutcome(1, ReplayCost.available(usd(attempt(route))))));
+                            : new ChainOutcome(1, acceptedCost(route, base.stage()))));
         }
         return base;
     }
 
-    /** The opposite verdict of an outcome as a revision visible at {@code at}. */
+    /** The opposite verdict of an outcome as a revision visible at {@code at}; the routed stage's usage is unchanged. */
     private ScriptedOutcome.Correction flip(ScriptedOutcome outcome, RouteKey route, long at) {
         boolean accepted = outcome.status() == OutcomeStatus.ACCEPTED;
         return new ScriptedOutcome.Correction(at, accepted ? OutcomeStatus.REJECTED : OutcomeStatus.ACCEPTED,
                 accepted ? failQuality(QualityDimension.TESTS) : passQuality(),
                 accepted ? new ChainOutcome(1, ReplayCost.unavailable("NO_VALIDATED_ACCEPTANCE"))
-                        : new ChainOutcome(1, ReplayCost.available(usd(attempt(route)))));
+                        : new ChainOutcome(1, acceptedCost(route, outcome.stage())));
+    }
+
+    /**
+     * The cost of an accepted single-attempt chain: complete only when every routed-stage counter is known. An unknown
+     * or not-measured counter leaves that stage uncovered, so the cost is a partial lower bound, never a complete one.
+     */
+    private ReplayCost acceptedCost(RouteKey route, ResourceSummary stage) {
+        boolean uncovered = stage.counters().stream().anyMatch(c -> !(c.value() instanceof ResourceValue.Known));
+        return uncovered ? ReplayCost.partial(List.of(usd(UNKNOWN_USAGE_LOWER_BOUND)), "UNKNOWN_USAGE")
+                : ReplayCost.available(usd(attempt(route)));
     }
 
     private ScriptedOutcome unknownUsage(ScriptedOutcome outcome) {
@@ -348,7 +360,7 @@ public final class SyntheticRoutingFixtures {
                         new UsageCounter(UsageKind.OUTPUT_TOKENS, new ResourceValue.Unknown())),
                 List.of(), List.of());
         ReplayCost cost = outcome.chain().cost().status() == ReplayCost.Status.UNAVAILABLE ? outcome.chain().cost()
-                : ReplayCost.partial(List.of(usd(new BigDecimal("0.0270"))), "UNKNOWN_USAGE");
+                : ReplayCost.partial(List.of(usd(UNKNOWN_USAGE_LOWER_BOUND)), "UNKNOWN_USAGE");
         return new ScriptedOutcome(outcome.observedAt(), outcome.invocation(), outcome.status(), outcome.origin(),
                 outcome.quality(), outcome.attribution(), outcome.acceptedByRepair(), stage,
                 new ChainOutcome(outcome.chain().attempts(), cost), outcome.correction());

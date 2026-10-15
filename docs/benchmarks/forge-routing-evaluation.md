@@ -108,6 +108,7 @@ task carries:
 
 **Construction checks.** These hold before any replay, and an oversized fixture is rejected, never truncated:
 - Every outcome must be visible strictly after its decision.
+- `requestOrdinal` must be strictly increasing in replay order, as the contract requires per scope.
 - Cohorts are bounded at ≤ 256.
 - Observations are bounded at ≤ 4096, so a full rebuild stays possible.
 
@@ -152,7 +153,7 @@ task carries:
   task and one event per delivery.
 - Nothing is retained between runs. There is no clock, no randomness, no background task and no session.
 
-## Fixtures (`forge-routing-replay-v2`)
+## Fixtures (`forge-routing-replay-v3`)
 
 [`SyntheticRoutingFixtures`](../../monada-neuron-evaluation/src/main/java/monada/neuron/evaluation/routing/SyntheticRoutingFixtures.java)
 builds every fixture by index arithmetic. Any content change must bump `VERSION`.
@@ -210,7 +211,7 @@ The `cases` scenario holds:
 | `sub-a` attempt | 0.0420 |
 | `sub-b` attempt | 0.0525 |
 | Repaired chain (`0.0420 + 0.0315`) | 0.0735, counted once |
-| Unknown-usage chain | `PARTIAL` lower bound 0.0270 |
+| Unknown-usage chain, including one later corrected to accepted | `PARTIAL` lower bound 0.0270 |
 | Two-currency chain | 0.0420 USD and 0.0390 EUR, never summed together |
 
 **Store arm.** [`StoreReplaySource`](../../monada-neuron-evaluation/src/integration/java/monada/neuron/evaluation/routing/StoreReplaySource.java)
@@ -244,6 +245,7 @@ derived, and unchanged earlier decisions are rejected as evidence when the mutat
 | `cases.unknown-usage` | Unknown and not-measured counters are counted as such, not as zero; the cost is a separate `PARTIAL` lower bound. |
 | `cases.incomparable-context-and-stage` | The same task under two context fingerprints, and the same task routed for two stages, are incomparable pairs (`context`, `stageKind`); identical keys form the only comparable pair. |
 | `cases.currencies-not-summed` | Complete costs are summed per currency only. |
+| `cost.completeness-consistent` | Across every fixture and arm, no observed sample whose routed stage has an unknown or not-measured usage counter reports an `AVAILABLE` cost (252 such samples in the full run). |
 | `cases.abstention-and-no-eligible-route` | A tier-capped stage abstains, an unserved stage has no eligible route, and both are `NOT_EXECUTED`. |
 | `cases.missing-counterfactual` | Adaptive choices of a route the log never executed are reported as coverage gaps with no outcome; an executed but unexported outcome is `UNOBSERVED`. |
 | `adaptation.improvement-and-degradation-visible` | On fixtures whose direction is known, the report shows both an improvement (+16 validated acceptances) and a degradation (−5). This tests the harness's sensitivity. No improvement is required on the measured workload. |
@@ -300,9 +302,9 @@ task. It reports changed decisions, gained and lost validated acceptances, and c
   every decision: the advised `RouteKey`, compared by full id and version and never by hash, plus packed kind, basis,
   abstention and coverage, and the snapshot watermark. The arrays are sized once per run, so filling them allocates
   nothing per decision. The trace also confirms the unrecorded (timed) path decides exactly as the recorded path the
-  checks verified. Each measured run must match its untimed reference on decision trace, delivered observations and
-  learned-state digest. The comparison runs outside
-  the timed window (`validationInWindow=false`): in the next iteration's untimed setup, and once more after the
+  checks verified. Each measured run must match its untimed reference on decision trace, on every delivered
+  observation by value and order (with the decision and request each answers, not only their count) and on
+  learned-state digest. The comparison runs outside the timed window (`validationInWindow=false`): in the next iteration's untimed setup, and once more after the
   collector returns, because the collector runs no setup after its last iteration.
 - **Setup.** Fixture construction, the reference run and all semantic checks run before measurement.
 - **GC telemetry.** JVM-wide, so it includes setup and validation.
@@ -318,15 +320,16 @@ mode.
 
 | Benchmark | Scale | Mean | p95 | Alloc / op |
 | :--- | :--- | :--- | :--- | :--- |
-| `RoutingReplay.static` | 960 tasks | 6.20 ms | 7.03 ms | 6.88 KB |
-| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 22.60 ms | 23.92 ms | 27.13 KB |
-| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 489.93 ms | 533.35 ms | 489.56 KB |
-| `StoreRoutingReplay.static` | 16 exported tasks | 0.86 ms | 1.03 ms | 7.48 KB |
-| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 1.82 ms | 2.27 ms | 16.16 KB |
-| `StoreRoutingReplay.adaptive` | 16 exported tasks | 2.54 ms | 3.16 ms | 19.96 KB |
+| `RoutingReplay.static` | 960 tasks | 5.82 ms | 6.14 ms | 6.84 KB |
+| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 19.42 ms | 21.87 ms | 27.63 KB |
+| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 413.73 ms | 428.92 ms | 492.87 KB |
+| `StoreRoutingReplay.static` | 16 exported tasks | 0.70 ms | 0.91 ms | 7.84 KB |
+| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 1.63 ms | 1.74 ms | 18.31 KB |
+| `StoreRoutingReplay.adaptive` | 16 exported tasks | 2.52 ms | 2.91 ms | 22.32 KB |
 
-These are single runs on one machine. Across the four full runs made for this PR, adaptive mean latency varied between
-397 ms and 490 ms, so differences within that range are noise, not a trend.
+These are single runs on one machine. Across the full runs made for this PR, adaptive mean latency varied between 397 ms
+and 490 ms. One run reported `static` at 18.38 ms, and two immediate repeats gave 5.72 ms and 5.82 ms with identical
+digests. Differences of this size are noise, not a trend.
 
 Modeled retained state at the end of the workload: 0 B for static, 8,000 B for derived-not-consumed (20 cohorts) and
 326,500 B for adaptive (20 cohorts plus 910 ledger entries). This is a model, not a measurement.
@@ -336,9 +339,9 @@ residues, not evidence about real routing:
 
 | Arm | Validated acceptances | `AVAILABLE` / `PARTIAL` / `UNAVAILABLE` cost | Available USD | Attempts / rework | Baseline fallback |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `static` | 380 of 910 observed | 349 / 31 / 530 | 16.3380 | 936 / 26 | 910 |
-| `derived-not-consumed` | 380 of 910 | 349 / 31 / 530 | 16.3380 | 936 / 26 | 910 |
-| `adaptive` | 767 of 910 | 698 / 69 / 143 | 38.2515 | 970 / 60 | 139 |
+| `static` | 380 of 910 observed | 346 / 34 / 530 | 16.2120 | 936 / 26 | 910 |
+| `derived-not-consumed` | 380 of 910 | 346 / 34 / 530 | 16.2120 | 936 / 26 | 910 |
+| `adaptive` | 767 of 910 | 697 / 70 / 143 | 38.1990 | 970 / 60 | 139 |
 
 **Arm comparison on the workload.** Against static, the adaptive arm changed 771 decisions. It gained a validated
 acceptance on 464 tasks and lost one on 77. That loss count is the scenario's own drift, and it is reported, not
@@ -370,13 +373,14 @@ Observations, not conclusions:
 
 | Digest | Value |
 | :--- | :--- |
-| `fixture.workload.digest` (full) | `1b9f63e350be74de2594d0f982e2b10a5357d6c03f5e645387fbd343ea5f6f1c` |
-| `workload.reportDigest` (full) | `35d9fae2a2b52d64b9ad8c35feba473f23fa9f46c471cbad73232d51e8b97914` |
-| `store.fixtureDigest` | `2c8ad462aa292c92a9c1311f85966f6c4e428db73fa91690c78c92087873ca66` |
+| `fixture.workload.digest` (full) | `d981c8472bbfd6c72776f9abf79f7ac511c1be76ce4c091570a41036cd84fcd7` |
+| `workload.reportDigest` (full) | `32e81a95069d1f3e7ba888b798d1d31e3252abb178e68fe81d8b3daab6bc6444` |
+| `store.fixtureDigest` | `b0dde75c8a5b868f00fc2dbe2e9ca8b8d3d7e7eed14561fc8e821665ff215009` |
 | `store.exportDigest` (Store tooling) | `f11276157baf9565a14ea07a386502ac8c5a8b3656a6744fb2861f00b4ae2ee8` |
-| `store.reportDigest` | `df6bee795f6240561ed91a73a32de3abd3c1e3bbd92f00893055c3a1787ff151` |
+| `store.reportDigest` | `76730b0997e9957a8ef5e803a5b54150267cef95343d6db26464cacd9ba8c990` |
 
-- **Digests.** All are SHA-256 over canonical lines: records render in declaration order, every collection in a defined
+- **Digests.** All are SHA-256 over canonical lines of the form `name=<utf8-byte-length>:<value>`, with every identity
+  (fixture id and version, policy id and version) on its own line: records render in declaration order, every collection in a defined
   order, and Node doubles as exact bit patterns. The report digest orders summaries by arm, whatever order the caller
   passes them in, and rejects two summaries of the same arm. They exclude timings, timestamps and environment.
 - **Stable across runs.** The report embeds every fixture, decision, feedback, state and report digest. Tests assert

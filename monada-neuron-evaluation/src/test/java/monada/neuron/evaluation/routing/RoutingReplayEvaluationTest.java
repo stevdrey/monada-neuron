@@ -1,11 +1,15 @@
 package monada.neuron.evaluation.routing;
 
+import monada.neuron.routing.outcome.Money;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
@@ -40,7 +44,7 @@ class RoutingReplayEvaluationTest {
                 "eligibility.violations-zero", "state.incremental-equals-rebuild", "cases.cheap-invalid",
                 "cases.repaired-accepted", "cases.unknown-usage", "cases.incomparable-context-and-stage",
                 "cases.currencies-not-summed", "cases.abstention-and-no-eligible-route",
-                "cases.missing-counterfactual", "adaptation.improvement-and-degradation-visible",
+                "cases.missing-counterfactual", "cost.completeness-consistent", "adaptation.improvement-and-degradation-visible",
                 "bounds.respected")), names.toString());
     }
 
@@ -129,9 +133,41 @@ class RoutingReplayEvaluationTest {
                 () -> assertThrows(IllegalStateException.class, () -> RoutingReplayEvaluation.requireSameReplay(
                         replay.run(ReplayArm.DERIVED_NOT_CONSUMED, false), replay.run(ReplayArm.STATIC, false),
                         digests)),
+                // same size, trace and state, but one delivery duplicated in place of another
+                () -> assertThrows(IllegalStateException.class, () -> {
+                    var derivedOnly = replay.run(ReplayArm.DERIVED_NOT_CONSUMED, false);
+                    var delivered = new ArrayList<>(derivedOnly.delivered());
+                    delivered.set(1, delivered.get(0));
+                    RoutingReplayEvaluation.requireSameReplay(new ReplayRun(derivedOnly.arm(), List.of(), List.of(),
+                            delivered, derivedOnly.decisions(), derivedOnly.state()), derivedOnly, digests);
+                }),
                 // a missing final run is an error, not a silent pass
                 () -> assertThrows(IllegalStateException.class,
                         () -> RoutingReplayEvaluation.requireSameReplay(null, reference, digests)));
+    }
+
+    @Test
+    void theCostCompletenessCheckCatchesACompleteCostDespiteUnknownUsage() {
+        var cases = runs(fixtures.cases(), ReplayArm.values());
+        ReplayRun control = cases.get(ReplayArm.STATIC);
+        var overstated = new ArrayList<ReplaySample>();
+        for (ReplaySample s : control.samples()) {
+            overstated.add(!s.decisionRef().taskId().equals("task-unknown-usage") ? s : new ReplaySample(
+                    s.decisionRef(), s.stageKind(), s.cutoff(), s.stateCutoff(), s.arm(), s.kind(), s.route(),
+                    s.basis(), s.abstainReason(), s.coverage(), s.acceptance(), s.verdict(), s.provenFailures(),
+                    s.attempts(), s.stageUsage(), Optional.of(ReplayCost.available(
+                            new Money(new BigDecimal("0.0420"), "USD"))), s.comparison()));
+        }
+        var corrupted = new EnumMap<ReplayArm, ReplayRun>(ReplayArm.class);
+        corrupted.put(ReplayArm.STATIC, new ReplayRun(ReplayArm.STATIC, overstated, control.feedback(),
+                control.delivered(), control.decisions(), control.state()));
+
+        assertAll(
+                () -> assertTrue(RoutingReplayEvaluation.costCompletenessCheck(List.of(cases)).passed()),
+                () -> assertFalse(RoutingReplayEvaluation.costCompletenessCheck(List.of(corrupted)).passed()),
+                // no sample with unknown usage: nothing was checked
+                () -> assertFalse(RoutingReplayEvaluation.costCompletenessCheck(
+                        List.of(runs(fixtures.improvement(24), ReplayArm.values()))).passed()));
     }
 
     @Test

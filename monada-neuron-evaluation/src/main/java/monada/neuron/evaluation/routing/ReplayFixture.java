@@ -1,6 +1,5 @@
 package monada.neuron.evaluation.routing;
 
-import monada.neuron.routing.DecisionRef;
 import monada.neuron.routing.LexicographicRoutingPolicy;
 import monada.neuron.routing.adaptation.AdaptiveStateDefinition;
 import monada.neuron.routing.adaptation.RoutingStateStore;
@@ -12,7 +11,6 @@ import monada.neuron.routing.feedback.RebuildOrder;
 import monada.neuron.routing.outcome.EvidencePolicy;
 import monada.neuron.routing.token.OpaqueTokens;
 
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.SortedSet;
@@ -66,17 +64,22 @@ public record ReplayFixture(
             throw new IllegalArgumentException("at most " + MAX_TASKS + " tasks, got: " + tasks.size());
         }
         tasks = tasks.stream().sorted(ReplayTask.ORDER).toList();
-        var refs = new HashSet<DecisionRef>();
         int observations = 0;
+        RoutingRequest previous = null;
         for (ReplayTask task : tasks) {
             RoutingRequest request = task.request();
+            // contract "Ordinals and cutoff": requestOrdinal is strictly increasing per scope, and a fixture has one
+            // scope, so in replay order every ordinal must exceed the previous one
+            if (previous != null && request.requestOrdinal() <= previous.requestOrdinal()) {
+                throw new IllegalArgumentException("requestOrdinal must be strictly increasing in replay order: "
+                        + request.executionId() + " has " + request.requestOrdinal() + " after "
+                        + previous.executionId() + " with " + previous.requestOrdinal());
+            }
+            previous = request;
             if (!request.scopeId().equals(partition.scopeId())
                     || !request.evaluationPolicyId().equals(partition.evaluationPolicyId())
                     || !request.evaluationPolicyVersion().equals(partition.evaluationPolicyVersion())) {
                 throw new IllegalArgumentException(request.executionId() + " is outside partition " + partition);
-            }
-            if (!refs.add(task.decisionRef())) {
-                throw new IllegalArgumentException("duplicate decision " + task.decisionRef());
             }
             observations += switch (task.oracle()) {
                 case OutcomeOracle.KnownForEveryRoute known -> known.outcomes().isEmpty() ? 0 : 2;
