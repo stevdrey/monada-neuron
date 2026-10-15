@@ -12,6 +12,7 @@ import monada.neuron.routing.adaptation.RebuildResult;
 import monada.neuron.routing.outcome.RoutingObservation;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
@@ -219,7 +220,7 @@ public final class StoreReplayEvaluation {
                 .multiply(BigDecimal.valueOf(SyntheticRoutingFixtures.inputTokens(SyntheticRoutingFixtures.SUB_B)))
                 .add(SyntheticRoutingFixtures.OUTPUT_PER_THOUSAND.multiply(
                         BigDecimal.valueOf(SyntheticRoutingFixtures.outputTokens(SyntheticRoutingFixtures.SUB_B))))
-                .movePointLeft(3);
+                .movePointLeft(3).setScale(4, RoundingMode.UNNECESSARY);
         int available = 0;
         int unavailable = 0;
         for (ReplayRun run : runs.values()) {

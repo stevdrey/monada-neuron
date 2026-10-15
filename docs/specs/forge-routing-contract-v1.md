@@ -589,8 +589,9 @@ The adaptive state (#66) reuses the existing generic learning path; **no second 
   `RoutingStateCheckpoint(scopeId, featureSchemaVersion, evaluationPolicy, mappingVersion, policyId, policyVersion, processedCutoff, preferenceSnapshot, ledgerDigest)` and compacts the entries it covers. A rebuild may
   start from the latest checkpoint whose `processedCutoff` is **strictly less than** the `supersedesSequence` of the earliest
   superseded revision (an inclusive checkpoint at that sequence already contains the obsolete effect) and replay only later
-  observations. Starting from a valid checkpoint must give a state **identical** to a rebuild from scratch (#67 verifies
-  the incremental-versus-rebuild equivalence such a checkpoint must satisfy; the checkpoint type itself is tracked in #89). A superseded revision at or before the checkpoint's `processedCutoff` invalidates it and forces a full rebuild.
+  observations. Starting from a valid checkpoint must give a state **identical** to a rebuild from scratch (#67 shows only
+  that the incrementally built state equals a full rebuild from scratch; the checkpoint type and its checkpoint-then-replay
+  equivalence are tracked in #89). A superseded revision at or before the checkpoint's `processedCutoff` invalidates it and forces a full rebuild.
 - **Atomic application.** Applying a `RoutingFeedback` is all-or-nothing. The caller **preflights** the ledger capacity (the
   entries it would add against the 4,096 bound) and the cohort capacity before mutating anything. If either would be
   exceeded the result is `CAPACITY_EXHAUSTED` and the Nodes, the applied-revision ledger, the supporting-observation counts and
@@ -1626,7 +1627,8 @@ snapshot through the published artifact.
 
 - `RoutingStateCheckpoint`, its ledger digest and ledger compaction (Section 7) are **not implemented**: a store whose ledger
   is full reports `CapacityExhausted` and the caller rebuilds into a new scope or waits for compaction (#89). The #67 replay
-  verifies the equivalence a checkpoint must satisfy: incremental state equals a rebuild from scratch, digest for digest.
+  shows that incremental state equals a full rebuild from scratch, digest for digest; that a rebuild started from a
+  checkpoint and replaying only later observations gives the same state is still #89's to verify.
 - No effectiveness, accuracy or cost claim: the reference values are illustrative and untuned; the #67 replay with controls
   ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)) shows they can follow stale rewards and validates
   nothing about them.

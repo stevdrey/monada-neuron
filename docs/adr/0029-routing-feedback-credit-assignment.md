@@ -69,7 +69,7 @@ Add a separate, opt-in package `monada.neuron.routing.feedback` (Contract Sectio
 
 ## Follow-Up Work
 
-- #66 (implemented, [ADR 0030](0030-caller-owned-adaptive-routing-state.md)): caller-owned state store, Node baseline and identity, snapshots and the composite state definition; checkpoints and ledger compaction are tracked in #89 (the #67 replay verifies the rebuild equivalence a checkpoint must satisfy).
+- #66 (implemented, [ADR 0030](0030-caller-owned-adaptive-routing-state.md)): caller-owned state store, Node baseline and identity, snapshots and the composite state definition; checkpoints and ledger compaction are tracked in #89 (the #67 replay shows incremental state equals a full rebuild from scratch; checkpoint-then-replay equivalence remains #89's to verify).
 - #67 (implemented, evaluation module only, [forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)): temporal
   replay evaluation with controls and exploratory measurements.
 - Cost refinement over hypothetical API cost or actual billing once outcomes carry directly comparable amounts.

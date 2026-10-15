@@ -32,8 +32,9 @@ scores join the cohort mapping under one composite `mappingVersion`.
 - Cohorts and ledger are `TreeMap`s in canonical order: point lookups, deterministic iteration, no hash-order dependence;
   `C <= 256` and `L <= 4,096` do not justify a primitive layout.
 - Provide `AdaptiveStateDefinition.reference()` (`adaptive-routing-state/1`) with documented, illustrative, untuned values.
-- Defer `RoutingStateCheckpoint` and compaction to #89. #67 verified the incremental-versus-rebuild equivalence a
-  checkpoint must satisfy.
+- Defer `RoutingStateCheckpoint` and compaction to #89. #67 shows only that the incrementally built state equals a full
+  rebuild from scratch; the equivalence a checkpoint needs, a rebuild started from an intermediate checkpoint and
+  replaying only later observations, is still #89's to verify.
 
 ## Alternatives
 
@@ -44,8 +45,8 @@ scores join the cohort mapping under one composite `mappingVersion`.
 - **Patch Nodes in place on reset or subtract superseded effects**: rejected, adaptation is clamped and not invertible.
 - **Hash maps keyed by cohort and sample**: rejected, iteration order would need a separate sort for every snapshot and
   diagnostics, with no measurable benefit at these bounds.
-- **Implement checkpoints now**: deferred; they need a core ledger digest format, owned by #89, and the equivalence
-  evidence, which #67 supplied.
+- **Implement checkpoints now**: deferred; they need a core ledger digest format and checkpoint-then-replay equivalence
+  evidence, both owned by #89. #67 supplies the full-rebuild baseline that evidence will be compared against.
 
 ## Consequences
 
@@ -59,10 +60,11 @@ scores join the cohort mapping under one composite `mappingVersion`.
 ## Follow-Up Work
 
 - #67 (implemented in the evaluation module only, [forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)):
-  replay evaluation with controls, an evaluation-side canonical digest of cohort Nodes and the ledger, the equivalence a
-  checkpoint must satisfy (incremental state equals a rebuild from scratch, digest for digest, including after corrections),
-  and measured latency/allocation beside a modeled retained footprint. Its allowed scope excludes core changes, so the core
-  `RoutingStateCheckpoint` type, a core ledger digest format and ledger compaction remain open follow-up work; the replay's
+  replay evaluation with controls, an evaluation-side canonical digest of cohort Nodes and the ledger, the full-rebuild
+  baseline (incremental state equals a rebuild from scratch, digest for digest, including after corrections), and measured
+  latency/allocation beside a modeled retained footprint. Its allowed scope excludes core changes, so the core
+  `RoutingStateCheckpoint` type, a core ledger digest format, ledger compaction and checkpoint-then-replay equivalence
+  remain open follow-up work (#89); the replay's
   rebuild-dominated adaptive cost is the evidence to weigh when they are scheduled. The reference values are not revisited:
   the drift fixture shows they can follow stale rewards, and nothing validates them.
 - #68: published consumer loop over real Store exports.

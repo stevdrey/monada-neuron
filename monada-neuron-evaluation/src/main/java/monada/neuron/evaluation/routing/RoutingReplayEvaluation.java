@@ -20,6 +20,7 @@ import monada.neuron.routing.outcome.QualityDimension;
 import monada.neuron.routing.outcome.UsageKind;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
@@ -552,7 +553,8 @@ public final class RoutingReplayEvaluation {
 
     /** The known input tokens of the unknown-usage case at the list prices: the only part of its cost known. */
     private static final BigDecimal UNKNOWN_USAGE_LOWER_BOUND = SyntheticRoutingFixtures.INPUT_PER_THOUSAND
-            .multiply(BigDecimal.valueOf(SyntheticRoutingFixtures.UNKNOWN_USAGE_INPUT_TOKENS)).movePointLeft(3);
+            .multiply(BigDecimal.valueOf(SyntheticRoutingFixtures.UNKNOWN_USAGE_INPUT_TOKENS)).movePointLeft(3)
+            .setScale(4, RoundingMode.UNNECESSARY);
 
     static Check unknownUsageCheck(Map<ReplayArm, ReplayRun> runs) {
         var failures = new ArrayList<String>();
