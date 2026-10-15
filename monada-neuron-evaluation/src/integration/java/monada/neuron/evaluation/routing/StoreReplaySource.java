@@ -175,7 +175,7 @@ final class StoreReplaySource implements AutoCloseable {
         }
         var fixture = new ReplayFixture(SyntheticRoutingFixtures.VERSION + ".store-export", "1",
                 SyntheticRoutingFixtures.DEFINITION, SyntheticRoutingFixtures.EVIDENCE,
-                SyntheticRoutingFixtures.POLICY, SyntheticRoutingFixtures.PARTITION, replayTasks);
+                SyntheticRoutingFixtures.POLICY, SyntheticRoutingFixtures.PARTITION, replayTasks, cutoff);
         return new Export(fixture, imported, Map.copyOf(costs), report.exportDigest(), cutoff);
     }
 

@@ -148,13 +148,16 @@ public final class RoutingReplayEvaluation {
         for (var entry : Map.of("workload", runs, "cases", caseRuns, "improvement", improvementRuns).entrySet()) {
             ReplayRun adaptive = entry.getValue().get(ReplayArm.ADAPTIVE);
             RoutingStateStore state = adaptive.state().orElseThrow();
+            ReplayFixture fixture = fixtureOf(entry.getKey(), workload, cases, improvement);
             String incremental = digests.state(state);
-            String scratch = switch (new TemporalReplay(fixtureOf(entry.getKey(), workload, cases, improvement))
-                    .rebuildFromScratch(adaptive)) {
+            String scratch = switch (new TemporalReplay(fixture).rebuildFromScratch(adaptive)) {
                 case RebuildResult.Rebuilt done -> digests.state(done.store());
                 case RebuildResult.Failed failed -> "failed at " + failed.observation().experienceRef();
             };
-            rebuilt.add(entry.getKey() + ":" + incremental.equals(scratch) + ":ledger=" + state.ledger().size()
+            // the state must also have examined the fixture through its horizon, not only its last observation
+            boolean atHorizon = state.processedCutoff() == fixture.horizon();
+            rebuilt.add(entry.getKey() + ":" + (incremental.equals(scratch) && atHorizon) + ":processedCutoff="
+                    + state.processedCutoff() + "/horizon=" + fixture.horizon() + ":ledger=" + state.ledger().size()
                     + ":rebuilds=" + count(adaptive, e -> e.update() == FeedbackEvent.Update.REBUILT));
         }
         checks.add(rebuildCheck(rebuilt.stream().sorted().toList()));
@@ -599,7 +602,7 @@ public final class RoutingReplayEvaluation {
         int ledger = reference.state().map(s -> s.ledger().size()).orElse(0);
         var diagnostics = new LinkedHashMap<String, String>();
         diagnostics.put("stateDigest", reference.state().map(digests::state).orElse("none"));
-        diagnostics.put("decisionChecksum", Long.toHexString(reference.decisionChecksum()));
+        diagnostics.put("decisionTraceDigest", digests.decisions(reference.decisions()));
         diagnostics.put("decisionsPerIteration", Integer.toString(fixture.tasks().size()));
         diagnostics.put("deliveredObservations", Integer.toString(reference.delivered().size()));
         diagnostics.put("cohorts", Integer.toString(cohorts));
@@ -627,8 +630,9 @@ public final class RoutingReplayEvaluation {
     }
 
     /**
-     * Requires a replay to equal a reference outside any timed window: same decision checksum (kind, route, basis,
-     * abstention, coverage and snapshot watermark of every decision), same deliveries and same learned state.
+     * Requires a replay to equal a reference outside any timed window: the same decision trace (route compared by full
+     * id and version, kind, basis, abstention, coverage and snapshot watermark of every decision), the same deliveries
+     * and the same learned state.
      *
      * @throws IllegalStateException naming the first difference
      */
@@ -636,10 +640,11 @@ public final class RoutingReplayEvaluation {
         if (run == null) {
             throw new IllegalStateException(reference.arm() + ": no measured replay to validate");
         }
-        if (run.decisionChecksum() != reference.decisionChecksum()) {
-            throw new IllegalStateException(run.arm() + " replay made different decisions: checksum "
-                    + Long.toHexString(run.decisionChecksum()) + " vs "
-                    + Long.toHexString(reference.decisionChecksum()));
+        int differs = run.decisions().firstDifference(reference.decisions());
+        if (differs >= 0) {
+            throw new IllegalStateException(run.arm() + " replay made a different decision at index " + differs + ": "
+                    + (differs < run.decisions().size() ? run.decisions().line(differs) : "none") + " vs "
+                    + (differs < reference.decisions().size() ? reference.decisions().line(differs) : "none"));
         }
         if (run.delivered().size() != reference.delivered().size()) {
             throw new IllegalStateException(run.arm() + " replay delivered " + run.delivered().size()

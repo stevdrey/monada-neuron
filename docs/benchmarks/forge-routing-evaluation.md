@@ -118,8 +118,12 @@ task carries:
   decision at cutoff `c`, exactly the pending observations with `ledgerSequence <= c` are delivered, in
   `(ledgerSequence, experienceRef, revision)` order. An outcome, acceptance, correction or usage observed after `c`
   cannot reach that decision, and a decision's own outcome must be visible strictly after its cutoff.
-- **Horizon.** After the last decision, every remaining observation is delivered, so the final state is the state as of
-  the replay horizon.
+- **Horizon.** A fixture carries `horizon`: the export's examined watermark. For a Store export that is its
+  high-watermark; otherwise it defaults to the latest cutoff or observation position, and nothing earlier is accepted.
+  After the last decision, every remaining observation is delivered and the adaptive state's watermark is advanced to
+  the horizon. The final state is therefore the state as of everything the export examined, not only as of its last
+  observation. In the Store fixture, the unfinished execution appends events after the last finished observation,
+  which makes the two differ.
 
 **Outcomes and feedback.**
 - **Synthetic outcomes** are built for the replayed decision's route through the public API
@@ -233,7 +237,7 @@ derived, and unchanged earlier decisions are rejected as evidence when the mutat
 | `control.static-equals-cold-start-baseline` | Static decisions equal `decide` over `RoutingPreference.empty`: #62 behavior is unchanged. |
 | `control.neutral-feedback-leaves-state-unchanged` | Neutral-only consumption leaves cohort Nodes and support equal to the reset baseline, and decisions equal static. |
 | `eligibility.violations-zero` | Across all arms and stages, none of the following occurs: a reward without a positive, stage-local candidate; a penalty without a negative candidate; credit for a route, stage or scope other than the executed one; a neutral rule that moves a Node. |
-| `state.incremental-equals-rebuild` | The final adaptive state digest equals a reset copy rebuilt from every delivered observation, including after correction-triggered rebuilds. |
+| `state.incremental-equals-rebuild` | The final adaptive state digest equals a reset copy rebuilt from every delivered observation, including after correction-triggered rebuilds, and its watermark equals the fixture horizon. |
 | `cases.cheap-invalid` | Few tokens with a proven security failure: gate failure, `NOT_ACCEPTED`, cost `UNAVAILABLE`, penalized and never rewarded. |
 | `cases.repaired-accepted` | 2 attempts, validated acceptance, 0.0735 USD counted once; chain-only attribution earns no credit. |
 | `cases.unknown-usage` | Unknown and not-measured counters are counted as such, not as zero; the cost is a separate `PARTIAL` lower bound. |
@@ -288,10 +292,12 @@ task. It reports changed decisions, gained and lost validated acceptances, and c
 - **Operation.** One op is one replayed decision; an iteration replays the whole workload fixture under one arm.
 - **Iterations.** Quick: 1 warmup and 3 measured. Full: 3 warmup and 10 measured.
 - **Timed window.** The replay runs without recording samples or events.
-- **Validation.** Each run replays without recording samples, but it still folds every decision into
-  `decisionChecksum`: kind, route, basis, abstention, coverage and snapshot watermark. That checksum also confirms the
-  unrecorded (timed) path decides exactly as the recorded path the checks verified. Each measured run must match its
-  untimed reference on decision checksum, delivered observations and learned-state digest. The comparison runs outside
+- **Validation.** Each run replays without recording samples, but it still keeps a collision-free `DecisionTrace` of
+  every decision: the advised `RouteKey`, compared by full id and version and never by hash, plus packed kind, basis,
+  abstention and coverage, and the snapshot watermark. The arrays are sized once per run, so filling them allocates
+  nothing per decision. The trace also confirms the unrecorded (timed) path decides exactly as the recorded path the
+  checks verified. Each measured run must match its untimed reference on decision trace, delivered observations and
+  learned-state digest. The comparison runs outside
   the timed window (`validationInWindow=false`): in the next iteration's untimed setup, and once more after the
   collector returns, because the collector runs no setup after its last iteration.
 - **Setup.** Fixture construction, the reference run and all semantic checks run before measurement.
@@ -308,12 +314,15 @@ mode.
 
 | Benchmark | Scale | Mean | p95 | Alloc / op |
 | :--- | :--- | :--- | :--- | :--- |
-| `RoutingReplay.static` | 960 tasks | 6.55 ms | 7.13 ms | 8.16 KB |
-| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 26.43 ms | 27.94 ms | 32.02 KB |
-| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 436.62 ms | 450.68 ms | 510.49 KB |
-| `StoreRoutingReplay.static` | 16 exported tasks | 0.80 ms | 1.03 ms | 7.47 KB |
-| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 1.94 ms | 2.35 ms | 16.14 KB |
-| `StoreRoutingReplay.adaptive` | 16 exported tasks | 2.56 ms | 3.20 ms | 19.94 KB |
+| `RoutingReplay.static` | 960 tasks | 5.17 ms | 5.68 ms | 6.85 KB |
+| `RoutingReplay.derived-not-consumed` | 960 tasks, 20 cohorts | 22.28 ms | 23.98 ms | 27.03 KB |
+| `RoutingReplay.adaptive` | 960 tasks, 20 cohorts, 910 ledger entries, 51 rebuilds | 460.13 ms | 595.85 ms | 484.79 KB |
+| `StoreRoutingReplay.static` | 16 exported tasks | 0.82 ms | 1.20 ms | 7.48 KB |
+| `StoreRoutingReplay.derived-not-consumed` | 16 exported tasks | 2.22 ms | 3.33 ms | 16.16 KB |
+| `StoreRoutingReplay.adaptive` | 16 exported tasks | 3.58 ms | 5.93 ms | 19.96 KB |
+
+These rows are noisier than the earlier runs: the adaptive p95 rose about 30% above its median. Another build was
+running on the same machine, so read these as one sample, not a trend.
 
 Modeled retained state at the end of the workload: 0 B for static, 8,000 B for derived-not-consumed (20 cohorts) and
 326,500 B for adaptive (20 cohorts plus 910 ledger entries). This is a model, not a measurement.
@@ -357,14 +366,15 @@ Observations, not conclusions:
 
 | Digest | Value |
 | :--- | :--- |
-| `fixture.workload.digest` (full) | `8d0911398c927de9a9013813bea344e99ba64b7601c342f95b013f44746bba17` |
+| `fixture.workload.digest` (full) | `4bd25a0cccb898d453981d6fe904185fa83b5947a88a87e93025ba3eac802ec6` |
 | `workload.reportDigest` (full) | `35d9fae2a2b52d64b9ad8c35feba473f23fa9f46c471cbad73232d51e8b97914` |
-| `store.fixtureDigest` | `d4d1b1845bf444a7e3359e0c1cac05027a49e8926e310f220a8b8a36140aab73` |
+| `store.fixtureDigest` | `39228acc68b0c712f87823e54d7418fc6b64af53dc0ac467d7838d45322c3730` |
 | `store.exportDigest` (Store tooling) | `f11276157baf9565a14ea07a386502ac8c5a8b3656a6744fb2861f00b4ae2ee8` |
 | `store.reportDigest` | `df6bee795f6240561ed91a73a32de3abd3c1e3bbd92f00893055c3a1787ff151` |
 
 - **Digests.** All are SHA-256 over canonical lines: records render in declaration order, every collection in a defined
-  order, and Node doubles as exact bit patterns. They exclude timings, timestamps and environment.
+  order, and Node doubles as exact bit patterns. The report digest orders summaries by arm, whatever order the caller
+  passes them in, and rejects two summaries of the same arm. They exclude timings, timestamps and environment.
 - **Stable across runs.** The report embeds every fixture, decision, feedback, state and report digest. Tests assert
   that verdicts and digests are identical across runs (`RoutingReplayEvaluationTest`, `StoreReplayEvaluationTest`).
 - **Mode dependence.** The `workload` digests depend on the mode, because quick mode uses 240 tasks. The scenario

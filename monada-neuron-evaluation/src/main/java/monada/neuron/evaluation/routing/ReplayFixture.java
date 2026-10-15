@@ -34,6 +34,8 @@ import java.util.TreeSet;
  * @param policy the routing policy; its state definition must be {@code definition.state()}
  * @param partition the state partition every task belongs to
  * @param tasks the tasks, stored in replay order
+ * @param horizon the examined watermark of the export (for a Store export, its high-watermark), at or after every task
+ *        cutoff and every observation position; the adaptive state ends the replay at this watermark
  */
 public record ReplayFixture(
         String fixtureId,
@@ -42,7 +44,8 @@ public record ReplayFixture(
         EvidencePolicy evidencePolicy,
         LexicographicRoutingPolicy policy,
         StatePartition partition,
-        List<ReplayTask> tasks) {
+        List<ReplayTask> tasks,
+        long horizon) {
 
     /** Maximum tasks per fixture. */
     public static final int MAX_TASKS = 1024;
@@ -84,11 +87,47 @@ public record ReplayFixture(
             throw new IllegalArgumentException("at most " + RebuildOrder.MAX_OBSERVATIONS
                     + " observations (a full rebuild must stay possible), got up to: " + observations);
         }
+        long latest = latestPosition(tasks);
+        if (horizon < latest) {
+            throw new IllegalArgumentException("horizon " + horizon + " is before position " + latest
+                    + " of the fixture: the replay would examine beyond its own horizon");
+        }
         int cohorts = cohortKeys(definition, tasks).size();
         if (cohorts > RoutingStateStore.MAX_COHORTS) {
             throw new IllegalArgumentException(
                     "at most " + RoutingStateStore.MAX_COHORTS + " cohorts, got: " + cohorts);
         }
+    }
+
+    /** A fixture whose horizon is its latest task cutoff or observation position. */
+    public ReplayFixture(String fixtureId, String version, AdaptiveStateDefinition definition,
+            EvidencePolicy evidencePolicy, LexicographicRoutingPolicy policy, StatePartition partition,
+            List<ReplayTask> tasks) {
+        this(fixtureId, version, definition, evidencePolicy, policy, partition, tasks, latestPosition(tasks));
+    }
+
+    /** The latest decision cutoff, scripted outcome or correction position, or logged observation position. */
+    private static long latestPosition(List<ReplayTask> tasks) {
+        long latest = 0;
+        for (ReplayTask task : tasks) {
+            latest = Math.max(latest, task.request().cutoff());
+            switch (task.oracle()) {
+                case OutcomeOracle.KnownForEveryRoute known -> {
+                    for (ScriptedOutcome outcome : known.outcomes().values()) {
+                        latest = Math.max(latest, outcome.observedAt());
+                        if (outcome.correction().isPresent()) {
+                            latest = Math.max(latest, outcome.correction().get().observedAt());
+                        }
+                    }
+                }
+                case OutcomeOracle.ChosenRouteOnly logged -> {
+                    for (var observation : logged.observed()) {
+                        latest = Math.max(latest, observation.ledgerSequence());
+                    }
+                }
+            }
+        }
+        return latest;
     }
 
     /**

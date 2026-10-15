@@ -54,6 +54,23 @@ class StoreReplayEvaluationTest {
     }
 
     @Test
+    void theExportHorizonIsCarriedIntoTheFinalAdaptiveState() {
+        StoreReplaySource.Export export;
+        try (StoreReplaySource source = StoreReplaySource.open()) {
+            export = source.recordAndExport(StoreReplayEvaluation.TASKS);
+        }
+        long lastImported = export.imported().observations().stream()
+                .mapToLong(o -> o.ledgerSequence()).max().orElseThrow();
+        var adaptive = new TemporalReplay(export.fixture()).run(ReplayArm.ADAPTIVE);
+
+        assertAll(
+                () -> assertEquals(export.cutoff(), export.fixture().horizon()),
+                // the unfinished execution appends events after the last finished observation
+                () -> assertTrue(export.cutoff() > lastImported),
+                () -> assertEquals(export.cutoff(), adaptive.state().orElseThrow().processedCutoff()));
+    }
+
+    @Test
     void theStoreCostIsMirroredWithoutChange() {
         var usd = Currency.getInstance("USD");
         var partial = new CostToAcceptedOutcome(CostToAcceptedOutcome.Status.PARTIAL,

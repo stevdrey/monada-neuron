@@ -36,7 +36,8 @@ import java.util.PriorityQueue;
  * are delivered, in {@code (ledgerSequence, experienceRef, revision)} order, and an outcome, acceptance, correction or
  * usage observed after {@code c} cannot reach that decision. A decision's own outcome is visible strictly after its
  * cutoff ({@link ReplayTask}), so it is never delivered before the decision. After the last decision every remaining
- * observation is delivered, so the final state is the state as of the replay horizon.
+ * observation is delivered and the adaptive state's watermark is advanced to {@link ReplayFixture#horizon()}, so the
+ * final state is the state as of the export's examined horizon, not only of its last observation.
  *
  * <p>Synthetic outcomes ({@link OutcomeOracle.KnownForEveryRoute}) are generated for the replayed decision's route
  * and answer that decision. Exported outcomes ({@link OutcomeOracle.ChosenRouteOnly}) answer the logged decision and
@@ -109,7 +110,11 @@ public final class TemporalReplay {
         while (!run.pending.isEmpty()) {
             run.deliver(run.pending.poll());
         }
-        return new ReplayRun(arm, run.samples, run.events, run.delivered, run.checksum,
+        if (arm == ReplayArm.ADAPTIVE && run.store.processedCutoff() < fixture.horizon()) {
+            // the state has examined the export through its horizon, not only through its last observation
+            run.store.advanceCutoff(fixture.horizon());
+        }
+        return new ReplayRun(arm, run.samples, run.events, run.delivered, run.trace,
                 Optional.ofNullable(run.store));
     }
 
@@ -161,8 +166,9 @@ public final class TemporalReplay {
         private final List<ReplaySample> samples = new ArrayList<>();
         private final List<FeedbackEvent> events = new ArrayList<>();
         private RoutingStateStore store;
-        /** Folds every decision's kind, route, basis, abstention, coverage and snapshot watermark, recorded or not. */
-        private long checksum = ReplayRun.EMPTY_CHECKSUM;
+        /** Every decision's route, kind, basis, abstention, coverage and snapshot watermark, recorded or not. */
+        private final DecisionTrace trace = DecisionTrace.sized(fixture.tasks().size());
+        private int decisions;
 
         Run(ReplayArm arm, boolean record) {
             this.arm = arm;
@@ -202,33 +208,10 @@ public final class TemporalReplay {
                     }
                 }
             }
-            fold(decision, coverage, preference.processedCutoff());
+            trace.record(decisions++, decision, coverage, preference.processedCutoff());
             if (record) {
                 samples.add(sample(task, decision, preference.processedCutoff(), coverage, outcome));
             }
-        }
-
-        /** FNV-1a style fold over fields with deterministic hashes; allocates nothing in the measured window. */
-        private void fold(RoutingDecision decision, ReplaySample.Coverage coverage, long stateCutoff) {
-            switch (decision) {
-                case RoutingDecision.Selected selected -> {
-                    mix(1);
-                    mix(selected.route().routeId().hashCode());
-                    mix(selected.route().routeVersion());
-                    mix(selected.basis().ordinal());
-                }
-                case RoutingDecision.Abstain abstain -> {
-                    mix(2);
-                    mix(abstain.reason().ordinal());
-                }
-                case RoutingDecision.NoEligibleRoute ignored -> mix(3);
-            }
-            mix(coverage.ordinal());
-            mix(stateCutoff);
-        }
-
-        private void mix(long value) {
-            checksum = (checksum ^ value) * 0x100000001b3L;
         }
 
         /** Generates the replayed route's observations, queues them for delivery and returns the latest one. */

@@ -167,7 +167,11 @@ public final class StoreReplayEvaluation {
                 String incremental = digests.state(adaptive.state().orElseThrow());
                 String scratch = digests.state(((RebuildResult.Rebuilt) rebuilt).store());
                 require(incremental.equals(scratch), "incremental " + incremental + " vs scratch " + scratch);
-                return "state " + incremental + " equals a rebuild from scratch";
+                long processed = adaptive.state().orElseThrow().processedCutoff();
+                require(processed == exported.cutoff(), "the state examined through " + processed
+                        + ", not through the export cutoff " + exported.cutoff());
+                return "state " + incremental + " equals a rebuild from scratch and has examined the export through its"
+                        + " cutoff " + exported.cutoff();
             });
             var summaries = new ArrayList<ReplaySummary>();
             for (ReplayRun run : runs.values()) {
@@ -269,7 +273,7 @@ public final class StoreReplayEvaluation {
         RoutingReplayEvaluation.requireSameReplay(reference, replay.run(arm), digests);
         var diagnostics = new LinkedHashMap<String, String>();
         diagnostics.put("stateDigest", reference.state().map(digests::state).orElse("none"));
-        diagnostics.put("decisionChecksum", Long.toHexString(reference.decisionChecksum()));
+        diagnostics.put("decisionTraceDigest", digests.decisions(reference.decisions()));
         diagnostics.put("decisionsPerIteration", Integer.toString(fixture.tasks().size()));
         diagnostics.put("deliveredObservations", Integer.toString(reference.delivered().size()));
         diagnostics.put("validationInWindow", "false");

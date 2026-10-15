@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collection;
+import java.util.EnumMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +35,7 @@ public final class ReplayDigests {
         lines.add("policy", fixture.policy().policyId() + "@" + fixture.policy().policyVersion() + " "
                 + fixture.policy().parameters());
         lines.add("partition", fixture.partition());
+        lines.add("horizon", fixture.horizon());
         for (ReplayTask task : fixture.tasks()) {
             lines.add("task", task);
         }
@@ -45,6 +47,15 @@ public final class ReplayDigests {
         var lines = new Lines();
         lines.add("arm", run.arm());
         run.samples().forEach(sample -> lines.add("sample", sample));
+        return lines.digest();
+    }
+
+    /** A decision trace, recorded or not: every decision's route, codes and snapshot watermark in replay order. */
+    public String decisions(DecisionTrace trace) {
+        var lines = new Lines();
+        for (int i = 0; i < trace.size(); i++) {
+            lines.add("decision", trace.line(i));
+        }
         return lines.digest();
     }
 
@@ -74,10 +85,21 @@ public final class ReplayDigests {
         return lines.digest();
     }
 
-    /** The semantic report: every summary line of every arm, in name order. */
+    /**
+     * The semantic report: the summaries in {@link ReplayArm} order, each summary's lines in name order, whatever the
+     * collection's own iteration order.
+     *
+     * @throws IllegalArgumentException if two summaries are of the same arm: their lines would collide
+     */
     public String report(Collection<ReplaySummary> summaries) {
-        var lines = new Lines();
+        var byArm = new EnumMap<ReplayArm, ReplaySummary>(ReplayArm.class);
         for (ReplaySummary summary : summaries) {
+            if (byArm.putIfAbsent(summary.arm(), summary) != null) {
+                throw new IllegalArgumentException("two summaries of the " + summary.arm() + " arm");
+            }
+        }
+        var lines = new Lines();
+        for (ReplaySummary summary : byArm.values()) {
             for (Map.Entry<String, String> line : summary.lines().entrySet()) {
                 lines.add(line.getKey(), line.getValue());
             }

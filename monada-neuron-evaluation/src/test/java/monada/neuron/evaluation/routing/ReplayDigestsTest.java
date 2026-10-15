@@ -4,6 +4,8 @@ import monada.neuron.routing.outcome.QualityDimension;
 import monada.neuron.routing.outcome.QualityState;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -11,6 +13,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ReplayDigestsTest {
 
@@ -30,6 +33,23 @@ class ReplayDigestsTest {
                         digests.state(second.state().orElseThrow())),
                 () -> assertEquals(digests.report(List.of(ReplaySummary.of(first))),
                         digests.report(List.of(ReplaySummary.of(second)))));
+    }
+
+    @Test
+    void theReportDigestDoesNotDependOnTheCollectionsOrder() {
+        var replay = new TemporalReplay(fixtures.improvement(24));
+        var summaries = new ArrayList<ReplaySummary>();
+        for (ReplayArm arm : ReplayArm.values()) {
+            summaries.add(ReplaySummary.of(replay.run(arm)));
+        }
+        String inOrder = digests.report(summaries);
+
+        assertAll(
+                () -> assertEquals(inOrder, digests.report(summaries.reversed())),
+                () -> assertEquals(inOrder, digests.report(new HashSet<>(summaries))),
+                // two summaries of one arm would collide line by line
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> digests.report(List.of(summaries.getFirst(), summaries.getFirst()))));
     }
 
     @Test

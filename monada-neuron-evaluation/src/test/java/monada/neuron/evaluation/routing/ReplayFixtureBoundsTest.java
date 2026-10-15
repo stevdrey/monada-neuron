@@ -60,6 +60,20 @@ class ReplayFixtureBoundsTest {
     }
 
     @Test
+    void aHorizonBeforeAnyCutoffOrObservationIsRejected() {
+        var fixture = fixtures.improvement(4);
+        long latest = fixture.horizon();
+
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class, () -> new ReplayFixture("f", "1",
+                        fixture.definition(), fixture.evidencePolicy(), fixture.policy(), fixture.partition(),
+                        fixture.tasks(), latest - 1)),
+                () -> assertEquals(latest + 10, new ReplayFixture("f", "1", fixture.definition(),
+                        fixture.evidencePolicy(), fixture.policy(), fixture.partition(), fixture.tasks(), latest + 10)
+                        .horizon()));
+    }
+
+    @Test
     void tasksAreStoredInTotalReplayOrder() {
         var fixture = fixtures.improvement(6);
         var reversed = new ArrayList<>(fixture.tasks()).reversed();

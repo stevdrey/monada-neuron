@@ -61,16 +61,55 @@ class TemporalReplayTest {
     }
 
     @Test
-    void theDecisionChecksumIsTheSameRecordedOrNotAndSeparatesDifferentDecisions() {
+    void theDecisionTraceIsTheSameRecordedOrNotAndSeparatesDifferentDecisions() {
         var replay = new TemporalReplay(fixtures.improvement(24));
 
         assertAll(
-                () -> assertEquals(replay.run(ReplayArm.ADAPTIVE).decisionChecksum(),
-                        replay.run(ReplayArm.ADAPTIVE, false).decisionChecksum()),
-                () -> assertEquals(replay.run(ReplayArm.STATIC).decisionChecksum(),
-                        replay.run(ReplayArm.DERIVED_NOT_CONSUMED, false).decisionChecksum()),
-                () -> assertNotEquals(replay.run(ReplayArm.STATIC, false).decisionChecksum(),
-                        replay.run(ReplayArm.ADAPTIVE, false).decisionChecksum()));
+                () -> assertEquals(replay.run(ReplayArm.ADAPTIVE).decisions(),
+                        replay.run(ReplayArm.ADAPTIVE, false).decisions()),
+                () -> assertEquals(replay.run(ReplayArm.STATIC).decisions(),
+                        replay.run(ReplayArm.DERIVED_NOT_CONSUMED, false).decisions()),
+                () -> assertEquals(-1, replay.run(ReplayArm.STATIC).decisions()
+                        .firstDifference(replay.run(ReplayArm.STATIC, false).decisions())),
+                // decision 2 is the first whose adaptive snapshot has examined an outcome (static stays at 0)
+                () -> assertEquals(2, replay.run(ReplayArm.STATIC, false).decisions()
+                        .firstDifference(replay.run(ReplayArm.ADAPTIVE, false).decisions())));
+    }
+
+    @Test
+    void routeIdsWithTheSameStringHashAreDifferentDecisions() {
+        // "Aa" and "BB" share String.hashCode(), so a hash-folded checksum could not tell them apart
+        var aa = new RouteKey("Aa", 1);
+        var bb = new RouteKey("BB", 1);
+        var first = new DecisionTrace(new RouteKey[] {aa}, new int[] {0x1000000}, new long[] {0});
+        var second = new DecisionTrace(new RouteKey[] {bb}, new int[] {0x1000000}, new long[] {0});
+
+        assertAll(
+                () -> assertEquals("Aa".hashCode(), "BB".hashCode()),
+                () -> assertNotEquals(first, second),
+                () -> assertEquals(0, first.firstDifference(second)),
+                () -> assertNotEquals(new ReplayDigests().decisions(first), new ReplayDigests().decisions(second)));
+    }
+
+    @Test
+    void theAdaptiveStateEndsAtTheFixtureHorizonNotAtItsLastObservation() {
+        var base = fixtures.improvement(8);
+        // an export examined beyond its last observation, as a Store export with an unfinished execution is
+        var fixture = new ReplayFixture(base.fixtureId(), base.version(), base.definition(), base.evidencePolicy(),
+                base.policy(), base.partition(), base.tasks(), base.horizon() + 1000);
+        var replay = new TemporalReplay(fixture);
+        var adaptive = replay.run(ReplayArm.ADAPTIVE);
+        long lastDelivered = adaptive.delivered().stream().mapToLong(d -> d.observation().ledgerSequence()).max()
+                .orElseThrow();
+
+        assertAll(
+                () -> assertTrue(fixture.horizon() > lastDelivered),
+                () -> assertEquals(lastDelivered, new TemporalReplay(base).run(ReplayArm.ADAPTIVE).state()
+                        .orElseThrow().processedCutoff()),
+                () -> assertEquals(fixture.horizon(), adaptive.state().orElseThrow().processedCutoff()),
+                // deriving without consuming examines nothing
+                () -> assertEquals(0L, replay.run(ReplayArm.DERIVED_NOT_CONSUMED).state().orElseThrow()
+                        .processedCutoff()));
     }
 
     @Test
