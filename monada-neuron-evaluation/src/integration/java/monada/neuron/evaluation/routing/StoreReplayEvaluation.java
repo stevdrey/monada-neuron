@@ -36,7 +36,7 @@ public final class StoreReplayEvaluation {
     static final int TASKS = 16;
 
     private final boolean quick;
-    private final int warmupIterations;
+    private final ReplayMeasurement.Warmup warmup;
     private final int measurementIterations;
     private final ReplayDigests digests = new ReplayDigests();
     private final ReplayMeasurement measurement;
@@ -44,20 +44,23 @@ public final class StoreReplayEvaluation {
     /** Creates the evaluation; quick mode measures fewer iterations. */
     public StoreReplayEvaluation(boolean quick) {
         this.quick = quick;
-        this.warmupIterations = quick ? 1 : 3;
+        this.warmup = ReplayMeasurement.Warmup.of(quick);
         this.measurementIterations = quick ? 3 : 10;
-        this.measurement = new ReplayMeasurement(new EvaluationMetricsCollector(), digests, warmupIterations,
+        this.measurement = new ReplayMeasurement(new EvaluationMetricsCollector(), digests, warmup,
                 measurementIterations);
     }
 
-    /** Returns the run configuration this evaluation actually uses. */
+    /**
+     * Returns the run configuration this evaluation actually uses; the warm-up is budgeted, so its reported count is the
+     * minimum and each row records the actual count.
+     */
     public RunConfiguration runConfiguration() {
-        return new RunConfiguration(0L, quick, warmupIterations, measurementIterations,
+        return new RunConfiguration(0L, quick, warmup.minIterations(), measurementIterations,
                 "An iteration replays the exported fixture under one arm; the timed window includes the full replay"
                         + " and, for the arms that keep state, constructing and binding a fresh state (see each row's"
                         + " timedWindow); only validation of the previous run is untimed; latency (mean and"
                         + " percentiles) is per replay iteration, while throughput and allocation are per replayed"
-                        + " decision; recording and export are not timed");
+                        + " decision; " + warmup.describe() + "; recording and export are not timed");
     }
 
     /** Records, exports, verifies and measures; never throws for a failing phase. */

@@ -254,6 +254,14 @@ class RoutingReplayEvaluationTest {
                         assertEquals(ReplayMeasurement.timedWindow(arm), row.diagnostics().get("timedWindow"));
                         assertEquals(Boolean.toString(arm != ReplayArm.STATIC),
                                 row.diagnostics().get("stateResetPerIteration"));
+                        // the warm-up is budgeted per arm, and the row records what actually ran
+                        var quickWarmup = ReplayMeasurement.Warmup.QUICK;
+                        assertTrue(Integer.parseInt(row.diagnostics().get("warmupIterations"))
+                                >= quickWarmup.minIterations());
+                        assertEquals(Long.toString(quickWarmup.budgetMillis()),
+                                row.diagnostics().get("warmupBudgetMillis"));
+                        assertTrue(Double.parseDouble(row.diagnostics().get("warmupReplayMillis"))
+                                >= quickWarmup.budgetMillis());
                     }
                 },
                 () -> assertTrue(RoutingReplayRunner.storeArmUnavailable().startsWith("UNAVAILABLE")),
@@ -271,6 +279,11 @@ class RoutingReplayEvaluationTest {
                 // fresh-state construction is timed; only validation is not
                 () -> assertTrue(quick.operationsPerIterationPolicy().contains("only validation of the previous run is"
                         + " untimed")),
+                // the warm-up count is a minimum; the time budget is stated with it
+                () -> assertTrue(quick.operationsPerIterationPolicy().contains(ReplayMeasurement.Warmup.QUICK
+                        .describe())),
+                () -> assertTrue(full.operationsPerIterationPolicy().contains(ReplayMeasurement.Warmup.FULL
+                        .describe())),
                 () -> assertTrue(quick.quickMode()),
                 () -> assertEquals(1, quick.defaultWarmupIterations()),
                 () -> assertEquals(3, quick.defaultMeasurementIterations()),

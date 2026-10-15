@@ -74,7 +74,7 @@ public final class RoutingReplayEvaluation {
 
     private final boolean quick;
     private final int workloadTasks;
-    private final int warmupIterations;
+    private final ReplayMeasurement.Warmup warmup;
     private final int measurementIterations;
     private final SyntheticRoutingFixtures fixtures = new SyntheticRoutingFixtures();
     private final ReplayDigests digests = new ReplayDigests();
@@ -85,24 +85,26 @@ public final class RoutingReplayEvaluation {
     public RoutingReplayEvaluation(boolean quick) {
         this.quick = quick;
         this.workloadTasks = quick ? 240 : 960;
-        this.warmupIterations = quick ? 1 : 3;
+        this.warmup = ReplayMeasurement.Warmup.of(quick);
         this.measurementIterations = quick ? 3 : 10;
-        this.measurement = new ReplayMeasurement(new EvaluationMetricsCollector(), digests, warmupIterations,
+        this.measurement = new ReplayMeasurement(new EvaluationMetricsCollector(), digests, warmup,
                 measurementIterations);
     }
 
     /**
      * Returns the run configuration this evaluation actually uses, so a report cannot state different iteration
-     * counts than were measured. The fixtures are enumerated, so there is no seed.
+     * counts than were measured. The warm-up is budgeted, so its reported count is the minimum and each row records
+     * the actual count. The fixtures are enumerated, so there is no seed.
      */
     public RunConfiguration runConfiguration() {
-        return new RunConfiguration(0L, quick, warmupIterations, measurementIterations,
+        return new RunConfiguration(0L, quick, warmup.minIterations(), measurementIterations,
                 "An iteration replays the whole workload fixture under one arm; the timed window includes the full"
                         + " replay and, for the arms that keep state, constructing and binding a fresh state (see each"
                         + " row's timedWindow); synthetic observations are generated once and reused, and only"
                         + " validation of the previous run is untimed; latency (mean and percentiles) is per replay"
                         + " iteration, while throughput and allocation are per replayed decision (see each row's"
-                        + " latencyScope and meanNanosPerDecision); fixtures are enumerated, so the seed is unused");
+                        + " latencyScope and meanNanosPerDecision); " + warmup.describe() + "; fixtures are"
+                        + " enumerated, so the seed is unused");
     }
 
     /**

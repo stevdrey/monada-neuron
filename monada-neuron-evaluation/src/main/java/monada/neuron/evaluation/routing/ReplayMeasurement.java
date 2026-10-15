@@ -13,10 +13,11 @@ import java.util.Objects;
  * diagnostics and labels.
  *
  * <p>Before timing, an unrecorded run must equal the recorded run the checks verified; that run also generates the
- * synthetic observations the timed runs reuse. Every timed iteration replays the whole fixture; the previous
- * iteration's run is validated against the reference in the collector's untimed setup (and the last one after the
- * loop), against a state digest computed once. Latency is per replay iteration; throughput and allocation are per
- * decision.
+ * synthetic observations the timed runs reuse. The arm is then warmed up under its {@link Warmup} budget, so a light
+ * arm runs as many replays as a heavy one runs time; every warm-up run is validated too. Every timed iteration replays
+ * the whole fixture; the previous iteration's run is validated against the reference in the collector's untimed setup
+ * (and the last one after the loop), against a state digest computed once. Latency is per replay iteration;
+ * throughput and allocation are per decision.
  */
 final class ReplayMeasurement {
 
@@ -24,16 +25,46 @@ final class ReplayMeasurement {
     static final long MODELED_COHORT_BYTES = 400L;
     static final long MODELED_LEDGER_ENTRY_BYTES = 350L;
 
+    /**
+     * How long an arm is warmed up before timing: at least {@code minIterations} replays and at least
+     * {@code budgetMillis} of accumulated replay time, whichever takes more replays. A fixed count cannot fit arms whose
+     * replays differ by two orders of magnitude: a few iterations of a millisecond replay end before the compiler does.
+     *
+     * @param minIterations the minimum number of warm-up replays
+     * @param budgetMillis the minimum accumulated replay time, excluding validation
+     */
+    record Warmup(int minIterations, long budgetMillis) {
+        /** Smoke mode: enough to exercise the budgeted loop, not to reach steady state. */
+        static final Warmup QUICK = new Warmup(1, 50L);
+        static final Warmup FULL = new Warmup(3, 2_000L);
+
+        Warmup {
+            if (minIterations < 0 || budgetMillis < 0L) {
+                throw new IllegalArgumentException("warm-up minimums must be non-negative");
+            }
+        }
+
+        static Warmup of(boolean quick) {
+            return quick ? QUICK : FULL;
+        }
+
+        /** States the policy for a run configuration. */
+        String describe() {
+            return "warm-up per arm runs at least " + minIterations + " replays and at least " + budgetMillis
+                    + " ms of replay time, so the count differs per row (see each row's warmupIterations)";
+        }
+    }
+
     private final EvaluationMetricsCollector collector;
     private final ReplayDigests digests;
-    private final int warmupIterations;
+    private final Warmup warmup;
     private final int measurementIterations;
 
-    ReplayMeasurement(EvaluationMetricsCollector collector, ReplayDigests digests, int warmupIterations,
+    ReplayMeasurement(EvaluationMetricsCollector collector, ReplayDigests digests, Warmup warmup,
             int measurementIterations) {
         this.collector = Objects.requireNonNull(collector, "collector must not be null");
         this.digests = Objects.requireNonNull(digests, "digests must not be null");
-        this.warmupIterations = warmupIterations;
+        this.warmup = Objects.requireNonNull(warmup, "warmup must not be null");
         this.measurementIterations = measurementIterations;
     }
 
@@ -59,11 +90,13 @@ final class ReplayMeasurement {
      * @param arm the arm
      * @param verified the recorded run of this arm and fixture that the semantic checks verified
      * @return the row, labelled with its latency scope
-     * @throws IllegalStateException if a measured run differs from the verified one
+     * @throws IllegalStateException if a warm-up or measured run differs from the verified one
      */
     BenchmarkRunResult measure(String name, ReplayFixture fixture, ReplayArm arm, ReplayRun verified) {
         var replay = new TemporalReplay(fixture);
+        long referenceStart = System.nanoTime();
         ReplayRun reference = replay.run(arm, false);
+        long referenceNanos = System.nanoTime() - referenceStart;
         String expectedState = verified.state().map(digests::state).orElse("none");
         // the unrecorded (timed) path must decide exactly as the recorded path the checks verified
         RoutingReplayEvaluation.requireSameReplay(reference, verified, expectedState, digests);
@@ -84,12 +117,28 @@ final class ReplayMeasurement {
         diagnostics.put("timedWindow", timedWindow(arm));
         diagnostics.put("validationInWindow", "false");
         diagnostics.put("gcTelemetryScope", "includes the untimed validation of the previous run");
+        // the reference run also generated the observations every later run reuses, so it is not a steady-state figure
+        diagnostics.put("referenceRunMillis", millis(referenceNanos));
+        int warmups = 0;
+        long warmupNanos = 0L;
+        long budgetNanos = warmup.budgetMillis() * 1_000_000L;
+        while (warmups < warmup.minIterations() || warmupNanos < budgetNanos) {
+            long start = System.nanoTime();
+            ReplayRun run = replay.run(arm, false);
+            warmupNanos += System.nanoTime() - start;
+            RoutingReplayEvaluation.requireSameReplay(run, reference, expectedState, digests);
+            warmups++;
+        }
+        diagnostics.put("warmupIterations", Integer.toString(warmups));
+        diagnostics.put("warmupMinIterations", Integer.toString(warmup.minIterations()));
+        diagnostics.put("warmupBudgetMillis", Long.toString(warmup.budgetMillis()));
+        diagnostics.put("warmupReplayMillis", millis(warmupNanos));
         var pending = new ReplayRun[1];
         BenchmarkRunResult result = collector.measure(name,
                 "tasks=" + decisions + ",routes=" + fixture.tasks().stream()
                         .flatMap(t -> t.catalog().entries().stream()).map(e -> e.key()).distinct().count()
                         + ",cohorts=" + fixture.cohortKeys().size(),
-                warmupIterations, measurementIterations, decisions,
+                0, measurementIterations, decisions,
                 () -> {
                     if (pending[0] != null) {
                         RoutingReplayEvaluation.requireSameReplay(pending[0], reference, expectedState, digests);
@@ -101,6 +150,10 @@ final class ReplayMeasurement {
         // the collector runs no setup after its last iteration, so the final measured run is validated here
         RoutingReplayEvaluation.requireSameReplay(pending[0], reference, expectedState, digests);
         return withLatencyScope(result, decisions);
+    }
+
+    private static String millis(long nanos) {
+        return String.format(Locale.ROOT, "%.1f", nanos / 1e6);
     }
 
     /**
