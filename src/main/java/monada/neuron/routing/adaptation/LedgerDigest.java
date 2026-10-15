@@ -39,7 +39,9 @@ import java.util.UUID;
  * and then its elements; an {@link EntryBasis} a tag byte ({@code 1} derived, {@code 2} marker) and then its components.
  * Nested records ({@link FeedbackIdentity}, {@link DecisionRef}, {@code RouteKey}, {@link CohortKey},
  * {@code CohortBinding}, {@link PeerRevision}) are encoded component by component in declaration order. No delimiter
- * is used, so distinct entries cannot collide on concatenation.
+ * is used, so distinct entries cannot collide on concatenation. Every encoded string is an opaque token, which
+ * {@code OpaqueTokens} requires to be well-formed UTF-16, so its UTF-8 form is lossless and distinct strings never
+ * share bytes.
  *
  * @param entries number of digested entries, non-negative
  * @param sum lowercase hexadecimal of the 32-byte sum, big-endian

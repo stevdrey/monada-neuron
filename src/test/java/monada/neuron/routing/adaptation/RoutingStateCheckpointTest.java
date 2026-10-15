@@ -89,6 +89,12 @@ class RoutingStateCheckpointTest {
                 .derive(o, decisions.get(o.experienceRef()), requests.get(o.experienceRef()), bindings));
     }
 
+    /** A checkpoint after confirming the watermark, as a caller does once every observation up to it was delivered. */
+    private static RoutingStateCheckpoint confirmedCheckpoint(RoutingStateStore store) {
+        store.advanceCutoff(store.processedCutoff());
+        return store.checkpoint(policy());
+    }
+
     private RoutingStateStore scratch(List<RoutingObservation> observations, long cutoff) {
         var result = bound().rebuild(observations, cutoff, List.of(KEY_A, KEY_B), (o, bindings) -> feedbackPolicy()
                 .derive(o, decisions.get(o.experienceRef()), requests.get(o.experienceRef()), bindings));
@@ -111,7 +117,7 @@ class RoutingStateCheckpointTest {
         var live = bound();
         deliverTo(live, sample("exp-1", "sub-a", 20, Kind.PASS));
         deliverTo(live, sample("exp-2", "sub-b", 30, Kind.FAIL));
-        var checkpoint = live.checkpoint(policy());
+        var checkpoint = confirmedCheckpoint(live);
         assertEquals("scope-demo", checkpoint.scopeId());
         assertEquals(30L, checkpoint.processedCutoff());
         assertEquals(LedgerDigest.of(live.ledger()), checkpoint.ledgerDigest());
@@ -133,7 +139,7 @@ class RoutingStateCheckpointTest {
         var live = bound();
         deliverTo(live, sample("exp-1", "sub-a", 20, Kind.PASS));
         deliverTo(live, sample("exp-2", "sub-b", 30, Kind.FAIL));
-        var checkpoint = live.checkpoint(policy());
+        var checkpoint = confirmedCheckpoint(live);
         deliverTo(live, sample("exp-3", "sub-a", 40, Kind.PASS));
         var cohorts = live.cohorts(demo());
         var digest = live.ledgerDigest();
@@ -152,15 +158,16 @@ class RoutingStateCheckpointTest {
     @Test
     void aFullLedgerLearnsAgainAfterCompaction() {
         var live = bound();
+        List<RoutingObservation> history = new ArrayList<>();
         for (int i = 0; i < RoutingStateStore.MAX_LEDGER; i++) {
-            assertInstanceOf(StateUpdate.Applied.class,
-                    deliverTo(live, sample(String.format("r-%05d", i), "sub-a", 100 + i, Kind.PENDING)));
+            history.add(sample(String.format("r-%05d", i), "sub-a", 100 + i, Kind.PENDING));
+            assertInstanceOf(StateUpdate.Applied.class, deliverTo(live, history.getLast()));
         }
         var overflow = sample("r-overflow", "sub-b", 90_000, Kind.PASS);
         var blocked = assertInstanceOf(StateUpdate.Blocked.class, deliverTo(live, overflow));
         assertInstanceOf(Reconciliation.CapacityExhausted.class, blocked.advice());
 
-        var checkpoint = live.checkpoint(policy());
+        var checkpoint = confirmedCheckpoint(live);
         assertEquals(new CompactionResult.Compacted(RoutingStateStore.MAX_LEDGER, 100 + 4095), live.compact(checkpoint));
         assertInstanceOf(StateUpdate.Applied.class, deliverTo(live, overflow));
         assertEquals(1, live.ledger().size());
@@ -170,6 +177,44 @@ class RoutingStateCheckpointTest {
         assertEquals(new StateUpdate.BeyondCheckpoint(StateUpdate.BeyondCheckpoint.Kind.COVERED, 4195, 150),
                 deliverTo(live, sample("r-00050", "sub-a", 150, Kind.PENDING)));
         assertEquals(1, live.cohorts(demo()).getLast().supportingObservations());
+
+        // the whole export, 4,097 observations, restores from the checkpoint: only the one after it counts against the
+        // rebuild bound, so a partition longer than one rebuild call can still be restored
+        var all = new ArrayList<>(history);
+        all.add(overflow);
+        var restored = assertInstanceOf(RebuildResult.Rebuilt.class,
+                rebuildFrom(live, checkpoint, all, live.processedCutoff())).store();
+        assertEquals(live.cohorts(demo()), restored.cohorts(demo()));
+        assertEquals(live.ledgerDigest(), restored.ledgerDigest());
+        assertEquals(live.ledger(), restored.ledger());
+        assertEquals(live.processedCutoff(), restored.processedCutoff());
+    }
+
+    @Test
+    void aCheckpointNeedsAConfirmedWatermarkSoALateSampleIsNeverLost() {
+        var live = bound();
+        // observations may arrive out of order: the neutral sample at 100 moves the watermark past a missing one at 50
+        var later = sample("exp-2", "sub-b", 100, Kind.PENDING);
+        assertInstanceOf(StateUpdate.Applied.class, deliverTo(live, later));
+        assertEquals(100L, live.processedCutoff());
+        assertEquals(0L, live.confirmedCutoff());
+        assertEquals("processedCutoff 100 is beyond the confirmed watermark 0: confirm the export's high-watermark"
+                + " with advanceCutoff before a checkpoint",
+                assertThrows(IllegalStateException.class, () -> live.checkpoint(policy())).getMessage());
+
+        // the late sample is applied in place, then the caller confirms the export's high-watermark
+        var late = sample("exp-1", "sub-a", 50, Kind.PASS);
+        assertInstanceOf(StateUpdate.Applied.class, deliverTo(live, late));
+        live.advanceCutoff(100);
+        assertEquals(100L, live.confirmedCutoff());
+        var checkpoint = live.checkpoint(policy());
+        assertEquals(new CompactionResult.Compacted(2, 100), live.compact(checkpoint));
+        assertSameState(scratch(List.of(late, later), 100), live);
+        // a restored store starts confirmed at the checkpoint, so it can take a checkpoint at once
+        var restored = assertInstanceOf(RebuildResult.Rebuilt.class,
+                rebuildFrom(live, checkpoint, List.of(late, later), 100)).store();
+        assertEquals(100L, restored.confirmedCutoff());
+        assertEquals(checkpoint, restored.checkpoint(policy()));
     }
 
     @Test
@@ -178,9 +223,9 @@ class RoutingStateCheckpointTest {
         var first = sample("exp-1", "sub-a", 20, Kind.PASS);
         var second = sample("exp-2", "sub-b", 30, Kind.PASS);
         deliverTo(live, first);
-        var early = live.checkpoint(policy());
+        var early = confirmedCheckpoint(live);
         deliverTo(live, second);
-        var late = live.checkpoint(policy());
+        var late = confirmedCheckpoint(live);
         live.compact(late);
         var cohorts = live.cohorts(demo());
         var ledger = live.ledger();
@@ -213,7 +258,7 @@ class RoutingStateCheckpointTest {
         var second = sample("exp-2", "sub-b", 30, Kind.PASS);
         var third = sample("exp-3", "sub-a", 40, Kind.FAIL);
         deliverTo(live, first);
-        var checkpoint = live.checkpoint(policy());
+        var checkpoint = confirmedCheckpoint(live);
         deliverTo(live, second);
         deliverTo(live, third);
         live.compact(checkpoint);
@@ -238,7 +283,7 @@ class RoutingStateCheckpointTest {
         var other = sample("exp-2", "sub-b", 100, Kind.PASS);
         deliverTo(live, first);
         deliverTo(live, other);
-        assertEquals(new CompactionResult.Compacted(2, 100), live.compact(live.checkpoint(policy())));
+        assertEquals(new CompactionResult.Compacted(2, 100), live.compact(confirmedCheckpoint(live)));
         var cohorts = live.cohorts(demo());
 
         // a correction never delivered before, at a sequence the horizon already passed
@@ -260,7 +305,7 @@ class RoutingStateCheckpointTest {
         var correction = corrected(first, 50, Kind.FAIL);
         var other = sample("exp-2", "sub-b", 100, Kind.PASS);
         var live = scratch(List.of(first, correction, other), 100);
-        var checkpoint = live.checkpoint(policy());
+        var checkpoint = confirmedCheckpoint(live);
         var later = sample("exp-3", "sub-a", 150, Kind.PASS);
 
         // the whole export: the examined correction at 50 lies below the cutoff and is part of the checkpoint
@@ -276,7 +321,7 @@ class RoutingStateCheckpointTest {
         var second = sample("exp-2", "sub-b", 30, Kind.FAIL);
         deliverTo(live, first);
         deliverTo(live, second);
-        var checkpoint = live.checkpoint(policy());
+        var checkpoint = confirmedCheckpoint(live);
         var later = sample("exp-3", "sub-a", 40, Kind.PASS);
 
         // after a restart the host holds only the checkpoint; the new store has examined nothing and binds nothing
@@ -294,7 +339,7 @@ class RoutingStateCheckpointTest {
         var live = bound();
         deliverTo(live, sample("exp-1", "sub-a", 20, Kind.PASS));
         deliverTo(live, sample("exp-2", "sub-b", 30, Kind.FAIL));
-        var valid = live.checkpoint(policy());
+        var valid = confirmedCheckpoint(live);
         var base = sample("exp-m", "sub-a", 10, Kind.PASS);
         List<AppliedRevision> tooMany = new ArrayList<>();
         for (int i = 0; i <= RoutingStateStore.MAX_LEDGER; i++) {
@@ -354,7 +399,7 @@ class RoutingStateCheckpointTest {
         assertInstanceOf(StateUpdate.Applied.class, live.consume(reward, refined));
 
         // the dependent reward is compacted while its peer stays retained
-        assertEquals(new CompactionResult.Compacted(1, 20), live.compact(live.checkpoint(policy())));
+        assertEquals(new CompactionResult.Compacted(1, 20), live.compact(confirmedCheckpoint(live)));
         assertEquals(List.of("exp-peer"), live.ledger().stream().map(AppliedRevision::experienceRef).toList());
         var cohorts = live.cohorts(demo());
         var ledger = live.ledger();
@@ -377,7 +422,7 @@ class RoutingStateCheckpointTest {
         var live = store();
         live.bind(List.of(KEY_A));
         deliverTo(live, sample("exp-b", "sub-b", 20, Kind.PASS));
-        var checkpoint = live.checkpoint(policy());
+        var checkpoint = confirmedCheckpoint(live);
         AppliedRevision marker = checkpoint.retainedMarkers().getFirst();
         var binding = ((EntryBasis.NoUpdateMarker) marker.basis()).cohortBinding();
         var rebucketed = new AppliedRevision(marker.identity(), marker.routingPolicyId(), marker.routingPolicyVersion(),
@@ -409,7 +454,7 @@ class RoutingStateCheckpointTest {
         var live = bound();
         deliverTo(live, sample("exp-1", "sub-a", 20, Kind.PASS));
         deliverTo(live, sample("exp-3", "sub-a", 40, Kind.PENDING));
-        var checkpoint = live.checkpoint(policy());
+        var checkpoint = confirmedCheckpoint(live);
         // a late sample below the cutoff that moves no Node after a later Node change is recorded in place
         assertInstanceOf(StateUpdate.Applied.class, deliverTo(live, sample("exp-2", "sub-b", 30, Kind.PENDING)));
         var ledger = live.ledger();
@@ -422,9 +467,9 @@ class RoutingStateCheckpointTest {
     void compactionNeverMovesBackwards() {
         var live = bound();
         deliverTo(live, sample("exp-1", "sub-a", 20, Kind.PASS));
-        var early = live.checkpoint(policy());
+        var early = confirmedCheckpoint(live);
         deliverTo(live, sample("exp-2", "sub-a", 30, Kind.PASS));
-        live.compact(live.checkpoint(policy()));
+        live.compact(confirmedCheckpoint(live));
         assertEquals(new CompactionResult.Refused(CompactionResult.Reason.BEHIND_HORIZON), live.compact(early));
     }
 
@@ -433,7 +478,7 @@ class RoutingStateCheckpointTest {
         var live = bound();
         deliverTo(live, sample("exp-b", "sub-b", 20, Kind.PASS));
         assertTrue(live.unbindDormant(KEY_B, AdaptationFixtures.only("sub-a")));
-        var checkpoint = live.checkpoint(policy());
+        var checkpoint = confirmedCheckpoint(live);
         assertEquals(new CompactionResult.Refused(CompactionResult.Reason.CREDITS_UNBOUND_COHORT),
                 live.compact(checkpoint));
         assertEquals(1, live.ledger().size());
@@ -446,7 +491,7 @@ class RoutingStateCheckpointTest {
         var a = sample("exp-a", "sub-a", 30, Kind.PASS);
         deliverTo(live, b);
         deliverTo(live, a);
-        var checkpoint = live.checkpoint(policy());
+        var checkpoint = confirmedCheckpoint(live);
         live.compact(checkpoint);
         assertTrue(live.unbindDormant(KEY_B, AdaptationFixtures.only("sub-a")));
         assertEquals(new BindResult.RebuildRequired(List.of(KEY_B)), live.bind(List.of(KEY_B)));
@@ -471,7 +516,7 @@ class RoutingStateCheckpointTest {
                 feedbackPolicy().derive(mismatch, decisions.get("exp-m"), review, live.bindings()));
         assertInstanceOf(StateUpdate.Recorded.class, wrong);
         deliverTo(live, sample("exp-a", "sub-a", 40, Kind.PASS));
-        var checkpoint = live.checkpoint(policy());
+        var checkpoint = confirmedCheckpoint(live);
         assertEquals(2, checkpoint.retainedMarkers().size());
 
         assertEquals(new CompactionResult.Compacted(1, 40), live.compact(checkpoint));
@@ -492,9 +537,9 @@ class RoutingStateCheckpointTest {
         var other = new RoutingStateStore(AdaptationFixtures.definition("adaptive-test/2"),
                 AdaptationFixtures.PARTITION);
         assertEquals("the checkpoint belongs to another partition or definition", assertThrows(
-                IllegalArgumentException.class, () -> other.compact(live.checkpoint(policy()))).getMessage());
+                IllegalArgumentException.class, () -> other.compact(confirmedCheckpoint(live))).getMessage());
         assertEquals("the checkpoint at 20 lies beyond processedCutoff 0", assertThrows(
-                IllegalArgumentException.class, () -> bound().compact(live.checkpoint(policy()))).getMessage());
+                IllegalArgumentException.class, () -> bound().compact(confirmedCheckpoint(live))).getMessage());
     }
 
     @Test
@@ -563,7 +608,7 @@ class RoutingStateCheckpointTest {
                 }
             }
             if (delivered.size() % 4 == 0) {
-                checkpoints.add(live.checkpoint(policy()));
+                checkpoints.add(confirmedCheckpoint(live));
                 if (checkpoints.size() >= 3) {
                     // a store restored from a newer checkpoint than this one is already compacted past it
                     var compaction = live.compact(checkpoints.get(checkpoints.size() - 3));

@@ -30,6 +30,11 @@ a valid checkpoint gives a state identical to a rebuild from scratch).
   `CheckpointCohort(key, amplitude, frequency, phase, energy, support)` for **every** cohort, active and dormant: a
   `RoutingPreference` omits dormant cohorts and the Node channels. `RoutingStateStore.checkpoint(policy)` takes one at
   the store's watermark; it is in-memory and caller-owned.
+  - **The watermark must be confirmed.** `consume` moves `processedCutoff` to the highest sequence examined, and
+    observations may arrive out of order. The store therefore keeps `confirmedCutoff()`: the last watermark the caller
+    asserted complete through `advanceCutoff`, or a rebuild's export cutoff. `checkpoint` throws
+    `IllegalStateException` while `processedCutoff` is beyond it. Without that, a sample still missing below the
+    watermark would be lost by compaction and by `rebuildFrom`'s skip of covered history.
   - A host may persist a checkpoint and build it again, so the constructor rejects more than 4,096 retained markers, a
     marker of another partition or definition, and a digest that counts fewer entries than the markers plus every
     support unit.
@@ -62,8 +67,9 @@ a valid checkpoint gives a state identical to a rebuild from scratch).
   later observations:
   - The checkpoint's cohorts get its Node channels and support; this store's other cohorts start at the baseline.
   - The ledger starts as the retained markers, and the checkpoint's cutoff is both the watermark and the horizon.
-  - Observations at or below the cutoff whose sample the checkpoint does not retain are history it already contains,
-    and are skipped, so a whole export may be passed.
+  - Observations at or below the cutoff whose sample the checkpoint does not retain are history it already contains.
+    They are dropped before the bounded ordering, so only the tail counts against the 4,096-observation bound, and a
+    whole export of a partition longer than one rebuild call may be passed.
   - The receiver need not be the store the checkpoint came from. A persisted checkpoint restores a new, empty store; only
     the export cutoff must reach the checkpoint's cutoff.
   - The checkpoint carries no bucket mapping. `rebuildFrom` and `compact` therefore reject a retained marker recorded

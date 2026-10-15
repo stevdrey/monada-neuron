@@ -40,7 +40,8 @@ import java.util.Objects;
  * @param mappingVersion composite {@code mappingVersion} of the definition
  * @param policyId routing policy the checkpoint was taken for (provenance only)
  * @param policyVersion version of that routing policy
- * @param processedCutoff the store's watermark when the checkpoint was taken; every covered entry lies at or below it
+ * @param processedCutoff the store's watermark when the checkpoint was taken, which the caller had confirmed complete
+ *        ({@link RoutingStateStore#confirmedCutoff()}); every covered entry lies at or below it
  * @param preferenceSnapshot every cohort in canonical {@link CohortKey} order, at most {@value RoutingStateStore#MAX_COHORTS}
  * @param ledgerDigest digest of every ledger entry the state had accounted for, compacted or not
  * @param retainedMarkers the retryable markers among those entries, in sample-reference code-point order

@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ObservationFactoryTest {
@@ -36,8 +37,8 @@ class ObservationFactoryTest {
     @Test
     void anUnpairedSurrogateNeverSharesAReferenceWithItsReplacement() {
         assertAll(
-                () -> assertNotEquals(observations.experienceRef(request("exe-\uD800", "att")),
-                        observations.experienceRef(request("exe-?", "att"))),
+                // routing tokens must be well-formed UTF-16 (OpaqueTokens), so such a request cannot even be built
+                () -> assertThrows(IllegalArgumentException.class, () -> request("exe-\uD800", "att")),
                 () -> assertNotEquals(observations.repairAttemptId("att-\uD800"),
                         observations.repairAttemptId("att-?")));
     }

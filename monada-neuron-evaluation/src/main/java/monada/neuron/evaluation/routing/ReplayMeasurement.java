@@ -151,7 +151,8 @@ final class ReplayMeasurement {
                 cohorts * MODELED_COHORT_BYTES + ledger * MODELED_LEDGER_ENTRY_BYTES + retainedCheckpointBytes));
         diagnostics.put("stateResetPerIteration", Boolean.toString(arm != ReplayArm.STATIC));
         diagnostics.put("timedWindow", timedWindow(arm) + (strategy == RebuildStrategy.CHECKPOINT
-                ? "; checkpoints every " + RebuildStrategy.CHECKPOINT_INTERVAL + " deliveries, "
+                ? "; a checkpoint at the first confirmed decision cutoff after every "
+                        + RebuildStrategy.CHECKPOINT_INTERVAL + " deliveries, "
                         + RebuildStrategy.RETAINED_CHECKPOINTS + " kept, ledger compacted to the oldest, and rebuilds"
                         + " started from the newest valid one are timed too"
                 : ""));

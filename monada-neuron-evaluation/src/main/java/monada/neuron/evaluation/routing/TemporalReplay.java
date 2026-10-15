@@ -141,9 +141,11 @@ public final class TemporalReplay {
             while (!run.pending.isEmpty() && run.pending.peek().observation().ledgerSequence() <= cutoff) {
                 run.deliver(run.pending.poll());
             }
-            if (arm == ReplayArm.ADAPTIVE && run.store.processedCutoff() < cutoff) {
-                // everything at or before the cutoff has been delivered: the state is the state as of the cutoff
+            if (arm == ReplayArm.ADAPTIVE && run.store.processedCutoff() <= cutoff) {
+                // everything at or before the cutoff has been delivered: the state is the state as of the cutoff, and
+                // the watermark is confirmed, which a checkpoint requires
                 run.store.advanceCutoff(cutoff);
+                run.checkpointIfDue();
             }
             run.decide(task);
         }
@@ -265,6 +267,8 @@ public final class TemporalReplay {
         private int checkpointsTaken;
         private int compactions;
         private int compactedEntries;
+        /** Deliveries when the last checkpoint was taken. */
+        private int checkpointedAt;
 
         Run(ReplayArm arm, boolean record, RebuildStrategy strategy) {
             this.arm = arm;
@@ -362,10 +366,6 @@ public final class TemporalReplay {
                         yield FeedbackEvent.Update.REBUILT;
                     }
                 };
-                if (strategy == RebuildStrategy.CHECKPOINT
-                        && delivered.size() % RebuildStrategy.CHECKPOINT_INTERVAL == 0) {
-                    checkpoint();
-                }
             }
             if (record) {
                 events.add(event(next, derivation, update));
@@ -412,8 +412,17 @@ public final class TemporalReplay {
             return derivation;
         }
 
-        /** Takes a checkpoint, keeps the newest few and compacts the ledger to the oldest kept one. */
-        private void checkpoint() {
+        /**
+         * With the checkpoint strategy, once {@link RebuildStrategy#CHECKPOINT_INTERVAL} observations were delivered
+         * since the last checkpoint, takes one at the just-confirmed watermark, keeps the newest few and compacts the
+         * ledger to the oldest kept one.
+         */
+        void checkpointIfDue() {
+            if (strategy != RebuildStrategy.CHECKPOINT
+                    || delivered.size() - checkpointedAt < RebuildStrategy.CHECKPOINT_INTERVAL) {
+                return;
+            }
+            checkpointedAt = delivered.size();
             checkpoints.addLast(store.checkpoint(policy));
             checkpointsTaken++;
             while (checkpoints.size() > RebuildStrategy.RETAINED_CHECKPOINTS) {

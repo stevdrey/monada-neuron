@@ -91,6 +91,8 @@ public final class RoutingStateStore {
     private final TreeMap<String, AppliedRevision> ledger = new TreeMap<>(OpaqueTokens.CODE_POINT_ORDER);
     private final List<AppliedRevision> ledgerView = new LedgerView();
     private long processedCutoff;
+    /** The last watermark the caller confirmed complete; {@link #consume} never moves it. */
+    private long confirmedCutoff;
     private TargetBindings bindings;
     /** The checkpoint the ledger is compacted to; {@code null} until the first compaction or restore. */
     private RoutingStateCheckpoint compactedTo;
@@ -125,6 +127,15 @@ public final class RoutingStateStore {
     /** The greatest ledger sequence or export watermark examined. */
     public long processedCutoff() {
         return processedCutoff;
+    }
+
+    /**
+     * The watermark the caller confirmed complete, through {@link #advanceCutoff} or a rebuild's export cutoff: every
+     * observation at or below it was delivered. {@link #consume} never moves it, because observations may arrive out of
+     * order, so {@code processedCutoff} can run ahead of it. A checkpoint needs the two to be equal.
+     */
+    public long confirmedCutoff() {
+        return confirmedCutoff;
     }
 
     /** Number of bound cohorts, active and dormant. */
@@ -279,7 +290,9 @@ public final class RoutingStateStore {
      * or when it is newer than the sample's retained marker: the compacted ledger cannot tell a correction examined
      * before the checkpoint from one never delivered, nor show a compacted cost-refined reward that depends on a
      * retained marker, so a re-read of an examined correction asks for a rebuild too, which is never wrong. Any other
-     * delivery at or below the horizon of a sample whose entry was compacted is {@code COVERED}. A delivery at or below the horizon that would apply or record
+     * delivery at or below the horizon of a sample whose entry was compacted is {@code COVERED}: the horizon is a
+     * {@linkplain #confirmedCutoff() confirmed} watermark, so the caller asserted it was delivered before the
+     * checkpoint. A delivery at or below the horizon that would apply or record
      * something is {@code BEFORE_HORIZON}. All three are
      * {@link StateUpdate.BeyondCheckpoint} and change nothing. A cost-refined derivation whose peer revision was
      * compacted is trusted to have been derived from the same export as the observation, which is later than the
@@ -365,7 +378,10 @@ public final class RoutingStateStore {
     }
 
     /**
-     * Advances the watermark to an export's high-watermark after its observations were consumed.
+     * Advances the watermark to an export's high-watermark after its observations were consumed, and confirms it: the
+     * caller asserts that every observation at or below it was delivered. A checkpoint relies on that assertion, so a
+     * sample at or below a confirmed watermark that arrives later is a caller contract violation; a compacted store
+     * reports it as {@code COVERED} when its entry was compacted.
      *
      * @param watermark the new watermark, not below the current one
      * @throws IllegalArgumentException if the watermark would move backwards
@@ -376,6 +392,7 @@ public final class RoutingStateStore {
                     "processedCutoff cannot move backwards from " + processedCutoff + " to " + watermark);
         }
         processedCutoff = watermark;
+        confirmedCutoff = watermark;
     }
 
     /**
@@ -497,10 +514,20 @@ public final class RoutingStateStore {
      * A checkpoint of this state at its {@code processedCutoff}: every cohort's Node channels and support, active and
      * dormant, the {@link #ledgerDigest()} and the retryable markers. This store is not modified. {@code O(C + L)}.
      *
+     * <p>The watermark must be {@linkplain #confirmedCutoff() confirmed}: a checkpoint stands for everything at or below
+     * its cutoff, and compaction and {@link #rebuildFrom} skip what it covers, so a sample still missing below an
+     * unconfirmed watermark (observations may arrive out of order) would be lost.
+     *
      * @param policyId routing policy the checkpoint is taken for (provenance only)
      * @param policyVersion version of that routing policy
+     * @throws IllegalStateException if observations were consumed beyond the confirmed watermark; call
+     *         {@link #advanceCutoff} with the export's high-watermark first
      */
     public RoutingStateCheckpoint checkpoint(String policyId, String policyVersion) {
+        if (processedCutoff > confirmedCutoff) {
+            throw new IllegalStateException("processedCutoff " + processedCutoff + " is beyond the confirmed watermark "
+                    + confirmedCutoff + ": confirm the export's high-watermark with advanceCutoff before a checkpoint");
+        }
         var cohortValues = new ArrayList<CheckpointCohort>(cohorts.size());
         for (Map.Entry<CohortKey, Cohort> entry : cohorts.entrySet()) {
             Node node = entry.getValue().node;
@@ -605,8 +632,9 @@ public final class RoutingStateStore {
      * entries ({@code M} retained markers) and {@code C} cohorts.
      *
      * @param checkpoint the checkpoint to start from; it may be older than this store's horizon
-     * @param observations the effective observations after the checkpoint, at most
-     *         {@value RebuildOrder#MAX_OBSERVATIONS}; a whole export is allowed, its history up to the cutoff is skipped
+     * @param observations the observations after the checkpoint; a whole export is allowed, because its history up to
+     *         the cutoff is dropped first, so only the rest (with every revision of a retained marker's sample) counts
+     *         against the bound of {@value RebuildOrder#MAX_OBSERVATIONS}
      * @param exportCutoff the export's high-watermark the rebuilt state has examined, not below the checkpoint's cutoff
      *         nor this store's {@link #processedCutoff()}
      * @param derive derives one observation against the staged bindings; called once per replayed observation
@@ -633,17 +661,21 @@ public final class RoutingStateStore {
         }
         var retained = new TreeSet<String>(OpaqueTokens.CODE_POINT_ORDER);
         checkpoint.retainedMarkers().forEach(marker -> retained.add(marker.experienceRef()));
+        // the history the checkpoint contains is dropped before ordering, so only the tail counts against the replay
+        // bound: a sample with revisions on both sides of the cutoff keeps its later one, which ordering would pick
+        // anyway, and a retained marker's sample keeps every revision, because it is still reconciled against the marker
         var later = new ArrayList<RoutingObservation>();
-        for (RoutingObservation observation : new RebuildOrder().order(observations)) {
-            // history the checkpoint contains; a retained marker's sample is still reconciled against it
+        for (RoutingObservation observation : observations) {
+            Objects.requireNonNull(observation, "observations must not contain null");
             if (observation.ledgerSequence() > checkpoint.processedCutoff()
                     || retained.contains(observation.experienceRef())) {
                 later.add(observation);
             }
         }
+        List<RoutingObservation> ordered = new RebuildOrder().order(later);
         var staged = new RoutingStateStore(definition, partition);
         staged.restore(checkpoint, cohorts.keySet());
-        return staged.replay(later, exportCutoff, derive);
+        return staged.replay(ordered, exportCutoff, derive);
     }
 
     /** Sets this new, empty store to a checkpoint plus the given extra cohorts at the baseline. */
@@ -687,6 +719,7 @@ public final class RoutingStateStore {
         compacted = checkpoint.ledgerDigest().minus(LedgerDigest.of(checkpoint.retainedMarkers()));
         compactedTo = checkpoint;
         processedCutoff = checkpoint.processedCutoff();
+        confirmedCutoff = checkpoint.processedCutoff();
         bindings = buildBindings();
     }
 

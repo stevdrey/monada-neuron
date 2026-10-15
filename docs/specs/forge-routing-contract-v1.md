@@ -82,8 +82,9 @@ Three decisions are deliberately distinct and must never be conflated:
 Identifier rules mirror the Store contract so that one value means the same thing in both repositories.
 
 - `ScopeId`, `TaskId`, `ExecutionId`, `AttemptId`, `StageId`, `RouteId` and `StageKind` are **caller-issued opaque tokens**:
-  1–128 Unicode code points, no control characters, no leading or trailing whitespace, compared with exact
-  `String.equals`. Neuron never generates, parses, normalizes or hashes them.
+  1–128 Unicode code points, no control characters, no leading or trailing whitespace, well-formed UTF-16 (no unpaired
+  surrogate, which has no UTF-8 form, so every canonical identity and digest built from them is lossless; #89), compared
+  with exact `String.equals`. Neuron never generates, parses, normalizes or hashes them.
 - A `RouteId` is stable across versions of the same route. `RouteVersion` is a **positive `long` (at least 1) assigned by
   the caller** and changes when the route's *behavioral* descriptor changes. The fields are classified exactly once:
 
@@ -1680,7 +1681,15 @@ data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value
 
 ### 23.3 Rules
 
+- **Confirmed watermark.** `consume` advances `processedCutoff` to the highest sequence it examined, but observations may
+  arrive out of order, so that does not prove everything below was delivered. `advanceCutoff(watermark)` (and a
+  rebuild's export cutoff) is the caller's assertion that every observation at or below the watermark was delivered;
+  the store keeps it as `confirmedCutoff()`, and `consume` never moves it.
 - **Checkpoint.** `checkpoint(policy)` captures the state at its `processedCutoff`; every ledger entry lies at or below it.
+  The watermark must be confirmed: `checkpoint` throws `IllegalStateException` when `processedCutoff` is beyond
+  `confirmedCutoff()`. A checkpoint stands for everything at or below its cutoff, and compaction and `rebuildFrom` skip
+  what it covers, so a sample still missing below an unconfirmed watermark would otherwise be lost. A sample at or below
+  a confirmed watermark that arrives later is a caller contract violation; once its entry is compacted it is `COVERED`.
 - **Compaction is all-or-nothing.**
   - `compact(checkpoint)` requires the checkpoint's partition and definition and a cutoff not beyond the watermark;
     anything else throws.
@@ -1701,7 +1710,8 @@ data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value
     cost-refined reward whose peer is a retained marker (a `PROVENANCE_MISMATCH` peer). A re-read of an examined
     correction therefore asks for a rebuild too: never wrong, only more work. A repeat or older revision of a retained
     marker is still answered by the reconciler;
-  - any other delivery of such a sample at or below the horizon is `COVERED`;
+  - any other delivery of such a sample at or below the horizon is `COVERED`: the horizon is a confirmed watermark, so
+    the caller asserted it was delivered before the checkpoint;
   - a delivery at or below the horizon that the reconciler would apply or record is `BEFORE_HORIZON`, because the
     compacted entries after it are invisible to the order rule;
   - all three change nothing, including the watermark. `COVERED` needs no action. The other two tell the caller to
@@ -1714,11 +1724,12 @@ data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value
 - **Rebuild from a checkpoint.** `rebuildFrom` stages a store with:
   - the checkpoint's cohorts (channels and support) plus this store's other cohorts at the baseline;
   - the retained markers as its ledger;
-  - the checkpoint's digest, and its cutoff as both watermark and horizon.
+  - the checkpoint's digest, and its cutoff as watermark, confirmed watermark and horizon.
 
-  It orders the observations with `RebuildOrder` (the latest revision of each sample) and skips those at or below the
-  cutoff whose sample the checkpoint does not retain. That history is already in the checkpoint, so a whole export may
-  be passed. It replays the rest under the horizon rules:
+  It first drops the observations at or below the cutoff whose sample the checkpoint does not retain: that history is
+  already in the checkpoint. Only the rest counts against the 4,096-observation bound, so a whole export of a partition
+  longer than one rebuild call may be passed. It then orders the rest with `RebuildOrder` (the latest revision of each
+  sample; a retained marker's sample keeps every revision) and replays it under the horizon rules:
   - applied, recorded, not-recorded and repeated-marker deliveries continue the replay;
   - an observation that invalidates the checkpoint ends it as `RebuildResult.Failed`.
 
@@ -1794,6 +1805,9 @@ Both rows reach the same decision trace, deliveries, derivations and state diges
 - a newer revision of a retained `PROVENANCE_MISMATCH` peer of a compacted cost-refined reward reported as
   `SUPERSEDES_COMPACTED`, while a repeat of the retained revision is still `Unchanged`;
 - a retained marker of another bucket mapping rejected by `compact` and `rebuildFrom`;
+- a checkpoint refused while an out-of-order sample is still missing below the watermark, and taken once the late
+  sample is applied and the watermark is confirmed;
+- a whole export of 4,097 observations restored from a checkpoint, only its tail counted against the rebuild bound;
 - `STALE`, `BEHIND_HORIZON` and `CREDITS_UNBOUND_COHORT`;
 - a rebind of a compacted cohort refused until a rebuild from the checkpoint;
 - retained retryable markers with a conservative bind refusal and `BEFORE_HORIZON`;

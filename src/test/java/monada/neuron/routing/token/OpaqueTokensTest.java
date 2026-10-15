@@ -41,6 +41,18 @@ class OpaqueTokensTest {
     }
 
     @Test
+    void rejectsUnpairedSurrogatesButAcceptsPairs() {
+        // UTF-8 would turn each of these into '?', so distinct tokens would encode alike
+        for (String malformed : new String[] {"a\uD800", "\uDC00b", "x\uDE00\uD83Dy", "\uD800\uD800"}) {
+            assertEquals("t must be well-formed UTF-16 (no unpaired surrogate)", message(malformed));
+        }
+        assertEquals("t must be well-formed UTF-16 (no unpaired surrogate)", assertThrows(
+                IllegalArgumentException.class, () -> OpaqueTokens.requireText("ref-\uDBFF", "t")).getMessage());
+        String pair = "a😀b";
+        assertSame(pair, OpaqueTokens.require(pair, "t"));
+    }
+
+    @Test
     void allowsInteriorSpacesAndFormatCharacters() {
         String zwj = "👨‍👩";
         assertSame(zwj, OpaqueTokens.require(zwj, "t"));

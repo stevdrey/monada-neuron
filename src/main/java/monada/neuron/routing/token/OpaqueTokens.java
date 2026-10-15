@@ -27,7 +27,9 @@ public final class OpaqueTokens {
     /**
      * Requires 1 to 128 code points, no control characters and no leading or trailing whitespace, Unicode
      * space separator (for example NBSP, which {@link String#strip()} does not remove) or format character
-     * (for example U+200B). Interior format characters stay valid, so emoji ZWJ sequences work.
+     * (for example U+200B). Interior format characters stay valid, so emoji ZWJ sequences work. The token must be
+     * well-formed UTF-16, with no unpaired surrogate, so its UTF-8 form, used by every canonical identity and digest,
+     * is lossless.
      *
      * @return the same token
      */
@@ -53,6 +55,11 @@ public final class OpaqueTokens {
         if (value.codePoints().anyMatch(Character::isISOControl)) {
             throw new IllegalArgumentException(name + " must not contain control characters");
         }
+        // an unpaired surrogate has no UTF-8 form: an encoder replaces it with '?', so two distinct tokens would share
+        // the bytes of every canonical encoding and identity built from them
+        if (hasUnpairedSurrogate(value)) {
+            throw new IllegalArgumentException(name + " must be well-formed UTF-16 (no unpaired surrogate)");
+        }
         if (isPadding(value.codePointAt(0)) || isPadding(value.codePointBefore(value.length()))) {
             throw new IllegalArgumentException(name + " must not have leading or trailing whitespace");
         }
@@ -73,6 +80,25 @@ public final class OpaqueTokens {
             j += Character.charCount(b);
         }
         return Integer.compare(left.length() - i, right.length() - j);
+    }
+
+    /**
+     * True when a high surrogate is not followed by a low one, or a low surrogate is not preceded by a high one. A plain
+     * scan over the UTF-16 units: validation runs on every routing request, so it must not allocate.
+     */
+    private static boolean hasUnpairedSurrogate(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            char unit = value.charAt(i);
+            if (Character.isHighSurrogate(unit)) {
+                if (i + 1 == value.length() || !Character.isLowSurrogate(value.charAt(i + 1))) {
+                    return true;
+                }
+                i++;
+            } else if (Character.isLowSurrogate(unit)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Invisible padding: whitespace, Unicode space separators and format characters such as U+200B or U+202E. */
