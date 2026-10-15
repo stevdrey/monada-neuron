@@ -4,7 +4,9 @@ import monada.neuron.routing.RoutingDecision;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.outcome.RoutingObservation;
+import monada.neuron.routing.outcome.RoutingOutcome;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -31,9 +33,14 @@ public sealed interface OutcomeOracle {
      */
     record KnownForEveryRoute(SortedMap<RouteKey, ScriptedOutcome> outcomes) implements OutcomeOracle {
 
-        /** Copies the map in route order. */
+        /**
+         * Copies the map in route order. The copy never keeps the caller's comparator, which could make two route
+         * versions one key and score a route with another version's outcome.
+         */
         public KnownForEveryRoute {
-            outcomes = Collections.unmodifiableSortedMap(new TreeMap<>(outcomes));
+            var ordered = new TreeMap<RouteKey, ScriptedOutcome>();
+            ordered.putAll(outcomes);
+            outcomes = Collections.unmodifiableSortedMap(ordered);
         }
 
         /** Builds the oracle from any map. */
@@ -55,7 +62,9 @@ public sealed interface OutcomeOracle {
      *        exported. They are revisions of one sample: one {@code experienceRef}, strictly increasing revisions (gaps
      *        allowed) and ledger sequences, and every corrected revision superseding the same original position, which
      *        is revision 0's ledger sequence when revision 0 is listed. This is how the Store translator versions a
-     *        sample: every revision after the first carries the sample's first translatable sequence
+     *        sample: every revision after the first carries the sample's first translatable sequence. A revision read
+     *        again at a later export cutoff is the same claim, as the core rebuild order treats it: the copies are
+     *        merged into the one read at the later cutoff, and two different claims of one revision are rejected
      * @param chain whole-chain attempts and cost of the latest observed revision, as supplied by evaluation tooling
      */
     record ChosenRouteOnly(RoutingDecision.Selected loggedDecision, List<RoutingObservation> observed,
@@ -64,7 +73,8 @@ public sealed interface OutcomeOracle {
         /** Validates that every observation answers the logged decision and that they are revisions of one sample. */
         public ChosenRouteOnly {
             Objects.requireNonNull(loggedDecision, "loggedDecision must not be null");
-            observed = observed.stream().sorted(Comparator.comparingLong(RoutingObservation::revision)).toList();
+            observed = sameClaimsMerged(observed.stream()
+                    .sorted(Comparator.comparingLong(RoutingObservation::revision)).toList());
             Objects.requireNonNull(chain, "chain must not be null");
             for (int i = 1; i < observed.size(); i++) {
                 RoutingObservation earlier = observed.get(i - 1);
@@ -72,10 +82,6 @@ public sealed interface OutcomeOracle {
                 if (!later.experienceRef().equals(earlier.experienceRef())) {
                     throw new IllegalArgumentException("logged observations " + earlier.experienceRef() + " and "
                             + later.experienceRef() + " are different samples, not revisions of one");
-                }
-                if (later.revision() == earlier.revision()) {
-                    throw new IllegalArgumentException("revision " + later.revision() + " of "
-                            + later.experienceRef() + " appears twice");
                 }
                 if (later.ledgerSequence() <= earlier.ledgerSequence()) {
                     throw new IllegalArgumentException("revision " + later.revision() + " of " + later.experienceRef()
@@ -109,6 +115,45 @@ public sealed interface OutcomeOracle {
         /** The logged route. */
         public RouteKey loggedRoute() {
             return loggedDecision.route();
+        }
+
+        /**
+         * Merges consecutive copies of one revision that are the same claim, keeping the one read at the later export
+         * cutoff (the first of an equal pair); a different claim of the same revision is left in place and rejected.
+         */
+        private static List<RoutingObservation> sameClaimsMerged(List<RoutingObservation> byRevision) {
+            var merged = new ArrayList<RoutingObservation>(byRevision.size());
+            for (RoutingObservation next : byRevision) {
+                if (!merged.isEmpty()) {
+                    RoutingObservation last = merged.getLast();
+                    if (last.experienceRef().equals(next.experienceRef()) && last.revision() == next.revision()) {
+                        long cutoff = Math.max(last.outcome().cutoff(), next.outcome().cutoff());
+                        if (!asOf(last, cutoff).equals(asOf(next, cutoff))) {
+                            throw new IllegalArgumentException("revision " + next.revision() + " of "
+                                    + next.experienceRef() + " is claimed twice with different content");
+                        }
+                        if (next.outcome().cutoff() > last.outcome().cutoff()) {
+                            merged.set(merged.size() - 1, next);
+                        }
+                        continue;
+                    }
+                }
+                merged.add(next);
+            }
+            return List.copyOf(merged);
+        }
+
+        /** The observation as read at {@code cutoff}: the export cutoff is a read's context, not the claim. */
+        private static RoutingObservation asOf(RoutingObservation observation, long cutoff) {
+            RoutingOutcome o = observation.outcome();
+            RoutingOutcome moved = new RoutingOutcome(o.contractVersion(), o.decisionRef(), o.executedRoute(),
+                    o.cohortBinding(), o.catalogVersion(), o.routingPolicyId(), o.routingPolicyVersion(),
+                    o.sourceFingerprint(), o.contextFingerprint(), o.constraintsFingerprint(), o.evaluationPolicyId(),
+                    o.evaluationPolicyVersion(), cutoff, o.invocation(), o.outcomeStatus(), o.outcomeOrigin(),
+                    o.acceptedAttemptId(), o.acceptedAttemptStatus(), o.outcomeSequence(), o.observations(),
+                    o.judgedRevisions(), o.resources(), o.attribution());
+            return new RoutingObservation(moved, observation.experienceRef(), observation.revision(),
+                    observation.ledgerSequence(), observation.supersedesSequence());
         }
     }
 }

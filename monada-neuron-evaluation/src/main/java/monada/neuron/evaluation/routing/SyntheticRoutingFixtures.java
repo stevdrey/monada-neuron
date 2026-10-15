@@ -30,6 +30,7 @@ import monada.neuron.routing.outcome.UsageDeclaration;
 import monada.neuron.routing.outcome.UsageKind;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
@@ -54,14 +55,19 @@ import java.util.TreeMap;
  *
  * <p>Positions: task {@code i} is decided at {@code 4096 (i + 1)}; its outcome is visible {@code d} decision slots
  * later at {@code 4096 (i + 1 + d) + 1 + i} and a correction at {@code 4096 (i + 1 + d + c) + 2049 + i}, so positions
- * are unique for {@code i < 2048} and an outcome always lands strictly between two decisions.
+ * are unique for {@code i < 2047} and an outcome always lands strictly between two decisions (at {@code i = 2047} a
+ * correction would land on the next decision's cutoff).
  *
- * <p>Costs are hypothetical API-equivalent USD per chain, hand-calculated from the per-attempt amounts below.
+ * <p>Costs are hypothetical API-equivalent USD per chain, priced from each attempt's tokens at the list prices below,
+ * the same table and prices the Store replay arm records, so every amount can be recomputed by hand: one {@code sub-a}
+ * attempt (1200 input, 300 output tokens) is {@code 0.0420}, one {@code sub-b} attempt (1500, 400) is {@code 0.0545},
+ * a repair attempt (500, 300) is {@code 0.0315}, and a stage whose output is unknown prices only its 900 known input
+ * tokens, a {@code 0.0135} lower bound.
  */
 public final class SyntheticRoutingFixtures {
 
     /** Fixture family version; any content change bumps it. */
-    public static final String VERSION = "forge-routing-replay-v3";
+    public static final String VERSION = "forge-routing-replay-v4";
 
     static final String SCOPE = "forge-replay";
     static final String IMPLEMENT = "implement";
@@ -80,14 +86,20 @@ public final class SyntheticRoutingFixtures {
             LexicographicRoutingPolicy.DEFAULT_MIN_SUPPORTING_OBSERVATIONS, OptionalInt.of(1), Optional.empty());
     static final StatePartition PARTITION = new StatePartition(SCOPE, EVIDENCE.id(), EVIDENCE.version());
 
-    /** Per-attempt hypothetical cost of one {@code sub-a} attempt: 1200 input and 300 output tokens. */
-    static final BigDecimal SUB_A_ATTEMPT = new BigDecimal("0.0420");
-    /** Per-attempt hypothetical cost of one {@code sub-b} attempt: 1500 input and 400 output tokens. */
-    static final BigDecimal SUB_B_ATTEMPT = new BigDecimal("0.0525");
-    /** Lower bound of a chain whose routed stage has unknown usage: only its 900 known input tokens are priced. */
-    static final BigDecimal UNKNOWN_USAGE_LOWER_BOUND = new BigDecimal("0.0270");
-    /** A repair attempt after a failed {@code sub-a} attempt. */
-    static final BigDecimal REPAIR_ATTEMPT = new BigDecimal("0.0315");
+    /** List price per 1000 input tokens, USD. */
+    static final BigDecimal INPUT_PER_THOUSAND = new BigDecimal("0.015");
+    /** List price per 1000 output tokens, USD. */
+    static final BigDecimal OUTPUT_PER_THOUSAND = new BigDecimal("0.080");
+    /** Input tokens known for a stage whose output tokens are unknown. */
+    static final long UNKNOWN_USAGE_INPUT_TOKENS = 900;
+    /** Input and output tokens of a repair attempt. */
+    static final long REPAIR_INPUT_TOKENS = 500;
+    static final long REPAIR_OUTPUT_TOKENS = 300;
+
+    /** Ledger positions per decision slot. */
+    static final long SLOT = 4096;
+    /** Offset of a correction inside its slot, after every original outcome position of the slot. */
+    static final long CORRECTION_OFFSET = 2049;
 
     static final RouteCatalog FULL = catalog("replay-cat/1", true);
     static final RouteCatalog SUB_A_OUTAGE = catalog("replay-cat/1-sub-a-out", false);
@@ -144,7 +156,7 @@ public final class SyntheticRoutingFixtures {
      *   <li>repaired accepted: the routed attempt failed and a repair was accepted; chain-only attribution earns no
      *       credit and the chain cost covers both attempts once ({@code 0.0420 + 0.0315 = 0.0735 USD});</li>
      *   <li>unknown usage: output tokens unknown and reasoning tokens not measured; the cost is a partial lower
-     *       bound ({@code 0.0270 USD});</li>
+     *       bound ({@code 0.0135 USD}, the known input tokens only);</li>
      *   <li>3 and 4: the same task under two different context fingerprints: an incomparable pair;</li>
      *   <li>5 and 6: the same task under identical keys: a directly comparable pair;</li>
      *   <li>7: two currencies ({@code 0.0420 USD}, {@code 0.0390 EUR}), never summed together;</li>
@@ -164,23 +176,24 @@ public final class SyntheticRoutingFixtures {
                 ScriptedOutcome.failing(observedAt(0, 1), GATES, QualityDimension.SECURITY, cheap,
                         new ChainOutcome(1, ReplayCost.unavailable("NO_VALIDATED_ACCEPTANCE"))))));
         var repaired = ScriptedOutcome.passing(observedAt(1, 1), GATES, stage(SUB_A),
-                new ChainOutcome(2, ReplayCost.available(usd(SUB_A_ATTEMPT.add(REPAIR_ATTEMPT))))).repaired();
+                new ChainOutcome(2, chainCost(stage(SUB_A), 2))).repaired();
         list.add(task(1, IMPLEMENT, 20L, "ctx-1", "task-repair", FULL, Map.of(SUB_A, repaired)));
         var unknown = new ResourceSummary(UsageDeclaration.MEASURED, Feature.unknown(),
-                List.of(reported(UsageKind.INPUT_TOKENS, 900),
+                List.of(reported(UsageKind.INPUT_TOKENS, UNKNOWN_USAGE_INPUT_TOKENS),
                         new UsageCounter(UsageKind.OUTPUT_TOKENS, new ResourceValue.Unknown()),
                         new UsageCounter(UsageKind.REASONING_TOKENS, new ResourceValue.NotMeasured())),
                 List.of(), List.of());
         list.add(task(2, IMPLEMENT, 20L, "ctx-1", "task-unknown-usage", FULL, Map.of(SUB_A,
                 ScriptedOutcome.passing(observedAt(2, 1), GATES, unknown, new ChainOutcome(1,
-                        ReplayCost.partial(List.of(usd(UNKNOWN_USAGE_LOWER_BOUND)), "UNKNOWN_USAGE"))))));
+                        chainCost(unknown, 1))))));
         list.add(task(3, IMPLEMENT, 20L, "ctx-1", "task-context", FULL, Map.of(SUB_A, passing(3, 1, SUB_A))));
         list.add(task(4, IMPLEMENT, 20L, "ctx-2", "task-context", FULL, Map.of(SUB_A, passing(4, 1, SUB_A))));
         list.add(task(5, IMPLEMENT, 20L, "ctx-1", "task-pair", FULL, Map.of(SUB_A, passing(5, 1, SUB_A))));
         list.add(task(6, IMPLEMENT, 20L, "ctx-1", "task-pair", FULL, Map.of(SUB_A, passing(6, 1, SUB_A))));
         list.add(task(7, IMPLEMENT, 20L, "ctx-1", "task-currencies", FULL, Map.of(SUB_A,
                 ScriptedOutcome.passing(observedAt(7, 1), GATES, stage(SUB_A), new ChainOutcome(1,
-                        ReplayCost.available(usd(SUB_A_ATTEMPT), new Money(new BigDecimal("0.0390"), "EUR")))))));
+                        ReplayCost.available(usd(price(stage(SUB_A))),
+                                new Money(new BigDecimal("0.0390"), "EUR")))))));
         list.add(task(8, QA, 20L, "ctx-1", "task-qa", FULL, Map.of(API_X, passing(8, 1, API_X))));
         list.add(task(9, DEPLOY, 20L, "ctx-1", "task-deploy", FULL, Map.of()));
         var corrected = passing(10, 1, SUB_A).corrected(new ScriptedOutcome.Correction(correctedAt(10, 1, 2),
@@ -240,14 +253,14 @@ public final class SyntheticRoutingFixtures {
                 ScriptedOutcome outcome = passes ? passing(i, delay, route)
                         : failing(i, delay, route, QualityDimension.TESTS);
                 if (i % 13 == 12 && passes) {
-                    outcome = ScriptedOutcome.passing(observedAt(i, delay), GATES, stage(route), new ChainOutcome(2,
-                            ReplayCost.available(usd(attempt(route).add(REPAIR_ATTEMPT))))).repaired();
+                    outcome = ScriptedOutcome.passing(observedAt(i, delay), GATES, stage(route),
+                            new ChainOutcome(2, chainCost(stage(route), 2))).repaired();
                 }
                 if (i % 11 == 10) {
                     outcome = unknownUsage(outcome);
                 }
                 if (i % 17 == 16) {
-                    outcome = outcome.corrected(flip(outcome, route, correctedAt(i, delay, 1)));
+                    outcome = outcome.corrected(flip(outcome, correctedAt(i, delay, 1)));
                 }
                 outcomes.put(route, outcome);
             }
@@ -268,17 +281,15 @@ public final class SyntheticRoutingFixtures {
                 throw new IllegalArgumentException("only synthetic outcomes can be flipped");
             }
             var outcomes = new TreeMap<RouteKey, ScriptedOutcome>();
-            known.outcomes().forEach((route, outcome) -> outcomes.put(route, flippedFrom(outcome, route, from)));
+            known.outcomes().forEach((route, outcome) -> outcomes.put(route, flippedFrom(outcome, from)));
             list.add(new ReplayTask(task.request(), task.catalog(), new OutcomeOracle.KnownForEveryRoute(outcomes)));
         }
-        return new ReplayFixture(fixture.fixtureId() + "+flipped@" + from, fixture.version(), fixture.definition(),
-                fixture.evidencePolicy(), fixture.policy(), fixture.partition(), list);
+        return fixture.withTasks(fixture.fixtureId() + "+flipped@" + from, list);
     }
 
     /** The same fixture with only the tasks decided before {@code before}. */
     public ReplayFixture truncated(ReplayFixture fixture, long before) {
-        return new ReplayFixture(fixture.fixtureId() + "+truncated@" + before, fixture.version(),
-                fixture.definition(), fixture.evidencePolicy(), fixture.policy(), fixture.partition(),
+        return fixture.withTasks(fixture.fixtureId() + "+truncated@" + before,
                 fixture.tasks().stream().filter(t -> t.request().cutoff() < before).toList());
     }
 
@@ -293,31 +304,31 @@ public final class SyntheticRoutingFixtures {
                     && task.oracle() instanceof OutcomeOracle.KnownForEveryRoute known) {
                 var outcomes = new TreeMap<RouteKey, ScriptedOutcome>();
                 known.outcomes().forEach((route, outcome) -> outcomes.put(route,
-                        outcome.corrected(flip(outcome, route, outcome.observedAt() + 4096L * slots + 2048))));
+                        outcome.corrected(flip(outcome, outcome.observedAt() + SLOT * slots + SLOT / 2))));
                 list.add(new ReplayTask(task.request(), task.catalog(),
                         new OutcomeOracle.KnownForEveryRoute(outcomes)));
             } else {
                 list.add(task);
             }
         }
-        return new ReplayFixture(fixture.fixtureId() + "+late-correction@" + index, fixture.version(),
-                fixture.definition(), fixture.evidencePolicy(), fixture.policy(), fixture.partition(), list);
+        return fixture.withTasks(fixture.fixtureId() + "+late-correction@" + index + "x" + slots, list);
     }
 
     /** The cutoff at which task {@code i} is decided. */
     public long cutoff(int i) {
-        return 4096L * (i + 1);
+        return SLOT * (i + 1);
     }
 
-    private ScriptedOutcome flippedFrom(ScriptedOutcome outcome, RouteKey route, long from) {
+    private ScriptedOutcome flippedFrom(ScriptedOutcome outcome, long from) {
         ScriptedOutcome base = outcome;
         if (outcome.observedAt() >= from) {
-            ScriptedOutcome.Correction opposite = flip(outcome, route, outcome.observedAt());
-            var quality = opposite.quality();
+            ResourceSummary usage = doubled(outcome.stage());
+            ScriptedOutcome.Correction opposite = opposite(outcome.status(), outcome.chain().attempts(), usage,
+                    outcome.observedAt());
             base = opposite.status() == OutcomeStatus.ACCEPTED
-                    ? ScriptedOutcome.passing(outcome.observedAt(), GATES, doubled(outcome.stage()), opposite.chain())
+                    ? ScriptedOutcome.passing(outcome.observedAt(), GATES, usage, opposite.chain())
                     : new ScriptedOutcome(outcome.observedAt(), InvocationStatus.COMPLETED, opposite.status(),
-                            OutcomeOrigin.VALIDATED, quality, outcome.attribution(), false, doubled(outcome.stage()),
+                            OutcomeOrigin.VALIDATED, opposite.quality(), outcome.attribution(), false, usage,
                             opposite.chain(), Optional.empty());
             if (outcome.correction().isPresent()) {
                 base = base.corrected(outcome.correction().get());
@@ -325,42 +336,75 @@ public final class SyntheticRoutingFixtures {
         }
         if (outcome.correction().isPresent() && outcome.correction().get().observedAt() >= from) {
             ScriptedOutcome.Correction original = outcome.correction().get();
-            boolean accepted = original.status() == OutcomeStatus.ACCEPTED;
-            base = base.corrected(new ScriptedOutcome.Correction(original.observedAt(),
-                    accepted ? OutcomeStatus.REJECTED : OutcomeStatus.ACCEPTED,
-                    accepted ? failQuality(QualityDimension.TESTS) : passQuality(),
-                    accepted ? new ChainOutcome(1, ReplayCost.unavailable("NO_VALIDATED_ACCEPTANCE"))
-                            : new ChainOutcome(1, acceptedCost(route, base.stage()))));
+            base = base.corrected(opposite(original.status(), original.chain().attempts(), base.stage(),
+                    original.observedAt()));
         }
         return base;
     }
 
     /** The opposite verdict of an outcome as a revision visible at {@code at}; the routed stage's usage is unchanged. */
-    private ScriptedOutcome.Correction flip(ScriptedOutcome outcome, RouteKey route, long at) {
-        boolean accepted = outcome.status() == OutcomeStatus.ACCEPTED;
-        return new ScriptedOutcome.Correction(at, accepted ? OutcomeStatus.REJECTED : OutcomeStatus.ACCEPTED,
-                accepted ? failQuality(QualityDimension.TESTS) : passQuality(),
-                accepted ? new ChainOutcome(1, ReplayCost.unavailable("NO_VALIDATED_ACCEPTANCE"))
-                        : new ChainOutcome(1, acceptedCost(route, outcome.stage())));
+    private ScriptedOutcome.Correction flip(ScriptedOutcome outcome, long at) {
+        return opposite(outcome.status(), outcome.chain().attempts(), outcome.stage(), at);
     }
 
     /**
-     * The cost of an accepted single-attempt chain: complete only when every routed-stage counter is known. An unknown
-     * or not-measured counter leaves that stage uncovered, so the cost is a partial lower bound, never a complete one.
+     * The opposite of {@code status} over the same chain of {@code attempts}: an acceptance becomes a test failure with
+     * no cost, anything else a validated acceptance priced from {@code usage}. The chain keeps its attempts, which the
+     * correction does not undo.
      */
-    private ReplayCost acceptedCost(RouteKey route, ResourceSummary stage) {
-        boolean uncovered = stage.counters().stream().anyMatch(c -> !(c.value() instanceof ResourceValue.Known));
-        return uncovered ? ReplayCost.partial(List.of(usd(UNKNOWN_USAGE_LOWER_BOUND)), "UNKNOWN_USAGE")
-                : ReplayCost.available(usd(attempt(route)));
+    private ScriptedOutcome.Correction opposite(OutcomeStatus status, int attempts, ResourceSummary usage, long at) {
+        boolean accepted = status == OutcomeStatus.ACCEPTED;
+        return new ScriptedOutcome.Correction(at, accepted ? OutcomeStatus.REJECTED : OutcomeStatus.ACCEPTED,
+                accepted ? failQuality(QualityDimension.TESTS) : passQuality(),
+                new ChainOutcome(attempts, accepted ? ReplayCost.unavailable("NO_VALIDATED_ACCEPTANCE")
+                        : chainCost(usage, attempts)));
     }
 
+    /**
+     * The cost of an accepted chain of {@code attempts}: the routed stage priced from {@code usage}, plus one repair
+     * attempt per later attempt. Complete only when every routed-stage counter is known; an unknown or not-measured
+     * counter leaves that stage uncovered, so the priced counters are a partial lower bound, never a complete cost.
+     */
+    private ReplayCost chainCost(ResourceSummary usage, int attempts) {
+        BigDecimal amount = price(usage).add(repairPrice().multiply(BigDecimal.valueOf(attempts - 1L)));
+        boolean uncovered = usage.counters().stream().anyMatch(c -> !(c.value() instanceof ResourceValue.Known));
+        return uncovered ? ReplayCost.partial(List.of(usd(amount)), "UNKNOWN_USAGE")
+                : ReplayCost.available(usd(amount));
+    }
+
+    /** The known input and output tokens of {@code usage} at the list prices; anything else is not priced. */
+    static BigDecimal price(ResourceSummary usage) {
+        BigDecimal amount = BigDecimal.ZERO;
+        for (UsageCounter counter : usage.counters()) {
+            if (counter.value() instanceof ResourceValue.Known known) {
+                BigDecimal perThousand = switch (counter.kind()) {
+                    case INPUT_TOKENS -> INPUT_PER_THOUSAND;
+                    case OUTPUT_TOKENS -> OUTPUT_PER_THOUSAND;
+                    default -> BigDecimal.ZERO;
+                };
+                amount = amount.add(perThousand.multiply(BigDecimal.valueOf(known.value())));
+            }
+        }
+        return amount.movePointLeft(3).setScale(4, RoundingMode.UNNECESSARY);
+    }
+
+    private static BigDecimal repairPrice() {
+        return INPUT_PER_THOUSAND.multiply(BigDecimal.valueOf(REPAIR_INPUT_TOKENS))
+                .add(OUTPUT_PER_THOUSAND.multiply(BigDecimal.valueOf(REPAIR_OUTPUT_TOKENS)))
+                .movePointLeft(3).setScale(4, RoundingMode.UNNECESSARY);
+    }
+
+    /**
+     * The same outcome with the routed stage's output tokens unknown. An accepted chain keeps its repair attempts'
+     * known cost in its partial lower bound; only the routed stage's unknown share is missing.
+     */
     private ScriptedOutcome unknownUsage(ScriptedOutcome outcome) {
         var stage = new ResourceSummary(UsageDeclaration.MEASURED, Feature.unknown(),
-                List.of(reported(UsageKind.INPUT_TOKENS, 900),
+                List.of(reported(UsageKind.INPUT_TOKENS, UNKNOWN_USAGE_INPUT_TOKENS),
                         new UsageCounter(UsageKind.OUTPUT_TOKENS, new ResourceValue.Unknown())),
                 List.of(), List.of());
         ReplayCost cost = outcome.chain().cost().status() == ReplayCost.Status.UNAVAILABLE ? outcome.chain().cost()
-                : ReplayCost.partial(List.of(usd(UNKNOWN_USAGE_LOWER_BOUND)), "UNKNOWN_USAGE");
+                : chainCost(stage, outcome.chain().attempts());
         return new ScriptedOutcome(outcome.observedAt(), outcome.invocation(), outcome.status(), outcome.origin(),
                 outcome.quality(), outcome.attribution(), outcome.acceptedByRepair(), stage,
                 new ChainOutcome(outcome.chain().attempts(), cost), outcome.correction());
@@ -387,7 +431,7 @@ public final class SyntheticRoutingFixtures {
 
     private ScriptedOutcome passing(int i, int delay, RouteKey route) {
         return ScriptedOutcome.passing(observedAt(i, delay), GATES, stage(route),
-                new ChainOutcome(1, ReplayCost.available(usd(attempt(route)))));
+                new ChainOutcome(1, chainCost(stage(route), 1)));
     }
 
     private ScriptedOutcome failing(int i, int delay, RouteKey route, QualityDimension failed) {
@@ -396,20 +440,26 @@ public final class SyntheticRoutingFixtures {
     }
 
     private long observedAt(int i, int delay) {
-        return 4096L * (i + 1 + delay) + 1 + i;
+        return SLOT * (i + 1 + delay) + 1 + i;
     }
 
     private long correctedAt(int i, int delay, int slots) {
-        return 4096L * (i + 1 + delay + slots) + 2049 + i;
+        return SLOT * (i + 1 + delay + slots) + CORRECTION_OFFSET + i;
     }
 
-    private BigDecimal attempt(RouteKey route) {
-        return route.equals(SUB_B) ? SUB_B_ATTEMPT : SUB_A_ATTEMPT;
+    /** Input tokens of one attempt of {@code route}; {@code sub-b} is the larger route. */
+    static long inputTokens(RouteKey route) {
+        return route.equals(SUB_B) ? 1500 : 1200;
+    }
+
+    /** Output tokens of one attempt of {@code route}. */
+    static long outputTokens(RouteKey route) {
+        return route.equals(SUB_B) ? 400 : 300;
     }
 
     private ResourceSummary stage(RouteKey route) {
-        long input = route.equals(SUB_B) ? 1500 : 1200;
-        long output = route.equals(SUB_B) ? 400 : 300;
+        long input = inputTokens(route);
+        long output = outputTokens(route);
         return new ResourceSummary(UsageDeclaration.MEASURED, Feature.unknown(),
                 List.of(reported(UsageKind.INPUT_TOKENS, input), reported(UsageKind.OUTPUT_TOKENS, output)),
                 List.of(), List.of());

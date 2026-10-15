@@ -78,6 +78,11 @@ public record ScriptedOutcome(
         if (acceptedByRepair && status != OutcomeStatus.ACCEPTED) {
             throw new IllegalArgumentException("only an accepted outcome can be accepted by a repair");
         }
+        // contract "StageAttribution": a repair chain is CHAIN_ONLY or NONE, so the repair's evidence never credits or
+        // blames the routed attempt's route
+        if (acceptedByRepair && attribution == StageAttribution.Basis.STAGE_LOCAL) {
+            throw new IllegalArgumentException("an outcome accepted by a repair cannot be attributed to the routed stage");
+        }
         Objects.requireNonNull(stage, "stage must not be null");
         Objects.requireNonNull(chain, "chain must not be null");
         Objects.requireNonNull(correction, "correction must not be null");

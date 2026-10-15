@@ -7,6 +7,7 @@ import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.outcome.EvidencePolicy;
 import monada.neuron.routing.outcome.Money;
+import monada.neuron.routing.outcome.OutcomeOrigin;
 import monada.neuron.routing.outcome.OutcomeStatus;
 import monada.neuron.routing.outcome.QualityDimension;
 import monada.neuron.routing.outcome.QualityState;
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -92,14 +94,14 @@ class ReplayFixtureBoundsTest {
     }
 
     @Test
-    void requestOrdinalsMustStrictlyIncreaseInReplayOrder() {
+    void requestOrdinalsAreUniquePerScopeButNotTiedToCutoffs() {
         var fixture = fixtures.improvement(2);
         ReplayTask first = fixture.tasks().get(0);
         ReplayTask second = fixture.tasks().get(1);
         // another task and execution, but the first task's ordinal
         var sameOrdinal = new ReplayTask(withIdentity(second.request(), "task-other", "exe-other", 0L),
                 second.catalog(), second.oracle());
-        // decided later but numbered earlier
+        // issued later but decided against an earlier snapshot: the contract ties neither to the other
         var reordered = new ReplayTask(withIdentity(first.request(), first.request().taskId(),
                 first.request().executionId(), 5L), first.catalog(), first.oracle());
 
@@ -107,9 +109,9 @@ class ReplayFixtureBoundsTest {
                 () -> assertThrows(IllegalArgumentException.class, () -> new ReplayFixture("f", "1",
                         fixture.definition(), fixture.evidencePolicy(), fixture.policy(), fixture.partition(),
                         List.of(first, sameOrdinal))),
-                () -> assertThrows(IllegalArgumentException.class, () -> new ReplayFixture("f", "1",
-                        fixture.definition(), fixture.evidencePolicy(), fixture.policy(), fixture.partition(),
-                        List.of(reordered, second))));
+                () -> assertEquals(List.of(5L, 1L), new ReplayFixture("f", "1", fixture.definition(),
+                        fixture.evidencePolicy(), fixture.policy(), fixture.partition(), List.of(second, reordered))
+                        .tasks().stream().map(t -> t.request().requestOrdinal()).toList()));
     }
 
     @Test
@@ -169,7 +171,14 @@ class ReplayFixtureBoundsTest {
                 () -> assertThrows(IllegalArgumentException.class, () -> new ChainOutcome(0,
                         ReplayCost.available(usd))),
                 () -> assertEquals(List.of("EUR", "USD"), ReplayCost.available(usd,
-                        new Money(BigDecimal.ONE, "EUR")).amounts().stream().map(Money::currency).toList()));
+                        new Money(BigDecimal.ONE, "EUR")).amounts().stream().map(Money::currency).toList()),
+                // like the Store's List.copyOf, a null reason or amount is rejected, alone or among others
+                () -> assertThrows(NullPointerException.class, () -> new ReplayCost(ReplayCost.Status.PARTIAL,
+                        List.of(usd), Arrays.asList((String) null))),
+                () -> assertThrows(NullPointerException.class, () -> new ReplayCost(ReplayCost.Status.PARTIAL,
+                        List.of(usd), Arrays.asList("A", null))),
+                () -> assertThrows(NullPointerException.class, () -> new ReplayCost(ReplayCost.Status.PARTIAL,
+                        Arrays.asList(usd, null), List.of())));
     }
 
     @Test
@@ -208,8 +217,9 @@ class ReplayFixtureBoundsTest {
                         List.of(revision1, revision0), logged.chain()).observed().size()),
                 () -> assertThrows(IllegalArgumentException.class, () -> new OutcomeOracle.ChosenRouteOnly(
                         logged.loggedDecision(), List.of(revision0, otherSample), logged.chain())),
-                () -> assertThrows(IllegalArgumentException.class, () -> new OutcomeOracle.ChosenRouteOnly(
-                        logged.loggedDecision(), List.of(revision0, revision0), logged.chain())),
+                // the same claim listed twice is one revision
+                () -> assertEquals(List.of(revision0), new OutcomeOracle.ChosenRouteOnly(logged.loggedDecision(),
+                        List.of(revision0, revision0), logged.chain()).observed()),
                 () -> assertThrows(IllegalArgumentException.class, () -> new OutcomeOracle.ChosenRouteOnly(
                         logged.loggedDecision(), List.of(revision0, notLater), logged.chain())));
     }
@@ -236,6 +246,92 @@ class ReplayFixtureBoundsTest {
                         () -> chosen(logged, revision0, revision1, revision2OnRevision1)),
                 () -> assertThrows(IllegalArgumentException.class,
                         () -> chosen(logged, revision1, revision2OnRevision1)));
+    }
+
+    @Test
+    void aRevisionReadAgainAtALaterExportIsOneClaimAsTheCoreRebuildOrderTreatsIt() {
+        var fixture = fixtures.chosenRouteOnly(6);
+        var logged = (OutcomeOracle.ChosenRouteOnly) fixture.tasks().getFirst().oracle();
+        RoutingObservation revision0 = logged.observed().getFirst();
+        long l0 = revision0.ledgerSequence();
+        // the translator re-exports an unchanged execution with the same revision and position at a later snapshot
+        RoutingObservation reread = readAt(revision0, l0 + 500);
+        // another claim of revision 0: a different outcome origin at the same position
+        RoutingOutcome o = revision0.outcome();
+        var otherClaim = new RoutingObservation(new RoutingOutcome(o.contractVersion(), o.decisionRef(),
+                o.executedRoute(), o.cohortBinding(), o.catalogVersion(), o.routingPolicyId(), o.routingPolicyVersion(),
+                o.sourceFingerprint(), o.contextFingerprint(), o.constraintsFingerprint(), o.evaluationPolicyId(),
+                o.evaluationPolicyVersion(), o.cutoff(), o.invocation(), o.outcomeStatus(),
+                o.outcomeOrigin() == OutcomeOrigin.VALIDATED ? OutcomeOrigin.IMPORTED_CLAIM : OutcomeOrigin.VALIDATED,
+                o.acceptedAttemptId(), o.acceptedAttemptStatus(), o.outcomeSequence(),
+                o.observations(), o.judgedRevisions(), o.resources(), o.attribution()),
+                revision0.experienceRef(), 0, l0, Feature.unknown());
+
+        assertAll(
+                () -> assertEquals(List.of(reread), chosen(logged, revision0, reread).observed()),
+                () -> assertEquals(List.of(reread), chosen(logged, reread, revision0).observed()),
+                () -> assertThrows(IllegalArgumentException.class, () -> chosen(logged, revision0, otherClaim)));
+    }
+
+    @Test
+    void oneSampleReferenceAnswersOneTask() {
+        var fixture = fixtures.chosenRouteOnly(8);
+        ReplayTask four = fixture.tasks().get(4);
+        ReplayTask five = fixture.tasks().get(5);
+        RoutingObservation fours = ((OutcomeOracle.ChosenRouteOnly) four.oracle()).observed().getFirst();
+        var fivesLogged = (OutcomeOracle.ChosenRouteOnly) five.oracle();
+        RoutingObservation fives = fivesLogged.observed().getFirst();
+        // task 5's outcome under task 4's sample reference, as a correction of it
+        var borrowed = new RoutingObservation(fives.outcome(), fours.experienceRef(), 1, fives.ledgerSequence(),
+                Feature.known(fours.ledgerSequence()));
+        var tasks = new ArrayList<>(fixture.tasks());
+        tasks.set(5, new ReplayTask(five.request(), five.catalog(), new OutcomeOracle.ChosenRouteOnly(
+                fivesLogged.loggedDecision(), List.of(borrowed), fivesLogged.chain())));
+
+        assertThrows(IllegalArgumentException.class, () -> fixture.withTasks("borrowed", tasks));
+    }
+
+    @Test
+    void theHorizonCoversTheExportCutoffEveryObservationWasReadAt() {
+        var fixture = fixtures.chosenRouteOnly(6);
+        ReplayTask task = fixture.tasks().getFirst();
+        var logged = (OutcomeOracle.ChosenRouteOnly) task.oracle();
+        long readAt = fixture.horizon() + 1000;
+        var tasks = new ArrayList<>(fixture.tasks());
+        tasks.set(0, new ReplayTask(task.request(), task.catalog(), new OutcomeOracle.ChosenRouteOnly(
+                logged.loggedDecision(), List.of(readAt(logged.observed().getFirst(), readAt)), logged.chain())));
+
+        var reread = new ReplayFixture(fixture.fixtureId(), fixture.version(), fixture.definition(),
+                fixture.evidencePolicy(), fixture.policy(), fixture.partition(), tasks);
+        assertEquals(readAt, reread.horizon());
+    }
+
+    @Test
+    void derivedFixturesKeepAnExplicitHorizon() {
+        var base = fixtures.workload(40);
+        long horizon = base.horizon() + 100_000;
+        var explicit = new ReplayFixture(base.fixtureId(), base.version(), base.definition(), base.evidencePolicy(),
+                base.policy(), base.partition(), base.tasks(), horizon);
+
+        assertAll(
+                () -> assertEquals(horizon, fixtures.futureFlipped(explicit, fixtures.cutoff(10)).horizon()),
+                () -> assertEquals(horizon, fixtures.truncated(explicit, fixtures.cutoff(10)).horizon()),
+                () -> assertEquals(horizon, fixtures.lateCorrection(explicit, 5, 3).horizon()),
+                () -> assertEquals(base.fixtureId() + "+late-correction@5x3",
+                        fixtures.lateCorrection(base, 5, 3).fixtureId()));
+    }
+
+    /** The same observation as read at a later export cutoff. */
+    private static RoutingObservation readAt(RoutingObservation observation, long cutoff) {
+        RoutingOutcome o = observation.outcome();
+        var outcome = new RoutingOutcome(o.contractVersion(), o.decisionRef(), o.executedRoute(), o.cohortBinding(),
+                o.catalogVersion(), o.routingPolicyId(), o.routingPolicyVersion(), o.sourceFingerprint(),
+                o.contextFingerprint(), o.constraintsFingerprint(), o.evaluationPolicyId(), o.evaluationPolicyVersion(),
+                cutoff, o.invocation(), o.outcomeStatus(), o.outcomeOrigin(), o.acceptedAttemptId(),
+                o.acceptedAttemptStatus(), o.outcomeSequence(), o.observations(), o.judgedRevisions(), o.resources(),
+                o.attribution());
+        return new RoutingObservation(outcome, observation.experienceRef(), observation.revision(),
+                observation.ledgerSequence(), observation.supersedesSequence());
     }
 
     private static OutcomeOracle.ChosenRouteOnly chosen(OutcomeOracle.ChosenRouteOnly logged,

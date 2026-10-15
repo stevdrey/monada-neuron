@@ -42,8 +42,9 @@ public record ReplayCost(Status status, List<Money> amounts, List<String> reason
     /** Validates and copies the lists in canonical order. */
     public ReplayCost {
         Objects.requireNonNull(status, "status must not be null");
-        amounts = amounts.stream().sorted(Comparator.comparing(Money::currency)).toList();
-        reasons = reasons.stream().sorted().toList();
+        // copied first, so a null amount or reason is rejected as the Store's List.copyOf rejects it
+        amounts = List.copyOf(amounts).stream().sorted(Comparator.comparing(Money::currency)).toList();
+        reasons = List.copyOf(reasons).stream().sorted().toList();
         var currencies = new HashSet<String>();
         for (Money amount : amounts) {
             if (!currencies.add(amount.currency())) {

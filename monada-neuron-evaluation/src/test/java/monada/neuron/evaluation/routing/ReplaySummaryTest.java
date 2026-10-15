@@ -35,7 +35,7 @@ class ReplaySummaryTest {
                 // + 2 x 0.0420 (the implement and review stages of one task, each its own execution)
                 () -> assertEquals(0, chain.available().get("USD").compareTo(new BigDecimal("0.3675"))),
                 () -> assertEquals(0, chain.available().get("EUR").compareTo(new BigDecimal("0.0390"))),
-                () -> assertEquals(0, chain.partialLowerBound().get("USD").compareTo(new BigDecimal("0.0270"))),
+                () -> assertEquals(0, chain.partialLowerBound().get("USD").compareTo(new BigDecimal("0.0135"))),
                 // cheap invalid and the corrected security failure have no validated acceptance
                 () -> assertEquals(Map.of("AVAILABLE", 8, "PARTIAL", 1, "UNAVAILABLE", 2), chain.costStatus()));
     }

@@ -11,6 +11,7 @@ import monada.neuron.routing.feedback.RebuildOrder;
 import monada.neuron.routing.outcome.EvidencePolicy;
 import monada.neuron.routing.token.OpaqueTokens;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.SortedSet;
@@ -71,18 +72,32 @@ public record ReplayFixture(
         }
         tasks = tasks.stream().sorted(ReplayTask.ORDER).toList();
         int observations = 0;
-        RoutingRequest previous = null;
+        var ordinals = new HashMap<Long, String>();
+        var refs = new HashMap<String, String>();
+        var identities = new ObservationFactory();
         for (ReplayTask task : tasks) {
             RoutingRequest request = task.request();
-            // contract "Ordinals and cutoff": requestOrdinal is strictly increasing per scope, and a fixture has one
-            // scope. Replay order breaks cutoff ties by ordinal, so this rejects only a repeated ordinal or a request
-            // issued later but decided at an earlier cutoff
-            if (previous != null && request.requestOrdinal() <= previous.requestOrdinal()) {
-                throw new IllegalArgumentException("requestOrdinal must be strictly increasing in replay order: "
-                        + request.executionId() + " has " + request.requestOrdinal() + " after "
-                        + previous.executionId() + " with " + previous.requestOrdinal());
+            // contract "Ordinals and cutoff": requestOrdinal numbers the requests of a scope, strictly increasing in
+            // issue order, and a fixture has one scope, so no two tasks share one. Cutoffs are caller-supplied and not
+            // tied to issue order: a request issued later may be decided against an earlier snapshot
+            String sameOrdinal = ordinals.putIfAbsent(request.requestOrdinal(), request.executionId());
+            if (sameOrdinal != null) {
+                throw new IllegalArgumentException("requestOrdinal " + request.requestOrdinal() + " numbers both "
+                        + sameOrdinal + " and " + request.executionId());
             }
-            previous = request;
+            // the replay joins every observation to its decision by sample reference, so one reference must answer
+            // one task: a synthetic outcome's reference is derived from its decision, a logged one is the export's
+            for (String ref : switch (task.oracle()) {
+                case OutcomeOracle.KnownForEveryRoute ignored -> List.of(identities.experienceRef(request));
+                case OutcomeOracle.ChosenRouteOnly logged -> logged.observed().isEmpty() ? List.<String>of()
+                        : List.of(logged.observed().getFirst().experienceRef());
+            }) {
+                String sameRef = refs.putIfAbsent(ref, request.executionId());
+                if (sameRef != null) {
+                    throw new IllegalArgumentException("sample " + ref + " answers both " + sameRef + " and "
+                            + request.executionId());
+                }
+            }
             if (!request.scopeId().equals(partition.scopeId())
                     || !request.evaluationPolicyId().equals(partition.evaluationPolicyId())
                     || !request.evaluationPolicyVersion().equals(partition.evaluationPolicyVersion())) {
@@ -109,14 +124,26 @@ public record ReplayFixture(
         }
     }
 
-    /** A fixture whose horizon is its latest task cutoff or observation position. */
+    /** A fixture whose horizon is its latest task cutoff, observation position or export cutoff. */
     public ReplayFixture(String fixtureId, String version, AdaptiveStateDefinition definition,
             EvidencePolicy evidencePolicy, LexicographicRoutingPolicy policy, StatePartition partition,
             List<ReplayTask> tasks) {
         this(fixtureId, version, definition, evidencePolicy, policy, partition, tasks, latestPosition(tasks));
     }
 
-    /** The latest decision cutoff, scripted outcome or correction position, or logged observation position. */
+    /**
+     * The same fixture under another identity with other tasks, keeping its horizon unless a task reaches past it, so
+     * a derived fixture never claims to have examined less than the one it came from.
+     */
+    public ReplayFixture withTasks(String newFixtureId, List<ReplayTask> newTasks) {
+        return new ReplayFixture(newFixtureId, version, definition, evidencePolicy, policy, partition, newTasks,
+                Math.max(horizon, latestPosition(newTasks)));
+    }
+
+    /**
+     * The latest decision cutoff, scripted outcome or correction position, or logged observation position or export
+     * cutoff: a logged observation was read at its outcome's cutoff, which the replay must have examined too.
+     */
     private static long latestPosition(List<ReplayTask> tasks) {
         long latest = 0;
         for (ReplayTask task : tasks) {
@@ -132,7 +159,8 @@ public record ReplayFixture(
                 }
                 case OutcomeOracle.ChosenRouteOnly logged -> {
                     for (var observation : logged.observed()) {
-                        latest = Math.max(latest, observation.ledgerSequence());
+                        latest = Math.max(latest,
+                                Math.max(observation.ledgerSequence(), observation.outcome().cutoff()));
                     }
                 }
             }

@@ -91,9 +91,9 @@ final class StoreReplaySource implements AutoCloseable {
     static final String PROVIDER = "fixture";
     static final Instant T0 = Instant.parse("2026-01-01T00:00:00Z");
     static final AttemptId A1 = AttemptId.of("a1");
-    /** List prices per 1000 tokens: input 0.015 USD, output 0.080 USD. */
-    static final BigDecimal INPUT_PER_THOUSAND = new BigDecimal("0.015");
-    static final BigDecimal OUTPUT_PER_THOUSAND = new BigDecimal("0.080");
+    /** List prices per 1000 tokens, shared with the synthetic fixtures: input 0.015 USD, output 0.080 USD. */
+    static final BigDecimal INPUT_PER_THOUSAND = SyntheticRoutingFixtures.INPUT_PER_THOUSAND;
+    static final BigDecimal OUTPUT_PER_THOUSAND = SyntheticRoutingFixtures.OUTPUT_PER_THOUSAND;
 
     private final Path root;
     private final ExecutionMemory memory;
@@ -229,8 +229,8 @@ final class StoreReplaySource implements AutoCloseable {
         EventId stage = id("stage");
         String ref = "env-" + stage.value();
         envelopes.put(scope.value() + "/" + ref, envelope);
-        long input = passes ? 1500 : 1200;
-        long output = passes ? 400 : 300;
+        long input = SyntheticRoutingFixtures.inputTokens(decision.route());
+        long output = SyntheticRoutingFixtures.outputTokens(decision.route());
         append(StageRecorded.measured(EventEnvelope.original(stage, scope, task, execution, A1, t, t),
                 request.stageId(), new RouteDescriptor(WORKER, Optional.of(PROVIDER),
                         Optional.of(model), Optional.empty(), com.monada.core.execution.BillingMode.SUBSCRIPTION),

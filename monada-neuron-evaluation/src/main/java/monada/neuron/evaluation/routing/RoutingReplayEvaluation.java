@@ -479,6 +479,10 @@ public final class RoutingReplayEvaluation {
                 : String.join("; ", failures));
     }
 
+    /** The known input tokens of the unknown-usage case at the list prices: the only part of its cost known. */
+    private static final BigDecimal UNKNOWN_USAGE_LOWER_BOUND = SyntheticRoutingFixtures.INPUT_PER_THOUSAND
+            .multiply(BigDecimal.valueOf(SyntheticRoutingFixtures.UNKNOWN_USAGE_INPUT_TOKENS)).movePointLeft(3);
+
     static Check unknownUsageCheck(Map<ReplayArm, ReplayRun> runs) {
         var failures = new ArrayList<String>();
         for (ReplayRun run : runs.values()) {
@@ -492,7 +496,7 @@ public final class RoutingReplayEvaluation {
             var reasoning = summary.total().tokens().get(UsageKind.REASONING_TOKENS.name());
             boolean partial = sample.chainCost().map(ReplayCost::status).orElse(null) == ReplayCost.Status.PARTIAL
                     && summary.chain().partialLowerBound().getOrDefault("USD", BigDecimal.ZERO)
-                            .compareTo(new BigDecimal("0.0270")) == 0;
+                            .compareTo(UNKNOWN_USAGE_LOWER_BOUND) == 0;
             if (!unknownKept || output == null || output.unknown() != 1 || reasoning == null
                     || reasoning.notMeasured() != 1 || !partial) {
                 failures.add(run.arm() + ": unknownKept=" + unknownKept + ", output=" + output + ", reasoning="
@@ -502,7 +506,7 @@ public final class RoutingReplayEvaluation {
         boolean passed = failures.isEmpty();
         return new Check("cases.unknown-usage", passed, passed
                 ? "unknown and not-measured counters are counted as such (never as zero); the cost is a separate"
-                        + " PARTIAL lower bound of 0.0270 USD"
+                        + " PARTIAL lower bound of " + UNKNOWN_USAGE_LOWER_BOUND.toPlainString() + " USD"
                 : String.join("; ", failures));
     }
 
