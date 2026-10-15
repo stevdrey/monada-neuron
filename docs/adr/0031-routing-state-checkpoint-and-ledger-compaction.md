@@ -54,8 +54,12 @@ a valid checkpoint gives a state identical to a rebuild from scratch).
   - It is also refused (`UNRESTORABLE`) when a rebuild could not start from the checkpoint on the store as it is now.
     Compaction drops entries only a rebuild from that checkpoint could recover.
   - It throws for a checkpoint whose Node channels lie outside the definition's bounds, as `rebuildFrom` does.
-  - Once compacted, `bind` keeps cohort slots for the checkpoint's cohorts that are no longer bound, so a later bind
-    cannot make the checkpoint unrestorable.
+  - `bind` keeps cohort slots for the cohorts of every checkpoint of the store's lineage that are no longer bound:
+    taken, compacted to or restored from, and inherited by rebuilt stores. A later bind therefore cannot make any kept
+    checkpoint unrestorable. Such a cohort keeps its slot until it is bound again.
+  - One predicate decides restorability for both `compact` (refused) and `rebuildFrom` (thrown).
+  - The live ledger's digest is folded lazily from the entries changed since the last digest, so consuming and
+    replaying never hash.
 - **Horizon rules in `consume`** apply only to a compacted store:
   - A revision that replaces a revision at or below the horizon is `SUPERSEDES_COMPACTED`, checked first and wherever
     its own sequence lies. This applies when its sample's entry was compacted, or when it is newer than the sample's
@@ -90,6 +94,17 @@ a valid checkpoint gives a state identical to a rebuild from scratch).
   `state.checkpoint-equals-rebuild` check.
 
 ## Alternatives
+
+- **Per-sample tombstones instead of dropping compacted entries.** A compacted entry would be replaced by a slim
+  tombstone: sample ref, revision, ledger sequence, a changed-state flag and the cost-peer ref, about 40 B instead of
+  about 350 B.
+  - **What it would buy.** `RevisionReconciler` could then answer duplicate, stale, supersede and dependent-reward
+    cases uniformly. That removes most of the horizon rules (`COVERED`, `SUPERSEDES_COMPACTED`, `BEFORE_HORIZON`) and
+    the confirmed-watermark requirement, which five review rounds kept extending.
+  - **Why it was deferred.** Memory becomes `O(samples)` instead of bounded by the ledger, which defeats the purpose of
+    compaction for a long-lived partition.
+  - **When to revisit.** If more horizon special cases are needed, or if a bounded tombstone window (for example the
+    newest `N` compacted samples) proves enough.
 
 - **Chained SHA-256** (`H(previous digest, newly covered entries)`): stronger against a deliberate adversary, but
   dependent on compaction history, so a from-scratch store could not reproduce a compacted store's digest without

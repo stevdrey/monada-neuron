@@ -1727,8 +1727,11 @@ data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value
     rebuild from a checkpoint strictly below `affectedFromSequence`, or from scratch.
 - **Binding** in a compacted store also refuses (`BindResult.RebuildRequired`) a new key that a compacted entry credited,
   or that a retained `NO_TARGET_BINDING` marker at or below the horizon names. The marker records no stage kind, so the
-  match by scope, bucket and route is conservative. Its capacity also counts the latest checkpoint's cohorts that it no
-  longer binds: a rebuild from that checkpoint restores them, so binding past them would make it unrestorable.
+  match by scope, bucket and route is conservative.
+- **Cohort slots.** Any store's `bind` capacity counts the cohorts held by every checkpoint of its lineage that it no
+  longer binds. That covers checkpoints taken, compacted to or restored from, and rebuilt stores inherit them. A rebuild
+  from any such checkpoint restores those cohorts, so binding past them would make it unrestorable. Such a cohort keeps
+  its slot until it is bound again.
 - **Cost peers.** A cost-refined derivation whose peer revision was compacted is trusted to come from the same export as
   the observation, which is later than the horizon. The compacted ledger cannot re-check an older peer view.
 - **Rebuild from a checkpoint.** `rebuildFrom` stages a store with:
@@ -1763,9 +1766,10 @@ data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value
 
 | Operation | Time | Extra space |
 | --- | --- | --- |
-| `checkpoint` | `O(C + L)` (cohort copy and the digest of the live ledger) | `O(C + M)` retained for `M` markers |
-| `compact` | `O(L log L + C log C)` | `O(L)` transient |
-| `ledgerDigest` | `O(L)` plus an `O(1)` folded part (a count and 32 bytes) | `O(1)` |
+| `checkpoint` | `O(C)` plus the digest | `O(C + M)` retained for `M` markers |
+| `compact` | `O(L log L + C log C)`; each covered entry hashed at most once | `O(L)` transient |
+| `ledgerDigest` | one hash per ledger entry changed since the last digest, or one `O(L)` pass when more changed than the ledger holds | `O(L)` pending changes at most |
+| `consume`, rebuild replay | no hashing: a change is only recorded for the next digest | `O(1)` per change |
 | `consume` | unchanged `O(L + log C)`; the horizon check is one map lookup | unchanged |
 | `rebuildFrom` | `O(N' log N' + N'·L' + C log C)` for the `N'` observations and `L'` entries after the cutoff | `O(N' + C + L')` staged |
 
@@ -1826,6 +1830,10 @@ change a decision. A rebuild from scratch, at most 4,096 observations, never rea
 - a covered delivery whose derivation answers another sample rejected, as in an uncompacted store;
 - a restored support count of `Integer.MAX_VALUE` that saturates on the next reward;
 - a fresh store that refuses a checkpoint until `advanceCutoff(0)`;
+- an older checkpoint that stays restorable after cohort churn (its cohorts keep their slots, also in the rebuilt
+  store), and a foreign checkpoint whose cohort union is 257 refused by `compact` and rejected by `rebuildFrom` with
+  one message;
+- the lazily folded ledger digest staying exact across many changes, replacement and compaction;
 - compaction that throws for out-of-bounds Node channels, refuses `UNRESTORABLE` for a cohort a retained marker names,
   and a compacted store whose `bind` keeps slots for the checkpoint's unbound cohorts;
 - `STALE`, `BEHIND_HORIZON` and `CREDITS_UNBOUND_COHORT`;

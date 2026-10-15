@@ -106,6 +106,19 @@ public final class RoutingStateStore {
     private LedgerDigest compacted = LedgerDigest.EMPTY;
     /** Cohorts that dropped entries moved: their effects live only in the checkpoint, so a rebind needs a rebuild. */
     private final TreeSet<CohortKey> compactedCredits = new TreeSet<>();
+    /**
+     * Cohorts held by any checkpoint this lineage produced, compacted to or restored from: a rebuild from any of them
+     * restores them, so while unbound they keep their cohort slots. Rebuilt stores inherit it.
+     */
+    private final TreeSet<CohortKey> checkpointedCohorts = new TreeSet<>();
+    /**
+     * Digest of the live ledger as of the last fold, plus the entries added and removed since; a digest is computed only
+     * when one is asked for, so consumption and replay never hash. Too many pending changes mark it stale instead.
+     */
+    private LedgerDigest liveDigest = LedgerDigest.EMPTY;
+    private final List<AppliedRevision> addedSinceFold = new ArrayList<>();
+    private final List<AppliedRevision> removedSinceFold = new ArrayList<>();
+    private boolean liveDigestStale;
 
     /**
      * An empty state: no cohorts, an empty ledger and a zero watermark.
@@ -165,8 +178,55 @@ public final class RoutingStateStore {
      * {@code O(L)}.
      */
     public LedgerDigest ledgerDigest() {
-        return compacted.plus(LedgerDigest.of(ledger.values()));
+        return compacted.plus(liveDigest());
     }
+
+    /**
+     * The digest of the live ledger, folding the changes since the last call: one hash per changed entry, or one pass
+     * over the ledger when more changed than it holds. Amortized {@code O(changes)}, at most {@code O(L)}.
+     */
+    private LedgerDigest liveDigest() {
+        if (liveDigestStale) {
+            liveDigest = LedgerDigest.of(ledger.values());
+            liveDigestStale = false;
+        } else if (!addedSinceFold.isEmpty() || !removedSinceFold.isEmpty()) {
+            liveDigest = liveDigest.plus(LedgerDigest.of(addedSinceFold)).minus(LedgerDigest.of(removedSinceFold));
+        }
+        addedSinceFold.clear();
+        removedSinceFold.clear();
+        return liveDigest;
+    }
+
+    /** Puts a ledger entry, recording the change for the next digest; the only way an entry enters the ledger. */
+    private void putEntry(AppliedRevision entry) {
+        recordChange(ledger.put(entry.experienceRef(), entry), entry);
+    }
+
+    /** Removes a ledger entry, recording the change for the next digest. */
+    private void removeEntry(String experienceRef) {
+        recordChange(ledger.remove(experienceRef), null);
+    }
+
+    private void recordChange(AppliedRevision removed, AppliedRevision added) {
+        if (liveDigestStale) {
+            return;
+        }
+        if (removed != null) {
+            removedSinceFold.add(removed);
+        }
+        if (added != null) {
+            addedSinceFold.add(added);
+        }
+        // keeps the pending changes O(L): past that, one recomputation is cheaper than folding them
+        if (addedSinceFold.size() + removedSinceFold.size() > Math.max(ledger.size(), PENDING_CHANGES_FLOOR)) {
+            addedSinceFold.clear();
+            removedSinceFold.clear();
+            liveDigestStale = true;
+        }
+    }
+
+    /** Pending digest changes always allowed before a recomputation, so a small ledger does not recompute constantly. */
+    private static final int PENDING_CHANGES_FLOOR = 64;
 
     /** The checkpoint the ledger was compacted to or restored from; empty for a store that never was. */
     public Optional<RoutingStateCheckpoint> latestCheckpoint() {
@@ -190,8 +250,11 @@ public final class RoutingStateStore {
      * <p>A compacted store refuses the same way a new key whose effects were compacted, and a new key that a retained
      * {@code NO_TARGET_BINDING} marker at or below the horizon names by scope, bucket and route (the marker records no
      * stage kind, so the match is conservative): binding it in place would leave that sample unapplied where a replay
-     * from before the horizon would apply it. Its capacity also counts the cohorts its latest checkpoint holds but it no
-     * longer binds: a rebuild from that checkpoint restores them, so binding past them would make it unrestorable.
+     * from before the horizon would apply it.
+     *
+     * <p>The capacity also counts the cohorts that any checkpoint of this lineage holds (one it took, compacted to or was
+     * restored from, inherited by rebuilt stores) and it no longer binds. A rebuild from that checkpoint restores them,
+     * so binding past them would make it unrestorable. Such a cohort keeps its slot until it is bound again.
      *
      * <p>{@code O(k log k + k log C + L log k + C log C)} for {@code k} keys, {@code C} cohorts and {@code L} ledger
      * entries: the ledger is scanned only when a key is new, and binding is rare, so no credited-cohort index is kept.
@@ -374,12 +437,12 @@ public final class RoutingStateStore {
                     target.support++;
                 }
                 AppliedRevision entry = AppliedRevision.of(feedback);
-                ledger.put(observation.experienceRef(), entry);
+                putEntry(entry);
                 advance(observation.ledgerSequence());
                 yield new StateUpdate.Applied(entry);
             }
             case Reconciliation.RecordOnly record -> {
-                ledger.put(observation.experienceRef(), record.marker());
+                putEntry(record.marker());
                 advance(observation.ledgerSequence());
                 yield new StateUpdate.Recorded(record.marker());
             }
@@ -529,12 +592,16 @@ public final class RoutingStateStore {
             throw new IllegalArgumentException("a rebuilt store allows at most " + MAX_COHORTS + " cohorts, got: "
                     + full.requested());
         }
+        // the caller's checkpoints of this lineage stay restorable from the rebuilt store
+        staged.checkpointedCohorts.addAll(checkpointedCohorts);
         return staged.replay(ordered, exportCutoff, derive);
     }
 
     /**
      * A checkpoint of this state at its {@code processedCutoff}: every cohort's Node channels and support, active and
-     * dormant, the {@link #ledgerDigest()} and the retryable markers. This store is not modified. {@code O(C + L)}.
+     * dormant, the {@link #ledgerDigest()} and the retryable markers. The state is not modified, but the checkpoint's
+     * cohorts keep their slots from then on (see {@link #bind}), so a rebuild from it stays possible after cohort churn.
+     * {@code O(C)} plus the hashing of the ledger entries changed since the last digest.
      *
      * <p>The watermark must be {@linkplain #confirmedCutoff() confirmed}: a checkpoint stands for everything at or below
      * its cutoff, and compaction and {@link #rebuildFrom} skip what it covers, so a sample still missing below an
@@ -567,9 +634,12 @@ public final class RoutingStateStore {
                 markers.add(entry);
             }
         }
-        return new RoutingStateCheckpoint(partition.scopeId(), definition.featureSchemaVersion(),
+        var checkpoint = new RoutingStateCheckpoint(partition.scopeId(), definition.featureSchemaVersion(),
                 partition.evaluationPolicyId(), partition.evaluationPolicyVersion(), definition.mappingVersion(),
                 policyId, policyVersion, processedCutoff, cohortValues, ledgerDigest(), markers);
+        // the caller may restore from it later, so its cohorts keep their slots while unbound
+        checkpointedCohorts.addAll(cohorts.keySet());
+        return checkpoint;
     }
 
     /** {@link #checkpoint(String, String)} with the policy's identity. */
@@ -615,7 +685,10 @@ public final class RoutingStateStore {
                 (entry.retryable() ? markers : dropped).add(entry);
             }
         }
-        if (!compacted.plus(LedgerDigest.of(covered)).equals(checkpoint.ledgerDigest())
+        // each covered entry is hashed at most once: when the checkpoint covers the whole live ledger (compacting to the
+        // newest checkpoint) its folded digest is reused, and the dropped part is derived instead of hashed again
+        LedgerDigest coveredDigest = covered.size() == ledger.size() ? liveDigest() : LedgerDigest.of(covered);
+        if (!compacted.plus(coveredDigest).equals(checkpoint.ledgerDigest())
                 || !markers.equals(checkpoint.retainedMarkers())) {
             return new CompactionResult.Refused(CompactionResult.Reason.STALE);
         }
@@ -631,17 +704,18 @@ public final class RoutingStateStore {
             return new CompactionResult.Refused(CompactionResult.Reason.CREDITS_UNBOUND_COHORT);
         }
         // compaction drops what the checkpoint covers, so a rebuild must be able to start from it afterwards
-        if (unrestorable(checkpoint)) {
+        if (restorabilityProblem(checkpoint).isPresent()) {
             return new CompactionResult.Refused(CompactionResult.Reason.UNRESTORABLE);
         }
         // everything that can fail is computed before the first mutation, so compaction stays all-or-nothing
-        LedgerDigest folded = compacted.plus(LedgerDigest.of(dropped));
+        LedgerDigest folded = compacted.plus(coveredDigest.minus(LedgerDigest.of(markers)));
         for (AppliedRevision entry : dropped) {
-            ledger.remove(entry.experienceRef());
+            removeEntry(entry.experienceRef());
         }
         compacted = folded;
         compactedCredits.addAll(credits);
         compactedTo = checkpoint;
+        checkpoint.preferenceSnapshot().forEach(cohort -> checkpointedCohorts.add(cohort.key()));
         return new CompactionResult.Compacted(dropped.size(), cutoff);
     }
 
@@ -705,7 +779,13 @@ public final class RoutingStateStore {
             }
         }
         List<RoutingObservation> ordered = new RebuildOrder().order(later);
+        Optional<String> problem = restorabilityProblem(checkpoint);
+        if (problem.isPresent()) {
+            throw new IllegalArgumentException(problem.get());
+        }
         var staged = new RoutingStateStore(definition, partition);
+        // the caller's other checkpoints of this lineage stay restorable from the rebuilt store
+        staged.checkpointedCohorts.addAll(checkpointedCohorts);
         staged.restore(checkpoint, cohorts.keySet());
         return staged.replay(ordered, exportCutoff, derive);
     }
@@ -722,28 +802,20 @@ public final class RoutingStateStore {
                 compactedCredits.add(value.key());
             }
         }
+        // the receiving store checked restorability (restorabilityProblem) before staging
         for (CohortKey key : extra) {
             if (!cohorts.containsKey(key)) {
-                for (AppliedRevision marker : checkpoint.retainedMarkers()) {
-                    if (marker.basis() instanceof EntryBasis.NoUpdateMarker basis
-                            && basis.reason() == NoUpdateReason.NO_TARGET_BINDING && names(basis, marker, key)) {
-                        throw new IllegalArgumentException("cohort " + key + " was bound after the checkpoint at "
-                                + checkpoint.processedCutoff() + ", which records sample " + marker.experienceRef()
-                                + " as unbound; rebuild from an earlier checkpoint or from scratch");
-                    }
-                }
                 cohorts.put(key, new Cohort(baselineNode(key)));
             }
-        }
-        if (cohorts.size() > MAX_COHORTS) {
-            throw new IllegalArgumentException("a rebuilt store allows at most " + MAX_COHORTS + " cohorts, got: "
-                    + cohorts.size());
         }
         for (AppliedRevision marker : checkpoint.retainedMarkers()) {
             ledger.put(marker.experienceRef(), marker);
         }
-        compacted = checkpoint.ledgerDigest().minus(LedgerDigest.of(checkpoint.retainedMarkers()));
+        // the markers are the whole live ledger, so their digest is the live digest, hashed once
+        liveDigest = LedgerDigest.of(checkpoint.retainedMarkers());
+        compacted = checkpoint.ledgerDigest().minus(liveDigest);
         compactedTo = checkpoint;
+        checkpoint.preferenceSnapshot().forEach(cohort -> checkpointedCohorts.add(cohort.key()));
         processedCutoff = checkpoint.processedCutoff();
         confirmedCutoff = checkpoint.processedCutoff();
         bindings = buildBindings();
@@ -811,11 +883,12 @@ public final class RoutingStateStore {
     }
 
     /**
-     * True when {@link #rebuildFrom} on this store could not start from the checkpoint as the store is now: its cohorts
-     * and this store's together exceed {@value #MAX_COHORTS}, or a cohort bound here but not held by the checkpoint is
-     * named by one of its retained {@code NO_TARGET_BINDING} markers.
+     * Why {@link #rebuildFrom} on this store could not start from the checkpoint as the store is now, if it could not:
+     * a cohort bound here but not held by the checkpoint is named by one of its retained {@code NO_TARGET_BINDING}
+     * markers, or its cohorts and this store's together exceed {@value #MAX_COHORTS}. The one rule both {@link #compact}
+     * (which refuses {@code UNRESTORABLE}) and {@link #rebuildFrom} (which throws) apply.
      */
-    private boolean unrestorable(RoutingStateCheckpoint checkpoint) {
+    private Optional<String> restorabilityProblem(RoutingStateCheckpoint checkpoint) {
         var held = new TreeSet<CohortKey>();
         checkpoint.preferenceSnapshot().forEach(cohort -> held.add(cohort.key()));
         int union = held.size();
@@ -827,25 +900,29 @@ public final class RoutingStateStore {
             for (AppliedRevision marker : checkpoint.retainedMarkers()) {
                 if (marker.basis() instanceof EntryBasis.NoUpdateMarker basis
                         && basis.reason() == NoUpdateReason.NO_TARGET_BINDING && names(basis, marker, key)) {
-                    return true;
+                    return Optional.of("cohort " + key + " was bound after the checkpoint at "
+                            + checkpoint.processedCutoff() + ", which records sample " + marker.experienceRef()
+                            + " as unbound; rebuild from an earlier checkpoint or from scratch");
                 }
             }
         }
-        return union > MAX_COHORTS;
+        if (union > MAX_COHORTS) {
+            return Optional.of("the checkpoint's cohorts and this store's together are " + union
+                    + ", more than the " + MAX_COHORTS + " a rebuilt store allows");
+        }
+        return Optional.empty();
     }
 
     /**
-     * Cohorts the latest checkpoint holds that this store no longer binds: a rebuild from it restores them, so they
-     * keep their cohort slots.
+     * Cohorts that a checkpoint of this lineage holds and this store no longer binds: a rebuild from that checkpoint
+     * restores them, so they keep their cohort slots. For every such checkpoint {@code C}, {@code |C ∪ bound|} then
+     * stays within {@value #MAX_COHORTS}.
      */
     private Set<CohortKey> reservedByCheckpoint() {
-        if (compactedTo == null) {
-            return Set.of();
-        }
         var reserved = new TreeSet<CohortKey>();
-        for (CheckpointCohort cohort : compactedTo.preferenceSnapshot()) {
-            if (!cohorts.containsKey(cohort.key())) {
-                reserved.add(cohort.key());
+        for (CohortKey key : checkpointedCohorts) {
+            if (!cohorts.containsKey(key)) {
+                reserved.add(key);
             }
         }
         return reserved;

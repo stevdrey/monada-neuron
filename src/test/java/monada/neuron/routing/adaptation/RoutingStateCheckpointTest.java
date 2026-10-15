@@ -300,6 +300,71 @@ class RoutingStateCheckpointTest {
     }
 
     @Test
+    void anOlderCheckpointStaysRestorableAfterCohortChurn() {
+        var live = store();
+        List<CohortKey> keys = new ArrayList<>();
+        for (int i = 0; i < RoutingStateStore.MAX_COHORTS; i++) {
+            keys.add(new CohortKey("scope-demo", "implement", "UNKNOWN", new RouteKey("route-" + i, 1)));
+        }
+        live.bind(keys);
+        var older = confirmedCheckpoint(live);
+        // route-0 leaves before the newer checkpoint, which therefore does not hold it
+        assertTrue(live.unbindDormant(keys.getFirst(), demo()));
+        var newer = confirmedCheckpoint(live);
+        assertEquals(new CompactionResult.Compacted(0, 0), live.compact(newer));
+        // the older checkpoint still holds route-0, so its slot stays taken and a rebuild from it fits
+        assertEquals(new BindResult.CapacityExhausted(1, 0), live.bind(List.of(KEY_A)));
+        var restored = assertInstanceOf(RebuildResult.Rebuilt.class, rebuildFrom(live, older, List.of(), 0)).store();
+        assertEquals(RoutingStateStore.MAX_COHORTS, restored.cohortCount());
+        // the rebuilt store inherits the reservation, so the newer checkpoint stays restorable from it too
+        assertEquals(new BindResult.CapacityExhausted(1, 0), restored.bind(List.of(KEY_A)));
+    }
+
+    @Test
+    void aCheckpointOfAnotherStoreThatCouldNotBeRestoredIsRefused() {
+        var other = store();
+        List<CohortKey> keys = new ArrayList<>();
+        for (int i = 0; i < RoutingStateStore.MAX_COHORTS; i++) {
+            keys.add(new CohortKey("scope-demo", "implement", "UNKNOWN", new RouteKey("route-" + i, 1)));
+        }
+        other.bind(keys);
+        var foreign = confirmedCheckpoint(other);
+        // same partition and an equally empty ledger, so only the cohort union stands in the way: 256 + 1
+        var live = store();
+        live.bind(List.of(KEY_A));
+        live.advanceCutoff(0);
+        assertEquals(new CompactionResult.Refused(CompactionResult.Reason.UNRESTORABLE), live.compact(foreign));
+        assertEquals(OptionalLong.empty(), live.compactionHorizon());
+        assertEquals("the checkpoint's cohorts and this store's together are 257, more than the 256 a rebuilt store"
+                + " allows", assertThrows(IllegalArgumentException.class,
+                        () -> rebuildFrom(live, foreign, List.of(), 0)).getMessage());
+    }
+
+    @Test
+    void theLedgerDigestStaysExactWithoutHashingOnEveryChange() {
+        var live = bound();
+        // more changes than the pending-change floor between two digests, so the stale path recomputes once
+        for (int i = 0; i < 100; i++) {
+            deliverTo(live, sample(String.format("d-%03d", i), "sub-a", 100 + i, Kind.PENDING));
+            if (i % 37 == 0) {
+                assertEquals(LedgerDigest.of(live.ledger()), live.ledgerDigest(), "after " + i);
+            }
+        }
+        assertEquals(LedgerDigest.of(live.ledger()), live.ledgerDigest());
+        // a replacement removes the old revision and adds the new one
+        var original = sample("d-005", "sub-a", 105, Kind.PENDING);
+        var replaced = corrected(original, 300, Kind.PASS);
+        assertInstanceOf(StateUpdate.Applied.class, deliverTo(live, replaced));
+        assertEquals(LedgerDigest.of(live.ledger()), live.ledgerDigest());
+        // compaction folds the dropped entries and keeps the total
+        var digest = live.ledgerDigest();
+        var checkpoint = confirmedCheckpoint(live);
+        deliverTo(live, sample("d-late", "sub-b", 400, Kind.PENDING));
+        live.compact(checkpoint);
+        assertEquals(digest.plus(LedgerDigest.of(List.of(live.ledger().getFirst()))), live.ledgerDigest());
+    }
+
+    @Test
     void aCheckpointNeedsAConfirmedWatermarkSoALateSampleIsNeverLost() {
         var live = bound();
         // observations may arrive out of order: the neutral sample at 100 moves the watermark past a missing one at 50
