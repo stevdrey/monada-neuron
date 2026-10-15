@@ -274,11 +274,12 @@ public final class RoutingStateStore {
      * ledger sequence, because the watermark records what was examined. {@code RebuildRequired}, a conflict, a stale
      * cost peer and a full ledger change nothing at all.
      *
-     * <p>A compacted store first applies the horizon rules. For a sample whose entry was compacted, a revision whose
-     * {@code supersedesSequence} is at or below the horizon is {@code SUPERSEDES_COMPACTED}, wherever its own sequence
-     * lies: the compacted ledger cannot tell a correction examined before the checkpoint from one never delivered, so a
-     * re-read of an examined correction asks for a rebuild too, which is never wrong. Any other delivery of such a
-     * sample at or below the horizon is {@code COVERED}. A delivery at or below the horizon that would apply or record
+     * <p>A compacted store first applies the horizon rules. A revision whose {@code supersedesSequence} is at or below
+     * the horizon is {@code SUPERSEDES_COMPACTED}, wherever its own sequence lies, when its sample's entry was compacted
+     * or when it is newer than the sample's retained marker: the compacted ledger cannot tell a correction examined
+     * before the checkpoint from one never delivered, nor show a compacted cost-refined reward that depends on a
+     * retained marker, so a re-read of an examined correction asks for a rebuild too, which is never wrong. Any other
+     * delivery at or below the horizon of a sample whose entry was compacted is {@code COVERED}. A delivery at or below the horizon that would apply or record
      * something is {@code BEFORE_HORIZON}. All three are
      * {@link StateUpdate.BeyondCheckpoint} and change nothing. A cost-refined derivation whose peer revision was
      * compacted is trusted to have been derived from the same export as the observation, which is later than the
@@ -301,14 +302,19 @@ public final class RoutingStateStore {
             return new StateUpdate.ForeignPartition(foreign);
         }
         long horizon = compactedTo == null ? -1 : compactedTo.processedCutoff();
-        if (horizon >= 0 && !ledger.containsKey(observation.experienceRef())) {
-            // a correction first, wherever it lies: a revision that replaces a compacted one may itself sit at or below
-            // the horizon, and only the ledger, now compacted, could tell an examined correction from a new one
-            if (observation.supersedesSequence() instanceof Feature.Known<Long> known && known.value() <= horizon) {
+        if (horizon >= 0) {
+            AppliedRevision retained = ledger.get(observation.experienceRef());
+            // a correction first, wherever it lies (contract section 7: a superseded revision at or before the cutoff
+            // invalidates the checkpoint). It may itself sit at or below the horizon, and only the compacted ledger
+            // could tell an examined correction from a new one; and a newer revision of a retained marker may be the
+            // cost peer of a compacted reward, which the reconciler cannot see. A repeat or older revision of a retained
+            // sample changes nothing, so the reconciler still answers it.
+            if (observation.supersedesSequence() instanceof Feature.Known<Long> known && known.value() <= horizon
+                    && (retained == null || observation.revision() > retained.revision())) {
                 return new StateUpdate.BeyondCheckpoint(StateUpdate.BeyondCheckpoint.Kind.SUPERSEDES_COMPACTED,
                         horizon, known.value());
             }
-            if (observation.ledgerSequence() <= horizon) {
+            if (retained == null && observation.ledgerSequence() <= horizon) {
                 return new StateUpdate.BeyondCheckpoint(StateUpdate.BeyondCheckpoint.Kind.COVERED, horizon,
                         observation.ledgerSequence());
             }
@@ -533,7 +539,8 @@ public final class RoutingStateStore {
      *
      * @param checkpoint the checkpoint
      * @return what happened
-     * @throws IllegalArgumentException if the checkpoint belongs to another partition or definition, or lies beyond
+     * @throws IllegalArgumentException if the checkpoint belongs to another partition or definition, retains a marker of
+     *         another bucket mapping, or lies beyond
      *         this store's watermark
      */
     public CompactionResult compact(RoutingStateCheckpoint checkpoint) {
@@ -604,7 +611,8 @@ public final class RoutingStateStore {
      *         nor this store's {@link #processedCutoff()}
      * @param derive derives one observation against the staged bindings; called once per replayed observation
      * @return the rebuilt store or where the replay stopped
-     * @throws IllegalArgumentException if the checkpoint belongs to another partition or definition, the export cutoff
+     * @throws IllegalArgumentException if the checkpoint belongs to another partition or definition, retains a marker
+     *         of another bucket mapping, the export cutoff
      *         is below the checkpoint's cutoff or this store's watermark, the checkpoint holds a Node channel outside
      *         the definition's bounds, the union of cohorts is oversized, a cohort bound after the checkpoint is named by
      *         one of its retained {@code NO_TARGET_BINDING} markers, or as
@@ -708,7 +716,10 @@ public final class RoutingStateStore {
         return new RebuildResult.Rebuilt(this);
     }
 
-    /** The checkpoint must be of this partition and definition; its cutoff is checked by each caller. */
+    /**
+     * The checkpoint must be of this partition and definition, and every retained marker of its bucket mapping; its
+     * cutoff is checked by each caller.
+     */
     private void requireSamePartition(RoutingStateCheckpoint checkpoint) {
         Objects.requireNonNull(checkpoint, "checkpoint must not be null");
         if (!checkpoint.scopeId().equals(partition.scopeId())
@@ -717,6 +728,16 @@ public final class RoutingStateStore {
                 || !checkpoint.mappingVersion().equals(definition.mappingVersion())
                 || !checkpoint.featureSchemaVersion().equals(definition.featureSchemaVersion())) {
             throw new IllegalArgumentException("the checkpoint belongs to another partition or definition");
+        }
+        // the record checks every binding part it carries; the bucket mapping is the definition's, so it is checked
+        // here, before a retained marker could answer a redelivery that this definition would bucket differently
+        String bucketMapping = definition.state().cohortMapping().bucketMappingVersion();
+        for (AppliedRevision marker : checkpoint.retainedMarkers()) {
+            if (marker.basis() instanceof EntryBasis.NoUpdateMarker basis
+                    && !basis.cohortBinding().bucketMappingVersion().equals(bucketMapping)) {
+                throw new IllegalArgumentException("marker " + marker.experienceRef() + " was recorded under bucket mapping "
+                        + basis.cohortBinding().bucketMappingVersion() + ", not " + bucketMapping);
+            }
         }
     }
 

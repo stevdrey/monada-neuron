@@ -1694,10 +1694,13 @@ data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value
   - The Nodes, support counts, watermark and `ledgerDigest()` do not change.
   - Compacting with an older checkpoint keeps newer entries reconcilable; compacting with the newest empties the ledger.
 - **Horizon rules (compacted stores only)**, after the partition checks of Section 22.2:
-  - for a sample whose entry was compacted, a revision whose `supersedesSequence` is at or below the horizon is
-    `SUPERSEDES_COMPACTED`, wherever its own sequence lies. The compacted ledger cannot tell a correction examined before
-    the checkpoint from one never delivered, so a re-read of an examined correction asks for a rebuild too: never wrong,
-    only more work;
+  - a revision whose `supersedesSequence` is at or below the horizon is `SUPERSEDES_COMPACTED`, wherever its own
+    sequence lies, when its sample's entry was compacted or when it is newer than the sample's retained marker. This is
+    Section 7's rule that a superseded revision at or before the cutoff invalidates the checkpoint. The compacted ledger
+    cannot tell a correction examined before the checkpoint from one never delivered, nor show a compacted
+    cost-refined reward whose peer is a retained marker (a `PROVENANCE_MISMATCH` peer). A re-read of an examined
+    correction therefore asks for a rebuild too: never wrong, only more work. A repeat or older revision of a retained
+    marker is still answered by the reconciler;
   - any other delivery of such a sample at or below the horizon is `COVERED`;
   - a delivery at or below the horizon that the reconciler would apply or record is `BEFORE_HORIZON`, because the
     compacted entries after it are invisible to the order rule;
@@ -1720,6 +1723,8 @@ data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value
   - an observation that invalidates the checkpoint ends it as `RebuildResult.Failed`.
 
   It throws when:
+  - a retained marker was recorded under another bucket mapping than the definition's (the record cannot check this,
+    because it carries no bucket mapping; `compact` checks it too);
   - the export cutoff is below the checkpoint's cutoff or the receiver's watermark;
   - the checkpoint holds a Node channel outside the definition's bounds;
   - the cohort union exceeds 256;
@@ -1786,6 +1791,9 @@ Both rows reach the same decision trace, deliveries, derivations and state diges
 - a rebuild from a checkpoint over a whole export whose history includes an examined correction;
 - a persisted checkpoint restored into a fresh store, and an export cutoff below the checkpoint rejected;
 - a reconstructed checkpoint with too many markers, a foreign marker, or more support than its digest counts rejected;
+- a newer revision of a retained `PROVENANCE_MISMATCH` peer of a compacted cost-refined reward reported as
+  `SUPERSEDES_COMPACTED`, while a repeat of the retained revision is still `Unchanged`;
+- a retained marker of another bucket mapping rejected by `compact` and `rebuildFrom`;
 - `STALE`, `BEHIND_HORIZON` and `CREDITS_UNBOUND_COHORT`;
 - a rebind of a compacted cohort refused until a rebuild from the checkpoint;
 - retained retryable markers with a conservative bind refusal and `BEFORE_HORIZON`;

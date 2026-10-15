@@ -14,6 +14,7 @@ import monada.neuron.routing.catalog.CatalogEntry;
 import monada.neuron.routing.catalog.HardRequirements;
 import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteDescriptor;
+import monada.neuron.routing.catalog.ResourceValue;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
@@ -35,6 +36,9 @@ import monada.neuron.routing.outcome.ResourceSummary;
 import monada.neuron.routing.outcome.RoutingObservation;
 import monada.neuron.routing.outcome.RoutingOutcome;
 import monada.neuron.routing.outcome.StageAttribution;
+import monada.neuron.routing.outcome.UsageCounter;
+import monada.neuron.routing.outcome.UsageDeclaration;
+import monada.neuron.routing.outcome.UsageKind;
 
 import java.util.List;
 import java.util.Optional;
@@ -146,6 +150,13 @@ final class AdaptationFixtures {
     /** One executed sample of {@code decision}; {@code supersedes} is required exactly for {@code revision > 0}. */
     static RoutingObservation observation(RoutingRequest request, RoutingDecision.Selected decision, String ref,
             long revision, long ledgerSequence, Feature<Long> supersedes, Kind kind) {
+        return observation(request, decision, ref, revision, ledgerSequence, supersedes, kind,
+                ResourceSummary.unrecorded());
+    }
+
+    /** As above, with the routed stage's measured usage, so a cost refinement can compare two executions. */
+    static RoutingObservation observation(RoutingRequest request, RoutingDecision.Selected decision, String ref,
+            long revision, long ledgerSequence, Feature<Long> supersedes, Kind kind, ResourceSummary resources) {
         String attempt = request.attemptId();
         QualityState tests = kind == Kind.FAIL ? QualityState.FAIL : QualityState.PASS;
         var observations = List.of(
@@ -161,10 +172,18 @@ final class AdaptationFixtures {
                 decision.cohortBinding(), decision.provenance().catalogVersion(), decision.provenance().policyId(),
                 decision.provenance().policyVersion(), "src-1", "ctx-1", "con-1", "forge-gates", "1", CUTOFF,
                 InvocationStatus.COMPLETED, status, OutcomeOrigin.VALIDATED, accepted, Feature.unknown(), 10L,
-                observations, List.of(), ResourceSummary.unrecorded(),
+                observations, List.of(), resources,
                 new StageAttribution(StageAttribution.Basis.STAGE_LOCAL, 1,
                         List.of(new EvidenceRef("log", "ref-stage", Feature.unknown()))));
         return new RoutingObservation(outcome, ref, revision, ledgerSequence, supersedes);
+    }
+
+    /** Measured input tokens of the routed stage. */
+    static ResourceSummary inputTokens(long tokens) {
+        return new ResourceSummary(UsageDeclaration.MEASURED, Feature.unknown(),
+                List.of(new UsageCounter(UsageKind.INPUT_TOKENS,
+                        new ResourceValue.Known(tokens, ResourceValue.Provenance.REPORTED))),
+                List.of(), List.of());
     }
 
     static RoutingObservation observation(RoutingRequest request, RoutingDecision.Selected decision, String ref,

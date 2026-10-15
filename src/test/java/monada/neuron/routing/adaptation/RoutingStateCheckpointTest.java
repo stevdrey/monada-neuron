@@ -1,12 +1,22 @@
 package monada.neuron.routing.adaptation;
 
+import monada.neuron.routing.ChangeSizeCohortMapping;
+import monada.neuron.routing.CohortBinding;
+import monada.neuron.routing.ResourceObjective;
 import monada.neuron.routing.RoutingDecision;
+import monada.neuron.routing.RoutingStateDefinition;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.feedback.AppliedRevision;
 import monada.neuron.routing.feedback.CohortKey;
+import monada.neuron.routing.feedback.CostObjective;
+import monada.neuron.routing.feedback.CostReference;
 import monada.neuron.routing.feedback.EntryBasis;
+import monada.neuron.routing.feedback.FeedbackDerivation;
 import monada.neuron.routing.feedback.NoUpdateReason;
+import monada.neuron.routing.feedback.RoutingFeedbackConfig;
+import monada.neuron.routing.feedback.ScoreRule;
+import monada.neuron.routing.outcome.UsageKind;
 import monada.neuron.routing.feedback.Reconciliation;
 import monada.neuron.routing.outcome.RoutingObservation;
 import org.junit.jupiter.api.Test;
@@ -16,6 +26,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Random;
 
@@ -304,6 +315,85 @@ class RoutingStateCheckpointTest {
         // two support units cannot come from a digest of one entry
         assertThrows(IllegalArgumentException.class, () -> withMarkers(valid, List.of(),
                 new LedgerDigest(1, valid.ledgerDigest().sum())));
+    }
+
+    @Test
+    void aNewerRevisionOfARetainedPeerOfACompactedRewardIsBeyondTheCheckpoint() {
+        var definition = new AdaptiveStateDefinition(
+                new RoutingStateDefinition("adaptive-cost/1", ChangeSizeCohortMapping.DEFAULT),
+                AdaptationFixtures.INITIAL, AdaptationFixtures.ADAPTATION, new RoutingFeedbackConfig(0.8, -0.4, 0.2,
+                        Optional.of(new CostObjective(UsageKind.INPUT_TOKENS, ResourceObjective.Direction.MINIMIZE))));
+        var policy = definition.feedbackPolicy(AdaptationFixtures.GATES);
+        var live = new RoutingStateStore(definition, AdaptationFixtures.PARTITION);
+        live.bind(List.of(KEY_A, KEY_B));
+
+        // peer P runs on sub-b. The host first paired its revisions with the wrong request, so the ledger keeps them as
+        // retained PROVENANCE_MISMATCH markers, while a cost reference with the right pairing still qualifies (the
+        // policy only compares against a peer it could credit, so a NO_TARGET_BINDING peer never refines a reward)
+        var peerRequest = request("exec-peer");
+        var wrongPairing = request("scope-demo", "review", Feature.unknown(), "exec-peer", 101L);
+        var peerDecision = decide(peerRequest, "sub-b", definition);
+        var peer0 = observation(peerRequest, peerDecision, "exp-peer", 0, 12, Feature.unknown(), Kind.PASS,
+                AdaptationFixtures.inputTokens(900));
+        var peer1 = observation(peerRequest, peerDecision, "exp-peer", 1, 15, Feature.known(12L), Kind.PASS,
+                AdaptationFixtures.inputTokens(900));
+        for (var revision : List.of(peer0, peer1)) {
+            var recorded = assertInstanceOf(StateUpdate.Recorded.class, live.consume(revision,
+                    policy.derive(revision, peerDecision, wrongPairing, live.bindings())));
+            assertEquals(NoUpdateReason.PROVENANCE_MISMATCH,
+                    ((EntryBasis.NoUpdateMarker) recorded.marker().basis()).reason());
+        }
+        // reward R on sub-a is cheaper than the comparable peer revision it was derived against
+        var rewardRequest = request("exec-reward");
+        var rewardDecision = decide(rewardRequest, "sub-a", definition);
+        var reward = observation(rewardRequest, rewardDecision, "exp-reward", 0, 20, Feature.unknown(), Kind.PASS,
+                AdaptationFixtures.inputTokens(400));
+        var refined = assertInstanceOf(FeedbackDerivation.Derived.class, policy.derive(reward, rewardDecision,
+                rewardRequest, live.bindings(), Optional.of(new CostReference(peer1, peerDecision, peerRequest))));
+        assertEquals(ScoreRule.REINFORCE_COST_REFINED, refined.feedback().rule());
+        assertInstanceOf(StateUpdate.Applied.class, live.consume(reward, refined));
+
+        // the dependent reward is compacted while its peer stays retained
+        assertEquals(new CompactionResult.Compacted(1, 20), live.compact(live.checkpoint(policy())));
+        assertEquals(List.of("exp-peer"), live.ledger().stream().map(AppliedRevision::experienceRef).toList());
+        var cohorts = live.cohorts(demo());
+        var ledger = live.ledger();
+
+        // a repeat of the retained revision is still answered by the ledger
+        assertInstanceOf(StateUpdate.Unchanged.class, live.consume(peer1,
+                policy.derive(peer1, peerDecision, wrongPairing, live.bindings())));
+        // a newer peer revision would make the compacted bonus obsolete, which the ledger can no longer show
+        var peer2 = observation(peerRequest, peerDecision, "exp-peer", 2, 40, Feature.known(12L), Kind.FAIL,
+                AdaptationFixtures.inputTokens(900));
+        assertEquals(new StateUpdate.BeyondCheckpoint(StateUpdate.BeyondCheckpoint.Kind.SUPERSEDES_COMPACTED, 20, 12),
+                live.consume(peer2, policy.derive(peer2, peerDecision, wrongPairing, live.bindings())));
+        assertEquals(cohorts, live.cohorts(demo()));
+        assertEquals(ledger, live.ledger());
+        assertEquals(20L, live.processedCutoff());
+    }
+
+    @Test
+    void aRetainedMarkerOfAnotherBucketMappingIsRejected() {
+        var live = store();
+        live.bind(List.of(KEY_A));
+        deliverTo(live, sample("exp-b", "sub-b", 20, Kind.PASS));
+        var checkpoint = live.checkpoint(policy());
+        AppliedRevision marker = checkpoint.retainedMarkers().getFirst();
+        var binding = ((EntryBasis.NoUpdateMarker) marker.basis()).cohortBinding();
+        var rebucketed = new AppliedRevision(marker.identity(), marker.routingPolicyId(), marker.routingPolicyVersion(),
+                marker.supersedesSequence(), marker.catalogVersion(), marker.cutoff(), marker.targetNodeId(),
+                marker.costPeer(), new EntryBasis.NoUpdateMarker(NoUpdateReason.NO_TARGET_BINDING,
+                        new CohortBinding(binding.cohortBucket(), "other-buckets/9", binding.mappingVersion(),
+                                binding.featureSchemaVersion())),
+                marker.disposition(), marker.score());
+        // the record carries no bucket mapping, so it accepts the marker; the store that would hold it does not
+        var foreign = withMarkers(checkpoint, List.of(rebucketed), checkpoint.ledgerDigest());
+        String expected = "marker exp-b was recorded under bucket mapping other-buckets/9, not "
+                + binding.bucketMappingVersion();
+        assertEquals(expected, assertThrows(IllegalArgumentException.class, () -> live.compact(foreign)).getMessage());
+        var fresh = new RoutingStateStore(AdaptationFixtures.DEFINITION, AdaptationFixtures.PARTITION);
+        assertEquals(expected, assertThrows(IllegalArgumentException.class,
+                () -> rebuildFrom(fresh, foreign, List.of(), 20)).getMessage());
     }
 
     private static RoutingStateCheckpoint withMarkers(RoutingStateCheckpoint checkpoint, List<AppliedRevision> markers,

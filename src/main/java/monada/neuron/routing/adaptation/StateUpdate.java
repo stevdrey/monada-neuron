@@ -161,9 +161,11 @@ public sealed interface StateUpdate {
              */
             COVERED,
             /**
-             * A newer revision replaces one whose entry was compacted; its old effect is part of the checkpoint. This is
-             * checked first, wherever the revision's own sequence lies: a compacted ledger cannot tell a correction
-             * examined before the checkpoint from one never delivered.
+             * A newer revision replaces one at or below the horizon: the sample's entry was compacted, or the revision is
+             * newer than its retained marker, whose compacted dependents (cost-refined rewards) the ledger no longer
+             * shows. Its old effect is part of the checkpoint. This is checked first, wherever the revision's own
+             * sequence lies: a compacted ledger cannot tell a correction examined before the checkpoint from one never
+             * delivered.
              */
             SUPERSEDES_COMPACTED,
             /**

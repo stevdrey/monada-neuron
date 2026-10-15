@@ -45,10 +45,13 @@ a valid checkpoint gives a state identical to a rebuild from scratch).
   become a first application. The cutoff becomes the **compaction horizon**. Compaction is refused, as a value, when an
   entry it would drop credits a cohort the checkpoint does not hold.
 - **Horizon rules in `consume`** apply only to a compacted store:
-  - For a sample whose entry was compacted, a revision that replaces a revision at or below the horizon is
-    `SUPERSEDES_COMPACTED`, checked first and wherever its own sequence lies. A compacted ledger cannot tell a correction
-    examined before the checkpoint from one never delivered. A re-read of an examined correction therefore asks for a
-    rebuild too: never wrong, only more work.
+  - A revision that replaces a revision at or below the horizon is `SUPERSEDES_COMPACTED`, checked first and wherever
+    its own sequence lies. This applies when its sample's entry was compacted, or when it is newer than the sample's
+    retained marker (contract Section 7: a superseded revision at or before the cutoff invalidates the checkpoint).
+    - A compacted ledger cannot tell a correction examined before the checkpoint from one never delivered.
+    - It also cannot show a compacted cost-refined reward whose peer is a retained `PROVENANCE_MISMATCH` marker.
+    - A re-read of an examined correction therefore asks for a rebuild too: never wrong, only more work. A repeat of a
+      retained marker is still answered by the reconciler.
   - Any other delivery of such a sample at or below the horizon is `COVERED`.
   - A delivery at or below the horizon that would apply or record something is `BEFORE_HORIZON`.
   - All three are reported by one new `StateUpdate.BeyondCheckpoint(kind, horizon, affectedFromSequence)` and change
@@ -63,6 +66,9 @@ a valid checkpoint gives a state identical to a rebuild from scratch).
     and are skipped, so a whole export may be passed.
   - The receiver need not be the store the checkpoint came from. A persisted checkpoint restores a new, empty store; only
     the export cutoff must reach the checkpoint's cutoff.
+  - The checkpoint carries no bucket mapping. `rebuildFrom` and `compact` therefore reject a retained marker recorded
+    under another bucket mapping than the definition's, so it can never answer a redelivery the definition would bucket
+    differently.
   - An observation that invalidates the checkpoint ends the replay as `RebuildResult.Failed`, so no new result type is
     needed.
   - The from-scratch `rebuild` overloads are unchanged.
