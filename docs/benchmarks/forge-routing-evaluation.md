@@ -584,3 +584,11 @@ Observations, not conclusions:
   contract Section 23). The harness's cadence (every 32 deliveries, 4 kept) is one illustrative policy over one
   constructed workload. The Store arm has no corrections, so it never rebuilds from a checkpoint.
 - **No tuning.** The reference adaptive values are not revisited, and nothing in the core is tuned.
+- **The published-consumer loop is not an evaluation.** Issue #68's `embeddedHostConsumerTest` (contract Section 24,
+  ADR 0032) runs a scripted embedded-host loop against the published artifacts:
+  - two routes and three rounds;
+  - a validated failure of the cold-start route;
+  - a learned preference after the support threshold.
+
+  It verifies packaging, resolution, ownership and the semantic path, not routing quality, cost or latency. It records
+  no timing or allocation measurement, and none of its output is evidence of effectiveness.
