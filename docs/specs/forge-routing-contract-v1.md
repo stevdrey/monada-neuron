@@ -2003,6 +2003,6 @@ Evidence gaps:
 
 - **Store version.** The pinned Store version is a SNAPSHOT. Provenance makes a change visible, but a re-published Store with different content at the same version is not rejected. A non-SNAPSHOT Store release is a Store follow-up.
 - **Encapsulation.** Automatic modules export every package. `monada.neuron.routing.token` remains a documented, not enforced, non-extension point (ADR 0028).
-- **CI.** The new tasks are not yet run in CI. That is a follow-up (ADR 0032).
+- **CI.** CI runs `jpmsConsumerTest` in the core job and `embeddedHostConsumerTest` in the adapter job, which prints `STORE-PROVENANCE.txt`. The adapter job tracks Store `main`: the run fails if that Store publishes a version other than `resonanceStoreVersion`, and the tested Store commit is recorded in provenance, not pinned (ADR 0032).
 - **Scenario scope.** The loop covers one routed stage per execution and one attempt, with no corrections. Revision handling over real exports remains covered by Section 20 and Section 23 tests.
 - **Effectiveness.** No effectiveness or efficiency claim is made: the scenario is scripted.

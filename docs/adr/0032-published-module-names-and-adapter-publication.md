@@ -93,10 +93,10 @@ Store issue #94 publishes `com.monada:monada-{core,encoder,storage,index,learnin
   not rejected.
 - Store-dependent verification exists only when the sibling checkout is present. Core-only builds, `test`,
   `consumerSmokeTest` and `jpmsConsumerTest` never need it.
-- CI is unchanged by this decision. The new tasks are run locally and are a CI follow-up.
+- CI runs `jpmsConsumerTest` in the core `verify` job and `embeddedHostConsumerTest` in the `adapter` job,
+  which already has the Store sibling checkout. The adapter job prints `STORE-PROVENANCE.txt` after the run.
 
 ## Follow-Up
 
-- Add `jpmsConsumerTest` to the core CI job and `embeddedHostConsumerTest` to the adapter CI job.
 - Request a non-SNAPSHOT Store release, then pin it.
 - Revisit real descriptors if Forge needs strong encapsulation or `jlink`.
