@@ -69,4 +69,4 @@ scores join the cohort mapping under one composite `mappingVersion`.
 - #89 (implemented, [ADR 0031](0031-routing-state-checkpoint-and-ledger-compaction.md), contract Section 23): the core
   `RoutingStateCheckpoint`, the `routing-ledger-digest/1` format, explicit ledger compaction with a horizon, and
   checkpoint-then-replay equivalence. The #67 replay's rebuild-dominated adaptive cost motivated it.
-- #68: published consumer loop over real Store exports.
+- #68: published consumer loop over real Store exports — done (contract Section 24, [ADR 0032](0032-published-module-names-and-adapter-publication.md)).

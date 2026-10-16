@@ -1,6 +1,6 @@
 # Forge Routing Contract v1
 
-Status: **proposed contract; implemented so far: `TaskFeatures` and its signal encoder (#60, Section 15), the route catalog and eligibility filter (#61, Section 16), the routing policy, decisions and composition seam (#62, Section 17), outcome evidence with learning eligibility (#63, Section 19), Store export translation (#64, Section 20), routing feedback with executed-route credit assignment (#65, Section 21), and the bounded caller-owned adaptive state (#66, Section 22).** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
+Status: **proposed contract; implemented so far: `TaskFeatures` and its signal encoder (#60, Section 15), the route catalog and eligibility filter (#61, Section 16), the routing policy, decisions and composition seam (#62, Section 17), outcome evidence with learning eligibility (#63, Section 19), Store export translation (#64, Section 20), routing feedback with executed-route credit assignment (#65, Section 21), the bounded caller-owned adaptive state (#66, Section 22), checkpoints, the ledger digest and compaction (#89, Section 23), and the published API verified by classpath and JPMS consumers with an embedded host loop (#68, Section 24).** Decision record: [ADR 0026](../adr/0026-forge-routing-ownership.md).
 Issue: [#59](https://github.com/stevdrey/monada-neuron/issues/59) (Forge Routing 1/10).
 
 This document is the normative v1 contract that issues #60–#68 implement. Later issues may refine exact Java
@@ -33,7 +33,7 @@ Inspected `main` at `d1dd569` (Java 27). Already implemented and **reused unchan
 - `RuntimeBackendSelector`, which selects *internal computational backends* (SCALAR/VECTOR_API, object/CSR graph, ...). It
   never selects external workers or models.
 
-At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 23 describe what has been added since. Still absent: the published consumer loop (#68); the replay evaluation (#67) exists in the evaluation module only ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)). `ActionRequest` carries Signals and an
+At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 24 describe what has been added since. The replay evaluation (#67) exists in the evaluation module only ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)). `ActionRequest` carries Signals and an
 opaque host context, not a route. `Signal` carries no identity (ADR 0005).
 
 ## Goal
@@ -770,7 +770,7 @@ Neuron implementation order (a dependency graph, not a claim that any item exist
                            -> #66 RoutingStateStore, checkpoints, Node bindings, snapshot production
                                                                   (needs #60, #61, #62, #65)
                                 -> #67 temporal replay evaluation (needs #62-#66, Store #99 #100)
-                                     -> #68 published API + JPMS consumer loop
+                                     -> #68 published API + JPMS consumer loop (automatic modules, Section 24)
 ```
 
 ## 11. Compatibility
@@ -803,7 +803,7 @@ Everything in this contract is additive and opt-in.
 - Stable provenance and schema/policy versions are required for replay; corrections and scope boundaries must not silently
   contaminate learned state, which is why mismatches are reported and rebuilds are explicit.
 - `NeuronRuntime` is sequential and not thread-safe; the preference snapshot must be passed by the host, not shared mutably.
-- The Store's execution-memory issues #94 to #101 are implemented on its `main` and #102 is informational (Section 10). Translation of real exports was exercised against a real `ExecutionMemory` by #64 (Section 20); the published API and the consumer loop over real exports remain unverified until #68.
+- The Store's execution-memory issues #94 to #101 are implemented on its `main` and #102 is informational (Section 10). Translation of real exports was exercised against a real `ExecutionMemory` by #64 (Section 20); #68 verifies the published API and the consumer loop over real exports from independent classpath and JPMS consumers (Section 24); its remaining gaps are listed in Section 24.6.
 
 ## 13. Verification (issue #59, historical)
 
@@ -1865,3 +1865,144 @@ with the from-scratch run.
 - A correction of anything at or below the horizon needs an earlier checkpoint or a full rebuild, which is capped at
   4,096 observations per call.
 - Adding a permitted subtype to `StateUpdate` breaks exhaustive `switch`es over it at compile time (ADR 0031).
+
+## 24. Implemented: Published API and Embedded Host Loop with a JPMS Consumer (#68)
+
+Issue: [#68](https://github.com/stevdrey/monada-neuron/issues/68) (Forge Routing 10/10). Decision record:
+[ADR 0032](../adr/0032-published-module-names-and-adapter-publication.md). No routing semantics change; this step adds
+packaging, publication and external verification only. No production Java source changes.
+
+### 24.1 Published coordinates and module names
+
+| Artifact | Coordinates | JPMS name | Runtime dependencies |
+| --- | --- | --- | --- |
+| Core | `monada.neuron:monada-neuron:0.1.0-SNAPSHOT` | `monada.neuron` (automatic) | none |
+| Adapter | `monada.neuron:monada-neuron-resonance-adapter:0.1.0-SNAPSHOT` | `monada.neuron.resonance.adapter` (automatic) | `api`: core, `com.monada:monada-api`, `com.monada:monada-core` at `resonanceStoreVersion` |
+
+- **Core.**
+  - It has no Store, evaluation or provider dependency.
+  - It needs no `jdk.incubator.vector`: as an automatic module it declares no `requires`, so the reflective Vector loader falls back to scalar.
+- **Adapter.**
+  - Its Store dependencies are `api` because Store types appear in its public signatures.
+  - Store's own published metadata adds `monada-encoder` and `monada-storage` at compile time, and `monada-index` and `monada-learning` at runtime.
+- **Publication target.** Both artifacts are published only to repository-local directories. Nothing is published remotely.
+- **Store version.** The pinned Store version is `0.1.0-SNAPSHOT`, the only one the Store publishes (Store #94). `STORE-PROVENANCE.txt` records the Store commit, a dirty-tree flag and SHA-256 digests (Section 24.4).
+
+### 24.2 Ownership in the embedded host loop
+
+`consumer-fixture/embedded-host` contains `EmbeddedRoutingHost`. It is a host built only from the published artifacts, and it owns all of the following explicitly:
+
+- the scope, the `TaskFeatures` and the `RouteCatalog` passed per request (availability is the host's observation);
+- the authorized `FakeWorker`, which is scripted per route and makes no provider, network or wall-clock call;
+- the acceptance judgment, the Store root, the routing envelopes and their resolver;
+- one `RoutingStateStore` per `StatePartition`.
+
+There is no singleton, no background task, no persistent learner and no auto-run cycle. The host is sequential; one instance is never shared between threads (`NeuronRuntime` and `RoutingStateStore` are not thread-safe). IDs and timestamps are caller-supplied constants. No randomness and no `Instant.now()` are used.
+
+The loop composes the existing runtime without changing cognitive order:
+
+1. **Route (Level B).**
+   - A routing-only `NeuronRuntime` runs `RoutingReasoningStage` with `TrustedRoutingProfile.lexicographic(policy)` as the REASONING source of its own cycle.
+   - Its resolver maps the `HostExecutionContext` reference to a `RoutingInput`, which carries `store.snapshot(...)`.
+   - The decision is advice. The host checks that it equals the pure Level A `policy.decide` over the same input.
+   - The request `cutoff` is the Store watermark the host last learned from, so a snapshot is never newer than its request.
+2. **Execute.** The host, not Neuron, submits the advised route to its fake worker.
+3. **Delayed result.**
+   - On a later host tick, the worker's completion reaches a second runtime. A host `PerceptionCapability` emits it as an `OBSERVATION` Signal, and an `ActionCapability` acknowledges it (PERCEPTION then ACTION).
+   - Routing cannot share that cycle (Section 3.5), and the cycle order is unchanged.
+4. **Record.** The host opens `ExecutionMemory` for the scope and appends six events:
+   - `ExecutionStarted` (source fingerprints and evaluation policy);
+   - `AttemptStarted`;
+   - the routed `StageRecorded`, with an `ArtifactRef` to the `RoutingEnvelope` and its digest;
+   - `EvidenceRecorded` (TESTS, SECURITY);
+   - `AttemptFinished`;
+   - `OutcomeRecorded`.
+
+   Every append must be `APPENDED`. The host then closes the memory. Neuron never writes to the Store.
+5. **Close/reopen and export.**
+   - The host reopens the scope read-only and imports `ExperienceExportRequest.of(scope, highWatermark, 8, 64)` through `StoreExperienceTranslator`.
+   - The export is cumulative. Samples exported again come back as `Unchanged` (already applied).
+6. **Feedback.** For each observation the host derives `RoutingFeedbackPolicy.derive(...)` against its own bindings, calls `consume(...)`, and then calls `advanceCutoff(watermark)`.
+7. **Later recommendation.** The next route reads the updated snapshot.
+
+The scenario runs over three rounds:
+
+- `sub-a` is the cold-start advice and fails validated tests, which yields `PENALIZE`.
+- `sub-b` is tried while `sub-a` is reported unavailable and passes, which yields `REINFORCE`.
+- Below `minSupportingObservations = 3`, the advice stays `sub-a / COLD_START`.
+- After the third round, the later advice is `sub-b / LEARNED_PREFERENCE` with `StateValidation.Compatible`.
+- Two runs over fresh Store roots produce an equal later decision, an equal `LedgerDigest` and equal `CohortState`s.
+- Every delivery must be a `Derived` feedback with an exact disposition and rule: `PENALIZE / PENALIZE_PROVEN_MANDATORY_FAILURE` for `sub-a` and `REINFORCE / REINFORCE_VALIDATED_STAGE_LOCAL` for `sub-b`. A `NoUpdate` fails the run.
+
+### 24.3 Negative cases
+
+| Case | Path | Required result |
+| --- | --- | --- |
+| Invalid quality: accepted with TESTS `UNKNOWN` | Store record → export → derive | exactly `Derived` `NEUTRAL / NEUTRAL_INCOMPLETE_EVIDENCE`, recorded (`Applied`), complete `CohortState`s unchanged |
+| Environmental failure: `TIMED_OUT` with failing TESTS | core `RoutingObservation` (Store attempt results cannot express it, Section 20.4) | exactly `Derived` `NEUTRAL / NEUTRAL_ENVIRONMENTAL`, recorded (`Applied`), complete `CohortState`s unchanged |
+| Cross-scope: two scopes in one Store root | export per scope; A's observation to B | each export holds only its scope; `NoUpdate / BINDING_SCOPE_MISMATCH` against B's bindings; `ForeignPartition[SCOPE]` for A's feedback; B's cohorts and ledger unchanged |
+| Tampered envelope: host copy changed after recording | export → translate | `ENVELOPE_DIGEST_MISMATCH` rejection, nothing translated |
+
+### 24.4 Build tasks and dependency resolution
+
+- **`./gradlew jpmsConsumerTest`.**
+  - Always available. It publishes the core to `build/consumer-repo` and runs `consumer-fixture/module-consumer`.
+  - That fixture is a named module, `monada.neuron.consumer.jpms`, which declares `requires monada.neuron`. It checks that:
+    - `monada.neuron` resolves as an automatic module, and the loaded jar's manifest declares `Automatic-Module-Name: monada.neuron` (the file name would derive the same name, so the manifest is read directly);
+    - `jdk.incubator.vector` and every Store/evaluation module are absent;
+    - the scalar fallback is used;
+    - one cycle runs;
+    - Level A routing works;
+    - adaptive-snapshot routing works.
+  - `printResolution` requires the runtime graph to be exactly `{monada.neuron:monada-neuron}`.
+- **`./gradlew publishIntegrationRepository`.** Available only when the adapter module is included, that is, when the Store sibling is present. It:
+  1. cleans `build/integration-repo`;
+  2. publishes the core and the adapter into it;
+  3. runs the Store's `publishLibrariesToVerificationRepository` and copies its `com/monada/**` unchanged;
+  4. fails unless every Store module is exactly `resonanceStoreVersion`;
+  5. writes `STORE-PROVENANCE.txt`: the Store commit, a dirty flag, and the SHA-256 of every Store jar, POM, Gradle `.module` file and both `maven-metadata.xml` levels (checksum sidecars excluded).
+- **`./gradlew embeddedHostConsumerTest`.**
+  - Builds `consumer-fixture/embedded-host` against `build/integration-repo` only (`FAIL_ON_PROJECT_REPOS`, one repository).
+  - `module-host` is a named module, `monada.neuron.consumer.host`. It requires `monada.neuron`, `monada.neuron.resonance.adapter`, `com.monada.api` and `com.monada.core`.
+  - `classpath-host` compiles the same host source without the descriptor, with Gradle's module-path inference disabled, and runs it from the unnamed module.
+  - Both hosts read the `Automatic-Module-Name` of the core and adapter jars from their manifests.
+  - Each declares only the adapter coordinate. `printResolution` requires exactly:
+    - compile: Neuron, the adapter, and Store `api`/`core`/`encoder`/`storage`;
+    - runtime: the compile set plus Store `index`/`learning`.
+- **No substitution anywhere.** No fixture uses `includeBuild`, project substitution, source copying or manually supplied jars. The existing `consumerSmokeTest` classpath fixture is unchanged.
+
+### 24.5 Bounds, complexity and footprint
+
+- **Catalog and cohorts.** The fixture catalog has 2 routes (bound 32), and there are 2 cohorts per scope (bound 256).
+- **Export.** Page size is 8 (adapter bound 500), and at most 64 samples are taken in total (adapter bound 10,000).
+- **Host bookkeeping.**
+  - The host remembers at most `MAX_ROUTED = 64` routed executions, equal to the export bound. Exceeding it throws.
+  - At most `FakeWorker.MAX_IN_FLIGHT = 8` executions are in flight. Exceeding it throws.
+- **Learning cost.** Each learning pass is O(n) in the cumulative export size n. Every sample is derived and reconciled once against the store's ledger, which uses the existing #65/#66 complexity.
+- **What is not measured.** The fixture makes no latency or allocation measurement, and none is claimed. It checks behaviour, not performance (see the benchmark note in [forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)).
+
+### 24.6 Verification and evidence gaps
+
+Without the Store sibling (core only):
+
+```bash
+./gradlew test
+./gradlew consumerSmokeTest
+./gradlew jpmsConsumerTest
+```
+
+With the Store sibling at `../monada-resonance-store`:
+
+```bash
+./gradlew test :monada-neuron-resonance-adapter:test
+./gradlew embeddedHostConsumerTest
+cat build/integration-repo/STORE-PROVENANCE.txt
+```
+
+Evidence gaps:
+
+- **Store version.** The pinned Store version is a SNAPSHOT. Provenance makes a change visible, but a re-published Store with different content at the same version is not rejected. A non-SNAPSHOT Store release is a Store follow-up.
+- **Encapsulation.** Automatic modules export every package. `monada.neuron.routing.token` remains a documented, not enforced, non-extension point (ADR 0028).
+- **CI.** The new tasks are not yet run in CI. That is a follow-up (ADR 0032).
+- **Scenario scope.** The loop covers one routed stage per execution and one attempt, with no corrections. Revision handling over real exports remains covered by Section 20 and Section 23 tests.
+- **Effectiveness.** No effectiveness or efficiency claim is made: the scenario is scripted.

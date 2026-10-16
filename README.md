@@ -193,6 +193,7 @@ no runtime dependencies.
 | | |
 | --- | --- |
 | Coordinates | `monada.neuron:monada-neuron:0.1.0-SNAPSHOT` |
+| JPMS name | `monada.neuron` (automatic module; no `module-info`) |
 | JDK | 27 |
 | Contents | Core contracts and runtime, including the host API (`monada.neuron.host`), plus sources and Javadoc jars |
 
@@ -222,8 +223,24 @@ falls back to the scalar reference implementation; to opt into SIMD, run the JVM
 **Core library vs. evaluation.** `monada-neuron-evaluation` (benchmarks, JMH, baseline runners) is a
 development-only module. It is not part of the published artifact and never a transitive dependency.
 
+**Module path.** A JPMS host writes `requires monada.neuron;`. The jar is an automatic module, so it declares no
+`requires jdk.incubator.vector` and the scalar fallback applies unless the host adds the module itself.
+
+**Resonance Store adapter.** The optional adapter is published as
+`monada.neuron:monada-neuron-resonance-adapter:0.1.0-SNAPSHOT` (JPMS name `monada.neuron.resonance.adapter`). Its `api`
+dependencies are the core artifact and `com.monada:monada-api` / `com.monada:monada-core` at the pinned
+`resonanceStoreVersion`. It is published only to a repository-local directory, and only when the sibling
+`../monada-resonance-store` checkout is present.
+
 To verify the contract end to end, `./gradlew consumerSmokeTest` publishes to a repository-local directory and builds
-the standalone `consumer-fixture/` project against it with no incubator flags. The standalone demo entry point is run
+the standalone `consumer-fixture/` project against it with no incubator flags. `./gradlew jpmsConsumerTest` does the
+same for the module-path consumer in `consumer-fixture/module-consumer`. With the Store sibling present,
+`./gradlew embeddedHostConsumerTest` publishes the core, the adapter and the actual Store publications into
+`build/integration-repo` (with `STORE-PROVENANCE.txt`). It then runs the classpath and JPMS embedded-host loop in
+`consumer-fixture/embedded-host`, which covers: route, fake execution, delayed evidence, Store record, close and reopen,
+bounded export, feedback, and a later recommendation, plus negative cases. See
+[ADR 0032](docs/adr/0032-published-module-names-and-adapter-publication.md) and Section 24 of the
+[Forge Routing Contract](docs/specs/forge-routing-contract-v1.md). The standalone demo entry point is run
 with `./gradlew runDemo`; it is a plain task, so it does not affect library consumers. See
 [ADR 0025](docs/adr/0025-consumable-library-packaging.md).
 
@@ -291,7 +308,7 @@ versioned contract is defined in [Forge Routing Contract v1](docs/specs/forge-ro
 mandatory validator and a policy-specific verifier (issue #76) and a host-configured `RoutingDecisionVerifier` and
 `TrustedRoutingProfile` (issue #78, [ADR 0027](docs/adr/0027-trusted-routing-decision-verification.md)), and the
 provenance-preserving `RoutingOutcome` / `RoutingObservation` with the quality-gated `OutcomeEvaluator` (`monada.neuron.routing.outcome`, issue #63), and the neutral translation of bounded Resonance Store experience exports into `RoutingObservation` (`monada-neuron-resonance-adapter`, issue #64), and the separate `RoutingFeedback` with executed-route credit assignment and caller-owned applied-revision rules (`monada.neuron.routing.feedback`, issue #65, [ADR 0029](docs/adr/0029-routing-feedback-credit-assignment.md)),
-are implemented, as is the bounded caller-owned adaptive routing state of issue #66 (`monada.neuron.routing.adaptation`) with the `RoutingStateCheckpoint`, ledger digest and ledger compaction of issue #89, and the offline temporal replay evaluation of issue #67 exists in the evaluation module only ([forge-routing-evaluation.md](docs/benchmarks/forge-routing-evaluation.md)), while the other routing types it names are proposals: issue #68 implements the published consumer loop, all additive and opt-in, and the Monada Resonance Store execution-memory capabilities it depends on (Store issues #94 to #101) are implemented on the Store's `main`. A routing decision is advice. Forge keeps authorization, execution and evidence judgment, and Monada Resonance Store
+are implemented, as is the bounded caller-owned adaptive routing state of issue #66 (`monada.neuron.routing.adaptation`) with the `RoutingStateCheckpoint`, ledger digest and ledger compaction of issue #89, and the offline temporal replay evaluation of issue #67 exists in the evaluation module only ([forge-routing-evaluation.md](docs/benchmarks/forge-routing-evaluation.md)), and issue #68 verifies the published API and the embedded host loop with classpath and JPMS consumers ([ADR 0032](docs/adr/0032-published-module-names-and-adapter-publication.md)), all additive and opt-in, while the other routing types it names are proposals, and the Monada Resonance Store execution-memory capabilities it depends on (Store issues #94 to #101) are implemented on the Store's `main`. A routing decision is advice. Forge keeps authorization, execution and evidence judgment, and Monada Resonance Store
 keeps persistent experience.
 
 ## Design Principles

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (contract; implemented so far: `TaskFeatures` and its signal encoder, issue #60, the route catalog and eligibility filter, issue #61, and the routing policy, decision types and composition seam, issue #62, with its decision verification split into focused validators by issue #76 and host-trusted extensible verification added by issue #78; outcome evidence and quality-gated learning eligibility added by issue #63; Store experience export translation by issue #64; routing feedback with executed-route credit assignment and caller-owned applied-revision rules by issue #65; the bounded caller-owned adaptive state by issue #66, [ADR 0030](0030-caller-owned-adaptive-routing-state.md); the offline temporal replay evaluation by issue #67, in the evaluation module only ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)); the published consumer loop is pending issue #68, and `RoutingStateCheckpoint` with ledger compaction issue #89)
+Accepted (contract; implemented so far: `TaskFeatures` and its signal encoder, issue #60, the route catalog and eligibility filter, issue #61, and the routing policy, decision types and composition seam, issue #62, with its decision verification split into focused validators by issue #76 and host-trusted extensible verification added by issue #78; outcome evidence and quality-gated learning eligibility added by issue #63; Store experience export translation by issue #64; routing feedback with executed-route credit assignment and caller-owned applied-revision rules by issue #65; the bounded caller-owned adaptive state by issue #66, [ADR 0030](0030-caller-owned-adaptive-routing-state.md); the offline temporal replay evaluation by issue #67, in the evaluation module only ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)); `RoutingStateCheckpoint` with ledger compaction by issue #89; and the published API verified by classpath and JPMS consumers with an embedded host loop by issue #68, [ADR 0032](0032-published-module-names-and-adapter-publication.md))
 
 ## Context
 
@@ -120,8 +120,8 @@ Rejected as a non-goal: persistence belongs to the Store (ADR 0001, ADR 0018).
 - All behavior is additive and opt-in; existing public signatures, defaults, `OutcomeFeedback` behavior and the canonical
   stage order are unchanged.
 - The translation of real Store exports was exercised against a real `ExecutionMemory` by issue #64's adapter tests (contract
-  Section 20), and routing feedback and its applied-revision rules by issue #65 (Section 21). The published API and the
-  consumer loop over real exports remain unverified until #68. The contract names those dependencies and does not claim
+  Section 20), and routing feedback and its applied-revision rules by issue #65 (Section 21). Issue #68 verifies the published API and the
+  consumer loop over real exports from independent classpath and JPMS consumers (contract Section 24, ADR 0032). The contract names those dependencies and does not claim
   the types or Store capabilities it has not yet implemented exist.
 - Routing quality, cost and adaptation effect are measured only offline: the replay evaluation (#67,
   [forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)) provides a reproducible workload with static,
