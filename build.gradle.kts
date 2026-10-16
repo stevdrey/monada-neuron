@@ -192,6 +192,7 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
             val storeModules = repoDir.resolve("com/monada").listFiles { f -> f.isDirectory }
                 ?.sortedBy { it.name } ?: emptyList()
             check(storeModules.isNotEmpty()) { "no Store publication was copied into $repoDir" }
+            val checksumExtensions = setOf("md5", "sha1", "sha256", "sha512")
             val provenance = StringBuilder()
             provenance.appendLine("store.version=$pinned")
             provenance.appendLine("store.commit=${storeCommit.get()}")
@@ -201,12 +202,15 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
                 check(versions == setOf(pinned)) {
                     "Store module ${module.name} was published as $versions, but resonanceStoreVersion pins $pinned"
                 }
-                module.resolve(pinned).listFiles { f -> f.extension == "jar" || f.extension == "pom" }
-                    ?.sortedBy { it.name }
-                    ?.forEach { artifact ->
-                        val digest = MessageDigest.getInstance("SHA-256").digest(artifact.readBytes())
+                // Every file that can change what a consumer resolves: jars, POMs, Gradle module metadata and both
+                // maven-metadata.xml levels (which pick the timestamped SNAPSHOT). Checksum sidecars are derived.
+                module.walkTopDown()
+                    .filter { it.isFile && it.extension !in checksumExtensions }
+                    .sortedBy { it.relativeTo(repoDir).invariantSeparatorsPath }
+                    .forEach { file ->
+                        val digest = MessageDigest.getInstance("SHA-256").digest(file.readBytes())
                         provenance.appendLine("sha256 ${HexFormat.of().formatHex(digest)}  " +
-                            "com/monada/${module.name}/$pinned/${artifact.name}")
+                            file.relativeTo(repoDir).invariantSeparatorsPath)
                     }
             }
             repoDir.resolve("STORE-PROVENANCE.txt").writeText(provenance.toString())

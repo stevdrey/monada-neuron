@@ -49,8 +49,10 @@ Store issue #94 publishes `com.monada:monada-{core,encoder,storage,index,learnin
     3. Runs the Store's own `publishLibrariesToVerificationRepository`.
     4. Copies the actual Store publications (`com/monada/**`) unchanged.
     5. Fails if any copied Store module is not exactly at the pinned version.
-    6. Writes `STORE-PROVENANCE.txt` with the Store commit, a dirty-tree flag, and the SHA-256 of every Store
-       jar and POM.
+    6. Writes `STORE-PROVENANCE.txt` with the Store commit, a dirty-tree flag, and the SHA-256 of every
+       resolution-relevant Store file: jars, POMs, Gradle `.module` metadata and both `maven-metadata.xml`
+       levels (checksum sidecars excluded). The `maven-metadata.xml` files carry publish timestamps, so the
+       digests identify one publication, not a commit.
   - There is no remote repository, no Store source copying, and no edit to the Store checkout.
 - **Independent consumers prove the metadata.**
   - `consumer-fixture/module-consumer` (`jpmsConsumerTest`) is a module-path host with
@@ -61,6 +63,11 @@ Store issue #94 publishes `com.monada:monada-{core,encoder,storage,index,learnin
     and both must resolve exactly:
     - compile: Neuron, the adapter, and Store `api`/`core`/`encoder`/`storage`;
     - runtime: the compile set plus Store `index`/`learning`.
+    `classpath-host` disables Gradle's module-path inference, because the shared source directory holds
+    `module-host`'s descriptor.
+  - Every consumer reads the `Automatic-Module-Name` from the manifest of the jar that actually loaded Neuron
+    (and the adapter). The names the jar file names would derive are identical, so checking only the resolved
+    module name would not prove the manifest.
   - None of these builds uses `includeBuild`, project substitution, or manually supplied jars.
   - The existing `consumerSmokeTest` classpath fixture is unchanged.
 

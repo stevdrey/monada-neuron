@@ -25,10 +25,16 @@ import monada.neuron.routing.feedback.CohortKey;
 import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.net.URISyntaxException;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
+import java.util.jar.Attributes;
+import java.util.jar.JarFile;
 
 /**
  * Module-path smoke host. Each check throws on failure, so {@code run} fails the build; no test framework is
@@ -46,6 +52,10 @@ public final class ModuleConsumer {
                 "the consumer must run as a named module, was " + self);
         require("monada.neuron".equals(neuron.getName()), "Neuron must resolve as module monada.neuron, was " + neuron);
         require(neuron.getDescriptor().isAutomatic(), "monada.neuron is an automatic module (ADR 0032)");
+        // The jar file name derives the same automatic name, so the published manifest is what must be checked.
+        require("monada.neuron".equals(manifestModuleName(Signal.class)),
+                "the published jar must declare Automatic-Module-Name monada.neuron, declares "
+                        + manifestModuleName(Signal.class));
         require(ModuleLayer.boot().findModule("jdk.incubator.vector").isEmpty(),
                 "the consumer must run without jdk.incubator.vector");
         require(ModuleLayer.boot().modules().stream().map(Module::getName)
@@ -105,6 +115,22 @@ public final class ModuleConsumer {
                 .locality("hosted")
                 .build();
         return RouteCatalog.of("catalog-1", List.of(new CatalogEntry(route, Availability.AVAILABLE, 1)));
+    }
+
+    /** The Automatic-Module-Name declared by the manifest of the jar that loaded {@code type}, or null. */
+    private static String manifestModuleName(Class<?> type) {
+        try {
+            Path jar = Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI());
+            try (var file = new JarFile(jar.toFile())) {
+                var manifest = file.getManifest();
+                return manifest == null ? null
+                        : manifest.getMainAttributes().getValue(new Attributes.Name("Automatic-Module-Name"));
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        } catch (URISyntaxException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static void require(boolean condition, String message) {

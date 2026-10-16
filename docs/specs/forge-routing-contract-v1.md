@@ -1931,14 +1931,15 @@ The scenario runs over three rounds:
 - `sub-b` is tried while `sub-a` is reported unavailable and passes, which yields `REINFORCE`.
 - Below `minSupportingObservations = 3`, the advice stays `sub-a / COLD_START`.
 - After the third round, the later advice is `sub-b / LEARNED_PREFERENCE` with `StateValidation.Compatible`.
-- Two runs over fresh Store roots produce equal decisions and equal `LedgerDigest`s.
+- Two runs over fresh Store roots produce an equal later decision, an equal `LedgerDigest` and equal `CohortState`s.
+- Every delivery must be a `Derived` feedback with an exact disposition and rule: `PENALIZE / PENALIZE_PROVEN_MANDATORY_FAILURE` for `sub-a` and `REINFORCE / REINFORCE_VALIDATED_STAGE_LOCAL` for `sub-b`. A `NoUpdate` fails the run.
 
 ### 24.3 Negative cases
 
 | Case | Path | Required result |
 | --- | --- | --- |
-| Invalid quality: accepted with TESTS `UNKNOWN` | Store record → export → derive | `NEUTRAL / NEUTRAL_INCOMPLETE_EVIDENCE`, no cohort Node moves |
-| Environmental failure: `TIMED_OUT` with failing TESTS | core `RoutingObservation` (Store attempt results cannot express it, Section 20.4) | `NEUTRAL / NEUTRAL_ENVIRONMENTAL`, no cohort Node moves |
+| Invalid quality: accepted with TESTS `UNKNOWN` | Store record → export → derive | exactly `Derived` `NEUTRAL / NEUTRAL_INCOMPLETE_EVIDENCE`, recorded (`Applied`), complete `CohortState`s unchanged |
+| Environmental failure: `TIMED_OUT` with failing TESTS | core `RoutingObservation` (Store attempt results cannot express it, Section 20.4) | exactly `Derived` `NEUTRAL / NEUTRAL_ENVIRONMENTAL`, recorded (`Applied`), complete `CohortState`s unchanged |
 | Cross-scope: two scopes in one Store root | export per scope; A's observation to B | each export holds only its scope; `NoUpdate / BINDING_SCOPE_MISMATCH` against B's bindings; `ForeignPartition[SCOPE]` for A's feedback; B's cohorts and ledger unchanged |
 | Tampered envelope: host copy changed after recording | export → translate | `ENVELOPE_DIGEST_MISMATCH` rejection, nothing translated |
 
@@ -1947,7 +1948,7 @@ The scenario runs over three rounds:
 - **`./gradlew jpmsConsumerTest`.**
   - Always available. It publishes the core to `build/consumer-repo` and runs `consumer-fixture/module-consumer`.
   - That fixture is a named module, `monada.neuron.consumer.jpms`, which declares `requires monada.neuron`. It checks that:
-    - `monada.neuron` resolves as an automatic module;
+    - `monada.neuron` resolves as an automatic module, and the loaded jar's manifest declares `Automatic-Module-Name: monada.neuron` (the file name would derive the same name, so the manifest is read directly);
     - `jdk.incubator.vector` and every Store/evaluation module are absent;
     - the scalar fallback is used;
     - one cycle runs;
@@ -1959,11 +1960,12 @@ The scenario runs over three rounds:
   2. publishes the core and the adapter into it;
   3. runs the Store's `publishLibrariesToVerificationRepository` and copies its `com/monada/**` unchanged;
   4. fails unless every Store module is exactly `resonanceStoreVersion`;
-  5. writes `STORE-PROVENANCE.txt`.
+  5. writes `STORE-PROVENANCE.txt`: the Store commit, a dirty flag, and the SHA-256 of every Store jar, POM, Gradle `.module` file and both `maven-metadata.xml` levels (checksum sidecars excluded).
 - **`./gradlew embeddedHostConsumerTest`.**
   - Builds `consumer-fixture/embedded-host` against `build/integration-repo` only (`FAIL_ON_PROJECT_REPOS`, one repository).
   - `module-host` is a named module, `monada.neuron.consumer.host`. It requires `monada.neuron`, `monada.neuron.resonance.adapter`, `com.monada.api` and `com.monada.core`.
-  - `classpath-host` compiles the same host source without the descriptor and runs it from the unnamed module.
+  - `classpath-host` compiles the same host source without the descriptor, with Gradle's module-path inference disabled, and runs it from the unnamed module.
+  - Both hosts read the `Automatic-Module-Name` of the core and adapter jars from their manifests.
   - Each declares only the adapter coordinate. `printResolution` requires exactly:
     - compile: Neuron, the adapter, and Store `api`/`core`/`encoder`/`storage`;
     - runtime: the compile set plus Store `index`/`learning`.

@@ -10,6 +10,7 @@ import monada.neuron.routing.Basis;
 import monada.neuron.routing.LexicographicRoutingPolicy;
 import monada.neuron.routing.RoutingDecision;
 import monada.neuron.routing.adaptation.CohortState;
+import monada.neuron.routing.adaptation.LedgerDigest;
 import monada.neuron.routing.adaptation.PartitionField;
 import monada.neuron.routing.adaptation.StateUpdate;
 import monada.neuron.routing.catalog.Availability;
@@ -20,15 +21,19 @@ import monada.neuron.routing.catalog.RouteDescriptor;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.feedback.FeedbackDerivation;
 import monada.neuron.routing.feedback.NoUpdateReason;
+import monada.neuron.routing.feedback.RoutingFeedback;
 import monada.neuron.routing.feedback.ScoreRule;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.jar.Attributes;
+import java.util.jar.JarFile;
 import java.util.stream.Stream;
 
 /**
@@ -43,6 +48,10 @@ public final class EmbeddedHostMain {
     /** The reference policy's support threshold the loop must reach before learned advice may apply. */
     private static final int SUPPORT = LexicographicRoutingPolicy.DEFAULT_MIN_SUPPORTING_OBSERVATIONS;
 
+    /** What two runs of the learning loop over fresh Stores must reproduce exactly. */
+    private record LoopResult(RoutingDecision later, LedgerDigest digest, List<CohortState> cohorts) {
+    }
+
     private EmbeddedHostMain() {
     }
 
@@ -53,12 +62,17 @@ public final class EmbeddedHostMain {
         try {
             var first = learningLoop(work.resolve("loop-1"));
             var second = learningLoop(work.resolve("loop-2"));
-            require(first.equals(second), "two runs over fresh Stores must agree: " + first + " vs " + second);
+            require(first.later().equals(second.later()), "two runs must give the same later advice: "
+                    + first.later() + " vs " + second.later());
+            require(first.digest().equals(second.digest()), "two runs must give the same ledger digest: "
+                    + first.digest() + " vs " + second.digest());
+            require(first.cohorts().equals(second.cohorts()), "two runs must leave the same cohort states: "
+                    + first.cohorts() + " vs " + second.cohorts());
             invalidQualityIsNeverReinforced(work.resolve("quality"));
             environmentalFailureIsNeutral(work.resolve("environmental"));
             scopesStayIsolated(work.resolve("scopes"));
             tamperedEnvelopeIsRejected(work.resolve("tamper"));
-            var advice = (RoutingDecision.Selected) first;
+            var advice = (RoutingDecision.Selected) first.later();
             System.out.println("[embedded-host:" + mode + "] all checks passed; deterministic later advice "
                     + advice.route() + " (" + advice.basis() + ")");
         } finally {
@@ -91,8 +105,29 @@ public final class EmbeddedHostMain {
                     "the classpath host and the adapter must be in the unnamed module");
             default -> throw new IllegalArgumentException("expected 'module' or 'classpath', got '" + mode + "'");
         }
+        // The automatic names the jar file names would derive are the same, so read the published manifests.
+        requireManifestName(RoutingDecision.class, "monada.neuron");
+        requireManifestName(RoutingEnvelope.class, "monada.neuron.resonance.adapter");
         require(ModuleLayer.boot().findModule("jdk.incubator.vector").isEmpty(),
                 "the host must run without jdk.incubator.vector");
+    }
+
+    /** Requires the jar that loaded {@code type} to declare {@code expected} as its Automatic-Module-Name. */
+    private static void requireManifestName(Class<?> type, String expected) {
+        try {
+            Path jar = Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI());
+            try (var file = new JarFile(jar.toFile())) {
+                var manifest = file.getManifest();
+                String declared = manifest == null ? null
+                        : manifest.getMainAttributes().getValue(new Attributes.Name("Automatic-Module-Name"));
+                require(expected.equals(declared), jar.getFileName() + " must declare Automatic-Module-Name "
+                        + expected + ", declares " + declared);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        } catch (URISyntaxException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     /** Two routes with the same tier and fallback priority, so only learning or route order decides. */
@@ -124,7 +159,7 @@ public final class EmbeddedHostMain {
      * recommendation. sub-a is cold-start first but fails validated tests; sub-b is tried while sub-a is down and
      * passes. Below the support threshold nothing changes; at it, the later advice moves to sub-b.
      */
-    private static RoutingDecision learningLoop(Path root) {
+    private static LoopResult learningLoop(Path root) {
         var host = new EmbeddedRoutingHost(root, "scope-a", worker());
         var full = catalog(Availability.AVAILABLE);
         host.bind(full);
@@ -149,11 +184,13 @@ public final class EmbeddedHostMain {
                     case StateUpdate.Unchanged ignored -> repeated++;
                     default -> throw new IllegalStateException("unexpected update " + delivery.update());
                 }
-                if (delivery.derivation() instanceof FeedbackDerivation.Derived derived) {
-                    var expected = delivery.observation().outcome().executedRoute().equals(SUB_A)
-                            ? FeedbackDisposition.PENALIZE : FeedbackDisposition.REINFORCE;
-                    require(derived.feedback().disposition() == expected,
-                            "proven failure penalizes and validated success reinforces: " + derived.feedback());
+                // every delivery is a derived feedback: a proven failure penalizes, a validated success reinforces
+                if (delivery.observation().outcome().executedRoute().equals(SUB_A)) {
+                    requireDerived(delivery.derivation(), FeedbackDisposition.PENALIZE,
+                            ScoreRule.PENALIZE_PROVEN_MANDATORY_FAILURE);
+                } else {
+                    requireDerived(delivery.derivation(), FeedbackDisposition.REINFORCE,
+                            ScoreRule.REINFORCE_VALIDATED_STAGE_LOCAL);
                 }
             }
         }
@@ -167,7 +204,7 @@ public final class EmbeddedHostMain {
                 "with sufficient validated support the later advice prefers sub-b: " + later.decision());
         System.out.println("[embedded-host] later advice " + later.selected().route() + " basis "
                 + later.selected().basis() + " ledger " + host.state().ledgerDigest());
-        return later.decision();
+        return new LoopResult(later.decision(), host.state().ledgerDigest(), host.state().cohorts(full));
     }
 
     /** An acceptance without a test verdict is recorded and exported, but never reinforces the route. */
@@ -180,11 +217,12 @@ public final class EmbeddedHostMain {
         runOne(host, "q-1", full);
         var learning = host.learn();
         require(learning.deliveries().size() == 1, "one sample is exported");
-        var derivation = learning.deliveries().getFirst().derivation();
-        require(!(derivation instanceof FeedbackDerivation.Derived derived)
-                        || derived.feedback().disposition() != FeedbackDisposition.REINFORCE,
-                "an acceptance with UNKNOWN mandatory evidence must not reinforce: " + derivation);
-        require(sameNodes(before, host.state().cohorts(full)), "no cohort Node moved");
+        var delivery = learning.deliveries().getFirst();
+        var derivation = delivery.derivation();
+        requireDerived(derivation, FeedbackDisposition.NEUTRAL, ScoreRule.NEUTRAL_INCOMPLETE_EVIDENCE);
+        // a neutral feedback is recorded in the ledger, but it targets no Node
+        require(delivery.update() instanceof StateUpdate.Applied, "the neutral feedback is recorded: " + delivery.update());
+        require(before.equals(host.state().cohorts(full)), "no cohort state changed");
         System.out.println("[embedded-host] invalid quality -> " + describe(derivation));
     }
 
@@ -196,11 +234,9 @@ public final class EmbeddedHostMain {
         var before = host.state().cohorts(full);
         var advice = host.route("task-env", "env-1", full);
         var delivery = host.deliver(host.timedOut(advice, 10L), advice);
-        var derived = (FeedbackDerivation.Derived) delivery.derivation();
-        require(derived.feedback().rule() == ScoreRule.NEUTRAL_ENVIRONMENTAL
-                        && derived.feedback().disposition() == FeedbackDisposition.NEUTRAL,
-                "an environmental failure is neutral: " + derived.feedback());
-        require(sameNodes(before, host.state().cohorts(full)), "no cohort Node moved");
+        requireDerived(delivery.derivation(), FeedbackDisposition.NEUTRAL, ScoreRule.NEUTRAL_ENVIRONMENTAL);
+        require(delivery.update() instanceof StateUpdate.Applied, "the neutral feedback is recorded: " + delivery.update());
+        require(before.equals(host.state().cohorts(full)), "no cohort state changed");
         System.out.println("[embedded-host] environmental failure -> " + describe(delivery.derivation()));
     }
 
@@ -253,20 +289,15 @@ public final class EmbeddedHostMain {
         System.out.println("[embedded-host] tampered envelope -> " + RejectionReason.ENVELOPE_DIGEST_MISMATCH);
     }
 
-    private static boolean sameNodes(List<CohortState> before,
-            List<CohortState> after) {
-        if (before.size() != after.size()) {
-            return false;
+    /** Requires a derived feedback with exactly this disposition and rule; a {@code NoUpdate} fails. */
+    private static RoutingFeedback requireDerived(FeedbackDerivation derivation, FeedbackDisposition disposition,
+            ScoreRule rule) {
+        if (!(derivation instanceof FeedbackDerivation.Derived derived)) {
+            throw new IllegalStateException("expected " + disposition + "/" + rule + ", got " + derivation);
         }
-        for (int i = 0; i < before.size(); i++) {
-            var b = before.get(i);
-            var a = after.get(i);
-            if (b.amplitude() != a.amplitude() || b.preferenceValue() != a.preferenceValue()
-                    || b.energy() != a.energy()) {
-                return false;
-            }
-        }
-        return true;
+        require(derived.feedback().disposition() == disposition && derived.feedback().rule() == rule,
+                "expected " + disposition + "/" + rule + ", got " + describe(derivation));
+        return derived.feedback();
     }
 
     private static String describe(FeedbackDerivation derivation) {

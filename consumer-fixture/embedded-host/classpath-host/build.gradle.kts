@@ -9,6 +9,12 @@ sourceSets {
     }
 }
 
+// The shared source directory holds module-host's descriptor; without this, Gradle would still infer a module
+// path from it. This consumer must compile and run on the plain classpath.
+java {
+    modularity.inferModulePath.set(false)
+}
+
 application {
     mainClass.set("consumer.host.EmbeddedHostMain")
 }
