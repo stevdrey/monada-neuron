@@ -72,6 +72,8 @@ public final class RoutingReplayEvaluation {
     /** Late correction of task 5 of the improvement scenario, visible six decision slots after the original. */
     static final int LATE_CORRECTION_TASK = 5;
     static final int LATE_CORRECTION_SLOTS = 6;
+    /** Report row of the adaptive arm rebuilding from checkpoints ({@link RebuildStrategy#CHECKPOINT}). */
+    static final String CHECKPOINTED_BENCHMARK = "RoutingReplay.adaptive-checkpointed";
 
     private final boolean quick;
     private final int workloadTasks;
@@ -124,6 +126,13 @@ public final class RoutingReplayEvaluation {
             } catch (IllegalStateException failure) {
                 checks.add(new Check("measurement." + arm.benchmarkName(), false, failure.getMessage()));
             }
+        }
+        try {
+            // held to the from-scratch adaptive run: both must decide, deliver, derive and learn identically
+            results.add(measurement.measure(CHECKPOINTED_BENCHMARK, verified.workload(), ReplayArm.ADAPTIVE,
+                    RebuildStrategy.CHECKPOINT, verified.runs().get(ReplayArm.ADAPTIVE)));
+        } catch (IllegalStateException failure) {
+            checks.add(new Check("measurement." + CHECKPOINTED_BENCHMARK, false, failure.getMessage()));
         }
         return new Outcome(checks, results, metadata());
     }
@@ -182,6 +191,12 @@ public final class RoutingReplayEvaluation {
             rebuilt.add(rebuildEvidence(scenario));
         }
         checks.add(rebuildCheck(rebuilt));
+        var checkpointed = new ArrayList<CheckpointEvidence>();
+        for (var scenario : List.of(new Scenario("cases", cases, caseRuns),
+                new Scenario("improvement", improvement, improvementRuns), new Scenario("workload", workload, runs))) {
+            checkpointed.add(checkpointEvidence(scenario));
+        }
+        checks.add(checkpointCheck(checkpointed));
 
         checks.add(cheapInvalidCheck(caseRuns));
         checks.add(repairedAcceptedCheck(caseRuns));
@@ -247,6 +262,64 @@ public final class RoutingReplayEvaluation {
         }
         return new RebuildEvidence(scenario.name(), equal, state.processedCutoff(), scenario.fixture().horizon(),
                 state.ledger().size(), count(adaptive, e -> e.update() == FeedbackEvent.Update.REBUILT), failure);
+    }
+
+    /**
+     * Whether a scenario's adaptive run with the {@link RebuildStrategy#CHECKPOINT} strategy equals its from-scratch
+     * run, and whether its final state rebuilt from the checkpoint it was compacted to equals it too.
+     *
+     * @param scenario the scenario
+     * @param equal decisions, deliveries, derivations and state digest equal the from-scratch run's
+     * @param restoredEqual the state rebuilt from its latest checkpoint has the same digest; true when never compacted
+     * @param stats the checkpointed run's rebuild work
+     * @param scratchReplayed observations the from-scratch run's rebuilds replayed
+     * @param failure why a comparison failed, if one did
+     */
+    record CheckpointEvidence(String scenario, boolean equal, boolean restoredEqual, ReplayRun.RebuildStats stats,
+            long scratchReplayed, String failure) {
+
+        boolean passed() {
+            return equal && restoredEqual;
+        }
+
+        /** True when the run compacted its ledger and started a rebuild from a checkpoint. */
+        boolean exercised() {
+            return stats.fromCheckpoint() > 0 && stats.compactedEntries() > 0;
+        }
+
+        @Override
+        public String toString() {
+            return scenario + ":" + passed() + ":fromCheckpoint=" + stats.fromCheckpoint() + "/" + stats.rebuilds()
+                    + ":compacted=" + stats.compactedEntries() + ":replayed=" + stats.replayedObservations() + "/"
+                    + scratchReplayed + (failure.isEmpty() ? "" : ":" + failure);
+        }
+    }
+
+    private CheckpointEvidence checkpointEvidence(Scenario scenario) {
+        ReplayRun scratch = scenario.runs().get(ReplayArm.ADAPTIVE);
+        var replay = new TemporalReplay(scenario.fixture());
+        ReplayRun checkpointed = replay.run(ReplayArm.ADAPTIVE, RebuildStrategy.CHECKPOINT);
+        String failure = "";
+        boolean equal = true;
+        try {
+            requireSameReplay(checkpointed, scratch, digests);
+        } catch (IllegalStateException difference) {
+            equal = false;
+            failure = difference.getMessage();
+        }
+        boolean restoredEqual = true;
+        RoutingStateStore state = checkpointed.state().orElseThrow();
+        if (state.latestCheckpoint().isPresent()) {
+            switch (replay.rebuildFromCheckpoint(checkpointed)) {
+                case RebuildResult.Rebuilt done -> restoredEqual = digests.state(done.store()).equals(digests.state(state));
+                case RebuildResult.Failed failed -> {
+                    restoredEqual = false;
+                    failure = "rebuild from checkpoint failed at " + failed.observation().experienceRef();
+                }
+            }
+        }
+        return new CheckpointEvidence(scenario.name(), equal, restoredEqual, checkpointed.rebuilds(),
+                scratch.rebuilds().replayedObservations(), failure);
     }
 
     private Map<ReplayArm, ReplayRun> runAll(ReplayFixture fixture) {
@@ -519,6 +592,19 @@ public final class RoutingReplayEvaluation {
         return new Check("state.incremental-equals-rebuild", passed,
                 String.join(", ", results.stream().map(RebuildEvidence::toString).toList())
                         + (exercised ? "" : " (no correction-triggered rebuild was exercised)"));
+    }
+
+    /**
+     * Checkpoint-then-replay equals rebuild-from-scratch: every scenario must pass, and at least one must have compacted
+     * its ledger and started a rebuild from a checkpoint, so the check cannot pass vacuously.
+     */
+    static Check checkpointCheck(List<CheckpointEvidence> results) {
+        boolean equal = !results.isEmpty() && results.stream().allMatch(CheckpointEvidence::passed);
+        boolean exercised = results.stream().anyMatch(CheckpointEvidence::exercised);
+        boolean passed = equal && exercised;
+        return new Check("state.checkpoint-equals-rebuild", passed,
+                String.join(", ", results.stream().map(CheckpointEvidence::toString).toList())
+                        + (exercised ? "" : " (no compaction and checkpoint-started rebuild were exercised)"));
     }
 
     static Check cheapInvalidCheck(Map<ReplayArm, ReplayRun> runs) {

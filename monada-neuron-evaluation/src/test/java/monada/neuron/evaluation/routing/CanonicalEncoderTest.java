@@ -73,8 +73,8 @@ class CanonicalEncoderTest {
                 () -> assertFalse(Arrays.equals(encoder.encode("\uD800"), encoder.encode("\uDC00"))),
                 // a valid pair differs from either half and from the halves reversed
                 () -> assertFalse(Arrays.equals(encoder.encode("\uD83D\uDE00"), encoder.encode("\uDE00\uD83D"))),
-                () -> assertFalse(Arrays.equals(encoder.encode(request("\uD800", "f")), encoder.encode(request("?",
-                        "f")))));
+                // routing tokens must be well-formed UTF-16 (OpaqueTokens), so such a request cannot even be built
+                () -> assertThrows(IllegalArgumentException.class, () -> request("\uD800", "f")));
     }
 
     @Test

@@ -512,8 +512,9 @@ offline temporal replay evaluation of issue #67, which lives in the evaluation m
 ([forge-routing-evaluation.md](benchmarks/forge-routing-evaluation.md)) and adds no routing API; the remaining names below
 are proposals that issue #68 implements, and the Store capabilities it depends on (Store issues #94 to #101 are implemented
 on the Store's `main`, #102 is informational) are available; the Neuron side of that integration is delivered by #64 and
-#66, its evaluation by #67, and the published consumer loop by #68. `RoutingStateCheckpoint` and ledger compaction are
-tracked in #89.
+#66, its evaluation by #67, and the published consumer loop by #68. Opt-in `RoutingStateCheckpoint`s, the
+`routing-ledger-digest/1` ledger digest and explicit ledger compaction are implemented by #89
+([ADR 0031](adr/0031-routing-state-checkpoint-and-ledger-compaction.md)).
 
 ```text
 Forge (host)
@@ -535,7 +536,7 @@ The extension is additive and opt-in. It keeps `Signal` identity-free: route ide
 seam is a pure `decide` function called by the host on an immutable preference snapshot, with an optional thin `REASONING`-position adapter
 whose inputs come from a host resolver and whose typed result retains the full decision. That adapter never trusts the hosted policy: it always runs a mandatory, non-bypassable provenance, request-admission and eligibility validator (issue #76, contract Section 17.5) and then a policy-specific verifier: with a host-configured `TrustedRoutingProfile` (issue #78, [ADR 0027](adr/0027-trusted-routing-decision-verification.md), contract Section 18) the host-selected `RoutingDecisionVerifier` checks the decision against independently supplied configuration, while the legacy three-argument constructor keeps the `route-lex/1` verifier on the parameters and cohort bucket the decision records itself. A decision reserves nothing and is never an `ActionStatus`; a worker invocation result is not validated task
 acceptance. Learning reuses the existing Node-bound `AdaptationPolicy` path through a separate `RoutingFeedback` artifact
-(`OutcomeFeedback` is unchanged), with caller-owned bounded state and an explicit reset-and-replay (optionally from a checkpoint) when corrected evidence
+(`OutcomeFeedback` is unchanged), with caller-owned bounded state and an explicit reset-and-replay (from scratch or from a caller-held checkpoint, #89) when corrected evidence
 supersedes any applied reward or penalty. Unknown resource values are never zero, and hypothetical API cost, actual billing and
 subscription activity stay distinct. The temporal replay evaluation (#67,
 [forge-routing-evaluation.md](benchmarks/forge-routing-evaluation.md)) now supplies a reproducible offline workload with

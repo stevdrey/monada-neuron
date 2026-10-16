@@ -11,7 +11,9 @@ import java.util.UUID;
  * Deterministic identity of a cohort Node (contract section 7): the name-based UUID of a collision-free byte string,
  * UTF-8 of the tag {@value #TAG}, then {@code scopeId}, evaluation policy id and version, {@code stageKind},
  * {@code cohortBucket}, {@code RouteId} and {@code mappingVersion}, each as a 4-byte big-endian length followed by
- * its UTF-8 bytes, and finally {@code RouteVersion} as an 8-byte big-endian {@code long}.
+ * its UTF-8 bytes, and finally {@code RouteVersion} as an 8-byte big-endian {@code long}. Every part is an opaque
+ * token, which {@code OpaqueTokens} requires to be well-formed UTF-16, so its UTF-8 form is lossless and two cohorts
+ * never share a Node identity through a replaced character.
  *
  * <p>The identity is a pure function of its inputs, so it is class-level rather than behavior of an instance; a reset
  * or restore recreates the same identity and no randomness is used.

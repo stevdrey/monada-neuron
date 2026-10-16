@@ -33,7 +33,7 @@ Inspected `main` at `d1dd569` (Java 27). Already implemented and **reused unchan
 - `RuntimeBackendSelector`, which selects *internal computational backends* (SCALAR/VECTOR_API, object/CSR graph, ...). It
   never selects external workers or models.
 
-At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 22 describe what has been added since. Still absent: `RoutingStateCheckpoint` and ledger compaction (tracked in #89), and the published consumer loop (#68); the replay evaluation (#67) exists in the evaluation module only ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)). `ActionRequest` carries Signals and an
+At that baseline there was no typed route, worker catalog, routing decision or routing outcome; Sections 15 to 23 describe what has been added since. Still absent: the published consumer loop (#68); the replay evaluation (#67) exists in the evaluation module only ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)). `ActionRequest` carries Signals and an
 opaque host context, not a route. `Signal` carries no identity (ADR 0005).
 
 ## Goal
@@ -82,8 +82,9 @@ Three decisions are deliberately distinct and must never be conflated:
 Identifier rules mirror the Store contract so that one value means the same thing in both repositories.
 
 - `ScopeId`, `TaskId`, `ExecutionId`, `AttemptId`, `StageId`, `RouteId` and `StageKind` are **caller-issued opaque tokens**:
-  1–128 Unicode code points, no control characters, no leading or trailing whitespace, compared with exact
-  `String.equals`. Neuron never generates, parses, normalizes or hashes them.
+  1–128 Unicode code points, no control characters, no leading or trailing whitespace, well-formed UTF-16 (no unpaired
+  surrogate, which has no UTF-8 form, so every canonical identity and digest built from them is lossless; #89), compared
+  with exact `String.equals`. Neuron never generates, parses, normalizes or hashes them.
 - A `RouteId` is stable across versions of the same route. `RouteVersion` is a **positive `long` (at least 1) assigned by
   the caller** and changes when the route's *behavioral* descriptor changes. The fields are classified exactly once:
 
@@ -163,7 +164,7 @@ maxima fixed by this contract; an implementation may lower a bound but must not 
 | `RoutingObservation` | #63 (implemented, Section 19) | Neutral, Store-independent record of one effective execution sample, defined with `RoutingOutcome` so feedback derivation needs only #63. #64 only *produces* it from Store exports. |
 | `RoutingFeedback` | #65 (implemented, Section 21) | Bounded artifact derived from an observation; separate from `OutcomeFeedback`. |
 | `RoutingPreference`, `CohortMapping`, `RoutingStateDefinition` | #62 (implemented, Section 17) | `CohortMapping` is the pure, versioned `TaskFeatures -> cohortBucket` function with its `bucketMappingVersion`. `RoutingStateDefinition` groups the `CohortMapping`, `initialNodeState`, `AdaptationConfig` and feedback scoring and eligibility rules under one composite `mappingVersion` that changes when any part changes. `RoutingPreference` is the **immutable value snapshot** of `scopeId`, `featureSchemaVersion`, `evaluationPolicy`, `mappingVersion`, cohort preference values, supporting counts and `processedCutoff`, taken from the caller's mutable state and passed to `decide`. #62 defines the value type, its valid empty cold-start form (`EMPTY` for a scope, feature schema, evaluation policy and mapping version) and its admission validation, so `decide` needs no later type; #66 only builds non-empty snapshots from the caller's state. |
-| `RoutingStateStore` (caller-owned, mutable) | #66 (implemented, Section 22) | The caller's `Node` bindings, applied-revision ledger and watermark; it produces the `RoutingPreference` snapshots. It is never passed to `decide`. The composite definition is the additive `AdaptiveStateDefinition`; `RoutingStateCheckpoint` is deferred (Section 22.6). |
+| `RoutingStateStore` (caller-owned, mutable) | #66 (implemented, Section 22) | The caller's `Node` bindings, applied-revision ledger and watermark; it produces the `RoutingPreference` snapshots. It is never passed to `decide`. The composite definition is the additive `AdaptiveStateDefinition`; `RoutingStateCheckpoint`, the ledger digest and compaction are #89 (implemented, Section 23). |
 | `RoutingCognitiveStageResult` | #62 (implemented, Section 17) | Level B stage result that retains the full `RoutingDecision` together with the hypothesis hand-off (Section 3.5). |
 
 ### 3.1 Request, catalog and policy inputs
@@ -589,9 +590,8 @@ The adaptive state (#66) reuses the existing generic learning path; **no second 
   `RoutingStateCheckpoint(scopeId, featureSchemaVersion, evaluationPolicy, mappingVersion, policyId, policyVersion, processedCutoff, preferenceSnapshot, ledgerDigest)` and compacts the entries it covers. A rebuild may
   start from the latest checkpoint whose `processedCutoff` is **strictly less than** the `supersedesSequence` of the earliest
   superseded revision (an inclusive checkpoint at that sequence already contains the obsolete effect) and replay only later
-  observations. Starting from a valid checkpoint must give a state **identical** to a rebuild from scratch (#67 shows only
-  that the incrementally built state equals a full rebuild from scratch; the checkpoint type and its checkpoint-then-replay
-  equivalence are tracked in #89). A superseded revision at or before the checkpoint's `processedCutoff` invalidates it and forces a full rebuild.
+  observations. Starting from a valid checkpoint must give a state **identical** to a rebuild from scratch (#89
+  implements and verifies this, Section 23). A superseded revision at or before the checkpoint's `processedCutoff` invalidates it and forces a full rebuild.
 - **Atomic application.** Applying a `RoutingFeedback` is all-or-nothing. The caller **preflights** the ledger capacity (the
   entries it would add against the 4,096 bound) and the cohort capacity before mutating anything. If either would be
   exceeded the result is `CAPACITY_EXHAUSTED` and the Nodes, the applied-revision ledger, the supporting-observation counts and
@@ -1492,7 +1492,7 @@ bindings, every neutral and no-update rule above, cheap failing work, incomplete
 determinism under permuted evidence, immutable target state, every reconciliation result, ledger capacity, and rebuild equality from any input order.
 
 Evidence gaps: the evaluator trusts the host's judgments, attribution basis and mandatory set; `RoutingOutcome` carries no `stageKind`, so the stage kind is bound to the decision's recorded `Provenance.stageKind` (a decision that never recorded it derives no update, and the cost peer is checked the same way); usage counters are stage-level and carry no unit, so cost refinement compares counters only; the Node baseline,
-identity, `AdaptationConfig`, ledger and snapshots are implemented by #66 (Section 22) and checkpoints are tracked in #89; the #67 replay evaluation supplies controls and coverage but no effectiveness claim; and
+identity, `AdaptationConfig`, ledger and snapshots are implemented by #66 (Section 22) and checkpoints by #89 (Section 23); the #67 replay evaluation supplies controls and coverage but no effectiveness claim; and
 only exploratory replay latency and a modeled retained footprint exist, from #67.
 
 ## 22. Implemented: Bounded Caller-Owned Adaptive State (#66)
@@ -1625,10 +1625,8 @@ snapshot through the published artifact.
 
 ### 22.6 Evidence gaps and follow-up
 
-- `RoutingStateCheckpoint`, its ledger digest and ledger compaction (Section 7) are **not implemented**: a store whose ledger
-  is full reports `CapacityExhausted` and the caller rebuilds into a new scope or waits for compaction (#89). The #67 replay
-  shows that incremental state equals a full rebuild from scratch, digest for digest; that a rebuild started from a
-  checkpoint and replaying only later observations gives the same state is still #89's to verify.
+- `RoutingStateCheckpoint`, its ledger digest and ledger compaction (Section 7) were not part of #66; #89 implements them
+  (Section 23), so a store whose ledger is full can checkpoint, compact and learn again.
 - No effectiveness, accuracy or cost claim: the reference values are illustrative and untuned; the #67 replay with controls
   ([forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)) shows they can follow stale rewards and validates
   nothing about them.
@@ -1639,3 +1637,231 @@ snapshot through the published artifact.
 - A removed dormant cohort leaves its ledger entries until the next rebuild, which records them as `NO_TARGET_BINDING`
   markers; the caller decides when to rebuild, and the key cannot be bound again before it.
 - `RoutingStateStore` is single-threaded, like `NeuronRuntime`; the host publishes snapshots to concurrent readers.
+
+## 23. Implemented: Checkpoints, Ledger Digest and Compaction (#89)
+
+Package `monada.neuron.routing.adaptation`. This section describes **implemented behavior** and refines Section 7; it does not
+change its semantics. Everything is additive and opt-in: a store that is never compacted behaves exactly as in Section 22,
+digest for digest. There is still no persistence, registry, clock, randomness or background task, and nothing compacts
+automatically. Decision record: [ADR 0031](../adr/0031-routing-state-checkpoint-and-ledger-compaction.md).
+
+### 23.1 Types
+
+| Type | Role |
+| --- | --- |
+| `RoutingStateCheckpoint(scopeId, featureSchemaVersion, evaluationPolicyId, evaluationPolicyVersion, mappingVersion, policyId, policyVersion, processedCutoff, preferenceSnapshot, ledgerDigest, retainedMarkers)` | The Section 7 checkpoint. `preferenceSnapshot` holds **every** cohort, active and dormant, in canonical order (at most 256). `retainedMarkers` are the retryable markers (`NO_TARGET_BINDING`, `PROVENANCE_MISMATCH`) it covers, kept as entries because their redelivery can still become a first application. A host may persist a checkpoint and build it again, so the constructor rejects more than 4,096 markers, a marker of another partition or definition, a marker beyond the cutoff, and a digest that counts fewer entries than the markers plus every support unit. |
+| `CheckpointCohort(key, amplitude, frequency, phase, energy, supportingObservations)` | One cohort's four Node channels and support. A restored Node is built like a reset one (deterministic identity, the definition's `NodeType`, `historyLimit = 0`) with these channels. |
+| `LedgerDigest(entries, sum)` | `routing-ledger-digest/1` (Section 23.2). `of(entries)`, `plus`, `minus`, `EMPTY`. |
+| `CompactionResult` | Sealed: `Compacted(removed, horizon)` or `Refused(STALE \| BEHIND_HORIZON \| CREDITS_UNBOUND_COHORT \| UNRESTORABLE)`. |
+| `StateUpdate.BeyondCheckpoint(kind, horizon, affectedFromSequence)` | New permitted subtype: `COVERED`, `SUPERSEDES_COMPACTED` or `BEFORE_HORIZON` (Section 23.3). |
+
+`RoutingStateStore` gains `checkpoint(policy)`, `compact(checkpoint)`, `rebuildFrom(checkpoint, observations, exportCutoff,
+derive)`, `ledgerDigest()`, `latestCheckpoint()` and `compactionHorizon()`.
+
+### 23.2 `routing-ledger-digest/1`
+
+Each `AppliedRevision` is encoded as UTF-8 of the tag `forge-routing/1/ledger-entry` followed by every component that
+`AppliedRevision.equals` compares, in declaration order, **excluding `cutoff`**:
+
+- strings are a 4-byte big-endian length and their UTF-8;
+- `long` is 8 bytes and `int` 4 bytes, big-endian;
+- the score is its `Double.doubleToLongBits`;
+- enum constants are their names;
+- a `Feature` or `Optional` is a presence byte, then the value;
+- a `UUID` is its two halves;
+- a list is its size, then its elements;
+- an `EntryBasis` is a tag byte (`1` derived, `2` marker), then its components;
+- nested records (`FeedbackIdentity`, `DecisionRef`, `RouteKey`, `CohortKey`, `CohortBinding`, `PeerRevision`) are encoded
+  component by component.
+
+The digest is the entry count and the sum, modulo 2^256, of each encoding's SHA-256, as 64 lowercase hex digits. The sum is
+order-independent and foldable: `ledgerDigest()` is the compacted part plus the live ledger, so compaction never changes it
+and it equals the digest of a from-scratch rebuild's ledger. It is an integrity and equivalence check over caller-owned
+data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value; any encoding change bumps the format.
+
+### 23.3 Rules
+
+- **Confirmed watermark.** `consume` advances `processedCutoff` to the highest sequence it examined, but observations may
+  arrive out of order, so that does not prove everything below was delivered. `advanceCutoff(watermark)` (and a
+  rebuild's export cutoff) is the caller's assertion that every observation at or below the watermark was delivered;
+  the store keeps it as `confirmedCutoff()`, and `consume` never moves it. A new store, or a reset copy, is unconfirmed
+  (`confirmedCutoff()` is empty), not confirmed through 0: sequence 0 is a valid position, so even an empty export is
+  confirmed explicitly with `advanceCutoff(0)`.
+- **Checkpoint.** `checkpoint(policy)` captures the state at its `processedCutoff`; every ledger entry lies at or below it.
+  The watermark must be confirmed: `checkpoint` throws `IllegalStateException` when `processedCutoff` is beyond
+  `confirmedCutoff()`. A checkpoint stands for everything at or below its cutoff, and compaction and `rebuildFrom` skip
+  what it covers, so a sample still missing below an unconfirmed watermark would otherwise be lost. A sample at or below
+  a confirmed watermark that arrives later is a caller contract violation; once its entry is compacted it is `COVERED`.
+- **Compaction is all-or-nothing.**
+  - `compact(checkpoint)` requires the checkpoint's partition and definition and a cutoff not beyond the watermark;
+    anything else throws.
+  - It is `Refused` and changes nothing:
+    - `STALE` when the ledger at or below the cutoff changed since the checkpoint was taken (its digest or markers no
+      longer match);
+    - `BEHIND_HORIZON` below the current horizon;
+    - `CREDITS_UNBOUND_COHORT` when a dropped or already compacted entry credits a cohort the checkpoint does not hold;
+    - `UNRESTORABLE` when a rebuild could not start from the checkpoint on the store as it is now: the checkpoint's
+      cohorts and the store's together exceed 256, or a cohort bound after the checkpoint is named by one of its
+      retained `NO_TARGET_BINDING` markers.
+  - A checkpoint whose Node channels lie outside the definition's bounds is host data that `rebuildFrom` would reject,
+    so `compact` throws for it before changing anything.
+  - Otherwise every covered entry except retryable markers is folded into the digest and dropped, and the cutoff becomes
+    the **compaction horizon**.
+  - The Nodes, support counts, watermark and `ledgerDigest()` do not change.
+  - Compacting with an older checkpoint keeps newer entries reconcilable; compacting with the newest empties the ledger.
+- **Horizon rules (compacted stores only)**, after the partition checks of Section 22.2 and after the reconciler has
+  validated the derivation against the observation and the ledger, so inconsistent caller data is rejected exactly as in
+  an uncompacted store. A horizon rule then overrides the reconciler's advice:
+  - a revision whose `supersedesSequence` is at or below the horizon is `SUPERSEDES_COMPACTED`, wherever its own
+    sequence lies, when its sample's entry was compacted or when it is newer than the sample's retained marker. This is
+    Section 7's rule that a superseded revision at or before the cutoff invalidates the checkpoint. The compacted ledger
+    cannot tell a correction examined before the checkpoint from one never delivered, nor show a compacted
+    cost-refined reward whose peer is a retained marker (a `PROVENANCE_MISMATCH` peer). A re-read of an examined
+    correction therefore asks for a rebuild too: never wrong, only more work. A repeat or older revision of a retained
+    marker is still answered by the reconciler;
+  - any other delivery of such a sample at or below the horizon is `COVERED`: the horizon is a confirmed watermark, so
+    the caller asserted it was delivered before the checkpoint;
+  - a delivery at or below the horizon that the reconciler would apply or record is `BEFORE_HORIZON`, because the
+    compacted entries after it are invisible to the order rule;
+  - all three change nothing, including the watermark. `COVERED` needs no action. The other two tell the caller to
+    rebuild from a checkpoint strictly below `affectedFromSequence`, or from scratch.
+- **Binding** in a compacted store also refuses (`BindResult.RebuildRequired`) a new key that a compacted entry credited,
+  or that a retained `NO_TARGET_BINDING` marker at or below the horizon names. The marker records no stage kind, so the
+  match by scope, bucket and route is conservative.
+- **Cohort slots.** Any store's `bind` capacity counts the cohorts held by every checkpoint of its lineage that it no
+  longer binds. That covers checkpoints taken, compacted to or restored from, and rebuilt stores inherit them. A rebuild
+  from any such checkpoint restores those cohorts, so binding past them would make it unrestorable. Such a cohort keeps
+  its slot until it is bound again.
+  - **The invariant.** Every successful operation keeps `|bound ∪ reserved| <= 256`.
+  - **Who refuses what.**
+    - `bind` counts the reservations.
+    - A full `rebuild` throws when its cohort set, together with the reservations it inherits, exceeds 256.
+    - `compact` (`UNRESTORABLE`) and `rebuildFrom` (thrown) share one check over the checkpoint's cohorts, the bound
+      ones and the reservations.
+  - **Result.** No checkpoint of the lineage becomes unrestorable, and the capacity a refused bind reports is never
+    negative.
+- **Cost peers.** A cost-refined derivation whose peer revision was compacted is trusted to come from the same export as
+  the observation, which is later than the horizon. The compacted ledger cannot re-check an older peer view.
+- **Rebuild from a checkpoint.** `rebuildFrom` stages a store with:
+  - the checkpoint's cohorts (channels and support) plus this store's other cohorts at the baseline;
+  - the retained markers as its ledger;
+  - the checkpoint's digest, and its cutoff as watermark, confirmed watermark and horizon.
+
+  It first drops the observations at or below the cutoff whose sample the checkpoint does not retain: that history is
+  already in the checkpoint. Only the rest counts against the 4,096-observation bound, so a whole export of a partition
+  longer than one rebuild call may be passed. It then orders the rest with `RebuildOrder` (the latest revision of each
+  sample; a retained marker's sample keeps every revision) and replays it under the horizon rules:
+  - applied, recorded, not-recorded and repeated-marker deliveries continue the replay;
+  - an observation that invalidates the checkpoint ends it as `RebuildResult.Failed`.
+
+  It throws when:
+  - a retained marker was recorded under another bucket mapping than the definition's (the record cannot check this,
+    because it carries no bucket mapping; `compact` checks it too);
+  - the export cutoff is below the checkpoint's cutoff or the receiver's watermark;
+  - the checkpoint holds a Node channel outside the definition's bounds;
+  - the cohort union exceeds 256;
+  - a cohort bound after the checkpoint is named by one of its retained `NO_TARGET_BINDING` markers.
+
+  The receiver is never modified and need not be the store the checkpoint came from. A host restores a persisted
+  checkpoint into a new, empty store this way, and only `compact` requires the checkpoint not to lie beyond the
+  receiver's watermark.
+- **Equivalence.** Starting from a valid checkpoint gives, over the same cohort set:
+  - the same cohort channels (bit for bit), support counts, `ledgerDigest()`, watermark and snapshot as a rebuild from
+    scratch;
+  - and its ledger equals the scratch ledger above the horizon, plus the retained markers.
+
+### 23.4 Complexity and footprint
+
+| Operation | Time | Extra space |
+| --- | --- | --- |
+| `checkpoint` | `O(C)` plus the digest | `O(C + M)` retained for `M` markers |
+| `compact` | `O(L log L + C log C)`; each covered entry hashed at most once | `O(L)` transient |
+| `ledgerDigest` | one hash per ledger entry changed since the last digest, or one `O(L)` pass when more changed than the ledger holds | `O(L)` pending changes at most |
+| `consume`, rebuild replay | no hashing: a change is only recorded for the next digest | `O(1)` per change |
+| `consume` | unchanged `O(L + log C)`; the horizon check is one map lookup | unchanged |
+| `rebuildFrom` | `O(N' log N' + N'·L' + C log C)` for the `N'` observations and `L'` entries after the cutoff | `O(N' + C + L')` staged |
+
+**Measured** in the #67 replay (full mode, 960 tasks, 51 correction-triggered rebuilds, JDK 27; one run on a single
+machine, exploratory, not a gate; [forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)):
+
+| Row | Mean per iteration | Alloc per decision | Replayed observations | Live / digested ledger entries |
+| --- | --- | --- | --- | --- |
+| `RoutingReplay.adaptive` | 322.69 ms | 357.53 KB | 24,349 | 910 / 910 |
+| `RoutingReplay.adaptive-checkpointed` | 18.43 ms | 28.93 KB | 893 | 34 / 910 |
+
+Both rows reach the same decision trace, deliveries, derivations and state digest. The checkpointed row:
+
+- takes a checkpoint every 32 deliveries and keeps 4;
+- starts 50 of the 51 rebuilds from a checkpoint;
+- compacts 31 entries explicitly; restores also shrink the ledger.
+
+**Modeled, not measured**: a checkpoint is about 64 bytes per cohort plus its markers (modeled like ledger entries,
+about 350 bytes each) and its digest.
+
+**Support saturates.** A cohort's support count stops at `Integer.MAX_VALUE` instead of wrapping. A persisted
+checkpoint may legally hold that value, and support is only compared against small minimums, so a full count cannot
+change a decision. A rebuild from scratch, at most 4,096 observations, never reaches it.
+
+### 23.5 Verification
+
+```bash
+./gradlew test --tests 'monada.neuron.routing.adaptation.*'
+./gradlew :monada-neuron-evaluation:test
+./gradlew :monada-neuron-evaluation:runForgeRoutingEvaluation
+```
+
+`LedgerDigestTest`:
+
+- pins the golden digest and the encoding prefix;
+- shows order independence and that `cutoff` is excluded while the score and catalog are not;
+- covers folding and unfolding.
+
+`RoutingStateCheckpointTest` covers:
+
+- a checkpoint's cohorts (including dormant ones), channels, digest and markers;
+- compaction leaving the state and digest unchanged, idempotently;
+- a full ledger that learns again after compaction, with the retry applied exactly once and an older sample `COVERED`;
+- a correction of a compacted revision refused as `SUPERSEDES_COMPACTED`, a rebuild from either checkpoint at or after
+  its `supersedesSequence` failing, and a rebuild from scratch succeeding;
+- checkpoint-then-replay equal to scratch after a correction;
+- a never-delivered correction at or below the horizon of a compacted revision reported as `SUPERSEDES_COMPACTED`, not
+  `COVERED`;
+- a rebuild from a checkpoint over a whole export whose history includes an examined correction;
+- a persisted checkpoint restored into a fresh store, and an export cutoff below the checkpoint rejected;
+- a reconstructed checkpoint with too many markers, a foreign marker, or more support than its digest counts rejected;
+- a newer revision of a retained `PROVENANCE_MISMATCH` peer of a compacted cost-refined reward reported as
+  `SUPERSEDES_COMPACTED`, while a repeat of the retained revision is still `Unchanged`;
+- a retained marker of another bucket mapping rejected by `compact` and `rebuildFrom`;
+- a checkpoint refused while an out-of-order sample is still missing below the watermark, and taken once the late
+  sample is applied and the watermark is confirmed;
+- a whole export of 4,097 observations restored from a checkpoint, only its tail counted against the rebuild bound;
+- a covered delivery whose derivation answers another sample rejected, as in an uncompacted store;
+- a restored support count of `Integer.MAX_VALUE` that saturates on the next reward;
+- a fresh store that refuses a checkpoint until `advanceCutoff(0)`;
+- an older checkpoint that stays restorable after cohort churn (its cohorts keep their slots, also in the rebuilt
+  store), and a foreign checkpoint whose cohort union is 257 refused by `compact` and rejected by `rebuildFrom` with
+  one message;
+- the lazily folded ledger digest staying exact across many changes, replacement and compaction;
+- a full rebuild refused when its cohorts and the inherited reservations exceed 256, a fitting or narrower one keeping
+  the earlier checkpoint restorable, and reservations counted by the restorability check;
+- a capacity probe that never sees negative free slots after these transitions;
+- compaction that throws for out-of-bounds Node channels, refuses `UNRESTORABLE` for a cohort a retained marker names,
+  and a compacted store whose `bind` keeps slots for the checkpoint's unbound cohorts;
+- `STALE`, `BEHIND_HORIZON` and `CREDITS_UNBOUND_COHORT`;
+- a rebind of a compacted cohort refused until a rebuild from the checkpoint;
+- retained retryable markers with a conservative bind refusal and `BEFORE_HORIZON`;
+- foreign or future checkpoints;
+- a long seeded fixture with short- and long-delay corrections, periodic checkpoints and compaction. Every rebuild
+  starts from the latest valid checkpoint, and the final state, and a rebuild from every remaining checkpoint, equal a
+  rebuild from scratch.
+
+In the evaluation module, `state.checkpoint-equals-rebuild` and `TemporalReplayTest` compare the checkpointed adaptive run
+with the from-scratch run.
+
+### 23.6 Evidence gaps
+
+- No checkpoint persistence or serialization format; the record is in-memory and hosts persist it as they wish.
+- The checkpoint cadence of the evaluation (32 deliveries, 4 kept) is illustrative, not tuned.
+- A correction of anything at or below the horizon needs an earlier checkpoint or a full rebuild, which is capped at
+  4,096 observations per call.
+- Adding a permitted subtype to `StateUpdate` breaks exhaustive `switch`es over it at compile time (ADR 0031).

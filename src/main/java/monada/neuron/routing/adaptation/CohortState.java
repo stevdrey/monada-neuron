@@ -16,7 +16,7 @@ import java.util.UUID;
  * @param phase current phase
  * @param energy current energy
  * @param preferenceValue {@code amplitude - baselineAmplitude}
- * @param supportingObservations applied observations that moved the Node
+ * @param supportingObservations applied observations that moved the Node, saturated at {@code Integer.MAX_VALUE}
  * @param status whether the route is in the catalog the view was taken for
  */
 public record CohortState(

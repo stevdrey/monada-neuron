@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (implemented by issue #66; replay evaluation and the full-rebuild baseline by issue #67; checkpoint-then-replay equivalence, the core checkpoint type and ledger compaction are tracked in #89)
+Accepted (implemented by issue #66; replay evaluation and the full-rebuild baseline by issue #67; the core checkpoint
+type, ledger digest, ledger compaction and checkpoint-then-replay equivalence by issue #89,
+[ADR 0031](0031-routing-state-checkpoint-and-ledger-compaction.md))
 
 ## Context
 
@@ -52,8 +54,8 @@ scores join the cohort mapping under one composite `mappingVersion`.
 
 - Hosts can now learn route preferences from validated outcomes and route from the resulting snapshots, entirely opt-in.
 - Equal definitions, partitions and ordered deliveries give equal states and decisions; scopes cannot contaminate each other.
-- A full ledger blocks learning in that store until a rebuild into a new scope or the ledger compaction tracked in #89;
-  this is explicit.
+- A full ledger blocks learning in that store until a rebuild into a new scope or an explicit compaction (#89,
+  ADR 0031); this is explicit.
 - `NodeType.MEMORY` is used for preference Nodes in the reference definition as Neuron-local adaptive state; long-term memory
   remains in the Resonance Store (ADR 0001).
 
@@ -62,9 +64,9 @@ scores join the cohort mapping under one composite `mappingVersion`.
 - #67 (implemented in the evaluation module only, [forge-routing-evaluation.md](../benchmarks/forge-routing-evaluation.md)):
   replay evaluation with controls, an evaluation-side canonical digest of cohort Nodes and the ledger, the full-rebuild
   baseline (incremental state equals a rebuild from scratch, digest for digest, including after corrections), and measured
-  latency/allocation beside a modeled retained footprint. Its allowed scope excludes core changes, so the core
-  `RoutingStateCheckpoint` type, a core ledger digest format, ledger compaction and checkpoint-then-replay equivalence
-  remain open follow-up work (#89); the replay's
-  rebuild-dominated adaptive cost is the evidence to weigh when they are scheduled. The reference values are not revisited:
-  the drift fixture shows they can follow stale rewards, and nothing validates them.
+  latency/allocation beside a modeled retained footprint. Its allowed scope excluded core changes. The reference values
+  are not revisited: the drift fixture shows they can follow stale rewards, and nothing validates them.
+- #89 (implemented, [ADR 0031](0031-routing-state-checkpoint-and-ledger-compaction.md), contract Section 23): the core
+  `RoutingStateCheckpoint`, the `routing-ledger-digest/1` format, explicit ledger compaction with a horizon, and
+  checkpoint-then-replay equivalence. The #67 replay's rebuild-dominated adaptive cost motivated it.
 - #68: published consumer loop over real Store exports.

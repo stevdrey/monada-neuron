@@ -27,8 +27,9 @@ on identical bounded fixtures:
 | `derived-not-consumed` | the snapshot of a bound state that never consumes | derived for every visible outcome, then dropped |
 | `adaptive` | the snapshot of the caller-owned `RoutingStateStore` (ADR 0030) | derived and consumed once visible |
 
-The harness is offline and evaluation-only. It adds no routing API, and nothing in the core
-(`src/main`) or the adapter changes. It makes **no claim** that adaptive routing improves quality or cost online:
+The harness is offline and evaluation-only. It adds no routing API of its own: it uses the published core API, including
+the checkpoints and compaction of #89 ([ADR 0031](../adr/0031-routing-state-checkpoint-and-ledger-compaction.md)). It makes
+**no claim** that adaptive routing improves quality or cost online:
 - **Synthetic fixtures** know every route's outcome, but they are constructed, not observed.
 - **Store exports** only hold the executed route's outcome, so a divergent replayed choice has no outcome at all.
 
@@ -177,7 +178,17 @@ task carries:
 - **Corrections.** A correction that returns `RebuildRequired` triggers a rebuild: `rebuild` runs over everything
   delivered so far and the staged store is swapped in. Each observation's derivation is the one made at its delivery,
   because the bindings it read never change during a run; `rebuildFromScratch`, the equivalence check, derives every
-  observation again. A failed rebuild means the fixture is invalid.
+  observation again. A failed rebuild means the fixture is invalid. The adaptive arm's
+  [`RebuildStrategy`](../../monada-neuron-evaluation/src/main/java/monada/neuron/evaluation/routing/RebuildStrategy.java)
+  decides where a rebuild starts:
+  - `SCRATCH` (the default, and every other check's reference) replays everything delivered so far.
+  - `CHECKPOINT`: the state takes a `RoutingStateCheckpoint` every 32 deliveries, keeps the newest 4 and compacts its
+    ledger to the oldest of them.
+    - A correction drops every kept checkpoint at or after its `supersedesSequence` (contract Section 7).
+    - A rebuild starts with `rebuildFrom` from the newest kept checkpoint strictly below the affected sequence, replaying
+      only later observations; with none kept, it starts from scratch.
+    - A correction of a compacted revision (`BeyondCheckpoint`) is rebuilt the same way.
+    - The cadence is illustrative, not tuned.
 
 **Data structures.**
 - Tasks are sorted once.
@@ -299,7 +310,8 @@ derived, and unchanged earlier decisions are rejected as evidence when the mutat
 | `control.static-wiring` | The control arm is wired as one: its decisions equal the policy's over `RoutingPreference.empty`, it keeps no state, delivers and derives nothing, and selects only by `COLD_START` or `HOST_PRIORITY`. The expected decisions come from the same policy, so this checks the harness, not #62's behavior, which #62's own tests cover. |
 | `control.neutral-feedback-leaves-state-unchanged` | Neutral-only consumption leaves cohort Nodes and support equal to the reset baseline, and decisions equal static. |
 | `eligibility.violations-zero` | Across all arms and stages, none of the following occurs: a reward or penalty that the observation's own fields do not admit, read directly and not through `OutcomeEvaluator` (a reward needs a validated, stage-local acceptance of the routed attempt itself, a completed invocation and every mandatory dimension passing on it; a penalty needs a stage-local, validated, settled outcome of a non-environmental, non-cancelled invocation with a mandatory dimension failing on the routed attempt); a reward or penalty without the matching evaluator candidate; credit to any cohort key other than the answered decision's (compared whole: scope, stage, cohort bucket, route); a neutral rule that moves a Node. The evaluator verdict is the one the policy acts on, so it is reported for consistency, not as independent evidence. |
-| `state.incremental-equals-rebuild` | The final adaptive state digest equals a reset copy rebuilt from every delivered observation, including after correction-triggered rebuilds, and its watermark equals the fixture horizon. |
+| `state.incremental-equals-rebuild` | The final adaptive state digest (cohort Nodes, support, the core `routing-ledger-digest/1` and the watermark) equals a reset copy rebuilt from every delivered observation, including after correction-triggered rebuilds, and its watermark equals the fixture horizon. |
+| `state.checkpoint-equals-rebuild` | With the `CHECKPOINT` strategy, the adaptive arm's decision trace, deliveries, derivations and state digest equal the `SCRATCH` run's. The final state rebuilt from the checkpoint it was compacted to equals it too. At least one fixture must compact its ledger and start a rebuild from a checkpoint. |
 | `cases.cheap-invalid` | Few tokens with a proven security failure: gate failure, `NOT_ACCEPTED`, cost `UNAVAILABLE`, penalized and never rewarded. |
 | `cases.repaired-accepted` | 2 attempts, validated acceptance, 0.0735 USD counted once per execution (however many of its stages were routed); chain-only attribution earns no credit. |
 | `cases.unknown-usage` | Unknown and not-measured counters are counted as such, not as zero; the cost is a separate `PARTIAL` lower bound of 0.0135 USD. |
@@ -409,9 +421,17 @@ task. It reports changed decisions, gained and lost validated acceptances, and c
   reference must equal the recorded run the checks verified, which is reused rather than replayed again.
 - **One implementation.** The store-free and Store rows share `ReplayMeasurement`, so their diagnostics and labels
   cannot drift apart.
+- **Checkpointed row.** `RoutingReplay.adaptive-checkpointed` measures the adaptive arm with the `CHECKPOINT` strategy.
+  - It is validated against the same verified from-scratch run as `RoutingReplay.adaptive`, because both must decide,
+    deliver, derive and learn identically.
+  - Its timed window includes taking checkpoints, compacting and starting rebuilds from a checkpoint.
+  - Every row reports `rebuildStrategy`, `rebuilds`, `rebuildsFromCheckpoint`, `replayedObservations`, `checkpoints`,
+    `compactedEntries`, the live `ledgerEntries` and the `ledgerDigestEntries` the state has accounted for.
 - **GC telemetry.** JVM-wide, so it includes the untimed validation.
 - **Retained memory** (`modeledRetainedStateBytes`) is a **model**:
   - 400 B per cohort and 350 B per ledger entry;
+  - in the checkpointed row, also the checkpoints the run still keeps (at most 4): 64 B per checkpoint cohort and
+    350 B per retained marker, counted from the actual kept checkpoints (`keptCheckpoints`, `keptCheckpointMarkers`);
   - not a measurement;
   - kept apart from measured allocation per op and measured latency.
 
@@ -430,6 +450,18 @@ mode.
 | `StoreRoutingReplay.adaptive` | 16 exported tasks, 2 cohorts | 117.39 µs | 142.94 µs | 7.3 µs | 15.27 KB |
 
 The rows above are single runs on one machine: the workload rows from one full-mode run, the Store rows from another.
+
+**Rebuild from checkpoints (#89).** These two rows come from one later full-mode run on the same machine, so they
+compare within that run:
+
+| Benchmark | Rebuilds (from a checkpoint) | Replayed observations | Live / digested ledger entries | Mean per iteration | p95 per iteration | Mean per decision (derived) | Alloc per decision |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `RoutingReplay.adaptive` | 51 (0) | 24,349 | 910 / 910 | 322.69 ms | 337.86 ms | 336.1 µs | 357.53 KB |
+| `RoutingReplay.adaptive-checkpointed` | 51 (50) | 893 | 34 / 910 | 18.43 ms | 19.21 ms | 19.2 µs | 28.93 KB |
+
+Both rows reach the same decision trace, deliveries, derivations and state digest, and the report digest is unchanged.
+The checkpointed row explicitly compacted 31 entries; each rebuild from a checkpoint also leaves only the later entries.
+It was a single run, not repeated five times like the table below.
 Over five full-mode runs of each evaluation, run alternately, the means ranged:
 
 | Benchmark | Mean per iteration, min–max over 5 runs | max / min |
@@ -496,8 +528,11 @@ Observations, not conclusions:
 - **Adaptive cost.** The adaptive arm is the slowest by more than an order of magnitude (about 30 times
   derived-not-consumed on the workload). Correction-triggered rebuilds
   dominate it: each re-applies every delivered observation, `O(N·L)` (51 rebuilds with a ledger of up to 910 entries),
-  even though it no longer re-derives them. That is the case for the deferred `RoutingStateCheckpoint` and compaction
-  (below), not a claim that they are needed at production scale.
+  even though it no longer re-derives them.
+  - Starting the same rebuilds from checkpoints (#89) replays 893 instead of 24,349 observations and reaches the
+    identical state.
+  - Its mean per iteration drops to about the derived-not-consumed level.
+  - This is evidence for the checkpoint, not a claim that production needs it.
 - **Unvalidated reference values.** The reference adaptive values (`adaptive-routing-state/1`) are untuned. The drift
   scenario shows they can follow stale rewards for five tasks. Nothing here validates them.
 - **Measurement noise.** Latency and allocation are single-machine figures over small fixtures. The budgeted warm-up
@@ -545,8 +580,7 @@ Observations, not conclusions:
   Store.
 - **No actual billing.** Actual billing is never populated by the #64 translator. Only hypothetical API-equivalent cost
   is reported.
-- **Checkpoint deferred.** `RoutingStateCheckpoint` and ledger compaction are core work tracked in #89 (ADR 0030); #67's
-  scope excluded core changes. This harness shows only that incremental state equals a full rebuild from scratch,
-  digest for digest. That a rebuild started from a checkpoint and replaying only later observations gives the same
-  state is the equivalence #89 must still verify.
-- **No core change.** The reference adaptive values are not revisited, and nothing in the core is tuned.
+- **Checkpoint cadence untuned.** The core `RoutingStateCheckpoint` and compaction are implemented by #89 (ADR 0031,
+  contract Section 23). The harness's cadence (every 32 deliveries, 4 kept) is one illustrative policy over one
+  constructed workload. The Store arm has no corrections, so it never rebuilds from a checkpoint.
+- **No tuning.** The reference adaptive values are not revisited, and nothing in the core is tuned.

@@ -8,11 +8,14 @@ import monada.neuron.routing.LexicographicRoutingPolicy;
 import monada.neuron.routing.RoutingDecision;
 import monada.neuron.routing.RoutingPreference;
 import monada.neuron.routing.adaptation.BindResult;
+import monada.neuron.routing.adaptation.CompactionResult;
 import monada.neuron.routing.adaptation.RebuildResult;
+import monada.neuron.routing.adaptation.RoutingStateCheckpoint;
 import monada.neuron.routing.adaptation.RoutingStateStore;
 import monada.neuron.routing.adaptation.StateUpdate;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.feedback.CohortKey;
 import monada.neuron.routing.feedback.FeedbackDerivation;
 import monada.neuron.routing.feedback.NoUpdateReason;
@@ -25,9 +28,11 @@ import monada.neuron.routing.outcome.OutcomeEvaluator;
 import monada.neuron.routing.outcome.RoutingObservation;
 import monada.neuron.routing.token.OpaqueTokens;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -64,9 +69,11 @@ import java.util.SortedSet;
  * decision.
  * Time {@code O(T (R log R + C) + P log P)} for {@code T} tasks, {@code R <= 32} routes and {@code C <= 256} cohorts,
  * plus {@code O(N log N + N L)} per rebuild after a correction, which reuses each observation's derivation from its
- * delivery (the bindings never change during a run). Retained: the state ({@code O(C + L)}), the delivered
- * observations and their derivations ({@code O(P)}) and, when recording, one sample per task and one event per
- * delivery.
+ * delivery (the bindings never change during a run). {@code N} is every delivered observation from scratch, or only
+ * those after the starting checkpoint with {@link RebuildStrategy#CHECKPOINT}. Retained: the state
+ * ({@code O(C + L)}), the delivered observations and their derivations ({@code O(P)}), at most
+ * {@link RebuildStrategy#RETAINED_CHECKPOINTS} checkpoints ({@code O(C)} each) and, when recording, one sample per task
+ * and one event per delivery.
  *
  * <p>Not thread-safe. A run owns its state for its whole run; between runs the replay keeps only the generated
  * synthetic observations, a pure function of the fixture.
@@ -95,9 +102,19 @@ public final class TemporalReplay {
         this.cohortKeys = fixture.cohortKeys();
     }
 
-    /** Replays one arm and records every sample and feedback event. */
+    /** Replays one arm, rebuilding from scratch, and records every sample and feedback event. */
     public ReplayRun run(ReplayArm arm) {
-        return run(arm, true);
+        return run(arm, true, RebuildStrategy.SCRATCH);
+    }
+
+    /** Replays one arm with the given rebuild strategy and records every sample and feedback event. */
+    public ReplayRun run(ReplayArm arm, RebuildStrategy strategy) {
+        return run(arm, true, strategy);
+    }
+
+    /** {@link #run(ReplayArm, boolean, RebuildStrategy)} rebuilding from scratch. */
+    ReplayRun run(ReplayArm arm, boolean record) {
+        return run(arm, record, RebuildStrategy.SCRATCH);
     }
 
     /**
@@ -105,10 +122,12 @@ public final class TemporalReplay {
      *
      * @param arm the arm
      * @param record whether to build samples and feedback events; the measured windows skip them
+     * @param strategy where correction-triggered rebuilds start; only the adaptive arm rebuilds
      */
-    ReplayRun run(ReplayArm arm, boolean record) {
+    ReplayRun run(ReplayArm arm, boolean record, RebuildStrategy strategy) {
         Objects.requireNonNull(arm, "arm must not be null");
-        var run = new Run(arm, record);
+        Objects.requireNonNull(strategy, "strategy must not be null");
+        var run = new Run(arm, record, strategy);
         if (arm != ReplayArm.STATIC) {
             for (ReplayTask task : fixture.tasks()) {
                 if (task.oracle() instanceof OutcomeOracle.ChosenRouteOnly logged) {
@@ -122,46 +141,86 @@ public final class TemporalReplay {
             long cutoff = task.request().cutoff();
             while (!run.pending.isEmpty() && run.pending.peek().observation().ledgerSequence() <= cutoff) {
                 run.deliver(run.pending.poll());
+                run.rebuildIfDue();
             }
-            if (arm == ReplayArm.ADAPTIVE && run.store.processedCutoff() < cutoff) {
-                // everything at or before the cutoff has been delivered: the state is the state as of the cutoff
+            if (arm == ReplayArm.ADAPTIVE && run.store.processedCutoff() <= cutoff) {
+                // everything at or before the cutoff has been delivered: the state is the state as of the cutoff, and
+                // the watermark is confirmed, which a checkpoint requires
                 run.store.advanceCutoff(cutoff);
+                run.checkpointIfDue();
             }
             run.decide(task);
         }
         while (!run.pending.isEmpty()) {
             run.deliver(run.pending.poll());
+            run.rebuildIfDue();
         }
         if (arm == ReplayArm.ADAPTIVE && run.store.processedCutoff() < fixture.horizon()) {
             // the state has examined the export through its horizon, not only through its last observation
             run.store.advanceCutoff(fixture.horizon());
         }
+        int keptCohorts = 0;
+        int keptMarkers = 0;
+        for (RoutingStateCheckpoint kept : run.checkpoints) {
+            keptCohorts += kept.preferenceSnapshot().size();
+            keptMarkers += kept.retainedMarkers().size();
+        }
         return new ReplayRun(arm, run.samples, run.events, run.delivered, run.trace.build(),
-                run.tally.build(), Optional.ofNullable(run.store));
+                run.tally.build(), Optional.ofNullable(run.store),
+                new ReplayRun.RebuildStats(strategy, run.rebuilds, run.fromCheckpoint, run.replayed,
+                        run.checkpointsTaken, run.compactions, run.compactedEntries, run.checkpoints.size(),
+                        keptCohorts, keptMarkers));
     }
 
     /**
      * Rebuilds the final adaptive state from scratch: a reset copy of the same cohorts replays every delivered
-     * observation in rebuild order. Equality with the incrementally built state is the checkpoint-versus-scratch
-     * equivalence the replay can show without a core checkpoint type. Every observation is derived again, so a wrong
-     * reuse of a delivery-time derivation in the incremental run shows up as a difference.
+     * observation in rebuild order. Its equality with the incrementally built state is the equivalence a checkpoint
+     * must preserve. Every observation is derived again, so a wrong reuse of a delivery-time derivation in the
+     * incremental run shows up as a difference.
      *
      * @param run an adaptive run
      * @return the rebuild result
      * @throws IllegalArgumentException if the run is not adaptive: only the adaptive arm consumes what it derives
      */
     public RebuildResult rebuildFromScratch(ReplayRun run) {
-        if (run.arm() != ReplayArm.ADAPTIVE) {
-            throw new IllegalArgumentException("only an adaptive run consumes its observations; the " + run.arm()
-                    + " arm's state is not built from them");
-        }
-        RoutingStateStore state = run.state().orElseThrow();
+        RoutingStateStore state = adaptiveState(run);
         Map<String, Delivered> answers = answers(run.delivered());
         List<RoutingObservation> delivered = run.delivered().stream().map(Delivered::observation).toList();
         RoutingStateStore scratch = state.resetCopy();
         return scratch.rebuild(delivered, state.processedCutoff(),
                 observation -> derive(answers.get(observation.experienceRef()), observation, scratch));
     }
+
+    /**
+     * Rebuilds the final adaptive state from the checkpoint its ledger was compacted to, replaying only the delivered
+     * observations after that checkpoint, each derived again against the staged bindings.
+     *
+     * @param run an adaptive run with the {@link RebuildStrategy#CHECKPOINT} strategy
+     * @return the rebuild result
+     * @throws IllegalArgumentException if the run is not adaptive or its state was never compacted
+     */
+    public RebuildResult rebuildFromCheckpoint(ReplayRun run) {
+        RoutingStateStore state = adaptiveState(run);
+        RoutingStateCheckpoint checkpoint = state.latestCheckpoint().orElseThrow(
+                () -> new IllegalArgumentException("the adaptive state was never compacted"));
+        Map<String, Delivered> answers = answers(run.delivered());
+        // the whole delivered history: rebuildFrom drops what the checkpoint covers itself
+        List<RoutingObservation> delivered = run.delivered().stream().map(Delivered::observation).toList();
+        return state.rebuildFrom(checkpoint, delivered, state.processedCutoff(),
+                (observation, bindings) -> {
+                    Delivered answer = answers.get(observation.experienceRef());
+                    return feedbackPolicy.derive(observation, answer.decision(), answer.request(), bindings);
+                });
+    }
+
+    private static RoutingStateStore adaptiveState(ReplayRun run) {
+        if (run.arm() != ReplayArm.ADAPTIVE) {
+            throw new IllegalArgumentException("only an adaptive run consumes its observations; the " + run.arm()
+                    + " arm's state is not built from them");
+        }
+        return run.state().orElseThrow();
+    }
+
 
     private FeedbackDerivation derive(Delivered answer, RoutingObservation observation, RoutingStateStore store) {
         return feedbackPolicy.derive(observation, answer.decision(), answer.request(), store.bindings());
@@ -201,10 +260,25 @@ public final class TemporalReplay {
         /** Every decision's route, kind, basis, abstention, coverage and snapshot watermark, recorded or not. */
         private final DecisionTrace.Builder trace = new DecisionTrace.Builder(fixture.tasks().size());
         private int decisions;
+        private final RebuildStrategy strategy;
+        /** Checkpoints still valid for a rebuild, oldest first; at most {@link RebuildStrategy#RETAINED_CHECKPOINTS}. */
+        private final ArrayDeque<RoutingStateCheckpoint> checkpoints = new ArrayDeque<>();
+        private int rebuilds;
+        private int fromCheckpoint;
+        private long replayed;
+        private int checkpointsTaken;
+        private int compactions;
+        private int compactedEntries;
+        /** Deliveries when the last checkpoint was taken. */
+        private int checkpointedAt;
+        /** The observation that asked for the pending rebuild, and the earliest sequence any request affected. */
+        private RoutingObservation rebuildTrigger;
+        private long rebuildFrom = Long.MAX_VALUE;
 
-        Run(ReplayArm arm, boolean record) {
+        Run(ReplayArm arm, boolean record, RebuildStrategy strategy) {
             this.arm = arm;
             this.record = record;
+            this.strategy = strategy;
             this.store = arm == ReplayArm.STATIC ? null : boundStore();
         }
 
@@ -275,14 +349,25 @@ public final class TemporalReplay {
             delivered.add(next);
             FeedbackEvent.Update update = FeedbackEvent.Update.NOT_CONSUMED;
             if (arm == ReplayArm.ADAPTIVE) {
+                // contract section 7: a checkpoint is valid only below the earliest revision a correction supersedes
+                if (observation.supersedesSequence() instanceof Feature.Known<Long> known) {
+                    checkpoints.removeIf(c -> c.processedCutoff() >= known.value());
+                }
                 update = switch (store.consume(observation, derivation)) {
                     case StateUpdate.Applied ignored -> FeedbackEvent.Update.APPLIED;
                     case StateUpdate.Recorded ignored -> FeedbackEvent.Update.RECORDED;
                     case StateUpdate.Unchanged ignored -> FeedbackEvent.Update.UNCHANGED;
                     case StateUpdate.Blocked ignored -> FeedbackEvent.Update.BLOCKED;
                     case StateUpdate.ForeignPartition ignored -> FeedbackEvent.Update.FOREIGN_PARTITION;
-                    case StateUpdate.RebuildRequired ignored -> {
-                        rebuild(observation);
+                    case StateUpdate.RebuildRequired rebuild -> {
+                        requestRebuild(observation, rebuild.advice().affectedFromSequence());
+                        yield FeedbackEvent.Update.REBUILT;
+                    }
+                    case StateUpdate.BeyondCheckpoint beyond -> {
+                        if (beyond.kind() == StateUpdate.BeyondCheckpoint.Kind.COVERED) {
+                            yield FeedbackEvent.Update.UNCHANGED;
+                        }
+                        requestRebuild(observation, beyond.affectedFromSequence());
                         yield FeedbackEvent.Update.REBUILT;
                     }
                 };
@@ -292,28 +377,112 @@ public final class TemporalReplay {
             }
         }
 
+        /** Records that a rebuild is needed from {@code affectedFrom}; {@link #rebuildIfDue} performs it. */
+        private void requestRebuild(RoutingObservation trigger, long affectedFrom) {
+            rebuildTrigger = trigger;
+            rebuildFrom = Math.min(rebuildFrom, affectedFrom);
+        }
+
         /**
-         * Stages a rebuild over everything delivered so far and swaps it in; a fixture that cannot is invalid. Each
-         * observation's derivation is the one made at its delivery: the bindings it read never change during a run.
+         * Performs a requested rebuild once every observation at the trigger's ledger sequence was delivered, so its
+         * export cutoff, which the rebuilt store confirms as complete, really is: delivery is ordered by
+         * {@code (ledgerSequence, experienceRef, revision)}, so another sample may still be pending at that sequence.
+         * Until then deliveries go to the previous state, and the rebuild replays them all anyway.
          */
-        private void rebuild(RoutingObservation trigger) {
-            List<RoutingObservation> replayed = delivered.stream().map(Delivered::observation).toList();
+        void rebuildIfDue() {
+            if (rebuildTrigger == null || (!pending.isEmpty()
+                    && pending.peek().observation().ledgerSequence() == rebuildTrigger.ledgerSequence())) {
+                return;
+            }
+            RoutingObservation trigger = rebuildTrigger;
+            long affectedFrom = rebuildFrom;
+            rebuildTrigger = null;
+            rebuildFrom = Long.MAX_VALUE;
+            rebuild(trigger, affectedFrom);
+        }
+
+        /**
+         * Stages a rebuild and swaps it in; a fixture that cannot is invalid. With checkpoints it starts from the
+         * newest one strictly below {@code affectedFrom}, and {@code rebuildFrom} replays only the observations after
+         * it; otherwise it replays everything delivered so far. Each observation's derivation is the one made at its
+         * delivery: the bindings it read never change during a run (a checkpoint holds exactly the run's cohorts).
+         */
+        private void rebuild(RoutingObservation trigger, long affectedFrom) {
+            rebuilds++;
+            checkpoints.removeIf(c -> c.processedCutoff() >= affectedFrom);
             RoutingStateStore live = store;
-            RebuildResult result = live.rebuild(replayed,
-                    Math.max(live.processedCutoff(), trigger.ledgerSequence()), observation -> {
-                        FeedbackDerivation derivation = derivations.get(observation);
-                        if (derivation == null) {
-                            throw new IllegalStateException("no derivation was made for " + observation.experienceRef()
-                                    + " revision " + observation.revision());
-                        }
-                        return derivation;
-                    });
+            long exportCutoff = Math.max(live.processedCutoff(), trigger.ledgerSequence());
+            RebuildResult result;
+            List<RoutingObservation> all = delivered.stream().map(Delivered::observation).toList();
+            if (!checkpoints.isEmpty()) {
+                RoutingStateCheckpoint start = checkpoints.getLast();
+                fromCheckpoint++;
+                replayed += replayedFrom(start, all);
+                // the whole delivered history: rebuildFrom drops what the checkpoint covers itself
+                result = live.rebuildFrom(start, all, exportCutoff, (observation, bindings) -> derivationOf(observation));
+            } else {
+                replayed += all.size();
+                result = live.rebuild(all, exportCutoff, this::derivationOf);
+            }
             store = switch (result) {
                 case RebuildResult.Rebuilt rebuilt -> rebuilt.store();
                 case RebuildResult.Failed failed -> throw new IllegalStateException("rebuild after "
                         + trigger.experienceRef() + " stopped at " + failed.observation().experienceRef() + ": "
                         + failed.update());
             };
+        }
+
+        /**
+         * Observations a rebuild from the checkpoint replays, for the {@code replayedObservations} diagnostic only:
+         * those after its cutoff, and every revision of a sample it retains a marker for, as {@code rebuildFrom}
+         * selects them.
+         */
+        private long replayedFrom(RoutingStateCheckpoint start, List<RoutingObservation> all) {
+            var retained = new HashSet<String>();
+            start.retainedMarkers().forEach(marker -> retained.add(marker.experienceRef()));
+            return all.stream().filter(o -> o.ledgerSequence() > start.processedCutoff()
+                    || retained.contains(o.experienceRef())).count();
+        }
+
+        private FeedbackDerivation derivationOf(RoutingObservation observation) {
+            FeedbackDerivation derivation = derivations.get(observation);
+            if (derivation == null) {
+                throw new IllegalStateException("no derivation was made for " + observation.experienceRef()
+                        + " revision " + observation.revision());
+            }
+            return derivation;
+        }
+
+        /**
+         * With the checkpoint strategy, once {@link RebuildStrategy#CHECKPOINT_INTERVAL} observations were delivered
+         * since the last checkpoint, takes one at the just-confirmed watermark, keeps the newest few and compacts the
+         * ledger to the oldest kept one.
+         */
+        void checkpointIfDue() {
+            if (strategy != RebuildStrategy.CHECKPOINT
+                    || delivered.size() - checkpointedAt < RebuildStrategy.CHECKPOINT_INTERVAL) {
+                return;
+            }
+            checkpointedAt = delivered.size();
+            checkpoints.addLast(store.checkpoint(policy));
+            checkpointsTaken++;
+            while (checkpoints.size() > RebuildStrategy.RETAINED_CHECKPOINTS) {
+                checkpoints.removeFirst();
+            }
+            switch (store.compact(checkpoints.getFirst())) {
+                case CompactionResult.Compacted done -> {
+                    if (done.removed() > 0) {
+                        compactions++;
+                        compactedEntries += done.removed();
+                    }
+                }
+                // a store restored from a newer checkpoint is already compacted past the oldest one
+                case CompactionResult.Refused refused
+                        when refused.reason() == CompactionResult.Reason.BEHIND_HORIZON -> {
+                }
+                case CompactionResult.Refused refused -> throw new IllegalStateException(
+                        "a valid checkpoint was refused: " + refused.reason());
+            }
         }
 
         private FeedbackEvent event(Delivered next, FeedbackDerivation derivation, FeedbackEvent.Update update) {

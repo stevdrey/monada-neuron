@@ -44,6 +44,13 @@ follow-up. A rule change would have to be applied four times, and the copies cou
 - Issue #65 added a second shared helper to the same package, `CanonicalLists.canonical` (sorted, bounded, duplicate-free
   immutable copies), moved verbatim from `routing.outcome.Ordering`, which now delegates to it; the same no-compatibility
   caveat applies, and it removed the fifth copy the new `routing.feedback` package would have needed.
+- **Issue #89 tightened the shared rule.** A token must now be well-formed UTF-16; an unpaired surrogate is rejected.
+  - **Why.** Such a code point has no UTF-8 form, so `String.getBytes(UTF_8)` replaced it with `?`, and distinct tokens
+    shared their bytes in every canonical encoding built from them. That covered `CohortNodeIdentity` (#66), where two
+    cohorts could get the same Node id, and the `routing-ledger-digest/1` entry encoding (ADR 0031).
+  - **Why here.** Rejecting at the one shared boundary closes the whole class instead of re-encoding each consumer.
+  - **Effect.** A Store string with an unpaired surrogate now fails construction, which `StoreExperienceTranslator`
+    already reports as a refused sample.
 
 ## Follow-Up
 
