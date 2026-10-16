@@ -1732,6 +1732,14 @@ data, **not** an authentication boundary. `LedgerDigestTest` pins a golden value
   longer binds. That covers checkpoints taken, compacted to or restored from, and rebuilt stores inherit them. A rebuild
   from any such checkpoint restores those cohorts, so binding past them would make it unrestorable. Such a cohort keeps
   its slot until it is bound again.
+  - **The invariant.** Every successful operation keeps `|bound ∪ reserved| <= 256`.
+  - **Who refuses what.**
+    - `bind` counts the reservations.
+    - A full `rebuild` throws when its cohort set, together with the reservations it inherits, exceeds 256.
+    - `compact` (`UNRESTORABLE`) and `rebuildFrom` (thrown) share one check over the checkpoint's cohorts, the bound
+      ones and the reservations.
+  - **Result.** No checkpoint of the lineage becomes unrestorable, and the capacity a refused bind reports is never
+    negative.
 - **Cost peers.** A cost-refined derivation whose peer revision was compacted is trusted to come from the same export as
   the observation, which is later than the horizon. The compacted ledger cannot re-check an older peer view.
 - **Rebuild from a checkpoint.** `rebuildFrom` stages a store with:
@@ -1834,6 +1842,9 @@ change a decision. A rebuild from scratch, at most 4,096 observations, never rea
   store), and a foreign checkpoint whose cohort union is 257 refused by `compact` and rejected by `rebuildFrom` with
   one message;
 - the lazily folded ledger digest staying exact across many changes, replacement and compaction;
+- a full rebuild refused when its cohorts and the inherited reservations exceed 256, a fitting or narrower one keeping
+  the earlier checkpoint restorable, and reservations counted by the restorability check;
+- a capacity probe that never sees negative free slots after these transitions;
 - compaction that throws for out-of-bounds Node channels, refuses `UNRESTORABLE` for a cohort a retained marker names,
   and a compacted store whose `bind` keeps slots for the checkpoint's unbound cohorts;
 - `STALE`, `BEHIND_HORIZON` and `CREDITS_UNBOUND_COHORT`;

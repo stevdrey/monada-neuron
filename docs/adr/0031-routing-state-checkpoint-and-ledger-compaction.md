@@ -57,6 +57,9 @@ a valid checkpoint gives a state identical to a rebuild from scratch).
   - `bind` keeps cohort slots for the cohorts of every checkpoint of the store's lineage that are no longer bound:
     taken, compacted to or restored from, and inherited by rebuilt stores. A later bind therefore cannot make any kept
     checkpoint unrestorable. Such a cohort keeps its slot until it is bound again.
+    - Every operation keeps `|bound ∪ reserved| <= 256`.
+    - A full rebuild refuses a cohort set that would exceed it together with the reservations it inherits.
+    - `compact` and `rebuildFrom` count the reservations in their restorability check.
   - One predicate decides restorability for both `compact` (refused) and `rebuildFrom` (thrown).
   - The live ledger's digest is folded lazily from the entries changed since the last digest, so consuming and
     replaying never hash.

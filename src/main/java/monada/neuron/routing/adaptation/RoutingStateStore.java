@@ -254,7 +254,11 @@ public final class RoutingStateStore {
      *
      * <p>The capacity also counts the cohorts that any checkpoint of this lineage holds (one it took, compacted to or was
      * restored from, inherited by rebuilt stores) and it no longer binds. A rebuild from that checkpoint restores them,
-     * so binding past them would make it unrestorable. Such a cohort keeps its slot until it is bound again.
+     * so binding past them would make it unrestorable. Such a cohort keeps its slot until it is bound again. Every
+     * operation keeps {@code |bound ∪ reserved| <= }{@value #MAX_COHORTS}: {@code bind} here, a rebuild by refusing a
+     * cohort set that would exceed it with the reservations it inherits, and {@code compact} and {@link #rebuildFrom}
+     * through the same restorability check. So no checkpoint of the lineage becomes unrestorable and the capacity a
+     * refusal reports is never negative.
      *
      * <p>{@code O(k log k + k log C + L log k + C log C)} for {@code k} keys, {@code C} cohorts and {@code L} ledger
      * entries: the ledger is scanned only when a key is new, and binding is rare, so no credited-cohort index is kept.
@@ -569,12 +573,14 @@ public final class RoutingStateStore {
      * @param observations every effective observation of the partition, at most {@value RebuildOrder#MAX_OBSERVATIONS}
      * @param exportCutoff the export's high-watermark the rebuilt state has examined, not below this store's
      *         {@link #processedCutoff()}
-     * @param cohortKeys the cohorts of the rebuilt store, at most {@value #MAX_COHORTS}, all of this scope
+     * @param cohortKeys the cohorts of the rebuilt store, all of this scope; together with the cohorts this lineage's
+     *         checkpoints hold, which the rebuilt store keeps reserved, at most {@value #MAX_COHORTS}
      * @param derive derives one observation against the given bindings; called once per replayed observation
      * @return the rebuilt store or where the replay stopped
      * @throws IllegalArgumentException if the export cutoff is below this store's watermark (the rebuilt state would
-     *         silently forget examined observations) or below a replayed ledger sequence, the cohort set is oversized or
-     *         foreign, or the observations are inconsistent or oversized
+     *         silently forget examined observations) or below a replayed ledger sequence, the cohort set is oversized
+     *         (alone or with the checkpoint reservations it inherits) or foreign, or the observations are inconsistent
+     *         or oversized
      */
     public RebuildResult rebuild(Collection<RoutingObservation> observations, long exportCutoff,
             Collection<CohortKey> cohortKeys,
@@ -587,13 +593,27 @@ public final class RoutingStateStore {
                     + processedCutoff + ": the rebuilt state would forget examined observations");
         }
         List<RoutingObservation> ordered = new RebuildOrder().order(observations);
-        var staged = new RoutingStateStore(definition, partition);
-        if (staged.bind(cohortKeys) instanceof BindResult.CapacityExhausted full) {
-            throw new IllegalArgumentException("a rebuilt store allows at most " + MAX_COHORTS + " cohorts, got: "
-                    + full.requested());
+        // the rebuilt store inherits this lineage's checkpoint reservations, so the requested cohorts and the cohorts
+        // those checkpoints hold must fit together, or a rebuild from one of them could no longer start
+        var union = new TreeSet<CohortKey>();
+        for (CohortKey key : cohortKeys) {
+            union.add(Objects.requireNonNull(key, "key must not be null"));
         }
-        // the caller's checkpoints of this lineage stay restorable from the rebuilt store
+        int requested = union.size();
+        union.addAll(checkpointedCohorts);
+        if (union.size() > MAX_COHORTS) {
+            int reservedOnly = union.size() - requested;
+            throw new IllegalArgumentException("a rebuilt store allows at most " + MAX_COHORTS + " cohorts, got: "
+                    + union.size() + (reservedOnly > 0
+                            ? " (" + reservedOnly + " held only by checkpoints of this store)" : ""));
+        }
+        var staged = new RoutingStateStore(definition, partition);
+        // inherited before binding, so the staged bind counts the reservations as every bind does
         staged.checkpointedCohorts.addAll(checkpointedCohorts);
+        if (staged.bind(cohortKeys) instanceof BindResult.CapacityExhausted full) {
+            throw new IllegalStateException("the cohort union was checked, yet the staged bind found only "
+                    + full.available() + " free slots");
+        }
         return staged.replay(ordered, exportCutoff, derive);
     }
 
@@ -885,18 +905,21 @@ public final class RoutingStateStore {
     /**
      * Why {@link #rebuildFrom} on this store could not start from the checkpoint as the store is now, if it could not:
      * a cohort bound here but not held by the checkpoint is named by one of its retained {@code NO_TARGET_BINDING}
-     * markers, or its cohorts and this store's together exceed {@value #MAX_COHORTS}. The one rule both {@link #compact}
-     * (which refuses {@code UNRESTORABLE}) and {@link #rebuildFrom} (which throws) apply.
+     * markers, or its cohorts, this store's and those this store's checkpoints hold together exceed
+     * {@value #MAX_COHORTS}. That union is exactly what the store holds and reserves afterwards (a rebuilt store
+     * inherits the reservations, a compacted one adds the checkpoint's cohorts), so every checkpoint of the lineage stays
+     * restorable. The one rule both {@link #compact} (which refuses {@code UNRESTORABLE}) and {@link #rebuildFrom}
+     * (which throws) apply.
      */
     private Optional<String> restorabilityProblem(RoutingStateCheckpoint checkpoint) {
         var held = new TreeSet<CohortKey>();
         checkpoint.preferenceSnapshot().forEach(cohort -> held.add(cohort.key()));
-        int union = held.size();
+        var union = new TreeSet<>(held);
         for (CohortKey key : cohorts.keySet()) {
             if (held.contains(key)) {
                 continue;
             }
-            union++;
+            union.add(key);
             for (AppliedRevision marker : checkpoint.retainedMarkers()) {
                 if (marker.basis() instanceof EntryBasis.NoUpdateMarker basis
                         && basis.reason() == NoUpdateReason.NO_TARGET_BINDING && names(basis, marker, key)) {
@@ -906,8 +929,12 @@ public final class RoutingStateStore {
                 }
             }
         }
-        if (union > MAX_COHORTS) {
-            return Optional.of("the checkpoint's cohorts and this store's together are " + union
+        int bound = union.size();
+        union.addAll(checkpointedCohorts);
+        if (union.size() > MAX_COHORTS) {
+            int reservedOnly = union.size() - bound;
+            return Optional.of("the checkpoint's cohorts and this store's together are " + union.size()
+                    + (reservedOnly > 0 ? ", " + reservedOnly + " of them held only by this store's checkpoints" : "")
                     + ", more than the " + MAX_COHORTS + " a rebuilt store allows");
         }
         return Optional.empty();

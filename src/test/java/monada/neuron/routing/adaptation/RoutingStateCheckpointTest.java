@@ -14,6 +14,7 @@ import monada.neuron.routing.feedback.CostObjective;
 import monada.neuron.routing.feedback.CostReference;
 import monada.neuron.routing.feedback.EntryBasis;
 import monada.neuron.routing.feedback.FeedbackDerivation;
+import monada.neuron.routing.feedback.TargetBindings;
 import monada.neuron.routing.feedback.NoUpdateReason;
 import monada.neuron.routing.feedback.RoutingFeedbackConfig;
 import monada.neuron.routing.feedback.ScoreRule;
@@ -30,6 +31,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Random;
+import java.util.function.BiFunction;
 
 import static monada.neuron.routing.adaptation.AdaptationFixtures.Kind;
 import static monada.neuron.routing.adaptation.AdaptationFixtures.SUB_A;
@@ -88,6 +90,25 @@ class RoutingStateCheckpointTest {
             List<RoutingObservation> observations, long cutoff) {
         return live.rebuildFrom(checkpoint, observations, cutoff, (o, bindings) -> feedbackPolicy()
                 .derive(o, decisions.get(o.experienceRef()), requests.get(o.experienceRef()), bindings));
+    }
+
+    /** {@code count} cohorts {@code prefix-0 .. prefix-(count-1)} of the demo scope. */
+    private static List<CohortKey> routes(String prefix, int count) {
+        List<CohortKey> keys = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            keys.add(new CohortKey("scope-demo", "implement", "UNKNOWN", new RouteKey(prefix + "-" + i, 1)));
+        }
+        return keys;
+    }
+
+    /**
+     * The capacity invariant {@code |bound ∪ reserved| <= 256}, probed without changing anything: a bind of 257 fresh
+     * keys is always refused, and the free slots it reports must not be negative.
+     */
+    private static void assertCapacityNotNegative(RoutingStateStore store) {
+        var refused = assertInstanceOf(BindResult.CapacityExhausted.class,
+                store.bind(routes("probe", RoutingStateStore.MAX_COHORTS + 1)));
+        assertTrue(refused.available() >= 0, "available " + refused.available());
     }
 
     /** A checkpoint after confirming the watermark, as a caller does once every observation up to it was delivered. */
@@ -286,10 +307,7 @@ class RoutingStateCheckpointTest {
     @Test
     void aCompactedStoreKeepsCohortSlotsForTheCheckpointsCohorts() {
         var live = store();
-        List<CohortKey> keys = new ArrayList<>();
-        for (int i = 0; i < RoutingStateStore.MAX_COHORTS; i++) {
-            keys.add(new CohortKey("scope-demo", "implement", "UNKNOWN", new RouteKey("route-" + i, 1)));
-        }
+        var keys = routes("route", RoutingStateStore.MAX_COHORTS);
         live.bind(keys);
         assertEquals(new CompactionResult.Compacted(0, 0), live.compact(confirmedCheckpoint(live)));
         assertTrue(live.unbindDormant(keys.getFirst(), demo()));
@@ -300,12 +318,58 @@ class RoutingStateCheckpointTest {
     }
 
     @Test
+    void aFullRebuildKeepsTheCheckpointReservationsItInherits() {
+        var live = store();
+        var keys = routes("route", RoutingStateStore.MAX_COHORTS);
+        live.bind(keys);
+        var checkpoint = confirmedCheckpoint(live);
+        BiFunction<RoutingObservation, TargetBindings, FeedbackDerivation> none = (o, bindings) -> {
+            throw new AssertionError("nothing to derive");
+        };
+
+        // one new cohort beside the 256 the checkpoint holds would make that checkpoint unrestorable
+        assertEquals("a rebuilt store allows at most 256 cohorts, got: 257 (256 held only by checkpoints of this store)",
+                assertThrows(IllegalArgumentException.class,
+                        () -> live.rebuild(List.of(), 0, List.of(KEY_B), none)).getMessage());
+        assertEquals(RoutingStateStore.MAX_COHORTS, live.cohortCount());
+        assertInstanceOf(RebuildResult.Rebuilt.class, rebuildFrom(live, checkpoint, List.of(), 0));
+        assertCapacityNotNegative(live);
+
+        // a rebuild that fits inherits the reservations, and the earlier checkpoint stays restorable from its result
+        var rebuilt = assertInstanceOf(RebuildResult.Rebuilt.class, live.rebuild(List.of(), 0, keys, none)).store();
+        assertCapacityNotNegative(rebuilt);
+        assertInstanceOf(RebuildResult.Rebuilt.class, rebuildFrom(rebuilt, checkpoint, List.of(), 0));
+        // and a rebuild that drops a cohort keeps it reserved
+        var smaller = assertInstanceOf(RebuildResult.Rebuilt.class,
+                live.rebuild(List.of(), 0, keys.subList(1, keys.size()), none)).store();
+        assertEquals(new BindResult.CapacityExhausted(1, 0), smaller.bind(List.of(KEY_A)));
+        assertInstanceOf(RebuildResult.Rebuilt.class, rebuildFrom(smaller, checkpoint, List.of(), 0));
+    }
+
+    @Test
+    void restorabilityCountsTheReservationsOfTheStoresOwnCheckpoints() {
+        var live = store();
+        var keys = routes("route", RoutingStateStore.MAX_COHORTS);
+        live.bind(keys);
+        confirmedCheckpoint(live);
+        assertTrue(live.unbindDormant(keys.getFirst(), demo()));
+        // a foreign checkpoint of one cohort: with the 255 bound it is 256, but route-0 is still reserved
+        var other = store();
+        other.bind(List.of(KEY_A));
+        var foreign = confirmedCheckpoint(other);
+
+        assertEquals(new CompactionResult.Refused(CompactionResult.Reason.UNRESTORABLE), live.compact(foreign));
+        assertEquals(OptionalLong.empty(), live.compactionHorizon());
+        assertEquals("the checkpoint's cohorts and this store's together are 257, 1 of them held only by this store's"
+                + " checkpoints, more than the 256 a rebuilt store allows", assertThrows(IllegalArgumentException.class,
+                        () -> rebuildFrom(live, foreign, List.of(), 0)).getMessage());
+        assertCapacityNotNegative(live);
+    }
+
+    @Test
     void anOlderCheckpointStaysRestorableAfterCohortChurn() {
         var live = store();
-        List<CohortKey> keys = new ArrayList<>();
-        for (int i = 0; i < RoutingStateStore.MAX_COHORTS; i++) {
-            keys.add(new CohortKey("scope-demo", "implement", "UNKNOWN", new RouteKey("route-" + i, 1)));
-        }
+        var keys = routes("route", RoutingStateStore.MAX_COHORTS);
         live.bind(keys);
         var older = confirmedCheckpoint(live);
         // route-0 leaves before the newer checkpoint, which therefore does not hold it
@@ -318,16 +382,14 @@ class RoutingStateCheckpointTest {
         assertEquals(RoutingStateStore.MAX_COHORTS, restored.cohortCount());
         // the rebuilt store inherits the reservation, so the newer checkpoint stays restorable from it too
         assertEquals(new BindResult.CapacityExhausted(1, 0), restored.bind(List.of(KEY_A)));
+        assertCapacityNotNegative(live);
+        assertCapacityNotNegative(restored);
     }
 
     @Test
     void aCheckpointOfAnotherStoreThatCouldNotBeRestoredIsRefused() {
         var other = store();
-        List<CohortKey> keys = new ArrayList<>();
-        for (int i = 0; i < RoutingStateStore.MAX_COHORTS; i++) {
-            keys.add(new CohortKey("scope-demo", "implement", "UNKNOWN", new RouteKey("route-" + i, 1)));
-        }
-        other.bind(keys);
+        other.bind(routes("route", RoutingStateStore.MAX_COHORTS));
         var foreign = confirmedCheckpoint(other);
         // same partition and an equally empty ledger, so only the cohort union stands in the way: 256 + 1
         var live = store();
