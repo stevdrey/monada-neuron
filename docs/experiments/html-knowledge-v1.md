@@ -46,7 +46,7 @@ Each question is scored separately. Quality and latency are reported separately.
 
 | Layer | Measures | Component under test | Metric namespace | Delivered by |
 | :--- | :--- | :--- | :--- | :--- |
-| L1 Store retrieval | ingestion fidelity, persistence, ranked recall of chunks | `MonadaMemory.remember` / `resonate(query).topK(k)` | `store.*` | #105, #106, #107 |
+| L1 Store retrieval | ingestion fidelity, persistence, ranked recall of chunks | `MonadaMemory.remember` / `resonate(query).topK(5).threshold(t)` | `store.*` | #105, #106, #107 |
 | L2 Neuron recall | recall through the production memory port and codec | `ResonanceStoreMemoryAdapter.recall` | `neuron.recall.*` | #106, #107 |
 | L3 Evidence use | whether recalled references reach downstream cycle artifacts | `ResonanceMemoryCognitiveStage` and later stages | `neuron.evidence.*` | #108 |
 | L4 Grounded answer (optional) | claim support, citation fidelity, abstention | an explicit answer component behind a seam | `answer.*` | #109 |
@@ -57,8 +57,8 @@ Rules:
 
 - A report never combines layers into a single score. A good L1 result is not evidence for L3 or L4, and an
   L4 answer is not evidence that L2 recalled anything.
-- L4 is only scored over queries whose L1/L2 evidence is recorded in the same run, so an answer can always be
-  traced back to what was actually retrieved.
+- Every L4 evaluation is **bound to exactly one retrieval layer** (see [Evidence binding](#evidence-binding)),
+  so an answer is always traced back to what that layer actually retrieved.
 - HTML technical choices (see [Decision-quality extension](#decision-quality-extension)) are not routing
   decisions and are never scored with the L5 metrics.
 
@@ -74,11 +74,19 @@ Rules:
 | `topic`, `section` | authored labels (for example `links`, `headings`, `forms`, `semantics`, `media`, `scripts`) |
 | `source` | `authored-fixture`, or the source URL plus a pinned revision/date |
 | `license`, `attribution` | declared per chunk; `Apache-2.0` for authored chunks |
-| `sourceSpan` | character range of the chunk in its normalized source document |
-| `sha256` | SHA-256 of the normalized chunk text |
+| `sourceSpan` | `[start, end)` range of the chunk in its normalized source document, in code points (see [Spans](#spans-and-offsets)) |
+| `sha256` | SHA-256 of the UTF-8 bytes of the normalized chunk text, lowercase hex |
 
 Normalization before hashing and before `remember`: UTF-8, Unicode NFC, `\n` line endings, trimmed leading
-and trailing whitespace. Code inside a chunk is kept byte-for-byte after normalization.
+and trailing whitespace. Code examples inside a chunk are delimited by lines consisting of exactly three
+backticks (a fenced block) and are kept byte-for-byte after normalization.
+
+### Spans and offsets
+
+Every span in this protocol (`sourceSpan`, gold `evidenceSpans`, answer citations) is a half-open range
+`[start, end)` of **Unicode code point** offsets into the normalized text it refers to, with
+`0 ≤ start < end ≤ length`. A span digest is the SHA-256 (lowercase hex) of the UTF-8 bytes of exactly that
+substring, with no further normalization.
 
 ### Scale and bounds
 
@@ -97,8 +105,25 @@ and trailing whitespace. Code inside a chunk is kept byte-for-byte after normali
 imports. The harness writes a **manifest** per import: `chunkId → atomId → opaque reference`, where the
 opaque reference is the adapter's `OpaqueReference.of(atomId)` (`rs-` plus 32 hex characters of SHA-256).
 The manifest is the only way a retrieved atom or Neuron reference is mapped back to a `chunkId`. It is built
-from the import, never from gold labels. Importing the same corpus twice into the same root is detected and
-fails explicitly.
+from the import, never from gold labels. It holds no content hashes: content checks always compare against the
+corpus `sha256`. Importing the same corpus twice into the same root is detected and fails explicitly. Because
+atom ids are random, the manifest never participates in a dataset hash or a cross-run comparison.
+
+### Dataset hashes
+
+`corpusHash` and `queryHash` are the SHA-256 (lowercase hex) of a canonical byte serialization, so formatting,
+file layout or map order cannot change them and any change to a covered field does:
+
+- Every field is encoded as UTF-8 bytes preceded by its byte length as a 4-byte big-endian unsigned integer;
+  an absent value is encoded as length `0xFFFFFFFF` with no bytes. Integers are encoded as their decimal string.
+- The serialization starts with the version string (`corpusVersion` or `queryVersion`), then the record count,
+  then the records sorted by id (`chunkId` or `queryId`, compared by code point).
+- Corpus record fields, in order: `chunkId`, `documentId`, `topic`, `section`, `source`, `license`,
+  `attribution`, `sourceSpan.start`, `sourceSpan.end`, `sha256`. The chunk text is covered through `sha256`.
+- Query record fields, in order: `queryId`, `category`, `text`, `answerability`, then `required` and
+  `supporting` (each as a count followed by its `chunkId`s sorted by code point), then `evidenceSpans` (count,
+  then each span as `chunkId`, `start`, `end`, `sha256`, sorted by `(chunkId, start, end)`), then `keyClaims`
+  (count, then each claim in curated order).
 
 ### External sources
 
@@ -118,9 +143,9 @@ review, and never run in default CI.
 | `category` | one of the categories below |
 | `text` | the query text exactly as sent to every system under test |
 | `answerability` | `ANSWERABLE`, `NO_ANSWER_IN_CORPUS`, `OUT_OF_DOMAIN`, `FALSE_PREMISE`, `CONFLICTING`, `BLANK` |
-| `required` | set of `chunkId` that together contain the answer (empty when not answerable) |
-| `supporting` | set of `chunkId` that are relevant but not required |
-| `evidenceSpans` | `(chunkId, start, end, sha256)` for each expected supporting passage |
+| `required` | set of `chunkId` that together contain the answer, or the refutation of a false premise; empty exactly when no chunk is relevant |
+| `supporting` | set of `chunkId` that are relevant but not required; must be empty when `required` is empty |
+| `evidenceSpans` | `(chunkId, start, end, sha256)` for each expected supporting passage; validated against the corpus text at load |
 | `keyClaims` | short, pre-enumerated factual claims a correct answer makes (used by L4 only) |
 
 The relevant set used by retrieval metrics is `Rel(q) = required ∪ supporting`.
@@ -147,8 +172,8 @@ answerable at L1/L2 (the refutation is the evidence); one with no refuting chunk
 | `conflicting-source` | touches the conflicting-source pair | `CONFLICTING` |
 | `blank` | empty or whitespace-only query | `BLANK` |
 
-`post-reopen` is a **run condition**, not a category: the whole query set is re-run after the Store root is
-closed and reopened, and results are compared with the pre-close run (see [Run conditions](#run-conditions)).
+`post-reopen` is a **run condition**, not a category: the whole query set is re-run against the same Store root
+from a new process, and results are compared with the first run (see [Run conditions](#run-conditions)).
 
 ### Label integrity and leakage
 
@@ -165,12 +190,25 @@ closed and reopened, and results are compared with the pre-close run (see [Run c
 
 ### Notation
 
-- `k ∈ {1, 3, 5}`, fixed.
+- `k ∈ {1, 3, 5}`, fixed. Each system is queried once with limit 5 and threshold `t` (see
+  [Baselines](#baselines)); `Ret_k(q)` is the prefix of that list. A separate check queries with limits 1 and 3
+  and requires the results to equal the prefixes; a difference is a failed semantic check.
 - `Ret_k(q)`: the first `k` results in the order the system returned them, each mapped to a `chunkId` through
   the manifest. Fewer than `k` results is allowed; `|Ret_k(q)| ≤ k`.
-- `Ret(q)`: the full returned list (bounded by the largest `k`, 5).
+- `Ret(q)` = `Ret_5(q)`, the full returned list.
 - `Rel(q)`: the gold relevant set. `A` = queries with `Rel(q) ≠ ∅`; `U` = queries with `Rel(q) = ∅`.
 - `rank_q`: 1-based position of the first relevant result in `Ret_k(q)`, undefined if none.
+
+### Undefined values and aggregation
+
+These rules apply to every metric in this protocol (L1 to L4):
+
+- A per-query ratio whose denominator is 0 is **undefined**, serialized as JSON `null`. It is never reported
+  as `0`, `1` or `NaN`.
+- An aggregate is the **macro mean** of the defined per-query values of its population, reported with
+  `nDefined` and `nUndefined`. When `nDefined = 0` (including an empty population), the aggregate is undefined.
+- A per-query value that the protocol marks as undefined for another reason (for example `traceAmbiguous` in
+  L3) follows the same rule.
 
 ### Answerable queries (`q ∈ A`)
 
@@ -178,10 +216,10 @@ closed and reopened, and results are compared with the pre-close run (see [Run c
 | :--- | :--- | :--- |
 | `Recall@k` | `|Rel(q) ∩ Ret_k(q)| / |Rel(q)|` | mean over `A` |
 | `Precision@k` | `|Rel(q) ∩ Ret_k(q)| / k` | mean over `A` |
-| `HitPrecision@k` | `|Rel(q) ∩ Ret_k(q)| / |Ret_k(q)|`, undefined when `Ret_k(q) = ∅` | mean over `A` with non-empty results, with that count reported |
+| `HitPrecision@k` | `|Rel(q) ∩ Ret_k(q)| / |Ret_k(q)|`, undefined when `Ret_k(q) = ∅` | mean over `A` (defined values only) |
 | `MRR@k` | `1 / rank_q`, `0` if no relevant result within `k` | mean over `A` |
 | `Coverage@k` | `1` if `Rel(q) ∩ Ret_k(q) ≠ ∅`, else `0` | mean over `A` |
-| `FullEvidence@k` | `1` if `required(q) ⊆ Ret_k(q)`, else `0` | mean over `multi-evidence` queries |
+| `FullEvidence@k` | `1` if `required(q) ⊆ Ret_k(q)`, else `0` | mean over `multi-evidence` queries (undefined if there are none) |
 
 `Precision@k` uses the fixed denominator `k`, so returning fewer results is not rewarded; `HitPrecision@k`
 shows the precision of what was actually returned. Both are always reported together.
@@ -193,27 +231,33 @@ metrics. Their count is always reported next to `|A|`, so they cannot disappear 
 
 | Metric | Formula |
 | :--- | :--- |
-| `NoAnswerFalsePositiveRate@k` | fraction of `q ∈ U` with `Ret_k(q) ≠ ∅` |
-| `AbstentionPrecision` | `|{q ∈ U : Ret(q) = ∅}| / |{q : Ret(q) = ∅}|`, undefined when no query returned nothing |
-| `AbstentionRecall` | `|{q ∈ U : Ret(q) = ∅}| / |U|` |
+| `NoAnswerFalsePositiveRate@k` | fraction of `q ∈ U` with `Ret_k(q) ≠ ∅`; undefined when `U = ∅` |
+| `AbstentionPrecision` | `|{q ∈ U : Ret(q) = ∅}| / |{q : Ret(q) = ∅}|`; undefined when no query returned nothing |
+| `AbstentionRecall` | `|{q ∈ U : Ret(q) = ∅}| / |U|`; undefined when `U = ∅` |
+
+These are set-level ratios over the query population, not means of per-query values.
 
 At L1/L2 "abstention" means an empty result after the configured threshold. `BLANK` queries are reported in
 `U` and also separately, because a blank query returning nothing is a contract check, not a quality signal.
-`CONFLICTING` queries are in `A` (both chunks of the pair are `supporting`, the curated one also `required`).
+`CONFLICTING` queries are in `A`: the curated chunk of the pair is `required`, the other one `supporting`.
 
 ### Per-query outcome
 
-Every query gets exactly one outcome per layer and `k`. Outcomes are reported as counts per category; they
-are never collapsed into a single accuracy.
+Every query gets exactly one outcome per layer and `k`. The outcome is the **first** row below, in order, whose
+condition holds; the conditions are evaluated in this order and later rows assume earlier ones failed.
+Outcomes are reported as counts per category; they are never collapsed into a single accuracy.
 
-| Outcome | Applies to | Condition |
-| :--- | :--- | :--- |
-| `HIT` | `A` | `required(q) ⊆ Ret_k(q)` |
-| `PARTIAL` | `A` | some but not all relevant chunks in `Ret_k(q)` |
-| `MISS_WITH_RESULTS` | `A` | results returned, none relevant |
-| `NO_EVIDENCE` | `A` | no results returned |
-| `CORRECT_ABSTENTION` | `U` | no results returned |
-| `FALSE_EVIDENCE` | `U` | results returned for a query with no relevant chunk |
+| Order | Outcome | Applies to | Condition |
+| :--- | :--- | :--- | :--- |
+| 1 | `HIT` | `A` | `required(q) ⊆ Ret_k(q)` (`required(q)` is non-empty for every `q ∈ A`) |
+| 2 | `PARTIAL` | `A` | `Rel(q) ∩ Ret_k(q) ≠ ∅` |
+| 3 | `MISS_WITH_RESULTS` | `A` | `Ret_k(q) ≠ ∅` |
+| 4 | `NO_EVIDENCE` | `A` | otherwise (`Ret_k(q) = ∅`) |
+| 1 | `CORRECT_ABSTENTION` | `U` | `Ret_k(q) = ∅` |
+| 2 | `FALSE_EVIDENCE` | `U` | otherwise |
+
+A query that returns every `required` chunk but not every `supporting` chunk is a `HIT`; `Recall@k` still
+shows the missing supporting chunk.
 
 `NO_EVIDENCE` is its own outcome. It is a miss for an answerable query, but it is reported separately from
 `MISS_WITH_RESULTS` and is never called "zero accuracy": returning nothing and returning the wrong thing are
@@ -225,7 +269,7 @@ different failure modes.
   flagged as `tieAtCutoff` on the query row. Within a tie group the system's order is used as returned, and
   the run is deterministic, so a repeated run reproduces it.
 - **Source fidelity** (L1): for every returned atom, the SHA-256 of its returned `content` after
-  normalization equals the manifest hash of the mapped chunk. A mismatch or an unmapped atom is a failed
+  normalization equals the corpus `sha256` of the mapped chunk. A mismatch or an unmapped atom is a failed
   semantic check, not a metric.
 - **Reference fidelity** (L2): every Neuron result reference maps through the manifest to a `chunkId`. An
   unmapped reference is a failed semantic check.
@@ -241,55 +285,138 @@ labels may be used for L2 quality metrics.** An L2 run must use a codec that:
 - is documented (name, version, parameters) in the report;
 - is the same for every query and every compared configuration.
 
-L1 and L2 run on the **same persisted snapshot** (same root, same manifest), with the same `k` and the same
-adapter `threshold`. Because the Store sees the raw query text in L1 and an encoded Signal in L2, the two are
-compared side by side without claiming parity; a difference is reported as a codec effect, not a Store or
-adapter defect.
+L1 and L2 run on the **same persisted snapshot** (same root, same manifest), with the same limit and the same
+threshold `t`.
+
+### Attributing L1/L2 differences
+
+The production adapter does more than encode: for each query Signal it calls
+`resonate(queryEncoder.encode(signal)).topK(maxResults).threshold(t)` on the Store, then merges all candidates by
+score descending, then query-Signal index, then Store rank, keeps the best candidate per atom, and cuts the list
+to `maxResults` (`ResonanceStoreMemoryAdapter`). A difference between L1 and L2 can therefore come from the codec
+**or** from the adapter. To separate them, every L2 run includes the control **B2c (codec-direct)**:
+
+1. the harness encodes the same query Signals with the same codec instance and records the emitted query texts;
+2. it sends each text directly to the Store with the same limit and `t`;
+3. it applies the merge rule above itself.
+
+B2 must equal B2c exactly (same atoms, order and scores); a difference is an **adapter defect** and a failed
+semantic check. Only the remaining difference between B1 and B2c is reported as a **codec effect**, compared
+side by side without claiming parity.
 
 ## Evidence use (L3, delivered by #108)
 
-A recalled reference is **used** when it appears in a downstream artifact of the same cycle: a Signal admitted
-by `ResonanceMemoryCognitiveStage`, or a `MemoryReferenceEvidence` attached to a hypothesis. Metrics:
+Signals carry no identifiers ([ADR 0005](../adr/0005-signals-without-identifiers.md)), and the core does not
+attach `MemoryReferenceEvidence` to anything on its own. L3 therefore traces evidence through what the code
+actually exposes:
 
-| Metric | Definition |
-| :--- | :--- |
-| `AdmittedFraction` | admitted recalled Signals / recalled results, with the budget recorded |
-| `TraceIntegrity` | fraction of downstream evidence references that map to a chunk recalled in the same cycle (must be 1) |
-| `RelevantEvidenceUsed@k` | fraction of `q ∈ A` with at least one relevant chunk among the used references |
-| `MemoryEmptyContrast` | per-query difference in downstream artifacts between the real port and a port that returns no results |
+- **Admitted**: `ResonanceMemoryStageResult.outputSignals()` is the admitted recalled suffix, aligned by position
+  with `response().results()`. Admitted Signal `i` therefore carries the reference of result `i`, which the
+  manifest maps to a `chunkId`.
+- **Trace key**: later stages may rewrite Signals, so tracing uses a documented **trace key function** `τ(Signal)`
+  recorded in the report (default: full value equality of the `Signal` record; an L3 run may declare another,
+  for example the frequency state, which the existing integration fixture keeps stable across stages).
+- **Used**: an admitted chunk is used when `τ` of its admitted Signal equals `τ` of a Signal in the
+  `outputSignals()` of a stage result that comes after `MEMORY_RECALL`. A stage that passes a Signal through
+  unchanged counts: "used" measures that evidence is **carried**, not that it influenced anything; influence is
+  what `MemoryEmptyContrast` probes.
+- **Ambiguity**: when two admitted Signals share a `τ` value, or an admitted Signal shares one with a cycle input
+  or a `PERCEPTION` output Signal, the query is marked `traceAmbiguous` and its trace-based values are undefined.
+- A `MemoryReferenceEvidence` counts as use only when an explicit, documented component attaches it; its
+  reference must then map through the manifest to a chunk admitted in the same cycle.
+
+The L3 run records the memory-stage result limit and the signal budget.
+
+| Metric | Per-query definition | Undefined when |
+| :--- | :--- | :--- |
+| `AdmittedFraction` | admitted recalled Signals / recalled results | no results recalled |
+| `UsedFraction` | used admitted chunks / admitted chunks | nothing admitted, or `traceAmbiguous` |
+| `RelevantEvidenceUsed` | `1` if a used chunk is in `Rel(q)`, else `0`; over `A` only | `traceAmbiguous` |
+| `MemoryEmptyContrast` | see below | never |
+
+**Trace integrity** is a semantic check, not a metric: the number of admitted Signals never exceeds the number of
+results, every admitted position has a mapped reference, and every attached `MemoryReferenceEvidence` maps to an
+admitted chunk. Any violation fails the run.
+
+**`MemoryEmptyContrast`**: the same cycle (same inputs, topology, configuration and seed) runs once with the real
+port and once with a port that answers `COMPLETE` with no results. The compared projection is the cycle
+`termination`, the ordered list of `(kind, status, outputSignals)` of every stage result, and the cycle
+`outputSignals`, compared by value equality. Per query the report records `differs` (boolean), the first
+differing stage kind (or none) and the output Signal counts of both runs. The aggregate is the count and
+fraction of queries with `differs = true`, reported separately for `A` and `U`.
 
 L3 shows that evidence flows through the cycle. It is explicitly **not** a measure of reasoning quality.
 
 ## Grounded answer (L4, delivered by #109)
 
-L4 scores an explicit, optional answer component. Every answer is a list of claims, each with citations to
-`chunkId` spans taken from the same run's retrieved evidence.
+L4 scores an explicit, optional answer component. An answer is either an abstention or a non-empty list of
+claims, each with citations `(chunkId, start, end)` into the normalized chunk text.
 
-### Graded answer status
+### Evidence binding
 
-| Status | Meaning |
-| :--- | :--- |
-| `SUPPORTED_CORRECT` | all `keyClaims` present, every emitted claim supported by a cited span |
-| `SUPPORTED_PARTIAL` | some `keyClaims` present, every emitted claim supported |
-| `UNSUPPORTED` | a claim is not supported by its cited evidence, **even if the claim is true** |
-| `CONTRADICTED` | a claim contradicts the curated evidence |
-| `CORRECT_ABSTENTION` | abstained on a non-answerable query |
-| `WRONG_ABSTENTION` | abstained although the query is answerable and relevant evidence was retrieved |
-| `FALSE_PREMISE_CORRECTED` / `FALSE_PREMISE_ACCEPTED` | false premise rejected with evidence / answered as if true |
-| `CONFLICT_SURFACED` / `CONFLICT_HIDDEN` | conflicting sources disclosed / one side silently chosen |
+Every L4 evaluation declares `evidenceLayer` (`B1` or `B2`), that layer's configuration, and `answerK`
+(one of 1, 3, 5). The **evidence set** is `E(q) = Ret_answerK(q)` of that layer in the same run. Its chunk text
+is the content the Store returned for `B1` (which passed source fidelity) and, for `B2`, whose results carry
+only opaque references, the corpus text of the chunk each reference maps to (which passed reference
+fidelity). Every L4 rule that refers to retrieved evidence uses `E(q)`: citation fidelity,
+abstention classification and the input of B3. Evaluations bound to different layers are separate report rows;
+evidence sets are never united or intersected.
 
-`UNSUPPORTED` exists because an answer can be right by prior knowledge or word overlap without using the
-stored evidence. **Grounding is mandatory**: a true but unsupported claim is not credited.
+### Claim judgments and flags
+
+For each emitted claim the judge records `supported` (at least one of its citations passes citation fidelity and
+its cited text entails the claim) and `contradicted` (the claim contradicts the curated evidence of the query).
+Per answer the judge also records the flags `anyUnsupportedClaim`, `anyContradictedClaim`, `premiseAccepted`
+(`FALSE_PREMISE` queries only; the answer treats the premise as true) and `conflictDisclosed` (`CONFLICTING`
+queries only; the answer states both claims of the pair and cites both chunks). Flags are always reported,
+independently of the primary status.
+
+### Primary answer status
+
+Each answer gets exactly one primary status: the **first** row, in order, whose condition holds.
+
+| Order | Status | Condition |
+| :--- | :--- | :--- |
+| abstention 1 | `CORRECT_ABSTENTION` | abstained and `Rel(q) = ∅` |
+| abstention 2 | `EVIDENCE_MISS_ABSTENTION` | abstained and `Rel(q) ∩ E(q) = ∅` (a retrieval miss, not an answer error) |
+| abstention 3 | `WRONG_ABSTENTION` | abstained otherwise |
+| answer 1 | `FALSE_PREMISE_ACCEPTED` | `premiseAccepted` |
+| answer 2 | `CONTRADICTED` | `anyContradictedClaim` |
+| answer 3 | `UNSUPPORTED` | `anyUnsupportedClaim`, **even if the claim is true** |
+| answer 4 | `FALSE_PREMISE_CORRECTED` | answerability `FALSE_PREMISE` |
+| answer 5 | `ANSWERED_UNANSWERABLE` | answerability `NO_ANSWER_IN_CORPUS`, `OUT_OF_DOMAIN` or `BLANK` |
+| answer 6 | `CONFLICT_HIDDEN` | answerability `CONFLICTING` and not `conflictDisclosed` |
+| answer 7 | `CONFLICT_SURFACED` | answerability `CONFLICTING` |
+| answer 8 | `SUPPORTED_CORRECT` | every `keyClaim` matched |
+| answer 9 | `SUPPORTED_PARTIAL` | at least one `keyClaim` matched |
+| answer 10 | `SUPPORTED_OFF_TARGET` | otherwise (all claims supported, none matches a `keyClaim`) |
+
+For example, an answer to a conflicting-source query that silently repeats the non-curated claim is
+`CONTRADICTED` with `conflictDisclosed = false`. `UNSUPPORTED` exists because an answer can be right by prior
+knowledge or word overlap without using the stored evidence. **Grounding is mandatory**: a true but unsupported
+claim is not credited.
 
 ### Metrics
 
-| Metric | Formula |
+| Metric | Per-query formula | Undefined when |
+| :--- | :--- | :--- |
+| `CitationFidelity` | citations with `chunkId ∈ E(q)` and valid bounds for that chunk's text in `E(q)` / citations | no citations |
+| `CitationPrecision` | `M(q) / citations` | no citations |
+| `CitationRecall` | `M(q) / gold evidenceSpans` | no gold spans |
+| `ClaimSupport` | supported claims / emitted claims | abstention |
+| `KeyClaimCoverage` | matched `keyClaims` / `keyClaims`, over answered (not abstained) queries | abstention, or no `keyClaims` |
+
+`M(q)` is the size of a **maximum one-to-one matching** between the answer's citations and the query's gold
+`evidenceSpans`, where a citation and a gold span can be matched when they name the same `chunkId` and overlap in
+at least one code point. Each citation and each gold span is matched at most once, so duplicate or broad
+citations cannot inflate either value; the matching size is unique even when several matchings reach it.
+Aggregates follow the [undefined-value rules](#undefined-values-and-aggregation); abstentions are counted by
+status, not hidden in the claim metrics.
+
+| Set-level metric | Formula |
 | :--- | :--- |
-| `CitationFidelity` | fraction of citations whose chunk is in the run's retrieved set and whose span hash matches the manifest |
-| `CitationPrecision` / `CitationRecall` | cited spans vs gold `evidenceSpans` (overlap counts as a match) |
-| `ClaimSupport` | supported emitted claims / emitted claims |
-| `KeyClaimCoverage` | matched `keyClaims` / `keyClaims`, over `A` |
-| `AbstentionPrecision`, `AbstentionRecall` | as in L1/L2, at answer level |
+| `AbstentionPrecision` | abstentions with `Rel(q) = ∅` / abstentions; undefined when nothing abstained |
+| `AbstentionRecall` | abstentions with `Rel(q) = ∅` / queries with `Rel(q) = ∅`; undefined when there are none |
 
 Judging: a deterministic matcher compares claims with the pre-enumerated `keyClaims` and spans; disagreements
 and unmatched claims go to a human reviewer, whose verdict is recorded with the query row. **The judge is
@@ -299,10 +426,25 @@ never the component under test**, and no model judges its own answers.
 
 | Id | Baseline | Purpose |
 | :--- | :--- | :--- |
-| B0 | exact-token overlap over the same normalized chunks: tokens split on non-alphanumerics, case-folded, score = shared distinct tokens, ties broken by `chunkId`, empty when the score is 0 | trivial lexical reference, scalar `O(Q·N)` |
-| B1 | Store direct: `MonadaMemory.resonate(query).topK(k)` with Store defaults | raw Store retrieval (L1) |
-| B2 | Neuron port: `ResonanceStoreMemoryAdapter.recall` with a documented non-oracle codec | Neuron memory port (L2) |
-| B3 | deterministic extractive answer: the sentence of the top-ranked retrieved chunk with the highest token overlap with the query, citing it; abstain when nothing is retrieved | answer floor for L4 (#109) |
+| B0 | exact-token overlap over the same normalized chunks (see below) | trivial lexical reference, scalar `O(Q·N)` |
+| B1 | Store direct: `MonadaMemory.resonate(query).topK(5).threshold(t)` | raw Store retrieval (L1) |
+| B2 | Neuron port: `ResonanceStoreMemoryAdapter.recall` with `maxResults = 5`, adapter threshold `t` and a documented non-oracle codec | Neuron memory port (L2) |
+| B2c | codec-direct control for B2 (see [Attributing L1/L2 differences](#attributing-l1l2-differences)) | separates adapter from codec effects |
+| B3 | deterministic extractive answer (see below) | answer floor for L4 (#109) |
+
+**Tokens** (B0, B3): maximal runs of code points for which `Character.isLetterOrDigit` is true, lowercased with
+`Locale.ROOT`. **B0** scores each chunk by the number of distinct query tokens it contains, drops chunks with
+score 0, orders by score descending then `chunkId`, and returns the first 5.
+
+**B3** takes the first chunk of `E(q)` and splits its normalized text into segments: each fenced code block is one
+segment; the remaining prose is split after `.`, `?` or `!` followed by whitespace or the end of the text, and at
+blank lines; segments are trimmed and empty segments dropped. Each segment is scored by the number of distinct
+query tokens it contains. The highest-scoring segment wins, ties going to the earliest segment in source order.
+B3 answers with that segment as its single claim, citing its exact span; it abstains when `E(q)` is empty or the
+best score is 0.
+
+**Threshold `t`**: B1, B2 and B2c always use the same explicit `t`. The default is `t = 0.0`, which is the current
+default of the Store's `MonadaQuery`; the report records `t` and the Store commit. B0 has no threshold.
 
 Fairness: every baseline sees the same chunks, the same normalization, the same `k` and, for B1/B2, the same
 persisted snapshot. B0 is a reference, not a search engine to be tuned; it is not extended with stemming,
@@ -310,20 +452,28 @@ synonyms or weighting.
 
 ## Thresholds and sweeps
 
-- Store defaults are never changed. The adapter `threshold` used for B2 is stated in the report.
+- Store defaults are never changed; `t` is passed explicitly to B1, B2 and B2c.
 - A threshold sweep is **exploratory**: a fixed, documented grid (for example `0.0` to `0.9` step `0.1`), a
-  fixed seed, and the full curve (`Recall@k`, `NoAnswerFalsePositiveRate@k`, `AbstentionPrecision`) reported
-  for every grid point.
-- A threshold picked from a sweep is not used to report quality on the same query set in the same run. It
-  becomes the configured value only through a new protocol or query-set version, before the next measured run.
+  fixed seed, the same `t` for B1/B2/B2c at every point, and the full curve (`Recall@k`,
+  `NoAnswerFalsePositiveRate@k`, `AbstentionPrecision`) reported for every grid point.
+- Any parameter chosen by looking at results on a query set (a threshold, codec parameters, a trace key) is
+  **tuned on that set**. Every later result on that set with that parameter is labeled `in-sample (tuned)`,
+  whatever its version name; renaming or re-versioning the same queries does not make them independent.
+- An out-of-sample quality claim requires a **held-out query set** curated under the same label rules, frozen
+  with its own `queryHash` **before** the sweep, and not run or inspected while tuning.
 
 ## Run conditions
 
 - **Determinism**: two runs with the same corpus, query set, configuration and seed produce identical semantic
   results (outcomes, mapped chunk ids, order and scores). A difference is a failed check.
-- **Post-reopen**: after the full query set runs, the Store root is closed and reopened (`MonadaMemory.open` on
-  the same path, a fresh adapter on the same path); the rerun must produce identical mapped chunk ids, order
-  and scores. Delivered by #106.
+- **Post-reopen (restart)**: the Store API has no close operation (`MonadaMemory` exposes none, and
+  `ResonanceStoreMemoryAdapter.close()` only marks the adapter unavailable), so a reopen inside one process
+  cannot prove that no original handle is alive. The persistence condition therefore uses **separate
+  processes**: ingestion runs in one JVM process that exits with status 0 before a new JVM process opens the
+  same root and reruns the full query set. Mapped chunk ids, order and scores must equal the first run. The
+  report records both processes (process id and exit status). A rerun through a fresh handle inside the same
+  process is reported separately as `fresh-handle consistency` and is never presented as persistence evidence.
+  Delivered by #106.
 - **Warm / cold**: as defined by the [integration evaluation](../benchmarks/resonance-store-integration.md#measurement-method):
   "cold" is a freshly opened handle in an already warmed JVM, "warm" is repeated use of one open handle.
   Process-cold numbers, if ever reported, are a separate, labeled row.
@@ -332,17 +482,23 @@ synonyms or weighting.
 
 ### Required report fields
 
-`protocolVersion`, `corpusVersion`, `corpusHash`, `queryVersion`, `queryHash`, `seed`, `k`, adapter
-`threshold`, codec name/version, run mode/profile, JDK vendor and version, OS and architecture, available
-processors, GC and heap settings, Neuron version and commit (`+dirty` when uncommitted), Store checkout commit,
-and the persisted Store manifest (version, encoder, normalizer, dimensions, vector format).
+`protocolVersion`, `corpusVersion`, `corpusHash`, `queryVersion`, `queryHash`, held-out `queryHash` when one
+exists, `in-sample (tuned)` labels where they apply, `seed`, `k` values, threshold `t`, codec name/version/
+parameters, L3 trace key and memory-stage limit, L4 `evidenceLayer` and `answerK`, reopen mode (`restart` or
+`fresh-handle`), run mode/profile, JDK vendor and version, OS and architecture, available processors, GC and
+heap settings, Neuron version and commit (`+dirty` when uncommitted), Store checkout commit, and the persisted
+Store manifest (version, encoder, normalizer, dimensions, vector format).
 
 ### Resources (L6)
 
 Latency is reported as **median and p95** per row. Allocated bytes per operation are reported separately, only
 when measured (the existing `EvaluationMetricsCollector` reports unavailable telemetry as unavailable). Setup,
-ingestion, reopen, first recall and warm recall are separate rows. Latency and allocation never affect a
-semantic verdict or the exit status.
+ingestion, reopen, first recall and warm recall are separate rows. Every row records its sampling, as the
+[integration evaluation](../benchmarks/resonance-store-integration.md#measurement-method) already does:
+`warmupIterations`, `measurementIterations`, `operationsPerIteration`, `measurementMethod`
+(`EvaluationMetricsCollector` wall clock or JMH, with JMH forks and modes when used), `validationInWindow` and
+`gcTelemetryScope`. Rows with different sampling are not compared as equals. Latency and allocation never
+affect a semantic verdict or the exit status.
 
 ## Comparison and regression
 
@@ -352,9 +508,9 @@ whose outcome changed, with the old and new retrieved chunk ids.
 
 A change is flagged as a **regression** (to be explained, fixed or documented, not a numeric gate) when:
 
-- a run is not deterministic, or post-reopen results differ;
-- source or reference fidelity fails;
-- a query that was `HIT` is no longer `HIT`;
+- a run is not deterministic, or post-reopen (restart) results differ;
+- source fidelity, reference fidelity, prefix stability, trace integrity or B2 = B2c fails;
+- a query that was `HIT` for a given layer and `k` is no longer `HIT` for the same layer and `k`;
 - a non-answerable query moves to `FALSE_EVIDENCE` without a documented configuration change that explains it;
 - a required report field is missing.
 
@@ -366,7 +522,8 @@ candidates. They are not removed or relabeled to improve a score.
 Each delivered experiment writes a machine-readable JSON report and a concise Markdown report under
 `build/reports/benchmarks/` (the existing default), containing the required fields, aggregate metrics per
 layer, `k` and category, outcome counts, and one row per query: `queryId`, category, answerability, expected
-chunk ids, returned chunk ids with ranks and scores, `tieAtCutoff`, outcome, and diagnostics for misses. The
+chunk ids, returned chunk ids with ranks and scores, `tieAtCutoff`, outcome, and diagnostics for misses (plus,
+where measured, L3 trace values and L4 status, flags and evidence layer). Undefined values are JSON `null`. The
 process exits non-zero only on a failed semantic check.
 
 ## Decision-quality extension
