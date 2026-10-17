@@ -15,7 +15,7 @@ An `<ol>` accepts a `start` attribute to begin counting at another number and a 
 
 ## Description lists
 
-A description list `<dl>` pairs terms with their descriptions. Each term goes in a `<dt>` element and each description in a `<dd>` element, which suits glossaries and key-value metadata.
+A description list `<dl>` groups terms with their descriptions; a group may have one or more terms and one or more descriptions. Each term goes in a `<dt>` element and each description in a `<dd>` element, which suits glossaries and key-value metadata.
 
 ## Strong versus b
 
@@ -27,4 +27,4 @@ The `<em>` element adds stress emphasis that changes the meaning of a sentence, 
 
 ## Code and preformatted text
 
-The `<code>` element marks a fragment of computer code inside a sentence. The `<pre>` element keeps the whitespace and line breaks of its content exactly as written, so longer code listings are usually written as `<pre><code>...</code></pre>`.
+The `<code>` element marks a fragment of computer code inside a sentence. By default, browsers display the whitespace and line breaks inside a `<pre>` element as written, except that the HTML parser drops a single newline directly after the `<pre>` start tag, and CSS can change this rendering. Longer code listings are therefore usually written as `<pre><code>...</code></pre>`.

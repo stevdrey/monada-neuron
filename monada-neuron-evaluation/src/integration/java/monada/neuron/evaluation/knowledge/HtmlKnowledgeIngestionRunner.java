@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -279,7 +280,7 @@ public final class HtmlKnowledgeIngestionRunner {
 
     /**
      * Creates the output directory and requires it to be writable and every output file name to be absent or a
-     * regular file.
+     * regular file that is not a symbolic link.
      *
      * @throws IllegalStateException when an output cannot be written
      */
@@ -293,7 +294,13 @@ public final class HtmlKnowledgeIngestionRunner {
             throw new IllegalStateException("output directory " + outputDir + " is not a writable directory");
         }
         for (var file : outputFiles(outputDir)) {
-            if (Files.exists(file) && (!Files.isRegularFile(file) || !Files.isWritable(file))) {
+            // Links are never followed: a (possibly dangling) link could point into a Store root that the import
+            // is about to create.
+            if (Files.isSymbolicLink(file)) {
+                throw new IllegalStateException("output file " + file + " is a symbolic link");
+            }
+            if (Files.exists(file, LinkOption.NOFOLLOW_LINKS)
+                    && (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || !Files.isWritable(file))) {
                 throw new IllegalStateException("output file " + file + " exists and is not a writable regular file");
             }
         }
@@ -371,6 +378,9 @@ public final class HtmlKnowledgeIngestionRunner {
     }
 
     private static Path writeFile(Path path, String content) throws IOException {
+        if (Files.isSymbolicLink(path)) {
+            throw new IOException("refusing to write through symbolic link " + path);
+        }
         Files.writeString(path, content, StandardCharsets.UTF_8);
         return path;
     }

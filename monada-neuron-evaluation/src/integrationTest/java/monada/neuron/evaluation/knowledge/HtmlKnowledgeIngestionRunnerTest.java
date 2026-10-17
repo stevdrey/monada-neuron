@@ -174,6 +174,24 @@ class HtmlKnowledgeIngestionRunnerTest {
     }
 
     @Test
+    void aSymlinkedOutputFileIsRejectedBeforeAnyStoreIsWritten() throws IOException {
+        var root = directory.resolve("kept");
+        var output = Files.createDirectories(directory.resolve("reports"));
+        try {
+            Files.createSymbolicLink(output.resolve("html-kc-v1-manifest.tsv"), root.resolve("manifest.json"));
+        } catch (UnsupportedOperationException | IOException e) {
+            assumeTrue(false, "symbolic links are not supported here: " + e);
+        }
+        var options = HtmlKnowledgeIngestionRunner.Options.parse(new String[] {
+                "--store-root", root.toString(), "--output-dir", output.toString()});
+
+        var failure = assertThrows(IllegalStateException.class, () -> HtmlKnowledgeIngestionRunner.run(options));
+
+        assertTrue(failure.getMessage().contains("symbolic link"), failure.getMessage());
+        assertFalse(Files.exists(root));
+    }
+
+    @Test
     void missingRequestedSnapshotFailsBeforeAnyStoreIsWritten() {
         var root = directory.resolve("kept");
         var options = HtmlKnowledgeIngestionRunner.Options.parse(new String[] {

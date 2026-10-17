@@ -13,7 +13,7 @@ Give every `<img>` an `alt` attribute. It provides a text replacement that scree
 
 ## Width and height on images
 
-Writing the intrinsic `width` and `height` attributes on an `<img>` lets the browser reserve the right amount of space before the file arrives, which prevents the page layout from jumping while images load.
+Writing the image's `width` and `height` attributes on an `<img>` lets modern browsers reserve space with the right aspect ratio before the file arrives, which reduces layout shifts while images load.
 
 ## Figures and captions
 

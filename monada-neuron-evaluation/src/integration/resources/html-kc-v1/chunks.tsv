@@ -2,35 +2,35 @@
 # Must equal canonical chunking (CorpusChunker); regenerate together with any text change and bump the corpus version.
 chunkId	documentId	topic	section	start	end	sha256	conflictPair	conflictRole
 chk:forms#00	doc:forms	forms	The form element	0	182	7c0e080d72b7c80eb5b7784a8de94569b6c2918acf968b4ab009d3e1939ef4da	-	-
-chk:forms#01	doc:forms	forms	GET versus POST submission	184	501	a76751f43c42a9d1d4b6d860bb743089cf404a5ed49136bb38a9665f96647675	-	-
-chk:forms#02	doc:forms	forms	Labels for inputs	503	867	1e5b20e6ec23af102ab88060d508a8cd1ea8c1dfe71df3baf7c7ffaf8b18ad7b	-	-
-chk:forms#03	doc:forms	forms	Input types and validation	869	1446	bdb722de4f7c9b5ca68406baddad7741b5dadf00a6e2353fd0d7fe35b8cf9339	-	-
-chk:forms#04	doc:forms	forms	Button types	1448	1663	11f5f0288bb212ee51862f9157ccedf578b52ec5fca52577dba1b16ca82401f1	-	-
-chk:forms#05	doc:forms	forms	Grouping controls	1665	1885	ba6df42b7fc527155db456cf16d55359a6773d3be1087033bb5140202410787e	-	-
-chk:headings-and-structure#00	doc:headings-and-structure	headings	Heading levels	0	302	957ddd94055d6872f19c9d2794c66bf36e867ac04bf58828d6c3b4bca608418a	-	-
-chk:headings-and-structure#01	doc:headings-and-structure	headings	One main heading and no skipped levels	304	661	c902d4a406b3ee8a48d1947d03cc58a00dab0c2c48b65c737d006a1b41840f34	-	-
-chk:headings-and-structure#02	doc:headings-and-structure	semantics	Landmark elements	663	1034	6d3a9f5d409229a60ca5f4b89cb8d890a7b18d7f8ea6a24b9a20a3298d5cda89	-	-
-chk:headings-and-structure#03	doc:headings-and-structure	semantics	Article versus section	1036	1323	2e58d00be787cf5defa706aee3ac65a2040022b49307225e2183dd3fa92d5adc	-	-
-chk:headings-and-structure#04	doc:headings-and-structure	structure	Grouping with div versus embedding with iframe	1325	1753	7d31635f5e6a68ddaa105e5f388074f8a5ce34bbeb88802426142855726394b8	-	-
+chk:forms#01	doc:forms	forms	GET versus POST submission	184	592	5b4925a926f76a59d5adcc4479d54871d20bba7084a8a085989bc121c787bef0	-	-
+chk:forms#02	doc:forms	forms	Labels for inputs	594	1038	13da9e04c8407d48f272f3f5888f3ae34e39b1cd48160c4a8d492f26daf7ea07	-	-
+chk:forms#03	doc:forms	forms	Input types and validation	1040	1630	5d436c99c1f38849b0cfa9c6614cb125317c03083b26dbd76103c1b10efca0be	-	-
+chk:forms#04	doc:forms	forms	Button types	1632	1960	f56bfdd8c30566c39eb5a2600f058106ec88ccaac702033262e0b4be38354e73	-	-
+chk:forms#05	doc:forms	forms	Grouping controls	1962	2196	eeef9b042d3ba7a708ad7be28f035f5816b3bf93a227b80a0ad2d69196dccb99	-	-
+chk:headings-and-structure#00	doc:headings-and-structure	headings	Heading levels	0	273	b36f21263239d58f3e6536e03d6ad2e0d6f13d571a06586e534765d7bbf65179	-	-
+chk:headings-and-structure#01	doc:headings-and-structure	headings	One main heading and no skipped levels	275	632	c902d4a406b3ee8a48d1947d03cc58a00dab0c2c48b65c737d006a1b41840f34	-	-
+chk:headings-and-structure#02	doc:headings-and-structure	semantics	Landmark elements	634	1124	e7874577169615e68a80ec1e984fd548b6b292c256d222431327fd97ddc3f9b5	-	-
+chk:headings-and-structure#03	doc:headings-and-structure	semantics	Article versus section	1126	1413	2e58d00be787cf5defa706aee3ac65a2040022b49307225e2183dd3fa92d5adc	-	-
+chk:headings-and-structure#04	doc:headings-and-structure	structure	Grouping with div versus embedding with iframe	1415	1879	9b9574471f55180fabdda9a85ed99101cb57df2ac88658fb6b6fcf2f59356f40	-	-
 chk:images-and-media#00	doc:images-and-media	media	The image element	0	168	96d9cabda3223966129a9718e0662aea79e5ceb6ed18b4c63459c50f70243404	-	-
 chk:images-and-media#01	doc:images-and-media	media	Alternative text for images	170	893	6612053dc2adacba215e54f1cd3aba212711ce08be1ed9097d5d30f72eba437f	conflict:img-alt	CURATED
-chk:images-and-media#02	doc:images-and-media	media	Width and height on images	895	1132	333f30927c0e66dd2925040db6431773d3fde4f8ebff78a57a8c5eb34ed942c6	-	-
-chk:images-and-media#03	doc:images-and-media	media	Figures and captions	1134	1412	8c232f2c6a3fbf7f1bf29a23a07b92c8c88feea317b32ca8925de9b9ee04574a	-	-
-chk:images-and-media#04	doc:images-and-media	media	Video and audio	1414	1650	107287f9817aaf7086bfd11152a82a3c8349eb7150545f7a9322dd023818783b	-	-
+chk:images-and-media#02	doc:images-and-media	media	Width and height on images	895	1126	cf7cbc12efab0a266806d877d33138e25d879f9b9c07f390d9e314d1c1881e9b	-	-
+chk:images-and-media#03	doc:images-and-media	media	Figures and captions	1128	1406	8c232f2c6a3fbf7f1bf29a23a07b92c8c88feea317b32ca8925de9b9ee04574a	-	-
+chk:images-and-media#04	doc:images-and-media	media	Video and audio	1408	1644	107287f9817aaf7086bfd11152a82a3c8349eb7150545f7a9322dd023818783b	-	-
 chk:legacy-notes#00	doc:legacy-notes	media	Image descriptions in old tutorials	0	327	647b73b17c79ec8218480ec76c43c6fa20cc77f2528862131a05ab32c9dfa42d	conflict:img-alt	CONTRADICTING
 chk:legacy-notes#01	doc:legacy-notes	legacy	Presentational elements	329	575	3512eb84972777b36784cdfdababe66dd48c7c00e2ee4ce6b6ee9c361e4dac36	-	-
 chk:links#00	doc:links	links	The anchor element	0	267	d30c5528292bbb1aefe0a0b5b9e36d9e02502a7ffe7293757d77b35d4d0f1dda	-	-
-chk:links#01	doc:links	links	Absolute and relative URLs	269	600	b9a6c65f3f6d561586237171b8ae481ab9dd75ed75afef1164053ddcc4ceaf02	-	-
-chk:links#02	doc:links	links	Linking to a fragment	602	865	10666b02c92f68a501aaca6b3f44260f3626ed54dafacc0fa72e2590bc61975d	-	-
-chk:links#03	doc:links	links	Opening a new tab safely	867	1177	e5e6dc22b5fe2b1e858665e1dab0bc70754a6e1aaa6aab58fd842b4777206684	-	-
-chk:links#04	doc:links	links	Email and download links	1179	1505	2f4163f0d83b6efef920c197e900bceab0774d02c2a540a8429358583675bb86	-	-
+chk:links#01	doc:links	links	Absolute and relative URLs	269	745	def07140691381690f69176f6d193dce69dd0a081d397c5ae53eb8e9d248da3a	-	-
+chk:links#02	doc:links	links	Linking to a fragment	747	1010	10666b02c92f68a501aaca6b3f44260f3626ed54dafacc0fa72e2590bc61975d	-	-
+chk:links#03	doc:links	links	Opening a new tab safely	1012	1322	e5e6dc22b5fe2b1e858665e1dab0bc70754a6e1aaa6aab58fd842b4777206684	-	-
+chk:links#04	doc:links	links	Email and download links	1324	1669	a80996ccc0e834ab70cb30aef7c26a6a2fa3045857311030597a9355153cd7b6	-	-
 chk:lists-and-text-semantics#00	doc:lists-and-text-semantics	lists	Ordered versus unordered lists	0	313	1231437c7edfaa4d1235b6ab6dc0cec2ec607c27849fb92c32a64648c2e64ee6	-	-
 chk:lists-and-text-semantics#01	doc:lists-and-text-semantics	lists	Numbering an ordered list	315	550	daf8583bc5062392cd8761eeff07ee5938b798cf3f6e4db2cff7ab896dbc4e48	-	-
-chk:lists-and-text-semantics#02	doc:lists-and-text-semantics	lists	Description lists	552	760	109db178c3007cde7d0eba0f509b52121ad84684f13bfea687e863ec15492bcb	-	-
-chk:lists-and-text-semantics#03	doc:lists-and-text-semantics	text-semantics	Strong versus b	762	1054	65982ca85807ce341e78b27f53650d6a083dcf42c36954899a632690fecba983	-	-
-chk:lists-and-text-semantics#04	doc:lists-and-text-semantics	text-semantics	Emphasis versus i	1056	1326	66a929347fce47aa68ddb0db56d42b912c7f3cd1b39d6819eb9eca078f0040ec	-	-
-chk:lists-and-text-semantics#05	doc:lists-and-text-semantics	text-semantics	Code and preformatted text	1328	1602	e492ace14af1aa71617600e6d36ff1abebf19abe0a08ff3b98b4613a6072dbce	-	-
+chk:lists-and-text-semantics#02	doc:lists-and-text-semantics	lists	Description lists	552	826	f8f84dd9cad12f1b62568726f56c669918ef97b9b68f57a7b0ec1630f44abe28	-	-
+chk:lists-and-text-semantics#03	doc:lists-and-text-semantics	text-semantics	Strong versus b	828	1120	65982ca85807ce341e78b27f53650d6a083dcf42c36954899a632690fecba983	-	-
+chk:lists-and-text-semantics#04	doc:lists-and-text-semantics	text-semantics	Emphasis versus i	1122	1392	66a929347fce47aa68ddb0db56d42b912c7f3cd1b39d6819eb9eca078f0040ec	-	-
+chk:lists-and-text-semantics#05	doc:lists-and-text-semantics	text-semantics	Code and preformatted text	1394	1804	f2efd4110d72ee68f3fec181136862ae912ba8b2070d5203ac4862f972e0a10a	-	-
 chk:scripts-and-embedding#00	doc:scripts-and-embedding	scripts	Inline versus external scripts	0	418	ab4e2d435dcb7c0a6472bcba676ab8114deda83c4d79b44614c644547af76ac8	-	-
-chk:scripts-and-embedding#01	doc:scripts-and-embedding	scripts	Defer versus async	420	789	3530083ec9e0bd9f93afd07e3cc73b0904778965e01e322249937e2954867d36	-	-
-chk:scripts-and-embedding#02	doc:scripts-and-embedding	scripts	Scripts and Content Security Policy	791	1157	96cb5526ac552a89739049214c197e068a0a343a5a9ce6c968b27921bd27e284	-	-
-chk:scripts-and-embedding#03	doc:scripts-and-embedding	embedding	Sandboxing an iframe	1159	1420	2d1524e20c2dd9d6e5023eae6e5f8fc181d860b04e0d7347a33afc648e4ae07d	-	-
+chk:scripts-and-embedding#01	doc:scripts-and-embedding	scripts	Defer versus async	420	879	b598073ddafb75a15fa154f8b18d8099b93ae747c105fa638c78b5d52104c685	-	-
+chk:scripts-and-embedding#02	doc:scripts-and-embedding	scripts	Scripts and Content Security Policy	881	1427	c424034de61843aabb997e1ca3c82d6384828d9b78cfc87d9e3904a6883a2dfe	-	-
+chk:scripts-and-embedding#03	doc:scripts-and-embedding	embedding	Sandboxing an iframe	1429	1690	2d1524e20c2dd9d6e5023eae6e5f8fc181d860b04e0d7347a33afc648e4ae07d	-	-

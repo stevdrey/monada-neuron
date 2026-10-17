@@ -8,7 +8,7 @@ A hyperlink is written with the `<a>` element. Its `href` attribute holds the de
 
 ## Absolute and relative URLs
 
-An absolute URL contains the scheme and host, such as `https://example.com/about.html`, and points to the same place from any page. A relative URL such as `projects/index.html` is resolved against the location of the current document, so it keeps working when a whole site is moved to another domain.
+An absolute URL starts with a scheme, and for web addresses also names the host, such as `https://example.com/about.html`; it points to the same place from any page. A relative URL such as `projects/index.html` is resolved against the document's base URL, which is the document's own address unless a `<base href>` element sets another one. Without such an absolute base, relative links keep working when a whole site is moved to another domain.
 
 ## Linking to a fragment
 
@@ -20,4 +20,4 @@ Setting `target="_blank"` on a link opens the destination in a new tab or window
 
 ## Email and download links
 
-A `mailto:` URL such as `href="mailto:team@example.com"` opens the visitor's email program instead of a web page. The `download` attribute on a link hints that the browser should save the linked resource as a file instead of navigating to it; browsers generally honor it only for same-origin URLs.
+A `mailto:` URL such as `href="mailto:team@example.com"` usually opens the visitor's configured email program instead of a web page. The `download` attribute on a link hints that the browser should save the linked resource as a file instead of navigating to it; browsers generally honor it only for same-origin URLs.

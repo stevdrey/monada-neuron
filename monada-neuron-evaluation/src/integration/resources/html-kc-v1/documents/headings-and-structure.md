@@ -1,6 +1,6 @@
 ## Heading levels
 
-HTML has six heading elements, from `<h1>` to `<h6>`. The number is the rank of the heading in the document outline, not a font size: `<h1>` is the most important heading and `<h6>` the least important. Change the visual size with CSS instead of picking a heading level for its look.
+HTML has six heading elements, from `<h1>` to `<h6>`. The number is the heading's rank, not a font size: `<h1>` is the most important heading and `<h6>` the least important. Change the visual size with CSS instead of picking a heading level for its look.
 
 ## One main heading and no skipped levels
 
@@ -8,7 +8,7 @@ A page normally has a single `<h1>` that names its main topic. Below it, heading
 
 ## Landmark elements
 
-The elements `<header>`, `<nav>`, `<main>` and `<footer>` mark the large regions of a page. A document should contain only one visible `<main>` element, and it holds the content that is unique to that page.
+The elements `<header>`, `<nav>`, `<main>` and `<footer>` mark the large regions of a page; a `<header>` or `<footer>` nested inside an `<article>` or `<section>` belongs to that part instead of the whole page. A document should contain only one visible `<main>` element, and it holds the content that is unique to that page.
 
 ```
 <body>
@@ -25,4 +25,4 @@ Use `<article>` for a self-contained composition that would still make sense if 
 
 ## Grouping with div versus embedding with iframe
 
-A `<div>` is a generic container with no meaning of its own; it only groups elements of the current document, usually for styling or scripting. An `<iframe>` does something different: it embeds a separate, independently loaded HTML document inside the page, with its own browsing context. Choose `<div>` to group content and `<iframe>` only when another document must be shown.
+A `<div>` is a generic container with no meaning of its own; it only groups elements of the current document, usually for styling or scripting. An `<iframe>` does something different: it embeds a separate HTML document, loaded from its `src` URL or given inline with `srcdoc`, inside the page, with its own browsing context. Choose `<div>` to group content and `<iframe>` only when another document must be shown.

@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class HtmlKnowledgeCorpusTest {
 
@@ -25,7 +26,7 @@ class HtmlKnowledgeCorpusTest {
      * Frozen fingerprint of {@code html-kc-v1}. Any change to text, chunking or labels changes it and must come with
      * a new corpus version, never with an edited constant.
      */
-    private static final String HTML_KC_V1_HASH = "40149cf860438fe50b1ebf54cf64a78e96375df6eaf1735664e864ecbbe950a3";
+    private static final String HTML_KC_V1_HASH = "1934ef6f127d37788bcb76e6a8e2c8cde7008e0ad9d0062277f65aa4861739a3";
 
     private static final List<String> DOCUMENT_FILES = List.of(
             "forms.md", "headings-and-structure.md", "images-and-media.md", "legacy-notes.md", "links.md",
@@ -96,6 +97,30 @@ class HtmlKnowledgeCorpusTest {
         copyBundledCorpus();
 
         assertEquals(HTML_KC_V1_HASH, HtmlKnowledgeCorpus.load(directory).corpusHash());
+    }
+
+    @Test
+    void resolvesFilesInsideARelativeRootAndRejectsEscapes() throws IOException {
+        assertEquals(Path.of("").toAbsolutePath().resolve("documents.tsv"),
+                HtmlKnowledgeCorpus.resolveInside(Path.of("."), "documents.tsv"));
+        assertEquals(Path.of("").toAbsolutePath().resolve("documents.tsv"),
+                HtmlKnowledgeCorpus.resolveInside(Path.of("src/.."), "documents.tsv"));
+        assertMessage("escapes", () -> HtmlKnowledgeCorpus.resolveInside(directory, "../outside.md"));
+
+        copyBundledCorpus();
+        var outside = Files.writeString(directory.getParent().resolve(directory.getFileName() + "-outside.md"),
+                Files.readString(directory.resolve("documents/forms.md")));
+        try {
+            Files.delete(directory.resolve("documents/forms.md"));
+            try {
+                Files.createSymbolicLink(directory.resolve("documents/forms.md"), outside);
+            } catch (UnsupportedOperationException | IOException e) {
+                assumeTrue(false, "symbolic links are not supported here: " + e);
+            }
+            assertMessage("through a link", () -> HtmlKnowledgeCorpus.load(directory));
+        } finally {
+            Files.deleteIfExists(outside);
+        }
     }
 
     @Test

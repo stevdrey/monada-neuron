@@ -525,14 +525,36 @@ public final class HtmlKnowledgeCorpus {
         }
     }
 
+    /**
+     * Resolves {@code name} inside the corpus directory {@code root}. The root is made absolute first, so a relative
+     * root such as {@code .} works. The file must lie inside the root lexically and, when it exists, after resolving
+     * symbolic links, so neither {@code ..} nor a link can read outside the corpus directory.
+     *
+     * @throws CorpusValidationException when the file escapes the root
+     */
+    static Path resolveInside(Path root, String name) {
+        var base = root.toAbsolutePath().normalize();
+        var file = base.resolve(name).normalize();
+        if (!file.startsWith(base) || file.equals(base)) {
+            throw new CorpusValidationException(name, "path escapes the corpus directory");
+        }
+        if (Files.exists(file)) {
+            try {
+                if (!file.toRealPath().startsWith(base.toRealPath())) {
+                    throw new CorpusValidationException(name, "path escapes the corpus directory through a link");
+                }
+            } catch (IOException e) {
+                throw new CorpusValidationException(file.toString(), "cannot resolve corpus file", e);
+            }
+        }
+        return file;
+    }
+
     private record DirectoryFiles(Path root) implements CorpusFiles {
 
         @Override
         public byte[] read(String name, int maxBytes) {
-            var file = root.resolve(name).normalize();
-            if (!file.startsWith(root.normalize())) {
-                throw new CorpusValidationException(name, "path escapes the corpus directory");
-            }
+            var file = resolveInside(root, name);
             try (var input = Files.newInputStream(file)) {
                 return readBounded(input, name, maxBytes);
             } catch (NoSuchFileException e) {
