@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -56,17 +57,29 @@ public final class HtmlKnowledgeCorpus {
     private static final Pattern TOPIC = Pattern.compile("[a-z0-9]+(?:-[a-z0-9]+)*");
     private static final Pattern CONFLICT_PAIR = Pattern.compile("conflict:[a-z0-9]+(?:-[a-z0-9]+)*");
 
+    /** Whether the corpus text, including its headings, may appear in published outputs. */
+    public enum TextPolicy {
+
+        /** Originally authored, Apache-2.0 text: labels may show section headings. */
+        PUBLISHABLE,
+
+        /** Third-party text (for example a CC BY-SA snapshot): outputs carry ids, spans and digests only. */
+        REDACTED
+    }
+
     private final String version;
     private final CorpusBounds bounds;
+    private final TextPolicy textPolicy;
     private final List<CorpusDocument> documents;
     private final List<CorpusChunk> chunks;
     private final Map<String, CorpusChunk> chunksById;
     private final String corpusHash;
 
-    private HtmlKnowledgeCorpus(String version, CorpusBounds bounds, List<CorpusDocument> documents,
-            List<CorpusChunk> chunks) {
+    private HtmlKnowledgeCorpus(String version, CorpusBounds bounds, TextPolicy textPolicy,
+            List<CorpusDocument> documents, List<CorpusChunk> chunks) {
         this.version = version;
         this.bounds = bounds;
+        this.textPolicy = textPolicy;
         this.documents = documents.stream().sorted(Comparator.comparing(CorpusDocument::documentId)).toList();
         this.chunks = chunks.stream().sorted(Comparator.comparing(CorpusChunk::chunkId)).toList();
         var index = new LinkedHashMap<String, CorpusChunk>();
@@ -91,12 +104,13 @@ public final class HtmlKnowledgeCorpus {
      *
      * @throws CorpusValidationException when any corpus invariant is violated
      */
-    static HtmlKnowledgeCorpus of(String version, CorpusBounds bounds, List<CorpusDocument> documents,
-            List<CorpusChunk> chunks) {
+    static HtmlKnowledgeCorpus of(String version, CorpusBounds bounds, TextPolicy textPolicy,
+            List<CorpusDocument> documents, List<CorpusChunk> chunks) {
         Objects.requireNonNull(version, "version must not be null");
         Objects.requireNonNull(bounds, "bounds must not be null");
+        Objects.requireNonNull(textPolicy, "textPolicy must not be null");
         validate(version, bounds, List.copyOf(documents), List.copyOf(chunks));
-        return new HtmlKnowledgeCorpus(version, bounds, documents, chunks);
+        return new HtmlKnowledgeCorpus(version, bounds, textPolicy, documents, chunks);
     }
 
     /** Returns the corpus version. */
@@ -107,6 +121,11 @@ public final class HtmlKnowledgeCorpus {
     /** Returns the bounds the corpus was validated against. */
     public CorpusBounds bounds() {
         return bounds;
+    }
+
+    /** Returns whether the corpus text may appear in published outputs. */
+    public TextPolicy textPolicy() {
+        return textPolicy;
     }
 
     /** Returns the documents in {@code documentId} order. */
@@ -131,16 +150,23 @@ public final class HtmlKnowledgeCorpus {
 
     /**
      * Renders the inspectable chunk labels and provenance as TSV, in {@code chunkId} order. Chunk text is never
-     * included, so the rendering of an external corpus carries no third-party prose.
+     * included. Under {@link TextPolicy#REDACTED} the {@code section} heading is replaced by {@code sha256:<hex>} of
+     * its UTF-8 bytes, so the rendering of an external corpus carries no third-party prose but stays comparable.
      */
     public String labelsTsv() {
         var sb = new StringBuilder();
         sb.append("# corpusVersion: ").append(version).append('\n');
         sb.append("# corpusHash: ").append(corpusHash).append('\n');
+        if (textPolicy == TextPolicy.REDACTED) {
+            sb.append("# Third-party text: section is redacted to sha256:<hex> of the heading; no prose is included.\n");
+        }
         sb.append("chunkId\tdocumentId\ttopic\tsection\tsource\tlicense\tattribution\tstart\tend\tsha256"
                 + "\tdocumentSha256\tconflictPair\tconflictRole\n");
         for (var chunk : chunks) {
-            sb.append(String.join("\t", chunk.chunkId(), chunk.documentId(), chunk.topic(), chunk.section(),
+            var section = textPolicy == TextPolicy.REDACTED
+                    ? "sha256:" + CorpusDigests.sha256(chunk.section())
+                    : chunk.section();
+            sb.append(String.join("\t", chunk.chunkId(), chunk.documentId(), chunk.topic(), section,
                     chunk.source(), chunk.license(), chunk.attribution(), Integer.toString(chunk.start()),
                     Integer.toString(chunk.end()), chunk.sha256(), chunk.documentSha256(),
                     chunk.conflict().map(Conflict::pairId).orElse(ABSENT),
@@ -208,7 +234,7 @@ public final class HtmlKnowledgeCorpus {
                 chunks.add(declaredChunk(document, spans.get(i), rows.get(i), i));
             }
         }
-        return of(VERSION, bounds, documents, chunks);
+        return of(VERSION, bounds, TextPolicy.PUBLISHABLE, documents, chunks);
     }
 
     private static CorpusChunk declaredChunk(CorpusDocument document, CorpusChunker.Span span, Row row, int ordinal) {
@@ -252,7 +278,7 @@ public final class HtmlKnowledgeCorpus {
 
     /** Returns the canonical chunk id of the {@code ordinal}-th chunk of document {@code slug}. */
     static String chunkId(String slug, int ordinal) {
-        return String.format("chk:%s#%02d", slug, ordinal);
+        return String.format(Locale.ROOT, "chk:%s#%02d", slug, ordinal);
     }
 
     private static void validate(String version, CorpusBounds bounds, List<CorpusDocument> documents,

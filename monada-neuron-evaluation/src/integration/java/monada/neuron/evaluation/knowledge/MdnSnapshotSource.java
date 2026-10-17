@@ -16,7 +16,8 @@ import java.util.regex.Pattern;
  * <p>Nothing is downloaded: the caller names the file, the {@code mdn/content} commit it was taken from, and the
  * SHA-256 of its raw bytes. A missing file, a different digest or an invalid revision fails explicitly. The YAML
  * front matter is removed, then the same normalization, canonical chunking and bounds as the authored corpus apply
- * (with the single-document {@link CorpusBounds#EXTERNAL} limits). No HTML, macro or link is parsed or rewritten.
+ * (with the single-document {@link CorpusBounds#EXTERNAL} limits) and the text policy
+ * {@link HtmlKnowledgeCorpus.TextPolicy#REDACTED}. No HTML, macro or link is parsed or rewritten.
  *
  * <p>MDN prose is licensed CC BY-SA 2.5 by Mozilla Contributors. Every chunk carries that license, the attribution,
  * the source URL and the pinned revision; the modification (normalized and chunked) is stated in the attribution.
@@ -94,7 +95,8 @@ public final class MdnSnapshotSource {
                     span.section(), source, LICENSE, ATTRIBUTION, span.start(), span.end(),
                     CorpusDigests.sha256(span.text()), document.documentSha256(), Optional.empty(), span.text()));
         }
-        return HtmlKnowledgeCorpus.of(VERSION, bounds, List.of(document), chunks);
+        return HtmlKnowledgeCorpus.of(VERSION, bounds, HtmlKnowledgeCorpus.TextPolicy.REDACTED, List.of(document),
+                chunks);
     }
 
     /** Removes a leading YAML front matter block delimited by {@code ---} lines, then re-normalizes. */

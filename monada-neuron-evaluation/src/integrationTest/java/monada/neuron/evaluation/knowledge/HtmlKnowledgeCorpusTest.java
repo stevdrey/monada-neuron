@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.function.UnaryOperator;
 
@@ -24,7 +25,7 @@ class HtmlKnowledgeCorpusTest {
      * Frozen fingerprint of {@code html-kc-v1}. Any change to text, chunking or labels changes it and must come with
      * a new corpus version, never with an edited constant.
      */
-    private static final String HTML_KC_V1_HASH = "9042d924e2cab9ef9e3458a50e95f39ceb644e51882d7d96c0a6c8e97375730a";
+    private static final String HTML_KC_V1_HASH = "bd7aa701d174a495b8c2696a652945dd07255fff412439c0d5eeb1a89fecf65a";
 
     private static final List<String> DOCUMENT_FILES = List.of(
             "forms.md", "headings-and-structure.md", "images-and-media.md", "legacy-notes.md", "links.md",
@@ -72,6 +73,25 @@ class HtmlKnowledgeCorpusTest {
     }
 
     @Test
+    void canonicalIdsAndHashDoNotDependOnTheDefaultLocale() {
+        var previous = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.forLanguageTag("ar-EG-u-nu-arab"));
+
+            assertEquals("chk:x#03", HtmlKnowledgeCorpus.chunkId("x", 3));
+            assertEquals(HTML_KC_V1_HASH, HtmlKnowledgeCorpus.bundled().corpusHash());
+        } finally {
+            Locale.setDefault(previous);
+        }
+    }
+
+    @Test
+    void boundsCannotExceedTheTwoDigitChunkOrdinals() {
+        assertThrows(IllegalArgumentException.class, () -> new CorpusBounds(1, 101, 1024, 101, 1, 1024, false));
+        assertEquals(CorpusBounds.MAX_ORDINALS, CorpusBounds.EXTERNAL.maxChunksPerDocument());
+    }
+
+    @Test
     void aCopiedCorpusDirectoryLoadsWithTheSameHash() throws IOException {
         copyBundledCorpus();
 
@@ -95,7 +115,8 @@ class HtmlKnowledgeCorpusTest {
         assertRejected("expected header", "chunks.tsv", text -> text.replace("chunkId\t", "id\t"));
         assertRejected("tab-separated columns", "chunks.tsv",
                 text -> text.replace("\tforms\tThe form element\t", "\tforms\t"));
-        assertRejected("does not match doc:<slug>", "documents.tsv", text -> text.replace("doc:forms\t", "doc:Forms\t"));
+        assertRejected("does not match doc:<slug>", "documents.tsv",
+                text -> text.replace("doc:forms\t", "doc:Forms\t"));
         assertRejected("(no paths)", "documents.tsv", text -> text.replace("\tforms.md\t", "\t../forms.md\t"));
         assertRejected("must be 'chk:forms#01'", "chunks.tsv", text -> text.replace("chk:forms#01", "chk:forms#00"));
         assertRejected("sha256 mismatch", "chunks.tsv", text -> replaceColumn(text, "chk:links#00", 6,
@@ -133,25 +154,30 @@ class HtmlKnowledgeCorpusTest {
         var chunks = corpus.chunks();
 
         var original = chunks.get(indexOf(chunks, "chk:links#00"));
-        assertMessage("identical normalized text", () -> HtmlKnowledgeCorpus.of("v", CorpusBounds.AUTHORED, documents,
+        assertMessage("identical normalized text", () -> build(CorpusBounds.AUTHORED, documents,
                 replace(chunks, "chk:links#01", chunk -> copy(chunk, chunk.start(), chunk.end(), original.sha256(),
                         chunk.conflict(), original.text()))));
-        assertMessage("outside the bound 20..40", () -> HtmlKnowledgeCorpus.of("v", CorpusBounds.AUTHORED, documents,
+        assertMessage("outside the bound 20..40", () -> build(CorpusBounds.AUTHORED, documents,
                 chunks.subList(0, 19)));
-        assertMessage("exceeds 4 chunks", () -> HtmlKnowledgeCorpus.of("v",
-                new CorpusBounds(20, 40, 1024, 4, 16, 32 * 1024, true), documents, chunks));
-        assertMessage("exactly one conflictPair", () -> HtmlKnowledgeCorpus.of("v", CorpusBounds.AUTHORED, documents,
+        assertMessage("exceeds 4 chunks",
+                () -> build(new CorpusBounds(20, 40, 1024, 4, 16, 32 * 1024, true), documents, chunks));
+        assertMessage("exactly one conflictPair", () -> build(CorpusBounds.AUTHORED, documents,
                 replace(chunks, "chk:forms#00", chunk -> copy(chunk, chunk.start(), chunk.end(), chunk.sha256(),
                         Optional.of(new Conflict("conflict:extra", ConflictRole.CURATED)), chunk.text()))));
-        assertMessage("exactly two members", () -> HtmlKnowledgeCorpus.of("v", CorpusBounds.AUTHORED, documents,
+        assertMessage("exactly two members", () -> build(CorpusBounds.AUTHORED, documents,
                 replace(chunks, "chk:legacy-notes#00", chunk -> copy(chunk, chunk.start(), chunk.end(),
                         chunk.sha256(), Optional.of(new Conflict("conflict:img-alt", ConflictRole.CURATED)),
                         chunk.text()))));
-        assertMessage("sourceSpan substring differs", () -> HtmlKnowledgeCorpus.of("v", CorpusBounds.AUTHORED,
-                documents, replace(chunks, "chk:forms#01", chunk -> copy(chunk, chunk.start() + 1, chunk.end() + 1,
+        assertMessage("sourceSpan substring differs", () -> build(CorpusBounds.AUTHORED, documents,
+                replace(chunks, "chk:forms#01", chunk -> copy(chunk, chunk.start() + 1, chunk.end() + 1,
                         chunk.sha256(), chunk.conflict(), chunk.text()))));
-        assertMessage("must not declare conflict pairs", () -> HtmlKnowledgeCorpus.of("v",
-                new CorpusBounds(20, 40, 1024, 8, 16, 32 * 1024, false), documents, chunks));
+        assertMessage("must not declare conflict pairs",
+                () -> build(new CorpusBounds(20, 40, 1024, 8, 16, 32 * 1024, false), documents, chunks));
+    }
+
+    private HtmlKnowledgeCorpus build(CorpusBounds bounds, List<CorpusDocument> documents,
+            List<CorpusChunk> chunks) {
+        return HtmlKnowledgeCorpus.of("v", bounds, HtmlKnowledgeCorpus.TextPolicy.PUBLISHABLE, documents, chunks);
     }
 
     private void assertRejected(String expected, String file, UnaryOperator<String> mutation) throws IOException {

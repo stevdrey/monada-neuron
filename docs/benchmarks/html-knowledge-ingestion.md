@@ -43,7 +43,7 @@ already holds a store.
 | `html-knowledge-ingestion.json`, `.md` | semantic checks, metadata (versions, `corpusHash`, bounds, chunking policy, licenses, Store manifest fields, commits), environment |
 | `html-kc-v1-chunks.tsv` | every chunk's labels and provenance: `chunkId`, `documentId`, `topic`, `section`, `source`, `license`, `attribution`, `[start, end)` code point span, `sha256`, `documentSha256`, conflict pair and role (no text) |
 | `html-kc-v1-manifest.tsv` | `chunkId → atomId → opaqueReference` for this import (no content hashes) |
-| `html-kc-ext-mdn-v1-*.tsv` | the same two files for a supplied snapshot |
+| `html-kc-ext-mdn-v1-*.tsv` | the same two files for a supplied snapshot, with `section` redacted to `sha256:<hex>`; deleted by a later run without a snapshot |
 
 Semantic checks:
 
@@ -104,7 +104,9 @@ sha256sum ~/src/mdn-content/files/en-us/learn_web_development/getting_started/yo
 ./gradlew :monada-neuron-evaluation:runHtmlKnowledgeIngestion -PbenchmarkArgs="--mdn-snapshot <path to index.md> --mdn-revision <commit> --mdn-sha256 <sha256>"
 ```
 
-The snapshot becomes the separate corpus `html-kc-ext-mdn-v1` in its own root.
+The snapshot becomes the separate corpus `html-kc-ext-mdn-v1` in its own root, with at most 100 chunks (the
+two-digit ordinal range). `--store-root`, `--mdn-store-root` and `--output-dir` must not be equal or nested in each
+other; such a run is rejected with exit status 2 before any Store is opened.
 
 Licensing: MDN prose is licensed **CC BY-SA 2.5** by Mozilla Contributors. Every chunk records:
 
@@ -114,7 +116,9 @@ Licensing: MDN prose is licensed **CC BY-SA 2.5** by Mozilla Contributors. Every
 - the modifications made: front matter removed, normalized and chunked.
 
 Share-alike applies to any adapted text. Never commit the snapshot or any output that contains its text, and do not
-run it in CI, without an explicit licensing review. The outputs of this task contain ids, spans and digests only.
+run it in CI, without an explicit licensing review. The output files of this task contain ids, spans and digests
+only; section headings appear as `sha256:<hex>`. A rejection message on stderr may quote a heading of the snapshot
+(for example an oversize section) and is never written to a file.
 
 When the snapshot options are absent, the report states `external.mdn: unavailable (not supplied)`. When a
 requested snapshot is missing or its digest differs, the run fails before any Store is written.

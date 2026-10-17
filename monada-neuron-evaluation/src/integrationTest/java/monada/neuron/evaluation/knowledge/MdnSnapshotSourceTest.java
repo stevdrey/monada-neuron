@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -60,8 +61,9 @@ class MdnSnapshotSourceTest {
     void rejectsADifferentDigestOrAnInvalidPin() throws IOException {
         var snapshot = write(SYNTHETIC_SNAPSHOT);
 
-        assertTrue(assertThrows(CorpusValidationException.class,
-                () -> source.load(snapshot, REVISION, "0".repeat(64))).getMessage().contains("differs from the pinned"));
+        var mismatch = assertThrows(CorpusValidationException.class,
+                () -> source.load(snapshot, REVISION, "0".repeat(64)));
+        assertTrue(mismatch.getMessage().contains("differs from the pinned"));
         assertThrows(CorpusValidationException.class, () -> source.load(snapshot, "main", sha256(snapshot)));
         assertThrows(CorpusValidationException.class, () -> source.load(snapshot, REVISION, "ABC"));
     }
@@ -92,9 +94,35 @@ class MdnSnapshotSourceTest {
             assertTrue(chunk.source().contains(MdnSnapshotSource.PAGE_URL));
             assertTrue(chunk.source().contains("mdn/content@" + REVISION));
         }
-        assertFalse(corpus.labelsTsv().contains("zebra-marker"));
+        var labels = corpus.labelsTsv();
+        assertEquals(HtmlKnowledgeCorpus.TextPolicy.REDACTED, corpus.textPolicy());
+        assertTrue(labels.contains("sha256:" + CorpusDigests.sha256("Synthetic section one")));
+        for (var line : snapshotLines()) {
+            assertFalse(labels.contains(line), line);
+        }
         var ingested = new HtmlKnowledgeIngestion(corpus).ingest(directory.resolve("store"));
         assertTrue(ingested.allPassed(), ingested.checks().toString());
+    }
+
+    @Test
+    void rejectsASnapshotWithMoreChunksThanTwoDigitOrdinalsByItsBound() throws IOException {
+        var sections = new StringBuilder();
+        for (var i = 0; i <= CorpusBounds.MAX_ORDINALS; i++) {
+            sections.append("## Section ").append(i).append("\n\nBody ").append(i).append(".\n\n");
+        }
+        var snapshot = write(sections.toString());
+
+        var failure = assertThrows(CorpusValidationException.class,
+                () -> source.load(snapshot, REVISION, sha256(snapshot)));
+        assertTrue(failure.getMessage().contains("101 chunks are outside the bound 1..100"), failure.getMessage());
+    }
+
+    /** Returns every non-blank, non-delimiter line of the synthetic snapshot: prose that must never be published. */
+    static List<String> snapshotLines() {
+        return SYNTHETIC_SNAPSHOT.lines().map(String::strip)
+                .filter(line -> !line.isEmpty() && !line.equals("---") && !line.startsWith("```"))
+                .map(line -> line.replaceFirst("^#+ ", ""))
+                .toList();
     }
 
     private Path write(String content) throws IOException {

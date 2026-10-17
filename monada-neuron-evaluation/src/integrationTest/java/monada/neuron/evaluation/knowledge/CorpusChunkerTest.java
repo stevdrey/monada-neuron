@@ -65,11 +65,11 @@ class CorpusChunkerTest {
 
     @Test
     void reportsCodePointOffsetsForNonBmpText() {
-        var document = "## Emoji 😀\n\nSmile 😀 text.\n\n## Next\n\nMore.";
+        var document = "## Emoji \uD83D\uDE00\n\nSmile \uD83D\uDE00 text.\n\n## Next\n\nMore.";
 
         var spans = chunker.chunk(document, "doc");
 
-        assertEquals("Emoji 😀", spans.getFirst().section());
+        assertEquals("Emoji \uD83D\uDE00", spans.getFirst().section());
         var secondStart = document.codePointCount(0, document.indexOf("## Next"));
         assertEquals(secondStart, spans.get(1).start());
         assertSpansMatch(document, spans);

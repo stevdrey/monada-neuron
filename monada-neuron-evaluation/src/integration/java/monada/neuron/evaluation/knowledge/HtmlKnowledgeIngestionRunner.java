@@ -41,6 +41,10 @@ public final class HtmlKnowledgeIngestionRunner {
     /** Core protocol version this experiment implements part of. */
     public static final String PROTOCOL_VERSION = "html-knowledge-protocol-v1";
 
+    /** Every corpus version whose label and manifest files this runner can write. */
+    private static final List<String> KNOWN_CORPUS_VERSIONS =
+            List.of(HtmlKnowledgeCorpus.VERSION, MdnSnapshotSource.VERSION);
+
     private static final String NEURON_VERSION_PROPERTY = "monada.neuron.version";
     private static final String STORE_DIRECTORY_PROPERTY = "monada.resonance.store.dir";
     private static final String USAGE = "Usage: [--output-dir <dir>] [--store-root <dir>]"
@@ -58,10 +62,35 @@ public final class HtmlKnowledgeIngestionRunner {
      */
     public record Options(Path outputDir, Optional<Path> storeRoot, Optional<MdnOptions> mdn) {
 
+        /**
+         * Requires every component and rejects overlapping locations before anything is written: the kept Store
+         * roots must be distinct and not nested in each other, and the output directory must not be or lie inside a
+         * kept Store root. Paths are compared after {@code toAbsolutePath().normalize()}.
+         */
         public Options {
             Objects.requireNonNull(outputDir, "outputDir must not be null");
             Objects.requireNonNull(storeRoot, "storeRoot must not be null");
             Objects.requireNonNull(mdn, "mdn must not be null");
+            var mdnRoot = mdn.flatMap(MdnOptions::storeRoot);
+            if (storeRoot.isPresent() && mdnRoot.isPresent() && overlap(storeRoot.get(), mdnRoot.get())) {
+                throw new IllegalArgumentException("--store-root and --mdn-store-root must be separate,"
+                        + " non-nested directories");
+            }
+            for (var root : Stream.concat(storeRoot.stream(), mdnRoot.stream()).toList()) {
+                if (absolute(outputDir).startsWith(absolute(root))) {
+                    throw new IllegalArgumentException("--output-dir must not be or lie inside a store root: " + root);
+                }
+            }
+        }
+
+        private static boolean overlap(Path first, Path second) {
+            var a = absolute(first);
+            var b = absolute(second);
+            return a.startsWith(b) || b.startsWith(a);
+        }
+
+        private static Path absolute(Path path) {
+            return path.toAbsolutePath().normalize();
         }
 
         /** Parses CLI arguments; throws {@link IllegalArgumentException} on invalid usage. */
@@ -222,16 +251,28 @@ public final class HtmlKnowledgeIngestionRunner {
         return new Outcome(report, authored, external);
     }
 
-    /** Writes the report, label and manifest files and returns their paths. */
+    /**
+     * Writes the report, label and manifest files and returns their paths. Corpus files of a known corpus version
+     * that this run did not produce (for example an external snapshot of an earlier run) are deleted, so the
+     * directory never shows labels or a manifest that the current report does not describe.
+     */
     public static List<Path> write(Outcome outcome, Path outputDir) throws IOException {
         Files.createDirectories(outputDir);
         var written = new ArrayList<Path>();
         written.add(writeFile(outputDir.resolve("html-knowledge-ingestion.json"), outcome.report().toJson()));
         written.add(writeFile(outputDir.resolve("html-knowledge-ingestion.md"), outcome.report().toMarkdown()));
+        var produced = new ArrayList<String>();
         for (var ingested : Stream.concat(Stream.of(outcome.authored()), outcome.external().stream()).toList()) {
             var version = ingested.corpus().version();
+            produced.add(version);
             written.add(writeFile(outputDir.resolve(version + "-chunks.tsv"), ingested.corpus().labelsTsv()));
             written.add(writeFile(outputDir.resolve(version + "-manifest.tsv"), ingested.result().manifest().toTsv()));
+        }
+        for (var version : KNOWN_CORPUS_VERSIONS) {
+            if (!produced.contains(version)) {
+                Files.deleteIfExists(outputDir.resolve(version + "-chunks.tsv"));
+                Files.deleteIfExists(outputDir.resolve(version + "-manifest.tsv"));
+            }
         }
         return written;
     }

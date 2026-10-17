@@ -15,11 +15,11 @@ class CorpusNormalizerTest {
 
     @Test
     void unifiesLineEndingsComposesToNfcAndTrims() {
-        var raw = "  café\r\nline\rend \n\n";
+        var raw = "  cafe\u0301\r\nline\rend \n\n";
 
         var normalized = normalizer.normalize(raw.getBytes(StandardCharsets.UTF_8), "raw");
 
-        assertEquals("café\nline\nend", normalized);
+        assertEquals("caf\u00E9\nline\nend", normalized);
         assertTrue(normalizer.isNormalized(normalized));
         assertFalse(normalizer.isNormalized(raw));
     }
@@ -41,7 +41,7 @@ class CorpusNormalizerTest {
 
     @Test
     void rejectsByteOrderMarkAndControlCharacters() {
-        var bom = "﻿text".getBytes(StandardCharsets.UTF_8);
+        var bom = "\uFEFFtext".getBytes(StandardCharsets.UTF_8);
         var control = "text\u0000more".getBytes(StandardCharsets.UTF_8);
 
         assertTrue(assertThrows(CorpusValidationException.class, () -> normalizer.normalize(bom, "bom"))

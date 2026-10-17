@@ -175,10 +175,11 @@ review, and never run in default CI.
 
 #105 supports exactly one external source: the Markdown file of MDN's *HTML: Creating the content* from a
 user-supplied `mdn/content` checkout, pinned by commit and by the SHA-256 of its raw bytes. It is a separate corpus
-version `html-kc-ext-mdn-v1` with single-document bounds (at most 256 KiB, at most 128 chunks of at most 1 KiB) and no
+version `html-kc-ext-mdn-v1` with single-document bounds (at most 256 KiB, at most 100 chunks, the two-digit ordinal range, of at most 1 KiB) and no
 conflict pair. It is imported into its own root. Every chunk declares `CC-BY-SA-2.5`, the attribution
 "Mozilla Contributors", the page URL with the pinned revision, and the modifications made (front matter removed,
-normalized, chunked). Reports and manifests built from it contain ids, spans and digests, never its text.
+normalized, chunked). Reports, labels and manifests built from it contain ids, spans and digests, never its text:
+its `section` headings are rendered as `sha256:<hex>`.
 
 ## Query set and gold labels (`html-kq-v1`, delivered by #107)
 
@@ -838,4 +839,7 @@ source set, and do not change `./gradlew test` when it is absent.
 - Errata, no version change (issue #105): Store atom ids are content-derived and `remember` is idempotent. The
   earlier text described them as random. No definition, formula, label rule or report field changes; see
   [Errata: Store atom ids](#errata-store-atom-ids). The corpus contract is delivered as `html-kc-v1`, together
-  with the external snapshot corpus `html-kc-ext-mdn-v1`.
+  with the external snapshot corpus `html-kc-ext-mdn-v1`. Before its first release, `html-kc-v1` was revised in
+  review: the curated `alt` chunk now states the narrow omission cases of the HTML Standard, and two other absolute
+  claims (labels, `required`) were qualified. Its version is unchanged because no result was produced with the
+  earlier text.

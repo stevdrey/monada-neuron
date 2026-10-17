@@ -2,9 +2,9 @@
 
 The `<img>` element embeds a picture. It is a void element, so it has no closing tag, and its `src` attribute gives the address of the image file.
 
-## Alternative text is required
+## Alternative text for images
 
-The `alt` attribute is required on every `<img>`. It provides a text replacement that screen readers announce and that browsers show when the image fails to load. An image that is purely decorative still needs the attribute, written empty as `alt=""`, so assistive technology knows to skip it.
+Give every `<img>` an `alt` attribute. It provides a text replacement that screen readers announce and that browsers show when the image fails to load. A purely decorative image gets an empty `alt=""` so assistive technology skips it. The HTML Standard allows leaving `alt` out only in narrow cases where no text alternative is available at all, such as a user-uploaded photo with no description placed inside a `<figure>` with a non-empty `<figcaption>`; a caption or `title` is never an automatic replacement for useful alternative text, and browsers do not generate it from the file name.
 
 ```
 <img src="dinosaur.png" alt="A red Tyrannosaurus skeleton">

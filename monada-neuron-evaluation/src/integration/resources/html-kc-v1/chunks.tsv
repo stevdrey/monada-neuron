@@ -3,22 +3,22 @@
 chunkId	documentId	topic	section	start	end	sha256	conflictPair	conflictRole
 chk:forms#00	doc:forms	forms	The form element	0	182	7c0e080d72b7c80eb5b7784a8de94569b6c2918acf968b4ab009d3e1939ef4da	-	-
 chk:forms#01	doc:forms	forms	GET versus POST submission	184	501	a76751f43c42a9d1d4b6d860bb743089cf404a5ed49136bb38a9665f96647675	-	-
-chk:forms#02	doc:forms	forms	Labels for inputs	503	844	ed6a2905049cc42219ac704c10687590f8abf094bfb681443ae783ea39ce90db	-	-
-chk:forms#03	doc:forms	forms	Input types and validation	846	1163	91e622ad2afe420ca4898e01621b734de03c25a81fa96962f2effb3431a9102f	-	-
-chk:forms#04	doc:forms	forms	Button types	1165	1380	11f5f0288bb212ee51862f9157ccedf578b52ec5fca52577dba1b16ca82401f1	-	-
-chk:forms#05	doc:forms	forms	Grouping controls	1382	1602	ba6df42b7fc527155db456cf16d55359a6773d3be1087033bb5140202410787e	-	-
+chk:forms#02	doc:forms	forms	Labels for inputs	503	851	950f3fda23a9b289e12a966349f09caca49c120eaf183a23fef1bce2ae2db43f	-	-
+chk:forms#03	doc:forms	forms	Input types and validation	853	1225	daa178c5ca55c779cd620c40a3df25e6715419be300fe35d515ed70920c44837	-	-
+chk:forms#04	doc:forms	forms	Button types	1227	1442	11f5f0288bb212ee51862f9157ccedf578b52ec5fca52577dba1b16ca82401f1	-	-
+chk:forms#05	doc:forms	forms	Grouping controls	1444	1664	ba6df42b7fc527155db456cf16d55359a6773d3be1087033bb5140202410787e	-	-
 chk:headings-and-structure#00	doc:headings-and-structure	headings	Heading levels	0	302	957ddd94055d6872f19c9d2794c66bf36e867ac04bf58828d6c3b4bca608418a	-	-
 chk:headings-and-structure#01	doc:headings-and-structure	headings	One main heading and no skipped levels	304	661	c902d4a406b3ee8a48d1947d03cc58a00dab0c2c48b65c737d006a1b41840f34	-	-
 chk:headings-and-structure#02	doc:headings-and-structure	semantics	Landmark elements	663	1034	6d3a9f5d409229a60ca5f4b89cb8d890a7b18d7f8ea6a24b9a20a3298d5cda89	-	-
 chk:headings-and-structure#03	doc:headings-and-structure	semantics	Article versus section	1036	1323	2e58d00be787cf5defa706aee3ac65a2040022b49307225e2183dd3fa92d5adc	-	-
 chk:headings-and-structure#04	doc:headings-and-structure	structure	Grouping with div versus embedding with iframe	1325	1753	7d31635f5e6a68ddaa105e5f388074f8a5ce34bbeb88802426142855726394b8	-	-
 chk:images-and-media#00	doc:images-and-media	media	The image element	0	168	96d9cabda3223966129a9718e0662aea79e5ceb6ed18b4c63459c50f70243404	-	-
-chk:images-and-media#01	doc:images-and-media	media	Alternative text is required	170	596	3491675c68ead1ecf95c6f74bb82732eac6ac397906e0a35c877b29c8c8d5ab1	conflict:img-alt	CURATED
-chk:images-and-media#02	doc:images-and-media	media	Width and height on images	598	835	333f30927c0e66dd2925040db6431773d3fde4f8ebff78a57a8c5eb34ed942c6	-	-
-chk:images-and-media#03	doc:images-and-media	media	Figures and captions	837	1115	8c232f2c6a3fbf7f1bf29a23a07b92c8c88feea317b32ca8925de9b9ee04574a	-	-
-chk:images-and-media#04	doc:images-and-media	media	Video and audio	1117	1353	107287f9817aaf7086bfd11152a82a3c8349eb7150545f7a9322dd023818783b	-	-
-chk:legacy-notes#00	doc:legacy-notes	media	Image descriptions in old tutorials	0	284	fe305fe0ebd2d48795a9048b7b010c8de3d935e7bb6164d0389765aa23a594c3	conflict:img-alt	CONTRADICTING
-chk:legacy-notes#01	doc:legacy-notes	legacy	Presentational elements	286	532	3512eb84972777b36784cdfdababe66dd48c7c00e2ee4ce6b6ee9c361e4dac36	-	-
+chk:images-and-media#01	doc:images-and-media	media	Alternative text for images	170	893	6612053dc2adacba215e54f1cd3aba212711ce08be1ed9097d5d30f72eba437f	conflict:img-alt	CURATED
+chk:images-and-media#02	doc:images-and-media	media	Width and height on images	895	1132	333f30927c0e66dd2925040db6431773d3fde4f8ebff78a57a8c5eb34ed942c6	-	-
+chk:images-and-media#03	doc:images-and-media	media	Figures and captions	1134	1412	8c232f2c6a3fbf7f1bf29a23a07b92c8c88feea317b32ca8925de9b9ee04574a	-	-
+chk:images-and-media#04	doc:images-and-media	media	Video and audio	1414	1650	107287f9817aaf7086bfd11152a82a3c8349eb7150545f7a9322dd023818783b	-	-
+chk:legacy-notes#00	doc:legacy-notes	media	Image descriptions in old tutorials	0	327	647b73b17c79ec8218480ec76c43c6fa20cc77f2528862131a05ab32c9dfa42d	conflict:img-alt	CONTRADICTING
+chk:legacy-notes#01	doc:legacy-notes	legacy	Presentational elements	329	575	3512eb84972777b36784cdfdababe66dd48c7c00e2ee4ce6b6ee9c361e4dac36	-	-
 chk:links#00	doc:links	links	The anchor element	0	267	d30c5528292bbb1aefe0a0b5b9e36d9e02502a7ffe7293757d77b35d4d0f1dda	-	-
 chk:links#01	doc:links	links	Absolute and relative URLs	269	600	b9a6c65f3f6d561586237171b8ae481ab9dd75ed75afef1164053ddcc4ceaf02	-	-
 chk:links#02	doc:links	links	Linking to a fragment	602	865	10666b02c92f68a501aaca6b3f44260f3626ed54dafacc0fa72e2590bc61975d	-	-

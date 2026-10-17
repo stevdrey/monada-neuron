@@ -6,6 +6,8 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -62,10 +64,52 @@ class HtmlKnowledgeIngestionRunnerTest {
 
         assertTrue(outcome.report().allPassed(), outcome.report().toMarkdown());
         assertEquals(6, written.size());
-        assertTrue(outcome.report().checks().stream().anyMatch(check -> check.name().equals("external.mdn.ingestion.readback")));
+        assertTrue(outcome.report().checks().stream()
+                .anyMatch(check -> check.name().equals("external.mdn.ingestion.readback")));
         for (var file : written) {
-            assertFalse(Files.readString(file).contains("zebra-marker"), file.toString());
+            var content = Files.readString(file);
+            for (var line : MdnSnapshotSourceTest.snapshotLines()) {
+                assertFalse(content.contains(line), file + " contains snapshot text: " + line);
+            }
         }
+    }
+
+    @Test
+    void anAuthoredOnlyRunRemovesExternalOutputsOfAnEarlierRun() throws IOException {
+        var snapshot = Files.writeString(directory.resolve("index.md"), MdnSnapshotSourceTest.SYNTHETIC_SNAPSHOT);
+        var output = directory.resolve("reports");
+        HtmlKnowledgeIngestionRunner.write(HtmlKnowledgeIngestionRunner.run(HtmlKnowledgeIngestionRunner.Options.parse(
+                new String[] {"--mdn-snapshot", snapshot.toString(), "--mdn-revision", MdnSnapshotSourceTest.REVISION,
+                        "--mdn-sha256", MdnSnapshotSourceTest.sha256(snapshot)})), output);
+        assertTrue(Files.exists(output.resolve("html-kc-ext-mdn-v1-manifest.tsv")));
+
+        HtmlKnowledgeIngestionRunner.write(
+                HtmlKnowledgeIngestionRunner.run(HtmlKnowledgeIngestionRunner.Options.parse(new String[] {})), output);
+
+        assertFalse(Files.exists(output.resolve("html-kc-ext-mdn-v1-manifest.tsv")));
+        assertFalse(Files.exists(output.resolve("html-kc-ext-mdn-v1-chunks.tsv")));
+        assertTrue(Files.exists(output.resolve("html-kc-v1-manifest.tsv")));
+    }
+
+    @Test
+    void rejectsOverlappingStoreRootsAndAnOutputDirectoryInsideAStoreRoot() {
+        var authored = directory.resolve("roots/authored");
+        var mdnArgs = new String[] {"--mdn-snapshot", "index.md", "--mdn-revision", MdnSnapshotSourceTest.REVISION,
+                "--mdn-sha256", "0".repeat(64)};
+        for (var mdnRoot : List.of(authored, authored.resolve("nested"), directory.resolve("roots"),
+                directory.resolve("roots/./authored"))) {
+            var args = concat(new String[] {
+                    "--store-root", authored.toString(), "--mdn-store-root", mdnRoot.toString()}, mdnArgs);
+            assertThrows(IllegalArgumentException.class, () -> HtmlKnowledgeIngestionRunner.Options.parse(args),
+                    mdnRoot.toString());
+        }
+        assertThrows(IllegalArgumentException.class, () -> HtmlKnowledgeIngestionRunner.Options.parse(new String[] {
+                "--store-root", authored.toString(), "--output-dir", authored.resolve("reports").toString()}));
+        assertThrows(IllegalArgumentException.class, () -> HtmlKnowledgeIngestionRunner.Options.parse(new String[] {
+                "--store-root", authored.toString(), "--output-dir", authored.toString()}));
+        assertFalse(Files.exists(directory.resolve("roots")));
+        HtmlKnowledgeIngestionRunner.Options.parse(concat(new String[] {"--store-root", authored.toString(),
+                "--mdn-store-root", directory.resolve("roots/mdn").toString()}, mdnArgs));
     }
 
     @Test
@@ -89,5 +133,9 @@ class HtmlKnowledgeIngestionRunnerTest {
                 () -> HtmlKnowledgeIngestionRunner.Options.parse(new String[] {"--quick"}));
         assertThrows(IllegalArgumentException.class,
                 () -> HtmlKnowledgeIngestionRunner.Options.parse(new String[] {"--store-root"}));
+    }
+
+    private static String[] concat(String[] first, String[] second) {
+        return Stream.concat(Stream.of(first), Stream.of(second)).toArray(String[]::new);
     }
 }

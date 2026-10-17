@@ -5,6 +5,7 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
+import java.util.Locale;
 
 /**
  * Canonical text normalization of the corpus contract: strict UTF-8, {@code \n} line endings, Unicode NFC and
@@ -27,12 +28,12 @@ public final class CorpusNormalizer {
         var normalized = Normalizer.normalize(unified, Normalizer.Form.NFC).strip();
         for (var i = 0; i < normalized.length(); i++) {
             var c = normalized.charAt(i);
-            if (c == '﻿') {
+            if (c == '\uFEFF') {
                 throw new CorpusValidationException(origin, "byte-order mark or U+FEFF is not allowed");
             }
             if (Character.isISOControl(c) && c != '\n' && c != '\t') {
                 throw new CorpusValidationException(origin,
-                        String.format("control character U+%04X at char %d is not allowed", (int) c, i));
+                        String.format(Locale.ROOT, "control character U+%04X at char %d is not allowed", (int) c, i));
             }
         }
         return normalized;
