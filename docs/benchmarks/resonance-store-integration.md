@@ -12,6 +12,9 @@ memory port cost when the same cycle replays the store's recorded responses with
 
 This is the integration oracle for the Neuron/Resonance Store boundary. It does **not** replace the
 Resonance Store's own protected evaluation datasets and does not change store retrieval or ranking.
+Its fixture codec is a lookup, so it does not measure retrieval quality: judged recall, evidence use and
+grounded answers over an HTML corpus follow the planned
+[HTML knowledge-memory evaluation protocol](../experiments/html-knowledge-v1.md).
 
 ## Running
 
