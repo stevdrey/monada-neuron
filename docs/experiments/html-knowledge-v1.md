@@ -123,7 +123,7 @@ file layout or map order cannot change them and any change to a covered field do
 - Query record fields, in order: `queryId`, `category`, `text`, `answerability`, then `required` and
   `supporting` (each as a count followed by its `chunkId`s sorted by code point), then `evidenceSpans` (count,
   then each span as `chunkId`, `start`, `end`, `sha256`, sorted by `(chunkId, start, end)`), then `keyClaims`
-  (count, then each claim in curated order).
+  (count, then each claim in curated order), then `avoidedTerms` (count, then the terms sorted by code point).
 
 ### External sources
 
@@ -147,6 +147,16 @@ review, and never run in default CI.
 | `supporting` | set of `chunkId` that are relevant but not required; must be empty when `required` is empty |
 | `evidenceSpans` | `(chunkId, start, end, sha256)` for each expected supporting passage; validated against the corpus text at load |
 | `keyClaims` | short, pre-enumerated factual claims a correct answer makes (used by L4 only); a `FALSE_PREMISE` query always includes the claim that refutes its premise |
+| `avoidedTerms` | `paraphrase` queries only: the distinctive terms of the relevant chunks that the query text deliberately avoids; empty for other categories |
+
+Load-time invariants (a violation fails the run before anything is scored):
+
+- `supporting` is empty when `required` is empty, and `required ∩ supporting = ∅`.
+- Every `evidenceSpans` entry names a chunk in `Rel(q)`, matches the corpus text by digest, and every `required`
+  chunk has at least one span. A query with `Rel(q) = ∅` has no spans.
+- Every query with `Rel(q) ≠ ∅` has at least one `keyClaim`; a query with `Rel(q) = ∅` may have none.
+- A `paraphrase` query has a non-empty `avoidedTerms`, and no token (B0 tokenization) of an avoided term occurs
+  among the tokens of its `text`.
 
 The relevant set used by retrieval metrics is `Rel(q) = required ∪ supporting`.
 
@@ -268,8 +278,10 @@ different failure modes.
 - Metrics use the returned order. The scorer records score ties; a tie group that straddles the cutoff `k` is
   flagged as `tieAtCutoff` on the query row. Within a tie group the system's order is used as returned, and
   the run is deterministic, so a repeated run reproduces it.
-- **Source fidelity** (L1): for every returned atom, the SHA-256 of its returned `content` after
-  normalization equals the corpus `sha256` of the mapped chunk. A mismatch or an unmapped atom is a failed
+- **Source fidelity** (L1): for every returned atom, the SHA-256 of the UTF-8 bytes of its returned `content`,
+  **as returned and without normalizing it again**, equals the corpus `sha256` of the mapped chunk. Chunks are
+  stored already normalized, so any change, including a normalization-equivalent one (boundary whitespace,
+  line endings, decomposed Unicode), fails. A mismatch or an unmapped atom is a failed
   semantic check, not a metric.
 - **Reference fidelity** (L2): every Neuron result reference maps through the manifest to a `chunkId`. An
   unmapped reference is a failed semantic check.
@@ -373,6 +385,13 @@ evidence sets are never united or intersected.
 
 For each emitted claim the judge records `supported` (at least one of its citations passes citation fidelity and
 its cited text entails the claim) and `contradicted` (the claim contradicts the curated evidence of the query).
+A `keyClaim` is **matched** by an emitted, supported claim. The deterministic matcher proposes a match when
+every token (B0 tokenization) of the `keyClaim` occurs in the claim; claims and `keyClaims` are paired one-to-one
+by a maximum matching, so one claim never matches two `keyClaims`. A human reviewer then examines every proposed
+match and every supported claim left unmatched, and may confirm, add or remove a match. The recorded match is
+the reviewer's verdict when one exists and the matcher's proposal otherwise. The report gives both the
+matcher-only and the final counts, plus the number of reviewer overrides, so the two are never conflated.
+
 Per answer the judge also records the flags `anyUnsupportedClaim`, `anyContradictedClaim`, `premiseAccepted`
 (`FALSE_PREMISE` queries only; the answer treats the premise as true), `premiseCorrected` (`FALSE_PREMISE`
 queries only; a supported claim matches the query's refutation `keyClaim`) and `conflictDisclosed` (`CONFLICTING`
@@ -396,7 +415,7 @@ Each answer gets exactly one primary status: the **first** row, in order, whose 
 | answer 6 | `ANSWERED_UNANSWERABLE` | answerability `NO_ANSWER_IN_CORPUS`, `OUT_OF_DOMAIN` or `BLANK` |
 | answer 7 | `CONFLICT_HIDDEN` | answerability `CONFLICTING` and not `conflictDisclosed` |
 | answer 8 | `CONFLICT_SURFACED` | answerability `CONFLICTING` and `conflictDisclosed` |
-| answer 9 | `SUPPORTED_CORRECT` | every `keyClaim` matched |
+| answer 9 | `SUPPORTED_CORRECT` | at least one `keyClaim` exists and every `keyClaim` is matched |
 | answer 10 | `SUPPORTED_PARTIAL` | at least one `keyClaim` matched |
 | answer 11 | `SUPPORTED_OFF_TARGET` | otherwise (all claims supported, none matches a `keyClaim`) |
 
@@ -416,8 +435,10 @@ claim is not credited.
 | `KeyClaimCoverage` | matched `keyClaims` / `keyClaims`, over answered (not abstained) queries | abstention, or no `keyClaims` |
 
 `M(q)` is the size of a **maximum one-to-one matching** between the answer's citations and the query's gold
-`evidenceSpans`, where a citation and a gold span can be matched when they name the same `chunkId` and overlap in
-at least one code point. Each citation and each gold span is matched at most once, so duplicate or broad
+`evidenceSpans`. A citation is **eligible** only when it passes citation fidelity (its `chunkId` is in `E(q)` and
+its bounds are valid for that chunk's text); an eligible citation and a gold span can be matched when they name
+the same `chunkId` and overlap in at least one code point. Ineligible citations still count in the
+`CitationPrecision` denominator but can never be matched. Each citation and each gold span is matched at most once, so duplicate or broad
 citations cannot inflate either value; the matching size is unique even when several matchings reach it.
 Aggregates follow the [undefined-value rules](#undefined-values-and-aggregation); abstentions are counted by
 status, not hidden in the claim metrics.
@@ -493,7 +514,9 @@ synonyms or weighting.
 
 `protocolVersion`, `corpusVersion`, `corpusHash`, `queryVersion`, `queryHash`, held-out `queryHash` when one
 exists, `in-sample (tuned)` labels where they apply, `seed`, `k` values, threshold `t`, codec name/version/
-parameters, L3 trace key and memory-stage limit, L4 `evidenceLayer` and `answerK`, reopen mode (`restart` or
+parameters, L3 trace key and memory-stage limit, L4 `evidenceLayer` and `answerK`, the L4 answer component (name, version,
+parameters, and any external model, provider, prompt template and decoding settings; `B3` needs only its name
+and protocol version), matcher-only vs final key-claim counts and reviewer overrides, reopen mode (`restart` or
 `fresh-handle`), run mode/profile, JDK vendor and version, OS and architecture, available processors, GC and
 heap settings, Neuron version and commit (`+dirty` when uncommitted), Store checkout commit, and the persisted
 Store manifest (version, encoder, normalizer, dimensions, vector format).
@@ -512,8 +535,15 @@ affect a semantic verdict or the exit status.
 ## Comparison and regression
 
 A comparison between a baseline configuration and a changed configuration is valid only when `corpusHash`,
-`queryHash` and `protocolVersion` are equal. It reports per-metric deltas and a **per-query diff**: queries
-whose outcome changed, with the old and new retrieved chunk ids.
+`queryHash` and `protocolVersion` are equal (the only exception is a [scaling family](#scaling-family-delivered-by-111)).
+It reports per-metric deltas and a **per-query diff**: queries whose outcome changed, with the old and new
+retrieved chunk ids.
+
+Quality comparisons may deliberately vary the system configuration. **`perf.*` deltas** additionally require
+equal JDK vendor and version, OS and architecture, available processors, GC and heap settings, measurement
+method, per-row sampling (`warmupIterations`, `measurementIterations`, `operationsPerIteration`) and
+`gcTelemetryScope`. When any of these differs, the rows are reported side by side and labeled
+`non-comparable`, never as a latency or allocation change.
 
 A change is flagged as a **regression** (to be explained, fixed or documented, not a numeric gate) when:
 
@@ -525,6 +555,60 @@ A change is flagged as a **regression** (to be explained, fixed or documented, n
 
 Known weak queries (for example paraphrases the lexical encoder misses) are listed as concrete follow-up
 candidates. They are not removed or relabeled to improve a score.
+
+## Relevance feedback (delivered by #110)
+
+**Ownership.** Relevance state belongs to Monada Resonance Store. Feedback is written only through the Store's
+public `MonadaMemory.feedback(query, atomId, signal)` and persists in the Store root. Neuron holds no relevance
+state, and the Neuron adapter stays a read-only `ResonanceMemoryPort`. This is retrieval-rank learning inside the
+Store; it is not Neuron cognition, evaluation adaptation or worker-route adaptation.
+
+**Every other experiment records zero feedback.** `MonadaMemoryOptions.defaults()` enables feedback-aware
+ranking, so a single event changes later rankings. Outside the #110 treatment arm, the harness never calls
+`feedback`, and every L1 to L4 run starts from a freshly imported root.
+
+**Design.**
+
+1. Two independent roots (`control` and `treatment`) are imported from the same corpus with the same options.
+   Before any event, both must return identical results for the whole query set; otherwise the run fails.
+2. The query set is split deterministically (this split is internal to #110 and is not the tuning held-out set of
+   [Thresholds and sweeps](#thresholds-and-sweeps)): within each category, queries are sorted by `queryId` and
+   assigned alternately to `calibration` and `held-out`, starting with `calibration`.
+3. Feedback events are derived **only from calibration queries and their labels**. For each calibration query
+   with `Rel(q) ≠ ∅`, the treatment arm's B1 `Ret_5(q)` is inspected once, before any event is recorded: each relevant returned chunk gets
+   `POSITIVE` and each non-relevant returned chunk gets `NEGATIVE`, keyed by the exact query text, with at most
+   5 events per query. Every event is recorded (query id, query key, `chunkId`, opaque reference, signal) and the
+   event list is hashed with the [dataset-hash](#dataset-hashes) encoding.
+4. Both arms are scored on the **held-out** queries only, at fixed `k` and `t`, through B1 and then B2 (reported
+   as separate paths), and again after a [restart](#run-conditions) of both roots. The restarted treatment arm
+   must reproduce its pre-restart results, which shows that the events persisted.
+
+**Scoring.** The report gives paired per-query results: outcome transitions (control → treatment), deltas of the
+L1/L2 metrics, top-k churn `|Ret_5^T(q) Δ Ret_5^C(q)|`, abstention changes, and every regression. Held-out labels
+and results are never used to choose events, and no event is recorded for a held-out query text. Because the
+Store keys feedback by query, an absence of effect on held-out queries is a valid result and is reported as
+such. Deltas describe this synthetic dataset only and are not generalized.
+
+## Scaling family (delivered by #111)
+
+**Size points.** N ∈ {25, 100, 500} chunks, with `k ∈ {1, 3, 5}`. Each size is its own frozen corpus version
+`html-kc-v1-scale-<N>` with its own `corpusHash`. With `B` the number of chunks in `html-kc-v1`, it contains the
+first `min(N, B)` base chunks in `chunkId` order plus `N − min(N, B)` generated distractors.
+
+**Generated distractors.** A versioned generator (`generatorVersion`, `seed`) expands authored templates into
+chunks with ids `chk:synthetic-<nnnn>#00`, source `generated:<generatorVersion>:<seed>`, license `Apache-2.0`, and
+the same normalization, hashing and size bounds as authored chunks. The templates are reviewed once, under the
+label-integrity rules, as irrelevant to every `html-kq-v1` query; changing a template bumps `generatorVersion`.
+The same generator version and seed always produce the same chunks, in the same order.
+
+**Query workload.** `html-kq-v1`, unchanged, at every size. Gold labels stay valid because generated chunks are
+irrelevant by construction. When `B > N`, queries whose relevant chunks are missing at that point are reported
+as non-comparable for that point and listed by id.
+
+**Cross-size rule.** Results at different sizes form a curve only within one **scaling family**: equal
+`protocolVersion`, `queryHash`, base `corpusHash`, `generatorVersion` and `seed`, with each point's own
+`corpusHash` recorded. Points are reported as a curve by N, never as before/after deltas, and `perf.*` points
+also need the environment equality above.
 
 ## Report shape
 
@@ -564,8 +648,8 @@ issue fixes the exact task name in its own documentation.
 | #107 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeRecall` | L1/L2 judged recall with B0/B1/B2 |
 | #108 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeEvidenceTrace` | L3 evidence use in a cognitive cycle |
 | #109 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeAnswers` | L4 grounded answers with B3 and abstention |
-| #110 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeFeedback` | relevance feedback vs a no-feedback control |
-| #111 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeScaling` | L6 scaling profile |
+| #110 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeFeedback` | [relevance feedback](#relevance-feedback-delivered-by-110) vs a no-feedback control |
+| #111 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeScaling` | L6 profile over the [scaling family](#scaling-family-delivered-by-111) |
 
 All planned tasks require the sibling `../monada-resonance-store` checkout, like the existing integration
 source set, and do not change `./gradlew test` when it is absent.
