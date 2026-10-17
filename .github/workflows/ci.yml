@@ -43,6 +43,9 @@ jobs:
       - name: Verify external library consumer
         run: ./gradlew --no-daemon consumerSmokeTest
 
+      - name: Verify JPMS module consumer
+        run: ./gradlew --no-daemon jpmsConsumerTest
+
       - name: Upload test reports on failure
         if: failure()
         uses: actions/upload-artifact@v7
@@ -123,6 +126,14 @@ jobs:
       - name: Run adapter tests
         working-directory: monada-neuron
         run: ./gradlew --no-daemon :monada-neuron-resonance-adapter:test
+
+      - name: Verify embedded-host consumers
+        working-directory: monada-neuron
+        run: ./gradlew --no-daemon embeddedHostConsumerTest
+
+      - name: Print Store provenance
+        working-directory: monada-neuron
+        run: cat build/integration-repo/STORE-PROVENANCE.txt
 
       - name: Upload adapter test reports on failure
         if: failure()

@@ -60,9 +60,14 @@ Store issue #94 publishes `com.monada:monada-{core,encoder,storage,index,learnin
     `{monada-neuron}`.
   - `consumer-fixture/embedded-host` (`embeddedHostConsumerTest`) runs one shared host source twice: as a named
     module (`module-host`) and on the classpath (`classpath-host`). Each declares only the adapter coordinate,
-    and both must resolve exactly:
-    - compile: Neuron, the adapter, and Store `api`/`core`/`encoder`/`storage`;
-    - runtime: the compile set plus Store `index`/`learning`.
+    and both scopes (compile and runtime) must resolve:
+    - exactly Neuron and the adapter as `monada.neuron` components;
+    - Store `api` and `core` at the pinned version;
+    - any other component only as a `com.monada` module at the pinned version. A third-party, provider or
+      other-group component fails.
+    Store-internal modules (today `encoder` and `storage` at compile time, plus `index` and `learning` at runtime)
+    come from the Store's own metadata. They are not pinned, so a Store layout change at the pinned version does
+    not fail Neuron.
     `classpath-host` disables Gradle's module-path inference, because the shared source directory holds
     `module-host`'s descriptor.
   - Every consumer reads the `Automatic-Module-Name` from the manifest of the jar that actually loaded Neuron
@@ -93,10 +98,10 @@ Store issue #94 publishes `com.monada:monada-{core,encoder,storage,index,learnin
   not rejected.
 - Store-dependent verification exists only when the sibling checkout is present. Core-only builds, `test`,
   `consumerSmokeTest` and `jpmsConsumerTest` never need it.
-- CI is unchanged by this decision. The new tasks are run locally and are a CI follow-up.
+- CI runs `jpmsConsumerTest` in the core `verify` job and `embeddedHostConsumerTest` in the `adapter` job,
+  which already has the Store sibling checkout. The adapter job prints `STORE-PROVENANCE.txt` after the run.
 
 ## Follow-Up
 
-- Add `jpmsConsumerTest` to the core CI job and `embeddedHostConsumerTest` to the adapter CI job.
 - Request a non-SNAPSHOT Store release, then pin it.
 - Revisit real descriptors if Forge needs strong encapsulation or `jlink`.
