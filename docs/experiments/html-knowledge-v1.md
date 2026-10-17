@@ -6,7 +6,7 @@
 | :--- | :--- |
 | Protocol version | `html-knowledge-protocol-v1` |
 | Issue | [#104](https://github.com/stevdrey/monada-neuron/issues/104) (Experiment Knowledge 1/8) |
-| Implementation | **None.** This document is the contract that issues #105 to #111 implement. |
+| Implementation | Corpus contract delivered by #105 ([ingestion](../benchmarks/html-knowledge-ingestion.md)); the rest of this document is the contract that issues #106 to #111 implement. |
 | Scope | Monada Neuron `monada-neuron-evaluation` optional `integration` / `integrationTest` source sets only |
 | Extensions | `l3-evidence-v1` (#108), `l4-answer-v1` (#109), `feedback-v1` (#110), `scaling-v1` (#111) |
 
@@ -114,13 +114,27 @@ substring, with no further normalization.
 
 ### Store identity mapping
 
-`MonadaMemory.remember` returns a `KnowledgeAtom` with a Store-generated id, which is not stable across
-imports. The harness writes a **manifest** per import: `chunkId → atomId → opaque reference`, where the
+`MonadaMemory.remember` returns a `KnowledgeAtom` with a Store-generated id. The harness never predicts or
+assumes that id (see the [errata](#errata-store-atom-ids) on how the Store currently derives it). The harness writes a **manifest** per import: `chunkId → atomId → opaque reference`, where the
 opaque reference is the adapter's `OpaqueReference.of(atomId)` (`rs-` plus 32 hex characters of SHA-256).
 The manifest is the only way a retrieved atom or Neuron reference is mapped back to a `chunkId`. It is built
 from the import, never from gold labels. It holds no content hashes: content checks always compare against the
 corpus `sha256`. Importing the same corpus twice into the same root is detected and fails explicitly. Because
-atom ids are random, the manifest never participates in a dataset hash or a cross-run comparison.
+atom ids are Store-owned, the manifest never participates in a dataset hash or a cross-run comparison.
+
+#### Errata: Store atom ids
+
+The first edition of this section called atom ids random. In the current Store they are **content-derived**
+(`KnowledgeAtom` uses a name-based UUID of the UTF-8 content), and `remember` is **idempotent**: remembering an
+existing text returns the existing atom and writes nothing. The rules above are unchanged, and two consequences are
+enforced by the harness rather than by the Store:
+
+- Two chunks with identical normalized text would collapse into one atom, so the corpus loader rejects them.
+- The Store cannot report a second import of the same corpus into the same root, so the harness refuses any target
+  root that already holds files.
+
+Ids are still mapped only through each root's manifest and compared across roots only as mapped chunk ids, so a
+future Store with random ids requires no protocol change.
 
 ### Dataset hashes
 
@@ -139,6 +153,18 @@ file layout or map order cannot change them and any change to a covered field do
   then each span as `chunkId`, `start`, `end`, `sha256`, sorted by `(chunkId, start, end)`), then `keyClaims`
   (count, then each claim in curated order), then `avoidedTerms` (count, then the terms sorted by code point).
 
+### Delivered implementation (#105)
+
+| Item | Location or rule |
+| :--- | :--- |
+| Corpus files | `monada-neuron-evaluation/src/integration/resources/html-kc-v1/`: `documents.tsv`, `chunks.tsv`, `documents/<slug>.md` |
+| Size | 7 originally authored documents (Apache-2.0), 33 chunks, conflict pair `conflict:img-alt` (`chk:images-and-media#01` `CURATED`, `chk:legacy-notes#00` `CONTRADICTING`) |
+| Chunk ids | `chk:<slug>#nn`, ordinals from `00` |
+| Chunking policy | `heading-section-v1`: each ATX heading starts a section, a heading-only section merges into the next, text before the first heading is a `(preamble)` section; an oversize section is split at blank-line blocks, then at sentence ends; a fence (an opening line starting with three backticks, a closing line of exactly three backticks) is never split; an oversize code block, heading or sentence is rejected |
+| Label check | loading rechunks every document and requires `chunks.tsv` (ids, `section`, spans, `sha256`) to equal the canonical result |
+| Bounds | as [above](#scale-and-bounds), plus at most 16 documents of at most 32 KiB each; label tables at most 64 KiB |
+| Command | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeIngestion` (see [the ingestion page](../benchmarks/html-knowledge-ingestion.md)) |
+
 ### External sources
 
 An external tutorial (for example MDN's *HTML: Creating the content*) is **opt-in only**: the user supplies a
@@ -146,6 +172,13 @@ locally downloaded, version-pinned snapshot; test code never downloads it; a req
 fails explicitly. MDN prose is CC BY-SA 2.5: credit, source link, notice of modifications and share-alike
 apply. External snapshots and text derived from them are **never committed** without an explicit licensing
 review, and never run in default CI.
+
+#105 supports exactly one external source: the Markdown file of MDN's *HTML: Creating the content* from a
+user-supplied `mdn/content` checkout, pinned by commit and by the SHA-256 of its raw bytes. It is a separate corpus
+version `html-kc-ext-mdn-v1` with single-document bounds (at most 256 KiB, at most 128 chunks of at most 1 KiB) and no
+conflict pair. It is imported into its own root. Every chunk declares `CC-BY-SA-2.5`, the attribution
+"Mozilla Contributors", the page URL with the pinned revision, and the modifications made (front matter removed,
+normalized, chunked). Reports and manifests built from it contain ids, spans and digests, never its text.
 
 ## Query set and gold labels (`html-kq-v1`, delivered by #107)
 
@@ -574,7 +607,7 @@ synonyms or weighting.
 
 - **Determinism**: two runs with the same corpus, query set, configuration and seed produce identical semantic
   results (outcomes, mapped chunk ids, order and scores). A difference is a failed check.
-- **Cross-root comparisons**: atom ids are random per import, so any comparison between results from different
+- **Cross-root comparisons**: atom ids are Store-owned and never assumed stable, so any comparison between results from different
   roots (separate runs, the two #110 arms) compares chunk ids mapped through each root's own manifest, their
   order and their scores, never raw atom ids. Comparisons within one root (for example B2 = B2c) may compare
   atoms directly.
@@ -683,7 +716,7 @@ ranking, so a single event changes later rankings. Outside the #110 treatment ar
    `feedbackHash` uses the [dataset-hash](#dataset-hashes) field encoding: the version string `html-kf-v1`, the
    event count, then the events sorted by `(queryId, chunkId)` (code point order), each as `queryId`, `queryKey`
    (exact query text), `chunkId`, `signal` (enum name, `POSITIVE` or `NEGATIVE`) and `delta` (absent when the
-   three-argument `feedback` overload is used). The opaque reference depends on random atom ids, so it is recorded
+   three-argument `feedback` overload is used). The opaque reference depends on Store-owned atom ids, so it is recorded
    but not hashed. A duplicate event fails the run.
 4. Both arms are scored at fixed `k` and `t`, through B1 and then B2 (reported as separate paths), and again
    after a [restart](#run-conditions) of both roots, on three separately labeled populations:
@@ -782,12 +815,12 @@ technical choices. Their protocol is specified in those issues; this protocol on
 
 ## Planned commands
 
-Only `./gradlew test` exists today. The commands below are **planned**: the names are provisional and each
+Rows marked **delivered** exist. The other commands are **planned**: their names are provisional and each
 issue fixes the exact task name in its own documentation.
 
 | Issue | Status | Command (provisional) | Purpose |
 | :--- | :--- | :--- | :--- |
-| #105 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeIngestion` | import `html-kc-v1` into a temporary Store, write the manifest |
+| #105 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeIngestion` | import `html-kc-v1` into a temporary Store, write the manifest |
 | #106 | planned | `./gradlew :monada-neuron-evaluation:integrationTest` | persistence, reopen and source-level readback through Neuron |
 | #107 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeRecall` | L1/L2 judged recall with B0/B1/B2 |
 | #108 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeEvidenceTrace` | L3 evidence use in a cognitive cycle |
@@ -802,3 +835,7 @@ source set, and do not change `./gradlew test` when it is absent.
 
 - `html-knowledge-protocol-v1` (issue #104): initial core protocol, with the initial extensions
   `l3-evidence-v1`, `l4-answer-v1`, `feedback-v1` and `scaling-v1`.
+- Errata, no version change (issue #105): Store atom ids are content-derived and `remember` is idempotent. The
+  earlier text described them as random. No definition, formula, label rule or report field changes; see
+  [Errata: Store atom ids](#errata-store-atom-ids). The corpus contract is delivered as `html-kc-v1`, together
+  with the external snapshot corpus `html-kc-ext-mdn-v1`.
