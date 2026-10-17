@@ -18,11 +18,6 @@ dependencies {
     implementation(neuronCoordinate)
 }
 
-// Always re-read the freshly published SNAPSHOT instead of a cached copy.
-configurations.configureEach {
-    resolutionStrategy.cacheChangingModulesFor(0, "seconds")
-}
-
 application {
     mainModule.set("monada.neuron.consumer.jpms")
     mainClass.set("consumer.jpms.ModuleConsumer")

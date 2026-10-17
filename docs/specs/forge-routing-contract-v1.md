@@ -1884,7 +1884,7 @@ packaging, publication and external verification only. No production Java source
   - It needs no `jdk.incubator.vector`: as an automatic module it declares no `requires`, so the reflective Vector loader falls back to scalar.
 - **Adapter.**
   - Its Store dependencies are `api` because Store types appear in its public signatures.
-  - Store's own published metadata adds `monada-encoder` and `monada-storage` at compile time, and `monada-index` and `monada-learning` at runtime.
+  - Store's own published metadata currently adds `monada-encoder` and `monada-storage` at compile time, and `monada-index` and `monada-learning` at runtime. These are Store-internal and not part of this contract.
 - **Publication target.** Both artifacts are published only to repository-local directories. Nothing is published remotely.
 - **Store version.** The pinned Store version is `0.1.0-SNAPSHOT`, the only one the Store publishes (Store #94). `STORE-PROVENANCE.txt` records the Store commit, a dirty-tree flag and SHA-256 digests (Section 24.4).
 
@@ -1966,9 +1966,10 @@ The scenario runs over three rounds:
   - `module-host` is a named module, `monada.neuron.consumer.host`. It requires `monada.neuron`, `monada.neuron.resonance.adapter`, `com.monada.api` and `com.monada.core`.
   - `classpath-host` compiles the same host source without the descriptor, with Gradle's module-path inference disabled, and runs it from the unnamed module.
   - Both hosts read the `Automatic-Module-Name` of the core and adapter jars from their manifests.
-  - Each declares only the adapter coordinate. `printResolution` requires exactly:
-    - compile: Neuron, the adapter, and Store `api`/`core`/`encoder`/`storage`;
-    - runtime: the compile set plus Store `index`/`learning`.
+  - Each declares only the adapter coordinate. In both the compile and runtime scopes, `printResolution` requires:
+    - exactly Neuron and the adapter as `monada.neuron` components;
+    - Store `api` and `core` at `resonanceStoreVersion`;
+    - any other component only as a `com.monada` module at `resonanceStoreVersion`, so a third-party or provider artifact fails, while a Store-internal layout change does not.
 - **No substitution anywhere.** No fixture uses `includeBuild`, project substitution, source copying or manually supplied jars. The existing `consumerSmokeTest` classpath fixture is unchanged.
 
 ### 24.5 Bounds, complexity and footprint

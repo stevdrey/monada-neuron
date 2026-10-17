@@ -81,9 +81,12 @@ tasks.jar {
     }
 }
 
-tasks.withType<AbstractArchiveTask>().configureEach {
-    isPreserveFileTimestamps = false
-    isReproducibleFileOrder = true
+// Every archive in the build (core, adapter, evaluation) is reproducible: no file timestamps, fixed order (ADR 0032).
+allprojects {
+    tasks.withType<AbstractArchiveTask>().configureEach {
+        isPreserveFileTimestamps = false
+        isReproducibleFileOrder = true
+    }
 }
 
 // Builds a standalone consumer project against the published artifact, with no incubator flags.
@@ -186,8 +189,6 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
         dependsOn(neuronPublications)
         val repoDir = integrationRepo.get().asFile
         val pinned = storeVersion
-        inputs.property("storeCommit", storeCommit)
-        inputs.property("storeStatus", storeStatus)
         doLast {
             val storeModules = repoDir.resolve("com/monada").listFiles { f -> f.isDirectory }
                 ?.sortedBy { it.name } ?: emptyList()

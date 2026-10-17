@@ -102,7 +102,7 @@ public final class EmbeddedRoutingHost {
     static final String STAGE = "implement";
     static final String ATTEMPT = "a1";
 
-    /** Bound on routed executions the host remembers to attribute exports; equals the export bound below. */
+    /** Bound on executed routes the host remembers to attribute exports; equals the export bound below. */
     public static final int MAX_ROUTED = 64;
     /** Export page size and total sample bound handed to the adapter (adapter limits: 500 and 10,000). */
     public static final int EXPORT_PAGE_SIZE = 8;
@@ -200,9 +200,6 @@ public final class EmbeddedRoutingHost {
      * @param catalog the catalog the host offers for this request (availability is the host's observation)
      */
     public Routed route(String taskId, String executionId, RouteCatalog catalog) {
-        if (routed.size() == MAX_ROUTED) {
-            throw new IllegalStateException("the host remembers at most " + MAX_ROUTED + " routed executions");
-        }
         var request = new RoutingRequest(RoutingRequest.CONTRACT_VERSION, scope, taskId, executionId, ATTEMPT, STAGE,
                 STAGE, 1L, SOURCE, CONTEXT, CONSTRAINTS, EVALUATION_POLICY_ID, EVALUATION_POLICY_VERSION, FEATURES,
                 REQUIREMENTS, false, watermark);
@@ -219,16 +216,24 @@ public final class EmbeddedRoutingHost {
         if (!levelA.equals(decision)) {
             throw new IllegalStateException("Level B advice " + decision + " differs from Level A " + levelA);
         }
-        var result = new Routed(request, decision);
-        if (decision instanceof RoutingDecision.Selected) {
-            routed.put(executionId, result);
-        }
-        return result;
+        return new Routed(request, decision);
     }
 
-    /** Step 2: the host decides to execute the advised route and submits it to its own worker. */
+    /**
+     * Step 2: the host decides to execute the advised route and submits it to its own worker. Only executed advice is
+     * remembered for export attribution; advice the host never executes costs nothing.
+     */
     public void execute(Routed advice) {
-        worker.submit(advice.request().executionId(), advice.selected().route().routeId());
+        String executionId = advice.request().executionId();
+        var route = advice.selected().route();
+        if (routed.containsKey(executionId)) {
+            throw new IllegalStateException("execution " + executionId + " was already executed");
+        }
+        if (routed.size() == MAX_ROUTED) {
+            throw new IllegalStateException("the host remembers at most " + MAX_ROUTED + " executed routes");
+        }
+        worker.submit(executionId, route.routeId());
+        routed.put(executionId, advice);
     }
 
     /**
@@ -280,7 +285,7 @@ public final class EmbeddedRoutingHost {
             for (RoutingObservation observation : imported.observations()) {
                 var advice = routed.get(observation.outcome().decisionRef().executionId());
                 if (advice == null) {
-                    throw new IllegalStateException("export holds an execution this host never routed: " + observation);
+                    throw new IllegalStateException("export holds an execution this host never executed: " + observation);
                 }
                 deliveries.add(deliver(observation, advice));
             }

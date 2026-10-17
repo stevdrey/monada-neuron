@@ -6,20 +6,18 @@ val storeVersion = providers.gradleProperty("resonanceStoreVersion").orNull
 // The single declared coordinate: everything else must arrive through the adapter's published metadata.
 val adapterCoordinate = "monada.neuron:monada-neuron-resonance-adapter:$neuronVersion"
 
-// Compile scope: the adapter's `api` dependencies and Store's own `api` graph behind monada-api.
-val expectedCompile = setOf(
+// Both scopes must hold exactly these Neuron coordinates and these Store modules (the adapter's `api` dependencies).
+val requiredNeuron = setOf(
     "monada.neuron:monada-neuron:$neuronVersion",
-    "monada.neuron:monada-neuron-resonance-adapter:$neuronVersion",
+    "monada.neuron:monada-neuron-resonance-adapter:$neuronVersion"
+)
+val requiredStore = setOf(
     "com.monada:monada-api:$storeVersion",
-    "com.monada:monada-core:$storeVersion",
-    "com.monada:monada-encoder:$storeVersion",
-    "com.monada:monada-storage:$storeVersion"
+    "com.monada:monada-core:$storeVersion"
 )
-// Runtime adds Store's `implementation` modules; no evaluation, benchmark or provider artifact.
-val expectedRuntime = expectedCompile + setOf(
-    "com.monada:monada-index:$storeVersion",
-    "com.monada:monada-learning:$storeVersion"
-)
+// Store's internal modules come from its own published metadata and may change with Store `main`: any other
+// `com.monada` module is accepted only at the pinned version, and any other group (third-party, provider) fails.
+val storeGroup = "com.monada"
 
 subprojects {
     apply(plugin = "application")
@@ -34,11 +32,6 @@ subprojects {
         "implementation"(adapterCoordinate)
     }
 
-    // Always re-read the freshly published SNAPSHOTs instead of a cached copy.
-    configurations.configureEach {
-        resolutionStrategy.cacheChangingModulesFor(0, "seconds")
-    }
-
     val printResolution = tasks.register("printResolution") {
         group = "verification"
         description = "Prints and verifies the resolved Neuron, adapter and Store dependency graph"
@@ -46,7 +39,7 @@ subprojects {
         val compileArtifacts = configurations.getByName("compileClasspath").incoming.artifacts.resolvedArtifacts
         val runtimeArtifacts = configurations.getByName("runtimeClasspath").incoming.artifacts.resolvedArtifacts
         doLast {
-            fun verify(label: String, artifacts: Set<ResolvedArtifactResult>, expected: Set<String>) {
+            fun verify(label: String, artifacts: Set<ResolvedArtifactResult>) {
                 println("[$label] declared: $adapterCoordinate")
                 val resolved = artifacts.map { artifact ->
                     val id = artifact.id.componentIdentifier
@@ -54,10 +47,16 @@ subprojects {
                     check(id is ModuleComponentIdentifier) { "Unexpected non-repository component in $label: $id" }
                     "${id.group}:${id.module}:${id.version}"
                 }.toSet()
-                check(resolved == expected) { "[$label] expected $expected but resolved $resolved" }
+                check(resolved.containsAll(requiredNeuron + requiredStore)) {
+                    "[$label] expected ${requiredNeuron + requiredStore} but resolved $resolved"
+                }
+                val others = resolved - requiredNeuron - requiredStore
+                check(others.all { it.startsWith("$storeGroup:") && it.endsWith(":$storeVersion") }) {
+                    "[$label] only $storeGroup modules at $storeVersion may be added, but resolved $others"
+                }
             }
-            verify("$consumerName compileClasspath", compileArtifacts.get(), expectedCompile)
-            verify("$consumerName runtimeClasspath", runtimeArtifacts.get(), expectedRuntime)
+            verify("$consumerName compileClasspath", compileArtifacts.get())
+            verify("$consumerName runtimeClasspath", runtimeArtifacts.get())
         }
     }
 

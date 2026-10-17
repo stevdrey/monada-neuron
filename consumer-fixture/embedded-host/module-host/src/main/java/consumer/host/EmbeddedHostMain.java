@@ -59,25 +59,36 @@ public final class EmbeddedHostMain {
         String mode = args.length == 1 ? args[0] : "";
         checkModuleMode(mode);
         Path work = Files.createTempDirectory("monada-neuron-embedded-host-");
+        // A failing check must stay the reported failure; a cleanup error is attached to it, never substituted.
         try {
-            var first = learningLoop(work.resolve("loop-1"));
-            var second = learningLoop(work.resolve("loop-2"));
-            require(first.later().equals(second.later()), "two runs must give the same later advice: "
-                    + first.later() + " vs " + second.later());
-            require(first.digest().equals(second.digest()), "two runs must give the same ledger digest: "
-                    + first.digest() + " vs " + second.digest());
-            require(first.cohorts().equals(second.cohorts()), "two runs must leave the same cohort states: "
-                    + first.cohorts() + " vs " + second.cohorts());
-            invalidQualityIsNeverReinforced(work.resolve("quality"));
-            environmentalFailureIsNeutral(work.resolve("environmental"));
-            scopesStayIsolated(work.resolve("scopes"));
-            tamperedEnvelopeIsRejected(work.resolve("tamper"));
-            var advice = (RoutingDecision.Selected) first.later();
-            System.out.println("[embedded-host:" + mode + "] all checks passed; deterministic later advice "
-                    + advice.route() + " (" + advice.basis() + ")");
-        } finally {
-            delete(work);
+            runChecks(mode, work);
+        } catch (RuntimeException | Error e) {
+            try {
+                delete(work);
+            } catch (IOException | UncheckedIOException cleanup) {
+                e.addSuppressed(cleanup);
+            }
+            throw e;
         }
+        delete(work);
+    }
+
+    private static void runChecks(String mode, Path work) {
+        var first = learningLoop(work.resolve("loop-1"));
+        var second = learningLoop(work.resolve("loop-2"));
+        require(first.later().equals(second.later()), "two runs must give the same later advice: "
+                + first.later() + " vs " + second.later());
+        require(first.digest().equals(second.digest()), "two runs must give the same ledger digest: "
+                + first.digest() + " vs " + second.digest());
+        require(first.cohorts().equals(second.cohorts()), "two runs must leave the same cohort states: "
+                + first.cohorts() + " vs " + second.cohorts());
+        invalidQualityIsNeverReinforced(work.resolve("quality"));
+        environmentalFailureIsNeutral(work.resolve("environmental"));
+        scopesStayIsolated(work.resolve("scopes"));
+        tamperedEnvelopeIsRejected(work.resolve("tamper"));
+        var advice = (RoutingDecision.Selected) first.later();
+        System.out.println("[embedded-host:" + mode + "] all checks passed; deterministic later advice "
+                + advice.route() + " (" + advice.basis() + ")");
     }
 
     private static void checkModuleMode(String mode) {

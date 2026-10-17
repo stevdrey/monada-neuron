@@ -60,9 +60,14 @@ Store issue #94 publishes `com.monada:monada-{core,encoder,storage,index,learnin
     `{monada-neuron}`.
   - `consumer-fixture/embedded-host` (`embeddedHostConsumerTest`) runs one shared host source twice: as a named
     module (`module-host`) and on the classpath (`classpath-host`). Each declares only the adapter coordinate,
-    and both must resolve exactly:
-    - compile: Neuron, the adapter, and Store `api`/`core`/`encoder`/`storage`;
-    - runtime: the compile set plus Store `index`/`learning`.
+    and both scopes (compile and runtime) must resolve:
+    - exactly Neuron and the adapter as `monada.neuron` components;
+    - Store `api` and `core` at the pinned version;
+    - any other component only as a `com.monada` module at the pinned version. A third-party, provider or
+      other-group component fails.
+    Store-internal modules (today `encoder` and `storage` at compile time, plus `index` and `learning` at runtime)
+    come from the Store's own metadata. They are not pinned, so a Store layout change at the pinned version does
+    not fail Neuron.
     `classpath-host` disables Gradle's module-path inference, because the shared source directory holds
     `module-host`'s descriptor.
   - Every consumer reads the `Automatic-Module-Name` from the manifest of the jar that actually loaded Neuron
