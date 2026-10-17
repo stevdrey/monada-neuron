@@ -93,6 +93,20 @@ class CorpusChunkerTest {
     }
 
     @Test
+    void measuresSentencesAndBlocksWithoutTheirSurroundingWhitespace() {
+        var word = "b".repeat(18) + ".";
+        var sentences = "A. " + word;
+        var trailing = "## H\n\nFits.   \nTwo.      ";
+
+        assertEquals(List.of("A.", word),
+                new CorpusChunker(19).chunk(sentences, "sentences").stream().map(CorpusChunker.Span::text).toList());
+        var spans = new CorpusChunker(20).chunk("## H\n\nFits.   \nTwo.      \n\n## Next\n\nMore.", "trailing");
+        assertEquals("## H\n\nFits.   \nTwo.", spans.getFirst().text());
+        assertEquals(2, spans.size());
+        assertTrue(trailing.getBytes(StandardCharsets.UTF_8).length > 20);
+    }
+
+    @Test
     void reportsCodePointOffsetsForNonBmpText() {
         var document = "## Emoji \uD83D\uDE00\n\nSmile \uD83D\uDE00 text.\n\n## Next\n\nMore.";
 

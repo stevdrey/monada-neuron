@@ -98,12 +98,12 @@ public final class CorpusChunker {
             var line = document.substring(lineStart, lineEnd);
             if (fenceStart >= 0) {
                 if (line.equals(FENCE)) {
-                    blocks.add(new Block(Kind.CODE, fenceStart, lineEnd, null));
+                    blocks.add(trimmed(document, Kind.CODE, fenceStart, lineEnd, null));
                     fenceStart = -1;
                 }
             } else if (line.startsWith(FENCE) || line.isBlank() || HEADING.matcher(line).matches()) {
                 if (paragraphStart >= 0) {
-                    blocks.add(new Block(Kind.PARAGRAPH, paragraphStart, paragraphEnd, null));
+                    blocks.add(trimmed(document, Kind.PARAGRAPH, paragraphStart, paragraphEnd, null));
                     paragraphStart = -1;
                 }
                 if (line.startsWith(FENCE)) {
@@ -111,7 +111,7 @@ public final class CorpusChunker {
                 } else if (!line.isBlank()) {
                     var matcher = HEADING.matcher(line);
                     matcher.matches();
-                    blocks.add(new Block(Kind.HEADING, lineStart, lineEnd, matcher.group(1).strip()));
+                    blocks.add(trimmed(document, Kind.HEADING, lineStart, lineEnd, matcher.group(1).strip()));
                 }
             } else {
                 if (paragraphStart < 0) {
@@ -128,7 +128,7 @@ public final class CorpusChunker {
             throw new CorpusValidationException(origin, "unterminated fenced code block at char " + fenceStart);
         }
         if (paragraphStart >= 0) {
-            blocks.add(new Block(Kind.PARAGRAPH, paragraphStart, paragraphEnd, null));
+            blocks.add(trimmed(document, Kind.PARAGRAPH, paragraphStart, paragraphEnd, null));
         }
         return blocks;
     }
@@ -205,12 +205,12 @@ public final class CorpusChunker {
             var boundary = (c == '.' || c == '!' || c == '?')
                     && (i + 1 == paragraph.end() || Character.isWhitespace(document.charAt(i + 1)));
             if (boundary) {
-                sentences.add(new Block(Kind.SENTENCE, start, i + 1, null));
+                sentences.add(trimmed(document, Kind.SENTENCE, start, i + 1, null));
                 start = i + 1;
             }
         }
         if (!document.substring(start, paragraph.end()).isBlank()) {
-            sentences.add(new Block(Kind.SENTENCE, start, paragraph.end(), null));
+            sentences.add(trimmed(document, Kind.SENTENCE, start, paragraph.end(), null));
         }
         for (var sentence : sentences) {
             var bytes = offsets.bytes(sentence.start(), sentence.end());
@@ -219,6 +219,20 @@ public final class CorpusChunker {
             }
         }
         return sentences;
+    }
+
+    /**
+     * Creates a block over {@code [start, end)} without surrounding whitespace, so every size the packer measures is
+     * exactly the size of the text {@link #span} emits.
+     */
+    private Block trimmed(String document, Kind kind, int start, int end, String heading) {
+        while (start < end && Character.isWhitespace(document.charAt(start))) {
+            start++;
+        }
+        while (end > start && Character.isWhitespace(document.charAt(end - 1))) {
+            end--;
+        }
+        return new Block(kind, start, end, heading);
     }
 
     private Span span(String document, Offsets offsets, int start, int end, String section) {

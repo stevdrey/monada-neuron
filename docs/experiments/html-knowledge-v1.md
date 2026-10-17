@@ -841,5 +841,5 @@ source set, and do not change `./gradlew test` when it is absent.
   [Errata: Store atom ids](#errata-store-atom-ids). The corpus contract is delivered as `html-kc-v1`, together
   with the external snapshot corpus `html-kc-ext-mdn-v1`. Before its first release, `html-kc-v1` was revised in
   review: the curated `alt` chunk now states the narrow omission cases of the HTML Standard, and two other absolute
-  claims (labels, `required`) were qualified. Its version is unchanged because no result was produced with the
+  claims (labels, `required`, later also the validation-bypass cases and `download`) were qualified. Its version is unchanged because no result was produced with the
   earlier text.

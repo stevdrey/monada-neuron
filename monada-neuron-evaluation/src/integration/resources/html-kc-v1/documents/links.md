@@ -20,4 +20,4 @@ Setting `target="_blank"` on a link opens the destination in a new tab or window
 
 ## Email and download links
 
-A `mailto:` URL such as `href="mailto:team@example.com"` opens the visitor's email program instead of a web page. The `download` attribute on a link asks the browser to save the linked resource as a file instead of navigating to it.
+A `mailto:` URL such as `href="mailto:team@example.com"` opens the visitor's email program instead of a web page. The `download` attribute on a link hints that the browser should save the linked resource as a file instead of navigating to it; browsers generally honor it only for same-origin URLs.

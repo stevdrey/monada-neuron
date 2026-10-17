@@ -107,8 +107,9 @@ sha256sum ~/src/mdn-content/files/en-us/learn_web_development/getting_started/yo
 
 The snapshot becomes the separate corpus `html-kc-ext-mdn-v1` in its own root, with at most 100 chunks (the
 two-digit ordinal range). `--store-root`, `--mdn-store-root` and `--output-dir` must not be equal or nested in each
-other in either direction, and every kept root must be absent or empty. Both are checked for all roots before the
-first import, so a rejected run (exit status 2) leaves no Store behind. Only a failure during an import itself (I/O
+other in either direction (compared after resolving symlinks), every kept root must be absent or empty, and the
+output directory must be writable with no output name taken by a directory or read-only file. All of this is checked
+before the first import, so a rejected run (exit status 2) leaves no Store behind. Only a failure during an import itself (I/O
 or a Store error) can leave a kept root partially written.
 
 Licensing: MDN prose is licensed **CC BY-SA 2.5** by Mozilla Contributors. Every chunk records:

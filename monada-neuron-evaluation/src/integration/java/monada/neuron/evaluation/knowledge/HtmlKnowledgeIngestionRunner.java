@@ -65,7 +65,8 @@ public final class HtmlKnowledgeIngestionRunner {
         /**
          * Requires every component and rejects overlapping locations before anything is written: the kept Store
          * roots and the output directory must be pairwise distinct and not nested in each other, in either
-         * direction. Paths are compared after {@code toAbsolutePath().normalize()}.
+         * direction. Paths are compared in canonical form (see {@link #canonical}), so a symlink cannot hide an
+         * overlap.
          */
         public Options {
             Objects.requireNonNull(outputDir, "outputDir must not be null");
@@ -85,13 +86,29 @@ public final class HtmlKnowledgeIngestionRunner {
         }
 
         private static boolean overlap(Path first, Path second) {
-            var a = absolute(first);
-            var b = absolute(second);
+            var a = canonical(first);
+            var b = canonical(second);
             return a.startsWith(b) || b.startsWith(a);
         }
 
-        private static Path absolute(Path path) {
-            return path.toAbsolutePath().normalize();
+        /**
+         * Returns the absolute path with its longest existing ancestor resolved through {@code toRealPath()}
+         * (following symlinks and {@code ..} on disk) and the not-yet-existing remainder appended, normalized.
+         */
+        static Path canonical(Path path) {
+            var absolute = path.toAbsolutePath();
+            var existing = absolute;
+            while (existing != null && Files.notExists(existing)) {
+                existing = existing.getParent();
+            }
+            if (existing == null) {
+                return absolute.normalize();
+            }
+            try {
+                return existing.toRealPath().resolve(existing.relativize(absolute)).normalize();
+            } catch (IOException e) {
+                throw new IllegalArgumentException("cannot resolve " + path + ": " + e.getMessage(), e);
+            }
         }
 
         /** Parses CLI arguments; throws {@link IllegalArgumentException} on invalid usage. */
@@ -212,9 +229,11 @@ public final class HtmlKnowledgeIngestionRunner {
         var externalCorpus = options.mdn()
                 .map(mdn -> new MdnSnapshotSource().load(mdn.snapshot(), mdn.revision(), mdn.sha256()));
 
-        // Preflight every kept root before importing anything, so a rejected run never leaves a populated Store.
+        // Preflight every kept root and the output directory before importing anything, so a rejected run never
+        // leaves a populated Store whose report and manifest could not be written.
         options.storeRoot().ifPresent(HtmlKnowledgeIngestion::requireFreshRoot);
         options.mdn().flatMap(MdnOptions::storeRoot).ifPresent(HtmlKnowledgeIngestion::requireFreshRoot);
+        requireWritableOutput(options.outputDir());
 
         var authored = new Ingested(corpus, ingest(corpus, options.storeRoot(), "store", checks, metadata));
         describe(corpus, "corpus", metadata);
@@ -256,6 +275,38 @@ public final class HtmlKnowledgeIngestionRunner {
                 TITLE);
         var report = new CheckedEvaluationReport(TITLE, "Ingestion Metadata", evaluation, checks, metadata);
         return new Outcome(report, authored, external);
+    }
+
+    /**
+     * Creates the output directory and requires it to be writable and every output file name to be absent or a
+     * regular file.
+     *
+     * @throws IllegalStateException when an output cannot be written
+     */
+    static void requireWritableOutput(Path outputDir) {
+        try {
+            Files.createDirectories(outputDir);
+        } catch (IOException e) {
+            throw new IllegalStateException("output directory " + outputDir + " cannot be created: " + e, e);
+        }
+        if (!Files.isDirectory(outputDir) || !Files.isWritable(outputDir)) {
+            throw new IllegalStateException("output directory " + outputDir + " is not a writable directory");
+        }
+        for (var file : outputFiles(outputDir)) {
+            if (Files.exists(file) && (!Files.isRegularFile(file) || !Files.isWritable(file))) {
+                throw new IllegalStateException("output file " + file + " exists and is not a writable regular file");
+            }
+        }
+    }
+
+    private static List<Path> outputFiles(Path outputDir) {
+        var files = new ArrayList<Path>(List.of(
+                outputDir.resolve("html-knowledge-ingestion.json"), outputDir.resolve("html-knowledge-ingestion.md")));
+        for (var version : KNOWN_CORPUS_VERSIONS) {
+            files.add(outputDir.resolve(version + "-chunks.tsv"));
+            files.add(outputDir.resolve(version + "-manifest.tsv"));
+        }
+        return files;
     }
 
     /**

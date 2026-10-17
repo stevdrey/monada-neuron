@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class HtmlKnowledgeIngestionRunnerTest {
 
@@ -132,6 +133,44 @@ class HtmlKnowledgeIngestionRunnerTest {
 
         assertTrue(failure.getMessage().contains("duplicate import refused"), failure.getMessage());
         assertFalse(Files.exists(authored));
+    }
+
+    @Test
+    void symlinkedAliasesOfAStoreRootAreRejectedAsOverlapping() throws IOException {
+        var real = Files.createDirectories(directory.resolve("real"));
+        var alias = directory.resolve("alias");
+        try {
+            Files.createSymbolicLink(alias, real);
+        } catch (UnsupportedOperationException | IOException e) {
+            assumeTrue(false, "symbolic links are not supported here: " + e);
+        }
+        var mdnArgs = new String[] {"--mdn-snapshot", "index.md", "--mdn-revision", MdnSnapshotSourceTest.REVISION,
+                "--mdn-sha256", "0".repeat(64)};
+
+        assertThrows(IllegalArgumentException.class, () -> HtmlKnowledgeIngestionRunner.Options.parse(concat(
+                new String[] {"--store-root", real.resolve("store").toString(),
+                        "--mdn-store-root", alias.resolve("store").toString()}, mdnArgs)));
+        assertThrows(IllegalArgumentException.class, () -> HtmlKnowledgeIngestionRunner.Options.parse(new String[] {
+                "--store-root", real.resolve("store").toString(),
+                "--output-dir", alias.resolve("store/reports").toString()}));
+        assertFalse(Files.exists(real.resolve("store")));
+    }
+
+    @Test
+    void anUnwritableOutputLocationFailsBeforeAnyStoreIsWritten() throws IOException {
+        var root = directory.resolve("kept");
+        var file = Files.writeString(directory.resolve("not-a-directory"), "x");
+        var options = HtmlKnowledgeIngestionRunner.Options.parse(new String[] {
+                "--store-root", root.toString(), "--output-dir", file.toString()});
+
+        assertThrows(IllegalStateException.class, () -> HtmlKnowledgeIngestionRunner.run(options));
+        assertFalse(Files.exists(root));
+
+        var output = Files.createDirectories(directory.resolve("reports/html-knowledge-ingestion.json"));
+        var blocked = HtmlKnowledgeIngestionRunner.Options.parse(new String[] {
+                "--store-root", root.toString(), "--output-dir", output.getParent().toString()});
+        assertThrows(IllegalStateException.class, () -> HtmlKnowledgeIngestionRunner.run(blocked));
+        assertFalse(Files.exists(root));
     }
 
     @Test

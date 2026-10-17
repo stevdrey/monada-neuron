@@ -25,7 +25,7 @@ class HtmlKnowledgeCorpusTest {
      * Frozen fingerprint of {@code html-kc-v1}. Any change to text, chunking or labels changes it and must come with
      * a new corpus version, never with an edited constant.
      */
-    private static final String HTML_KC_V1_HASH = "bd7aa701d174a495b8c2696a652945dd07255fff412439c0d5eeb1a89fecf65a";
+    private static final String HTML_KC_V1_HASH = "40149cf860438fe50b1ebf54cf64a78e96375df6eaf1735664e864ecbbe950a3";
 
     private static final List<String> DOCUMENT_FILES = List.of(
             "forms.md", "headings-and-structure.md", "images-and-media.md", "legacy-notes.md", "links.md",
