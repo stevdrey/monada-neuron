@@ -76,6 +76,8 @@ Rules:
 | `license`, `attribution` | declared per chunk; `Apache-2.0` for authored chunks |
 | `sourceSpan` | `[start, end)` range of the chunk in its normalized source document, in code points (see [Spans](#spans-and-offsets)) |
 | `sha256` | SHA-256 of the UTF-8 bytes of the normalized chunk text, lowercase hex |
+| `documentSha256` | SHA-256 of the normalized source document (the authored document file, or the user-supplied external snapshot) |
+| `conflictPair`, `conflictRole` | id of the conflicting-source pair and the member's role (`CURATED` or `CONTRADICTING`); absent for every other chunk |
 
 Normalization before hashing and before `remember`: UTF-8, Unicode NFC, `\n` line endings, trimmed leading
 and trailing whitespace. Code examples inside a chunk are delimited by lines consisting of exactly three
@@ -95,8 +97,11 @@ substring, with no further normalization.
 - Chunking happens at heading, sentence or code-unit boundaries. A code example is never split.
 - The corpus deliberately includes: confusable chunks (for example `<ol>` vs `<ul>`, `<b>` vs `<strong>`),
   chunks whose key fact is in a code example, cross-topic distractors sharing vocabulary, and exactly one
-  documented **conflicting-source pair** (two chunks with contradicting claims, one marked as the curated
-  correct one).
+  documented **conflicting-source pair** (two chunks with contradicting claims sharing one `conflictPair`, exactly
+  one of them with `conflictRole = CURATED`).
+- Load-time corpus invariants: exactly one `conflictPair` exists, with exactly two members and exactly one
+  `CURATED`; each normalized source document matches its `documentSha256`; and the `sourceSpan` substring of that
+  document equals the chunk's normalized text. A violation fails the run before hashing or import.
 - Scaling corpora with distinct sizes (#111) are separate, named versions and never replace `html-kc-v1`.
 
 ### Store identity mapping
@@ -119,7 +124,8 @@ file layout or map order cannot change them and any change to a covered field do
 - The serialization starts with the version string (`corpusVersion` or `queryVersion`), then the record count,
   then the records sorted by id (`chunkId` or `queryId`, compared by code point).
 - Corpus record fields, in order: `chunkId`, `documentId`, `topic`, `section`, `source`, `license`,
-  `attribution`, `sourceSpan.start`, `sourceSpan.end`, `sha256`. The chunk text is covered through `sha256`.
+  `attribution`, `sourceSpan.start`, `sourceSpan.end`, `sha256`, `documentSha256`, `conflictPair`,
+  `conflictRole`. The chunk text is covered through `sha256`.
 - Query record fields, in order: `queryId`, `category`, `text`, `answerability`, then `required` and
   `supporting` (each as a count followed by its `chunkId`s sorted by code point), then `evidenceSpans` (count,
   then each span as `chunkId`, `start`, `end`, `sha256`, sorted by `(chunkId, start, end)`), then `keyClaims`
@@ -159,7 +165,7 @@ Load-time invariants (a violation fails the run before anything is scored, seria
 - `answerability` is fixed by `category` (table below) and agrees with the relevant set: `ANSWERABLE` and
   `CONFLICTING` have `required ≠ ∅`; `NO_ANSWER_IN_CORPUS`, `OUT_OF_DOMAIN` and `BLANK` have `Rel(q) = ∅`; only
   `FALSE_PREMISE` may have either.
-- A `CONFLICTING` query has both chunks of the conflicting-source pair in `required`.
+- A `CONFLICTING` query has exactly the two chunks of the conflicting-source pair as `required`.
 - `text` is empty or whitespace-only exactly for `blank` queries, and query texts are unique within the set.
 - `|Rel(q)| ≤ 5`, the largest evaluated limit, so `HIT`, `FullEvidence@5` and `Recall@5 = 1` are always
   attainable. For `k < |Rel(q)|` the lower ceiling of `Recall@k` is inherent to that `k`.
@@ -424,11 +430,14 @@ evidence sets are never united or intersected.
 
 For each emitted claim the judge records `supported` (at least one of its citations passes citation fidelity and
 its cited text entails the claim) and `contradicted` (the claim contradicts the curated evidence of the query).
-A `keyClaim` is **matched** by an emitted, supported claim. The deterministic matcher proposes a match when
-every token (B0 tokenization) of the `keyClaim` occurs in the claim; claims and `keyClaims` are paired one-to-one
-by a maximum matching, so one claim never matches two `keyClaims`. A human reviewer then examines every proposed
-match and every supported claim left unmatched, and may confirm, add or remove a match. The recorded match is
-the reviewer's verdict when one exists and the matcher's proposal otherwise. The report gives both the
+A `keyClaim` is **matched** by an emitted, supported claim. A **candidate edge** is a pair (supported claim,
+`keyClaim`); the deterministic matcher accepts an edge when every token (B0 tokenization) of the `keyClaim` occurs
+in the claim. A human reviewer examines **every** candidate edge, not only the accepted ones, and may accept or
+reject it; the reviewer's verdict on an edge replaces the matcher's. From the accepted edges, the matching is
+computed deterministically: a maximum-cardinality one-to-one matching (one claim never matches two `keyClaims`)
+and, among matchings of that size, the one whose edge list, sorted by (`keyClaim` index in curated order, claim
+index in emitted order), is lexicographically smallest. The matcher-only matching uses the same rule over the
+matcher's accepted edges. The report gives both the
 matcher-only and the final counts, plus the number of reviewer overrides, so the two are never conflated.
 
 Per answer the judge also records the flags `anyUnsupportedClaim`, `anyContradictedClaim`, `premiseAccepted`
@@ -474,14 +483,16 @@ claim is not credited.
 | `ClaimSupport` | supported claims / emitted claims | abstention |
 | `KeyClaimCoverage` | matched `keyClaims` / `keyClaims`, over answered (not abstained) queries | abstention, or no `keyClaims` |
 
-`M(q)` is the size of a **maximum one-to-one matching** between the answer's distinct citations and the query's
-gold `evidenceSpans`. Identical citations `(chunkId, start, end)` within one answer are collapsed into one before
-the matching, so repeating a citation cannot pair it with several gold spans; every emitted citation, duplicates
-included, still counts in the `CitationPrecision` denominator, and the report records `duplicateCitations`. A citation is **eligible** only when it passes citation fidelity (its `chunkId` is in `E(q)` and
-its bounds are valid for that chunk's text); an eligible citation and a gold span can be matched when they name
-the same `chunkId` and overlap in at least one code point. Ineligible citations still count in the
-`CitationPrecision` denominator but can never be matched. Each distinct citation and each gold span is matched at
-most once, so neither duplicate nor broad citations can inflate either value; the matching size is unique even when several matchings reach it.
+`M(q)` is the size of a **maximum one-to-one matching** between the answer's citation groups and the query's
+gold `evidenceSpans`. Before the matching, the eligible citations of one answer to the same chunk are merged into
+**citation groups**: the connected components of the "overlaps in at least one code point" relation, so identical,
+nested and overlapping variants form one group. A group can therefore be paired with at most one gold span, and
+near-duplicate broad citations cannot earn credit for several spans. Every emitted citation still counts in the
+`CitationPrecision` denominator, and the report records `mergedCitations`. A citation is **eligible** only when it passes citation fidelity (its `chunkId` is in `E(q)` and
+its bounds are valid for that chunk's text); a citation group and a gold span can be matched when they name the
+same `chunkId` and some citation of the group overlaps the span in at least one code point. Ineligible citations still count in the
+`CitationPrecision` denominator but can never be matched. Each citation group and each gold span is matched at
+most once, so neither duplicate nor overlapping citations can inflate either value; the matching size is unique even when several matchings reach it.
 Aggregates follow the [undefined-value rules](#undefined-values-and-aggregation); abstentions are counted by
 status, not hidden in the claim metrics.
 
@@ -570,8 +581,8 @@ exists, `in-sample (tuned)` labels where they apply, `seed`, `k` values, thresho
 parameters, L3 trace key and memory-stage limit, L4 `evidenceLayer` and `answerK`, the L4 answer component (name, version,
 parameters, and any external model, provider, prompt template and decoding settings; `B3` needs only its name
 and protocol version), matcher-only vs final key-claim counts and reviewer overrides, reopen mode (`restart` or
-`fresh-handle`), run mode/profile, JDK vendor and version, OS and architecture, available processors, GC and
-heap settings, Neuron version and commit (`+dirty` when uncommitted), Store checkout commit (`+dirty` when the Store checkout has uncommitted changes, as `StoreMetadata` already reports), and the persisted
+`fresh-handle`), run mode/profile, JDK vendor and version, OS and architecture, CPU model, available processors,
+total physical memory, storage type and file system of the Store root, `hostId` (hashed), GC and heap settings, Neuron version and commit (`+dirty` when uncommitted), Store checkout commit (`+dirty` when the Store checkout has uncommitted changes, as `StoreMetadata` already reports), and the persisted
 Store manifest (version, encoder, normalizer, dimensions, vector format).
 
 ### Resources (L6)
@@ -595,8 +606,9 @@ It reports per-metric deltas and a **per-query diff**: queries whose outcome cha
 retrieved chunk ids.
 
 Quality comparisons may deliberately vary the system configuration. **`perf.*` deltas** additionally require
-equal JDK vendor and version, OS and architecture, available processors, GC and heap settings, measurement
-method, per-row sampling (`warmupIterations`, `measurementIterations`, `operationsPerIteration`) and
+equal JDK vendor and version, OS and architecture, CPU model, available processors, total physical memory, the
+storage type and file system of the Store root, a stable `hostId` (a hash, never the plain host name), GC and heap
+settings, measurement method, per-row sampling (`warmupIterations`, `measurementIterations`, `operationsPerIteration`) and
 `gcTelemetryScope`. When any of these differs, the rows are reported side by side and labeled
 `non-comparable`, never as a latency or allocation change.
 
@@ -644,8 +656,15 @@ ranking, so a single event changes later rankings. Outside the #110 treatment ar
    `queryKey` (exact query text), `chunkId`, `signal` (enum name, `POSITIVE` or `NEGATIVE`) and `delta`
    (absent when the three-argument `feedback` overload is used). The opaque reference depends on random atom
    ids, so it is recorded but not hashed. A duplicate event fails the run.
-4. Both arms are scored on the **held-out** queries only, at fixed `k` and `t`, through B1 and then B2 (reported
-   as separate paths), and again after a [restart](#run-conditions) of both roots.
+4. Both arms are scored at fixed `k` and `t`, through B1 and then B2 (reported as separate paths), and again
+   after a [restart](#run-conditions) of both roots, on two separately labeled populations:
+   - **calibration keys, `in-sample (tuned)`**: the keys that received events. This is the only population on
+     which the Store's key-scoped feedback can change results, so the intervention's effect is measured here,
+     always labeled in-sample and never presented as generalization;
+   - **held-out keys, transfer check**: keys that received no event. Under a key strategy that maps each distinct
+     text to its own key (the default `ExactQueryKeyStrategy`), treatment and control **must** be identical, and a
+     difference is reported as a cross-key leak defect. Only when the run configures a strategy that maps
+     distinct texts to shared keys (recorded in the report) does this population measure transfer.
 5. **Persistence audit** (a semantic check, not a quality metric). Held-out queries never received events, so
    they cannot show that events persisted, and the Store's public API has no read of stored feedback. The audit
    therefore replays the **calibration** query keys, which did receive events, through B1:
@@ -655,13 +674,12 @@ ranking, so a single event changes later rankings. Outside the #110 treatment ar
    - after the restart, each arm must reproduce its own pre-restart calibration results exactly (mapped chunk
      ids, order and scores).
 
-   Calibration results are used only for this audit and never in the quality scoring.
+   The audit is a separate check from the in-sample quality scoring above, even though both use calibration keys.
 
-**Scoring.** The report gives paired per-query results: outcome transitions (control → treatment), deltas of the
-L1/L2 metrics, top-k churn `|Ret_5^T(q) Δ Ret_5^C(q)|`, abstention changes, and every regression. Held-out labels
-and results are never used to choose events, and no event is recorded for a held-out query text. Because the
-Store keys feedback by query, an absence of effect on held-out queries is a valid result and is reported as
-such. Deltas describe this synthetic dataset only and are not generalized.
+**Scoring.** For each population the report gives paired per-query results: outcome transitions
+(control → treatment), deltas of the L1/L2 metrics, top-k churn `|Ret_5^T(q) Δ Ret_5^C(q)|`, abstention changes,
+and every regression. Held-out labels and results are never used to choose events, and no event is recorded for
+a held-out query key. An absence of in-sample effect is a valid result and is reported as such. Deltas describe this synthetic dataset only and are not generalized.
 
 ## Scaling family (delivered by #111)
 
@@ -683,8 +701,11 @@ by id.
 
 **Cross-size rule.** Results at different sizes form a curve only within one **scaling family**: equal
 `protocolVersion`, `queryHash`, base `corpusHash`, `generatorVersion` and `seed`, with each point's own
-`corpusHash` recorded. Points are reported as a curve by N, never as before/after deltas, and `perf.*` points
-also need the environment equality above.
+`corpusHash` recorded. Every point of the curve is computed over the **same query population**: the queries
+eligible at every point of the family (a query removed at any point is excluded from the whole curve and listed),
+so only the corpus size changes along the curve. Per-point results over each point's own eligible set may be
+reported separately, labeled as a series that is not comparable across points. Points are reported as a curve by
+N, never as before/after deltas, and `perf.*` points also need the environment equality above.
 
 ## Report shape
 
@@ -697,8 +718,8 @@ claim-level artifacts, so a different human judgment can never hide behind ident
 
 - every emitted claim with its text and citations, each citation marked eligible or not;
 - the `supported` and `contradicted` verdict of each claim and its source (matcher or reviewer);
-- the key-claim matching edges proposed by the matcher and the final edges;
-- every reviewer override: the edge, the action (`confirm`, `add`, `remove`), a reviewer identifier and the
+- every candidate key-claim edge with the matcher's verdict, plus the matcher-only and final matchings;
+- every reviewer verdict on a candidate edge: the edge, `accept` or `reject`, a reviewer identifier and the
   reason.
 
 Undefined values are JSON `null`. The process exits non-zero only on a failed semantic check.
