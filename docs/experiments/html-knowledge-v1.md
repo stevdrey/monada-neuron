@@ -156,6 +156,11 @@ Load-time invariants (a violation fails the run before anything is scored, seria
 - No list or set field contains a repeated entry: `required`, `supporting`, `evidenceSpans`, `keyClaims` and
   `avoidedTerms`.
 - `supporting` is empty when `required` is empty, and `required ∩ supporting = ∅`.
+- `answerability` is fixed by `category` (table below) and agrees with the relevant set: `ANSWERABLE` and
+  `CONFLICTING` have `required ≠ ∅`; `NO_ANSWER_IN_CORPUS`, `OUT_OF_DOMAIN` and `BLANK` have `Rel(q) = ∅`; only
+  `FALSE_PREMISE` may have either.
+- A `CONFLICTING` query has both chunks of the conflicting-source pair in `required`.
+- `text` is empty or whitespace-only exactly for `blank` queries, and query texts are unique within the set.
 - `|Rel(q)| ≤ 5`, the largest evaluated limit, so `HIT`, `FullEvidence@5` and `Recall@5 = 1` are always
   attainable. For `k < |Rel(q)|` the lower ceiling of `Recall@k` is inherent to that `k`.
 - Every `evidenceSpans` entry names a chunk in `Rel(q)`, matches the corpus text by digest, and every `required`
@@ -175,7 +180,7 @@ Retrieval metrics split queries only by `Rel(q)` (empty or not); `answerability`
 `FALSE_PREMISE` query whose premise is refuted by a chunk has that chunk in `Rel(q)` and is scored as
 answerable at L1/L2 (the refutation is the evidence); one with no refuting chunk has `Rel(q) = ∅`.
 
-| Category | Intent | Typical answerability |
+| Category | Intent | Answerability (fixed) |
 | :--- | :--- | :--- |
 | `exact-term` | key term appears verbatim in the relevant chunk | `ANSWERABLE` |
 | `paraphrase` | answer exists, but the query avoids the chunk's distinctive terms | `ANSWERABLE` |
@@ -262,7 +267,8 @@ so an operational failure can never be counted as an abstention. At L1/L2 "abste
 list in a completed recall, after the configured threshold.
 
 `BLANK` queries are reported in `U` and also separately, because a blank query returning nothing is a contract check, not a quality signal.
-`CONFLICTING` queries are in `A`: the curated chunk of the pair is `required`, the other one `supporting`.
+`CONFLICTING` queries are in `A` with **both** chunks of the pair `required`, so a `HIT` means both sources were
+retrieved. Which side is correct is judged at L4 through `keyClaims` and `contradicted`, not through `required`.
 
 ### Per-query outcome
 
@@ -375,13 +381,24 @@ port response, the recalled slice of `outputSignals()` equals their Signals in o
 maps through the manifest to a `chunkId`, and every attached `MemoryReferenceEvidence` maps to an admitted chunk.
 Any violation fails the run.
 
-**`MemoryEmptyContrast`**: the same cycle (same inputs, topology, configuration and seed) runs once with the real
-port and once with a port that answers `COMPLETE` with no results. The `MEMORY_RECALL` stage itself is excluded,
-because its real-port output contains the recalled Signals by construction. The compared projection is the
-ordered list of `(kind, status, outputSignals)` of every stage result **after** `MEMORY_RECALL` (a different
-number of stages counts as a difference) and the cycle `outputSignals`, compared by value equality. Per query
-the report records `differs` (boolean), the first differing post-recall stage kind (or none), the output Signal
-counts of both runs, and `terminationDiffers` separately, since the recall's own budget use can change the
+**`MemoryEmptyContrast`**: the same cycle (same inputs, configuration and seed) runs once with the real port and
+once with a port that answers `COMPLETE` with no results.
+
+- **Isolation**: post-recall stages mutate state (for example `FeedbackAdaptationCognitiveStage` changes Node
+  state), so each arm starts from a fixture rebuilt independently from the same seed by a generator that derives
+  every identifier from the seed (as `DeterministicWorkloadGenerator` does), with a fresh `PrimaryMonad` and
+  fresh capability state. Both fixtures must be value-equal before the arms run; no topology object is shared
+  between arms, and the order is fixed (real port first).
+- **Projection**: the `MEMORY_RECALL` stage itself is excluded, because its real-port output contains the
+  recalled Signals by construction. Compared are the ordered list of **complete** stage results after
+  `MEMORY_RECALL`, by value equality of every component (output Signals and typed artifacts such as hypotheses,
+  evaluations, adaptation decisions, action outcomes and coordination results; a different number of stages
+  counts as a difference), and the cycle `outputSignals`. A component without value equality is a failed check;
+  the comparison never falls back to identity.
+
+Per query the report records `differs` (boolean), `differsInSignals` and `differsInArtifacts`, the first
+differing post-recall stage kind (or none), the output Signal counts of both runs, and `terminationDiffers`
+separately, since the recall's own budget use can change the
 termination. The aggregate is the count and
 fraction of queries with `differs = true`, reported separately for `A` and `U`.
 
@@ -435,11 +452,12 @@ Each answer gets exactly one primary status: the **first** row, in order, whose 
 | answer 4 | `FALSE_PREMISE_CORRECTED` | answerability `FALSE_PREMISE` and `premiseCorrected` |
 | answer 5 | `FALSE_PREMISE_UNADDRESSED` | answerability `FALSE_PREMISE` (neither accepts nor corrects the premise) |
 | answer 6 | `ANSWERED_UNANSWERABLE` | answerability `NO_ANSWER_IN_CORPUS`, `OUT_OF_DOMAIN` or `BLANK` |
-| answer 7 | `CONFLICT_HIDDEN` | answerability `CONFLICTING` and not `conflictDisclosed` |
-| answer 8 | `CONFLICT_SURFACED` | answerability `CONFLICTING` and `conflictDisclosed` |
-| answer 9 | `SUPPORTED_CORRECT` | at least one `keyClaim` exists and every `keyClaim` is matched |
-| answer 10 | `SUPPORTED_PARTIAL` | at least one `keyClaim` matched |
-| answer 11 | `SUPPORTED_OFF_TARGET` | otherwise (all claims supported, none matches a `keyClaim`) |
+| answer 7 | `CONFLICT_EVIDENCE_MISSING` | answerability `CONFLICTING` and `required(q) ⊄ E(q)` (disclosure cannot be judged without both sources) |
+| answer 8 | `CONFLICT_HIDDEN` | answerability `CONFLICTING` and not `conflictDisclosed` |
+| answer 9 | `CONFLICT_SURFACED` | answerability `CONFLICTING` and `conflictDisclosed` |
+| answer 10 | `SUPPORTED_CORRECT` | at least one `keyClaim` exists and every `keyClaim` is matched |
+| answer 11 | `SUPPORTED_PARTIAL` | at least one `keyClaim` matched |
+| answer 12 | `SUPPORTED_OFF_TARGET` | otherwise (all claims supported, none matches a `keyClaim`) |
 
 For example, an answer to a conflicting-source query that silently repeats the non-curated claim is
 `CONTRADICTED` with `conflictDisclosed = false`. `UNSUPPORTED` exists because an answer can be right by prior
@@ -456,12 +474,14 @@ claim is not credited.
 | `ClaimSupport` | supported claims / emitted claims | abstention |
 | `KeyClaimCoverage` | matched `keyClaims` / `keyClaims`, over answered (not abstained) queries | abstention, or no `keyClaims` |
 
-`M(q)` is the size of a **maximum one-to-one matching** between the answer's citations and the query's gold
-`evidenceSpans`. A citation is **eligible** only when it passes citation fidelity (its `chunkId` is in `E(q)` and
+`M(q)` is the size of a **maximum one-to-one matching** between the answer's distinct citations and the query's
+gold `evidenceSpans`. Identical citations `(chunkId, start, end)` within one answer are collapsed into one before
+the matching, so repeating a citation cannot pair it with several gold spans; every emitted citation, duplicates
+included, still counts in the `CitationPrecision` denominator, and the report records `duplicateCitations`. A citation is **eligible** only when it passes citation fidelity (its `chunkId` is in `E(q)` and
 its bounds are valid for that chunk's text); an eligible citation and a gold span can be matched when they name
 the same `chunkId` and overlap in at least one code point. Ineligible citations still count in the
-`CitationPrecision` denominator but can never be matched. Each citation and each gold span is matched at most once, so duplicate or broad
-citations cannot inflate either value; the matching size is unique even when several matchings reach it.
+`CitationPrecision` denominator but can never be matched. Each distinct citation and each gold span is matched at
+most once, so neither duplicate nor broad citations can inflate either value; the matching size is unique even when several matchings reach it.
 Aggregates follow the [undefined-value rules](#undefined-values-and-aggregation); abstentions are counted by
 status, not hidden in the claim metrics.
 
@@ -551,7 +571,7 @@ parameters, L3 trace key and memory-stage limit, L4 `evidenceLayer` and `answerK
 parameters, and any external model, provider, prompt template and decoding settings; `B3` needs only its name
 and protocol version), matcher-only vs final key-claim counts and reviewer overrides, reopen mode (`restart` or
 `fresh-handle`), run mode/profile, JDK vendor and version, OS and architecture, available processors, GC and
-heap settings, Neuron version and commit (`+dirty` when uncommitted), Store checkout commit, and the persisted
+heap settings, Neuron version and commit (`+dirty` when uncommitted), Store checkout commit (`+dirty` when the Store checkout has uncommitted changes, as `StoreMetadata` already reports), and the persisted
 Store manifest (version, encoder, normalizer, dimensions, vector format).
 
 ### Resources (L6)
@@ -568,7 +588,9 @@ affect a semantic verdict or the exit status.
 ## Comparison and regression
 
 A comparison between a baseline configuration and a changed configuration is valid only when `corpusHash`,
-`queryHash` and `protocolVersion` are equal (the only exception is a [scaling family](#scaling-family-delivered-by-111)).
+`queryHash`, `protocolVersion` and `seed` are equal (the only dataset exception is a
+[scaling family](#scaling-family-delivered-by-111)). Rows with different seeds are labeled `non-comparable` and
+no delta is computed.
 It reports per-metric deltas and a **per-query diff**: queries whose outcome changed, with the old and new
 retrieved chunk ids.
 
@@ -606,8 +628,12 @@ ranking, so a single event changes later rankings. Outside the #110 treatment ar
    Before any event, both must return identical results for the whole query set, compared by mapped chunk ids,
    order and scores (see [Cross-root comparisons](#run-conditions)); otherwise the run fails.
 2. The query set is split deterministically (this split is internal to #110 and is not the tuning held-out set of
-   [Thresholds and sweeps](#thresholds-and-sweeps)): within each category, queries are sorted by `queryId` and
-   assigned alternately to `calibration` and `held-out`, starting with `calibration`.
+   [Thresholds and sweeps](#thresholds-and-sweeps)). Queries are first grouped by their Store feedback key under
+   the configured key strategy (with the default `ExactQueryKeyStrategy` the key is the raw query text, and texts
+   are unique, so groups are single queries). Within each category, groups are sorted by their smallest
+   `queryId` and assigned alternately to `calibration` and `held-out`, starting with `calibration`; a group is
+   never split. On the B2 path, a held-out query whose codec-emitted Store query text has the same feedback key
+   as any calibration event is marked `keyCollision` and reported as non-comparable.
 3. Feedback events are derived **only from calibration queries and their labels**. For each calibration query
    with `Rel(q) ≠ ∅`, the treatment arm's B1 `Ret_5(q)` is inspected once, before any event is recorded: each relevant returned chunk gets
    `POSITIVE` and each non-relevant returned chunk gets `NEGATIVE`, keyed by the exact query text, with at most
@@ -650,8 +676,10 @@ label-integrity rules, as irrelevant to every `html-kq-v1` query; changing a tem
 The same generator version and seed always produce the same chunks, in the same order.
 
 **Query workload.** `html-kq-v1`, unchanged, at every size. Gold labels stay valid because generated chunks are
-irrelevant by construction. When `B > N`, queries whose relevant chunks are missing at that point are reported
-as non-comparable for that point and listed by id.
+irrelevant by construction. Label invariants (spans, digests, relevant sets) are validated once against the
+**full base corpus** `html-kc-v1`. When `B > N`, queries with a relevant chunk missing at that point are removed
+from that point **before** any point-local check or scoring, reported as non-comparable for that point and listed
+by id.
 
 **Cross-size rule.** Results at different sizes form a curve only within one **scaling family**: equal
 `protocolVersion`, `queryHash`, base `corpusHash`, `generatorVersion` and `seed`, with each point's own
