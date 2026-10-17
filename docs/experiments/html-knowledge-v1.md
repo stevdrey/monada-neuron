@@ -149,9 +149,15 @@ review, and never run in default CI.
 | `keyClaims` | short, pre-enumerated factual claims a correct answer makes (used by L4 only); a `FALSE_PREMISE` query always includes the claim that refutes its premise |
 | `avoidedTerms` | `paraphrase` queries only: the distinctive terms of the relevant chunks that the query text deliberately avoids; empty for other categories |
 
-Load-time invariants (a violation fails the run before anything is scored):
+Load-time invariants (a violation fails the run before anything is scored, serialized or imported):
 
+- `chunkId` is unique within the corpus and its ordinal belongs to its `documentId`; `queryId` is unique within
+  the query set.
+- No list or set field contains a repeated entry: `required`, `supporting`, `evidenceSpans`, `keyClaims` and
+  `avoidedTerms`.
 - `supporting` is empty when `required` is empty, and `required ∩ supporting = ∅`.
+- `|Rel(q)| ≤ 5`, the largest evaluated limit, so `HIT`, `FullEvidence@5` and `Recall@5 = 1` are always
+  attainable. For `k < |Rel(q)|` the lower ceiling of `Recall@k` is inherent to that `k`.
 - Every `evidenceSpans` entry names a chunk in `Rel(q)`, matches the corpus text by digest, and every `required`
   chunk has at least one span. A query with `Rel(q) = ∅` has no spans.
 - Every query with `Rel(q) ≠ ∅` has at least one `keyClaim`; a query with `Rel(q) = ∅` may have none.
@@ -370,10 +376,13 @@ maps through the manifest to a `chunkId`, and every attached `MemoryReferenceEvi
 Any violation fails the run.
 
 **`MemoryEmptyContrast`**: the same cycle (same inputs, topology, configuration and seed) runs once with the real
-port and once with a port that answers `COMPLETE` with no results. The compared projection is the cycle
-`termination`, the ordered list of `(kind, status, outputSignals)` of every stage result, and the cycle
-`outputSignals`, compared by value equality. Per query the report records `differs` (boolean), the first
-differing stage kind (or none) and the output Signal counts of both runs. The aggregate is the count and
+port and once with a port that answers `COMPLETE` with no results. The `MEMORY_RECALL` stage itself is excluded,
+because its real-port output contains the recalled Signals by construction. The compared projection is the
+ordered list of `(kind, status, outputSignals)` of every stage result **after** `MEMORY_RECALL` (a different
+number of stages counts as a difference) and the cycle `outputSignals`, compared by value equality. Per query
+the report records `differs` (boolean), the first differing post-recall stage kind (or none), the output Signal
+counts of both runs, and `terminationDiffers` separately, since the recall's own budget use can change the
+termination. The aggregate is the count and
 fraction of queries with `differs = true`, reported separately for `A` and `U`.
 
 L3 shows that evidence flows through the cycle. It is explicitly **not** a measure of reasoning quality.
@@ -418,8 +427,8 @@ Each answer gets exactly one primary status: the **first** row, in order, whose 
 | Order | Status | Condition |
 | :--- | :--- | :--- |
 | abstention 1 | `CORRECT_ABSTENTION` | abstained and `Rel(q) = ∅` |
-| abstention 2 | `EVIDENCE_MISS_ABSTENTION` | abstained and `Rel(q) ∩ E(q) = ∅` (a retrieval miss, not an answer error) |
-| abstention 3 | `WRONG_ABSTENTION` | abstained otherwise |
+| abstention 2 | `EVIDENCE_MISS_ABSTENTION` | abstained and `required(q) ⊄ E(q)` (incomplete retrieval, not an answer error) |
+| abstention 3 | `WRONG_ABSTENTION` | abstained although every `required` chunk was in `E(q)` |
 | answer 1 | `FALSE_PREMISE_ACCEPTED` | `premiseAccepted` |
 | answer 2 | `CONTRADICTED` | `anyContradictedClaim` |
 | answer 3 | `UNSUPPORTED` | `anyUnsupportedClaim`, **even if the claim is true** |
@@ -509,6 +518,17 @@ synonyms or weighting.
 
 - **Determinism**: two runs with the same corpus, query set, configuration and seed produce identical semantic
   results (outcomes, mapped chunk ids, order and scores). A difference is a failed check.
+- **Cross-root comparisons**: atom ids are random per import, so any comparison between results from different
+  roots (separate runs, the two #110 arms) compares chunk ids mapped through each root's own manifest, their
+  order and their scores, never raw atom ids. Comparisons within one root (for example B2 = B2c) may compare
+  atoms directly.
+- **Ingestion readback** (a semantic check, not a metric): the public Store API has no export or read by id, so
+  every manifest entry is read back through the read-only `resonate`: for each chunk,
+  `resonate(<normalized chunk text>).topK(B).threshold(0.0)`, with `B` the corpus size (bounded: at most 40, or
+  N ≤ 500 for a scaling family), must return that chunk's atom, and the SHA-256 of its returned content bytes
+  must equal the corpus `sha256`. The readback runs in the ingestion process after import and again in the
+  restarted process, so a chunk that was lost or corrupted and is never recalled by a query is still detected.
+  If the Store later offers a bounded export, a new protocol version prefers it.
 - **Post-reopen (restart)**: the Store API has no close operation (`MonadaMemory` exposes none, and
   `ResonanceStoreMemoryAdapter.close()` only marks the adapter unavailable), so a reopen inside one process
   cannot prove that no original handle is alive. The persistence condition therefore uses **separate
@@ -583,7 +603,8 @@ ranking, so a single event changes later rankings. Outside the #110 treatment ar
 **Design.**
 
 1. Two independent roots (`control` and `treatment`) are imported from the same corpus with the same options.
-   Before any event, both must return identical results for the whole query set; otherwise the run fails.
+   Before any event, both must return identical results for the whole query set, compared by mapped chunk ids,
+   order and scores (see [Cross-root comparisons](#run-conditions)); otherwise the run fails.
 2. The query set is split deterministically (this split is internal to #110 and is not the tuning held-out set of
    [Thresholds and sweeps](#thresholds-and-sweeps)): within each category, queries are sorted by `queryId` and
    assigned alternately to `calibration` and `held-out`, starting with `calibration`.
@@ -602,10 +623,11 @@ ranking, so a single event changes later rankings. Outside the #110 treatment ar
 5. **Persistence audit** (a semantic check, not a quality metric). Held-out queries never received events, so
    they cannot show that events persisted, and the Store's public API has no read of stored feedback. The audit
    therefore replays the **calibration** query keys, which did receive events, through B1:
-   - before the restart, at least one calibration key must return different results (atoms, order or scores)
-     in the treatment arm than in the control arm; otherwise persistence is reported as
+   - before the restart, at least one calibration key must return different results (mapped chunk ids, order
+     or scores) in the treatment arm than in the control arm; otherwise persistence is reported as
      `unverified (no observable effect)`, never as passed;
-   - after the restart, each arm must reproduce its own pre-restart calibration results exactly.
+   - after the restart, each arm must reproduce its own pre-restart calibration results exactly (mapped chunk
+     ids, order and scores).
 
    Calibration results are used only for this audit and never in the quality scoring.
 
