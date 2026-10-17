@@ -247,8 +247,15 @@ metrics. Their count is always reported next to `|A|`, so they cannot disappear 
 
 These are set-level ratios over the query population, not means of per-query values.
 
-At L1/L2 "abstention" means an empty result after the configured threshold. `BLANK` queries are reported in
-`U` and also separately, because a blank query returning nothing is a contract check, not a quality signal.
+### Completed recalls only
+
+Only completed recalls are scored. B2 must answer with status `COMPLETE`, and every B1/B2c Store call must
+return without an exception. Any other result (`FAILED`, `UNAVAILABLE`, `PARTIAL` or `TIMED_OUT` from the port, or
+an exception from the Store) is a failed semantic check: the query gets no outcome and the run exits non-zero,
+so an operational failure can never be counted as an abstention. At L1/L2 "abstention" means an empty result
+list in a completed recall, after the configured threshold.
+
+`BLANK` queries are reported in `U` and also separately, because a blank query returning nothing is a contract check, not a quality signal.
 `CONFLICTING` queries are in `A`: the curated chunk of the pair is `required`, the other one `supporting`.
 
 ### Per-query outcome
@@ -323,7 +330,9 @@ attach `MemoryReferenceEvidence` to anything on its own. L3 therefore traces evi
 actually exposes:
 
 - **Recalled**: the port's full response is captured at the port boundary by a recording decorator (the same
-  pattern as the `ReplayedMemoryResponse` row of the integration evaluation). The stage result alone cannot give
+  pattern as the `ReplayedMemoryResponse` row of the integration evaluation). It must have status `COMPLETE`
+  (see [Completed recalls only](#completed-recalls-only)); the `PARTIAL` status that admission
+  later gives the stage result is expected and is not an error. The stage result alone cannot give
   this count: when the cycle admits only part of the output, `withAdmittedOutputSignals` trims the response to the
   admitted result prefix (status `PARTIAL`).
 - **Admitted**: `ResonanceMemoryCognitiveStage` emits the pass-through input Signals followed by the recalled
@@ -340,6 +349,9 @@ actually exposes:
   what `MemoryEmptyContrast` probes.
 - **Ambiguity**: when two admitted Signals share a `τ` value, or an admitted Signal shares one with a cycle input
   or a `PERCEPTION` output Signal, the query is marked `traceAmbiguous` and its trace-based values are undefined.
+  The same applies when `τ` of an admitted Signal also appears in the output of any stage after `MEMORY_RECALL`
+  in the memory-empty run of the same query (see `MemoryEmptyContrast` below, which is therefore mandatory in
+  every L3 run): a key that the cycle reproduces without memory is not evidence that memory was carried.
 - A `MemoryReferenceEvidence` counts as use only when an explicit, documented component attaches it; its
   reference must then map through the manifest to a chunk admitted in the same cycle.
 
@@ -368,16 +380,17 @@ L3 shows that evidence flows through the cycle. It is explicitly **not** a measu
 
 ## Grounded answer (L4, delivered by #109)
 
-L4 scores an explicit, optional answer component. An answer is either an abstention or a non-empty list of
+L4 scores an explicit, optional answer component, only over queries whose bound recall completed (see
+[Completed recalls only](#completed-recalls-only)). An answer is either an abstention or a non-empty list of
 claims, each with citations `(chunkId, start, end)` into the normalized chunk text.
 
 ### Evidence binding
 
 Every L4 evaluation declares `evidenceLayer` (`B1` or `B2`), that layer's configuration, and `answerK`
 (one of 1, 3, 5). The **evidence set** is `E(q) = Ret_answerK(q)` of that layer in the same run. Its chunk text
-is the content the Store returned for `B1` (which passed source fidelity) and, for `B2`, whose results carry
-only opaque references, the corpus text of the chunk each reference maps to (which passed reference
-fidelity). Every L4 rule that refers to retrieved evidence uses `E(q)`: citation fidelity,
+is always content the Store actually returned and that passed source fidelity: for `B1`, B1's returned content;
+for `B2`, whose results carry only opaque references, the content returned by the B2c control for the same atoms
+(B2 = B2c is already required). Corpus text is never substituted for Store output. Every L4 rule that refers to retrieved evidence uses `E(q)`: citation fidelity,
 abstention classification and the input of B3. Evaluations bound to different layers are separate report rows;
 evidence sets are never united or intersected.
 
@@ -577,11 +590,24 @@ ranking, so a single event changes later rankings. Outside the #110 treatment ar
 3. Feedback events are derived **only from calibration queries and their labels**. For each calibration query
    with `Rel(q) ≠ ∅`, the treatment arm's B1 `Ret_5(q)` is inspected once, before any event is recorded: each relevant returned chunk gets
    `POSITIVE` and each non-relevant returned chunk gets `NEGATIVE`, keyed by the exact query text, with at most
-   5 events per query. Every event is recorded (query id, query key, `chunkId`, opaque reference, signal) and the
-   event list is hashed with the [dataset-hash](#dataset-hashes) encoding.
+   5 events per query and at most one event per `(queryId, chunkId)`. Events are applied in canonical order and
+   every event is recorded (query id, query key, `chunkId`, opaque reference, signal).
+   `feedbackHash` uses the [dataset-hash](#dataset-hashes) field encoding: the version string `html-kf-v1`, the
+   event count, then the events sorted by `(queryId, chunkId)` (code point order), each as `queryId`,
+   `queryKey` (exact query text), `chunkId`, `signal` (enum name, `POSITIVE` or `NEGATIVE`) and `delta`
+   (absent when the three-argument `feedback` overload is used). The opaque reference depends on random atom
+   ids, so it is recorded but not hashed. A duplicate event fails the run.
 4. Both arms are scored on the **held-out** queries only, at fixed `k` and `t`, through B1 and then B2 (reported
-   as separate paths), and again after a [restart](#run-conditions) of both roots. The restarted treatment arm
-   must reproduce its pre-restart results, which shows that the events persisted.
+   as separate paths), and again after a [restart](#run-conditions) of both roots.
+5. **Persistence audit** (a semantic check, not a quality metric). Held-out queries never received events, so
+   they cannot show that events persisted, and the Store's public API has no read of stored feedback. The audit
+   therefore replays the **calibration** query keys, which did receive events, through B1:
+   - before the restart, at least one calibration key must return different results (atoms, order or scores)
+     in the treatment arm than in the control arm; otherwise persistence is reported as
+     `unverified (no observable effect)`, never as passed;
+   - after the restart, each arm must reproduce its own pre-restart calibration results exactly.
+
+   Calibration results are used only for this audit and never in the quality scoring.
 
 **Scoring.** The report gives paired per-query results: outcome transitions (control → treatment), deltas of the
 L1/L2 metrics, top-k churn `|Ret_5^T(q) Δ Ret_5^C(q)|`, abstention changes, and every regression. Held-out labels
@@ -616,8 +642,16 @@ Each delivered experiment writes a machine-readable JSON report and a concise Ma
 `build/reports/benchmarks/` (the existing default), containing the required fields, aggregate metrics per
 layer, `k` and category, outcome counts, and one row per query: `queryId`, category, answerability, expected
 chunk ids, returned chunk ids with ranks and scores, `tieAtCutoff`, outcome, and diagnostics for misses (plus,
-where measured, L3 trace values and L4 status, flags and evidence layer). Undefined values are JSON `null`. The
-process exits non-zero only on a failed semantic check.
+where measured, L3 trace values and L4 status, flags and evidence layer). Each L4 query row also carries its
+claim-level artifacts, so a different human judgment can never hide behind identical counts:
+
+- every emitted claim with its text and citations, each citation marked eligible or not;
+- the `supported` and `contradicted` verdict of each claim and its source (matcher or reviewer);
+- the key-claim matching edges proposed by the matcher and the final edges;
+- every reviewer override: the edge, the action (`confirm`, `add`, `remove`), a reviewer identifier and the
+  reason.
+
+Undefined values are JSON `null`. The process exits non-zero only on a failed semantic check.
 
 ## Decision-quality extension
 
