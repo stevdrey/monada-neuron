@@ -64,6 +64,35 @@ class CorpusChunkerTest {
     }
 
     @Test
+    void keepsAHeadingWithTheFirstSentencesWhenItsWholeParagraphDoesNotFitWithIt() {
+        var document = "## Heading\n\nFirst short one. Second sentence here.";
+
+        var spans = new CorpusChunker(40).chunk(document, "doc");
+
+        assertEquals(List.of("## Heading\n\nFirst short one.", "Second sentence here."),
+                spans.stream().map(CorpusChunker.Span::text).toList());
+        assertSpansMatch(document, spans);
+    }
+
+    @Test
+    void emitsHeadingsAsTheirOwnChunkWhenNothingAfterThemFits() {
+        var code = "## Code sample\n\n```\n<p>x</p>\n```";
+        var sentence = "## Heading one\n\nA single sentence of words.";
+        var headings = "# Top level title\n## Second heading\nBody.";
+
+        assertEquals(List.of("## Code sample", "```\n<p>x</p>\n```"),
+                new CorpusChunker(30).chunk(code, "code").stream().map(CorpusChunker.Span::text).toList());
+        assertEquals(List.of("## Heading one", "A single sentence of words."),
+                new CorpusChunker(30).chunk(sentence, "sentence").stream().map(CorpusChunker.Span::text).toList());
+        var headingSpans = new CorpusChunker(20).chunk(headings, "headings");
+        assertEquals(List.of("# Top level title", "## Second heading", "Body."),
+                headingSpans.stream().map(CorpusChunker.Span::text).toList());
+        assertTrue(headingSpans.stream().allMatch(span -> span.section().equals("Second heading")));
+        assertSpansMatch(code, new CorpusChunker(30).chunk(code, "code"));
+        assertSpansMatch(headings, headingSpans);
+    }
+
+    @Test
     void reportsCodePointOffsetsForNonBmpText() {
         var document = "## Emoji \uD83D\uDE00\n\nSmile \uD83D\uDE00 text.\n\n## Next\n\nMore.";
 

@@ -127,6 +127,12 @@ jobs:
         working-directory: monada-neuron
         run: ./gradlew --no-daemon :monada-neuron-resonance-adapter:test
 
+      - name: Run evaluation integration tests
+        # The integration source sets of monada-neuron-evaluation exist only with the Store sibling, so the verify
+        # job cannot run them (Store integration, adapter boundary, routing replay, HTML knowledge ingestion).
+        working-directory: monada-neuron
+        run: ./gradlew --no-daemon :monada-neuron-evaluation:integrationTest
+
       - name: Verify embedded-host consumers
         working-directory: monada-neuron
         run: ./gradlew --no-daemon embeddedHostConsumerTest

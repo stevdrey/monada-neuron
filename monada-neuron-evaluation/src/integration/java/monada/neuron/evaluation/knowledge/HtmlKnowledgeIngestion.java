@@ -144,7 +144,12 @@ public final class HtmlKnowledgeIngestion {
         return failures;
     }
 
-    private void requireFreshRoot(Path root) {
+    /**
+     * Requires {@code root} to be absent or an empty directory, the duplicate-import guard.
+     *
+     * @throws IllegalStateException when the root is not a directory or already holds files
+     */
+    static void requireFreshRoot(Path root) {
         if (Files.notExists(root)) {
             return;
         }

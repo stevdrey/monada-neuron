@@ -107,9 +107,31 @@ class HtmlKnowledgeIngestionRunnerTest {
                 "--store-root", authored.toString(), "--output-dir", authored.resolve("reports").toString()}));
         assertThrows(IllegalArgumentException.class, () -> HtmlKnowledgeIngestionRunner.Options.parse(new String[] {
                 "--store-root", authored.toString(), "--output-dir", authored.toString()}));
+        assertThrows(IllegalArgumentException.class, () -> HtmlKnowledgeIngestionRunner.Options.parse(new String[] {
+                "--store-root", authored.toString(), "--output-dir", directory.resolve("roots").toString()}));
+        assertThrows(IllegalArgumentException.class, () -> HtmlKnowledgeIngestionRunner.Options.parse(concat(
+                new String[] {"--mdn-store-root", authored.toString(), "--output-dir",
+                        directory.resolve("roots").toString()}, mdnArgs)));
         assertFalse(Files.exists(directory.resolve("roots")));
         HtmlKnowledgeIngestionRunner.Options.parse(concat(new String[] {"--store-root", authored.toString(),
                 "--mdn-store-root", directory.resolve("roots/mdn").toString()}, mdnArgs));
+    }
+
+    @Test
+    void anOccupiedExternalRootFailsBeforeTheAuthoredCorpusIsImported() throws IOException {
+        var snapshot = Files.writeString(directory.resolve("index.md"), MdnSnapshotSourceTest.SYNTHETIC_SNAPSHOT);
+        var authored = directory.resolve("authored");
+        var occupied = Files.createDirectories(directory.resolve("occupied"));
+        Files.writeString(occupied.resolve("notes.txt"), "unrelated");
+        var options = HtmlKnowledgeIngestionRunner.Options.parse(new String[] {
+                "--store-root", authored.toString(), "--mdn-store-root", occupied.toString(),
+                "--mdn-snapshot", snapshot.toString(), "--mdn-revision", MdnSnapshotSourceTest.REVISION,
+                "--mdn-sha256", MdnSnapshotSourceTest.sha256(snapshot)});
+
+        var failure = assertThrows(IllegalStateException.class, () -> HtmlKnowledgeIngestionRunner.run(options));
+
+        assertTrue(failure.getMessage().contains("duplicate import refused"), failure.getMessage());
+        assertFalse(Files.exists(authored));
     }
 
     @Test

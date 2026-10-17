@@ -15,7 +15,8 @@ text is external memory, not training: nothing here learns HTML.
 ## Running
 
 Requires the sibling `../monada-resonance-store` checkout, like every integration task. Without it the task
-does not exist and `./gradlew test` does not change.
+does not exist and `./gradlew test` does not change. CI runs `:monada-neuron-evaluation:integrationTest`, including
+these tests, in the adapter job against Store `main`.
 
 ```bash
 ./gradlew :monada-neuron-evaluation:runHtmlKnowledgeIngestion
@@ -106,7 +107,9 @@ sha256sum ~/src/mdn-content/files/en-us/learn_web_development/getting_started/yo
 
 The snapshot becomes the separate corpus `html-kc-ext-mdn-v1` in its own root, with at most 100 chunks (the
 two-digit ordinal range). `--store-root`, `--mdn-store-root` and `--output-dir` must not be equal or nested in each
-other; such a run is rejected with exit status 2 before any Store is opened.
+other in either direction, and every kept root must be absent or empty. Both are checked for all roots before the
+first import, so a rejected run (exit status 2) leaves no Store behind. Only a failure during an import itself (I/O
+or a Store error) can leave a kept root partially written.
 
 Licensing: MDN prose is licensed **CC BY-SA 2.5** by Mozilla Contributors. Every chunk records:
 

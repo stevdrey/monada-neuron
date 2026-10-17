@@ -14,7 +14,10 @@ import java.util.regex.Pattern;
  *       next section; text before the first heading forms a {@value #PREAMBLE} section.</li>
  *   <li>A section is one chunk when its UTF-8 size fits the bound. Otherwise it is split greedily at block
  *       boundaries (blank lines, heading lines, fences), and a paragraph that alone exceeds the bound is split
- *       at sentence ends ({@code .}, {@code !} or {@code ?} followed by whitespace).</li>
+ *       at sentence ends ({@code .}, {@code !} or {@code ?} followed by whitespace). When headings do not fit
+ *       together with the paragraph that follows them, that paragraph is split at sentence ends so the headings
+ *       keep its first sentences; when nothing after them fits (a code block or a single sentence), the headings
+ *       form their own chunk.</li>
  *   <li>A fenced code block (opened by a line starting with three backticks, closed by a line of exactly three
  *       backticks) is never split; an oversize code block, heading or sentence is rejected, never truncated.</li>
  * </ol>
@@ -63,9 +66,9 @@ public final class CorpusChunker {
         }
     }
 
-    private enum Kind { HEADING, PARAGRAPH, CODE }
+    private enum Kind { HEADING, PARAGRAPH, SENTENCE, CODE }
 
-    /** Block of the document in char offsets: a heading line, a paragraph or a whole fenced code block. */
+    /** Block in char offsets: a heading line, a paragraph, one sentence of a paragraph, or a fenced code block. */
     private record Block(Kind kind, int start, int end, String heading) {
     }
 
@@ -170,16 +173,26 @@ public final class CorpusChunker {
             }
         }
         var first = 0;
-        for (var i = 1; i < units.size(); i++) {
+        var i = 1;
+        while (i < units.size()) {
             if (offsets.bytes(units.get(first).start(), units.get(i).end()) <= maxChunkBytes) {
+                i++;
                 continue;
             }
-            if (units.subList(first, i).stream().allMatch(unit -> unit.kind() == Kind.HEADING)) {
-                throw oversize(origin, section, "heading with its first block",
-                        offsets.bytes(units.get(first).start(), units.get(i).end()));
+            var headingsOnly = units.subList(first, i).stream().allMatch(unit -> unit.kind() == Kind.HEADING);
+            if (headingsOnly && units.get(i).kind() == Kind.PARAGRAPH) {
+                // Keep the heading with as much of its first paragraph as fits: retry with the paragraph's sentences.
+                var split = sentences(document, offsets, units.get(i), section, origin);
+                if (split.size() > 1) {
+                    units.remove(i);
+                    units.addAll(i, split);
+                    continue;
+                }
             }
+            // A heading group that fits nothing after it becomes its own chunk instead of being rejected.
             spans.add(span(document, offsets, units.get(first).start(), units.get(i - 1).end(), section.label()));
             first = i;
+            i++;
         }
         spans.add(span(document, offsets, units.get(first).start(), units.getLast().end(), section.label()));
     }
@@ -192,12 +205,12 @@ public final class CorpusChunker {
             var boundary = (c == '.' || c == '!' || c == '?')
                     && (i + 1 == paragraph.end() || Character.isWhitespace(document.charAt(i + 1)));
             if (boundary) {
-                sentences.add(new Block(Kind.PARAGRAPH, start, i + 1, null));
+                sentences.add(new Block(Kind.SENTENCE, start, i + 1, null));
                 start = i + 1;
             }
         }
         if (!document.substring(start, paragraph.end()).isBlank()) {
-            sentences.add(new Block(Kind.PARAGRAPH, start, paragraph.end(), null));
+            sentences.add(new Block(Kind.SENTENCE, start, paragraph.end(), null));
         }
         for (var sentence : sentences) {
             var bytes = offsets.bytes(sentence.start(), sentence.end());

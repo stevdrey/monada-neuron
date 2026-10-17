@@ -64,8 +64,8 @@ public final class HtmlKnowledgeIngestionRunner {
 
         /**
          * Requires every component and rejects overlapping locations before anything is written: the kept Store
-         * roots must be distinct and not nested in each other, and the output directory must not be or lie inside a
-         * kept Store root. Paths are compared after {@code toAbsolutePath().normalize()}.
+         * roots and the output directory must be pairwise distinct and not nested in each other, in either
+         * direction. Paths are compared after {@code toAbsolutePath().normalize()}.
          */
         public Options {
             Objects.requireNonNull(outputDir, "outputDir must not be null");
@@ -77,8 +77,9 @@ public final class HtmlKnowledgeIngestionRunner {
                         + " non-nested directories");
             }
             for (var root : Stream.concat(storeRoot.stream(), mdnRoot.stream()).toList()) {
-                if (absolute(outputDir).startsWith(absolute(root))) {
-                    throw new IllegalArgumentException("--output-dir must not be or lie inside a store root: " + root);
+                if (overlap(outputDir, root)) {
+                    throw new IllegalArgumentException(
+                            "--output-dir and a store root must be separate, non-nested directories: " + root);
                 }
             }
         }
@@ -185,6 +186,8 @@ public final class HtmlKnowledgeIngestionRunner {
 
     /**
      * Runs the experiment. Temporary roots are deleted before returning; a requested {@code --store-root} is kept.
+     * Every input, including the snapshot and the freshness of every kept root, is checked before the first import;
+     * only a failure during an import (I/O or Store error) can leave a kept root partially written.
      *
      * @throws CorpusValidationException when a corpus or the requested snapshot is rejected
      * @throws IllegalStateException when a target root already holds a store (duplicate import)
@@ -208,6 +211,10 @@ public final class HtmlKnowledgeIngestionRunner {
         // Validate the external snapshot before writing any store, so a rejected input leaves nothing behind.
         var externalCorpus = options.mdn()
                 .map(mdn -> new MdnSnapshotSource().load(mdn.snapshot(), mdn.revision(), mdn.sha256()));
+
+        // Preflight every kept root before importing anything, so a rejected run never leaves a populated Store.
+        options.storeRoot().ifPresent(HtmlKnowledgeIngestion::requireFreshRoot);
+        options.mdn().flatMap(MdnOptions::storeRoot).ifPresent(HtmlKnowledgeIngestion::requireFreshRoot);
 
         var authored = new Ingested(corpus, ingest(corpus, options.storeRoot(), "store", checks, metadata));
         describe(corpus, "corpus", metadata);
@@ -283,7 +290,8 @@ public final class HtmlKnowledgeIngestionRunner {
         try {
             var result = new HtmlKnowledgeIngestion(corpus).ingest(root);
             checks.addAll(result.checks());
-            metadata.put(prefix + ".root", keptRoot.isPresent() ? root.toAbsolutePath().toString() : "temporary (deleted)");
+            metadata.put(prefix + ".root",
+                    keptRoot.isPresent() ? root.toAbsolutePath().toString() : "temporary (deleted)");
             metadata.put(prefix + ".perf.ingestNanos", Long.toString(result.ingestNanos()));
             metadata.put(prefix + ".perf.readbackNanos", Long.toString(result.readbackNanos()));
             var manifest = root.resolve("manifest.json");
