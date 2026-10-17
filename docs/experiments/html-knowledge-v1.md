@@ -146,7 +146,7 @@ review, and never run in default CI.
 | `required` | set of `chunkId` that together contain the answer, or the refutation of a false premise; empty exactly when no chunk is relevant |
 | `supporting` | set of `chunkId` that are relevant but not required; must be empty when `required` is empty |
 | `evidenceSpans` | `(chunkId, start, end, sha256)` for each expected supporting passage; validated against the corpus text at load |
-| `keyClaims` | short, pre-enumerated factual claims a correct answer makes (used by L4 only) |
+| `keyClaims` | short, pre-enumerated factual claims a correct answer makes (used by L4 only); a `FALSE_PREMISE` query always includes the claim that refutes its premise |
 
 The relevant set used by retrieval metrics is `Rel(q) = required ∪ supporting`.
 
@@ -310,9 +310,15 @@ Signals carry no identifiers ([ADR 0005](../adr/0005-signals-without-identifiers
 attach `MemoryReferenceEvidence` to anything on its own. L3 therefore traces evidence through what the code
 actually exposes:
 
-- **Admitted**: `ResonanceMemoryStageResult.outputSignals()` is the admitted recalled suffix, aligned by position
-  with `response().results()`. Admitted Signal `i` therefore carries the reference of result `i`, which the
-  manifest maps to a `chunkId`.
+- **Recalled**: the port's full response is captured at the port boundary by a recording decorator (the same
+  pattern as the `ReplayedMemoryResponse` row of the integration evaluation). The stage result alone cannot give
+  this count: when the cycle admits only part of the output, `withAdmittedOutputSignals` trims the response to the
+  admitted result prefix (status `PARTIAL`).
+- **Admitted**: `ResonanceMemoryCognitiveStage` emits the pass-through input Signals followed by the recalled
+  Signals, so in the admitted `ResonanceMemoryStageResult` the recalled slice is the **last**
+  `r = response().results().size()` elements of `outputSignals()`, and `outputSignals().size() - r` is the
+  pass-through count. Element `j` of that slice is `response().results().get(j).signal()` and carries that
+  result's reference, which the manifest maps to a `chunkId`.
 - **Trace key**: later stages may rewrite Signals, so tracing uses a documented **trace key function** `τ(Signal)`
   recorded in the report (default: full value equality of the `Signal` record; an L3 run may declare another,
   for example the frequency state, which the existing integration fixture keeps stable across stages).
@@ -329,14 +335,15 @@ The L3 run records the memory-stage result limit and the signal budget.
 
 | Metric | Per-query definition | Undefined when |
 | :--- | :--- | :--- |
-| `AdmittedFraction` | admitted recalled Signals / recalled results | no results recalled |
+| `AdmittedFraction` | admitted results / results in the recorded port response | the recorded response has no results |
 | `UsedFraction` | used admitted chunks / admitted chunks | nothing admitted, or `traceAmbiguous` |
 | `RelevantEvidenceUsed` | `1` if a used chunk is in `Rel(q)`, else `0`; over `A` only | `traceAmbiguous` |
 | `MemoryEmptyContrast` | see below | never |
 
-**Trace integrity** is a semantic check, not a metric: the number of admitted Signals never exceeds the number of
-results, every admitted position has a mapped reference, and every attached `MemoryReferenceEvidence` maps to an
-admitted chunk. Any violation fails the run.
+**Trace integrity** is a semantic check, not a metric: the admitted results are an ordered prefix of the recorded
+port response, the recalled slice of `outputSignals()` equals their Signals in order, every admitted reference
+maps through the manifest to a `chunkId`, and every attached `MemoryReferenceEvidence` maps to an admitted chunk.
+Any violation fails the run.
 
 **`MemoryEmptyContrast`**: the same cycle (same inputs, topology, configuration and seed) runs once with the real
 port and once with a port that answers `COMPLETE` with no results. The compared projection is the cycle
@@ -367,7 +374,8 @@ evidence sets are never united or intersected.
 For each emitted claim the judge records `supported` (at least one of its citations passes citation fidelity and
 its cited text entails the claim) and `contradicted` (the claim contradicts the curated evidence of the query).
 Per answer the judge also records the flags `anyUnsupportedClaim`, `anyContradictedClaim`, `premiseAccepted`
-(`FALSE_PREMISE` queries only; the answer treats the premise as true) and `conflictDisclosed` (`CONFLICTING`
+(`FALSE_PREMISE` queries only; the answer treats the premise as true), `premiseCorrected` (`FALSE_PREMISE`
+queries only; a supported claim matches the query's refutation `keyClaim`) and `conflictDisclosed` (`CONFLICTING`
 queries only; the answer states both claims of the pair and cites both chunks). Flags are always reported,
 independently of the primary status.
 
@@ -383,13 +391,14 @@ Each answer gets exactly one primary status: the **first** row, in order, whose 
 | answer 1 | `FALSE_PREMISE_ACCEPTED` | `premiseAccepted` |
 | answer 2 | `CONTRADICTED` | `anyContradictedClaim` |
 | answer 3 | `UNSUPPORTED` | `anyUnsupportedClaim`, **even if the claim is true** |
-| answer 4 | `FALSE_PREMISE_CORRECTED` | answerability `FALSE_PREMISE` |
-| answer 5 | `ANSWERED_UNANSWERABLE` | answerability `NO_ANSWER_IN_CORPUS`, `OUT_OF_DOMAIN` or `BLANK` |
-| answer 6 | `CONFLICT_HIDDEN` | answerability `CONFLICTING` and not `conflictDisclosed` |
-| answer 7 | `CONFLICT_SURFACED` | answerability `CONFLICTING` |
-| answer 8 | `SUPPORTED_CORRECT` | every `keyClaim` matched |
-| answer 9 | `SUPPORTED_PARTIAL` | at least one `keyClaim` matched |
-| answer 10 | `SUPPORTED_OFF_TARGET` | otherwise (all claims supported, none matches a `keyClaim`) |
+| answer 4 | `FALSE_PREMISE_CORRECTED` | answerability `FALSE_PREMISE` and `premiseCorrected` |
+| answer 5 | `FALSE_PREMISE_UNADDRESSED` | answerability `FALSE_PREMISE` (neither accepts nor corrects the premise) |
+| answer 6 | `ANSWERED_UNANSWERABLE` | answerability `NO_ANSWER_IN_CORPUS`, `OUT_OF_DOMAIN` or `BLANK` |
+| answer 7 | `CONFLICT_HIDDEN` | answerability `CONFLICTING` and not `conflictDisclosed` |
+| answer 8 | `CONFLICT_SURFACED` | answerability `CONFLICTING` and `conflictDisclosed` |
+| answer 9 | `SUPPORTED_CORRECT` | every `keyClaim` matched |
+| answer 10 | `SUPPORTED_PARTIAL` | at least one `keyClaim` matched |
+| answer 11 | `SUPPORTED_OFF_TARGET` | otherwise (all claims supported, none matches a `keyClaim`) |
 
 For example, an answer to a conflicting-source query that silently repeats the non-curated claim is
 `CONTRADICTED` with `conflictDisclosed = false`. `UNSUPPORTED` exists because an answer can be right by prior
