@@ -61,7 +61,7 @@ class HtmlKnowledgePersistenceTest {
         var rows = new ArrayList<>(seeded.observation().snapshot().rows());
         var first = rows.getFirst();
         rows.set(0, new Row(first.probeId(), first.path(), first.rank(), first.chunkId(), first.score() + 1.0));
-        var tampered = new Snapshot("another profile", rows);
+        var tampered = new Snapshot("another profile", "0".repeat(64), rows);
 
         var observation = persistence.reopen(root, seeded.manifest(), tampered);
 
@@ -69,6 +69,7 @@ class HtmlKnowledgePersistenceTest {
         assertFalse(recall.passed());
         assertTrue(recall.detail().contains("first difference at result 0"), recall.detail());
         assertFalse(check(observation.checks(), "persistence.restartProfileEqual").passed());
+        assertFalse(check(observation.checks(), "persistence.restartProbeSetEqual").passed());
         assertTrue(check(observation.checks(), "neuron.restartEqual").passed());
         assertTrue(check(observation.checks(), "persistence.freshHandleConsistency").detail()
                 .contains("not persistence evidence"));

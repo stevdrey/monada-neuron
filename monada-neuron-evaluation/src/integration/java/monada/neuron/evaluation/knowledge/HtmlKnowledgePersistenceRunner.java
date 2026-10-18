@@ -334,6 +334,8 @@ public final class HtmlKnowledgePersistenceRunner {
         metadata.put("corpus.chunks", Integer.toString(corpus.chunks().size()));
         metadata.put("codec", ChunkTextProbeCodec.describe());
         metadata.put("codec.scope", "attribution and run comparison only; a lookup codec, not valid for L2 quality");
+        metadata.put("probes.version", PersistenceProbes.VERSION);
+        metadata.put("probes.hash", persistence.probeHash());
         metadata.put("probes.count", Integer.toString(persistence.probes().size()));
         metadata.put("probes.topK", Integer.toString(HtmlKnowledgePersistence.TOP_K));
         metadata.put("probes.threshold", Double.toString(HtmlKnowledgePersistence.THRESHOLD));

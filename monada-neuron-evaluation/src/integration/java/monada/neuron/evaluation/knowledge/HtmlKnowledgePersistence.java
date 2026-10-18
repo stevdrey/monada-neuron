@@ -146,6 +146,10 @@ public final class HtmlKnowledgePersistence {
                 snapshot.profile().equals(seeded.profile())
                         ? "the persisted encoding and vector-format profile read in this process equals the seed's"
                         : "profile changed: seed [" + seeded.profile() + "], now [" + snapshot.profile() + "]"));
+        var sameProbes = snapshot.probeHash().equals(seeded.probeHash());
+        checks.add(new Check("persistence.restartProbeSetEqual", sameProbes, sameProbes
+                ? "both processes ran the same probe set (probeHash " + snapshot.probeHash() + ")"
+                : "probe set changed: seed " + seeded.probeHash() + ", now " + snapshot.probeHash()));
         checks.add(equalRows("persistence.restartRecallEqual", seeded.rows(DIRECT), snapshot.rows(DIRECT),
                 "direct MonadaMemory results of every probe equal the seed process's: chunk ids through the manifest,"
                         + " order and bit-exact scores"));
@@ -280,7 +284,7 @@ public final class HtmlKnowledgePersistence {
         metadata.put("probes", Integer.toString(probes.size()));
         metadata.put("probeResults.direct", Long.toString(rows.size() - neuronResults));
         metadata.put("probeResults.neuron", Long.toString(neuronResults));
-        return new Observation(new Snapshot(profile, rows), checks, metadata);
+        return new Observation(new Snapshot(profile, probeHash(), rows), checks, metadata);
     }
 
     private Check directVersusAdapter(List<Row> rows) {
@@ -552,6 +556,20 @@ public final class HtmlKnowledgePersistence {
     /** Returns the probes in their fixed order. */
     List<PersistenceProbes.Probe> probes() {
         return probes;
+    }
+
+    /**
+     * Returns the canonical SHA-256 of the probe workload: the probe-set version, the {@code corpusHash} (readback
+     * queries are chunk texts), the probe count, then every probe id and query text in order, each a length-prefixed
+     * field ({@link CanonicalRecordDigest}). Any change to a query text changes the hash even when ids and count stay.
+     */
+    String probeHash() {
+        var digest = new CanonicalRecordDigest().field(PersistenceProbes.VERSION).field(corpus.corpusHash())
+                .field(probes.size());
+        for (var probe : probes) {
+            digest.field(probe.probeId()).field(probe.query());
+        }
+        return digest.hex();
     }
 
     private String profile(Manifest manifest) {

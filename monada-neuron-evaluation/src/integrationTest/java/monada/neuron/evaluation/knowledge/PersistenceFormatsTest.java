@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -61,6 +62,22 @@ class PersistenceFormatsTest {
     }
 
     @Test
+    void probeHashChangesWithAQueryTextEvenWhenIdsAndCountStay() {
+        var persistence = new HtmlKnowledgePersistence(corpus);
+        var hash = persistence.probeHash();
+
+        assertTrue(CorpusDigests.isSha256(hash));
+        assertEquals(hash, new HtmlKnowledgePersistence(HtmlKnowledgeCorpus.bundled()).probeHash());
+        // The canonical form is length-prefixed, so moving text between an id and its query changes the hash.
+        var shifted = new CanonicalRecordDigest().field(PersistenceProbes.VERSION).field(corpus.corpusHash())
+                .field(probes.size());
+        for (var probe : probes) {
+            shifted.field(probe.probeId() + probe.query().charAt(0)).field(probe.query().substring(1));
+        }
+        assertNotEquals(hash, shifted.hex());
+    }
+
+    @Test
     void manifestTsvRoundTripsAndRejectsAnotherCorpusOrMalformedRows() {
         var manifest = new IngestionManifest(corpus.version(), corpus.corpusHash(), List.of(
                 new IngestionManifest.Entry("chk:a#00", "atom-1", "rs-1"),
@@ -82,7 +99,8 @@ class PersistenceFormatsTest {
     @Test
     void snapshotTsvKeepsScoresBitExact() {
         var score = Math.nextUp(0.1);
-        var snapshot = new Snapshot("profile", List.of(new Row("readback:chk:a#00", "direct", 0, "chk:a#00", score)));
+        var snapshot = new Snapshot("profile", "0".repeat(64),
+                List.of(new Row("readback:chk:a#00", "direct", 0, "chk:a#00", score)));
 
         var parsed = Snapshot.parseTsv(snapshot.toTsv());
         assertEquals(snapshot, parsed);

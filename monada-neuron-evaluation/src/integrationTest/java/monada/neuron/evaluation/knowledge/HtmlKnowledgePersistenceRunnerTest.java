@@ -34,6 +34,7 @@ class HtmlKnowledgePersistenceRunnerTest {
             "reopen.neuron.signalAttribution",
             "reopen.neuron.directVsAdapterEqual",
             "reopen.persistence.restartProfileEqual",
+            "reopen.persistence.restartProbeSetEqual",
             "reopen.persistence.restartRecallEqual",
             "reopen.neuron.restartEqual",
             "reopen.persistence.freshHandleConsistency",
@@ -95,6 +96,9 @@ class HtmlKnowledgePersistenceRunnerTest {
         assertTrue(metadata.get("reopenMode").startsWith("restart"));
         assertTrue(metadata.get("codec").startsWith(ChunkTextProbeCodec.NAME + " v" + ChunkTextProbeCodec.VERSION));
         assertEquals("5", metadata.get("probes.topK"));
+        assertEquals(PersistenceProbes.VERSION, metadata.get("probes.version"));
+        assertEquals(new HtmlKnowledgePersistence(HtmlKnowledgeCorpus.bundled()).probeHash(),
+                metadata.get("probes.hash"));
         for (var key : List.of("store.manifest.version", "store.manifest.encoder", "store.manifest.normalizer",
                 "store.manifest.dimensions", "store.manifest.vectorScalarType", "store.implementationVersion",
                 "store.checkoutCommit", "neuron.commit", "neuron.version", "phase.seed.pid", "phase.reopen.pid",

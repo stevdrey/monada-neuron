@@ -15,6 +15,9 @@ import java.util.Objects;
  */
 final class PersistenceProbes {
 
+    /** Version of the probe set; bump with any change to the probe ids, the paraphrases or the readback probe rule. */
+    static final String VERSION = "html-kc-probes-v1";
+
     /** Upper bound on the probe count, so the probe codec and every snapshot stay bounded. */
     static final int MAX_PROBES = 256;
 
@@ -95,14 +98,16 @@ final class PersistenceProbes {
      * Recall observed on one root in one process.
      *
      * @param profile persisted encoding and vector-format profile, rendered from the Store's own records
+     * @param probeHash {@code probeHash} of the probe set that produced the rows
      * @param rows every recalled result, ordered by probe, then path, then rank
      */
-    record Snapshot(String profile, List<Row> rows) {
+    record Snapshot(String profile, String probeHash, List<Row> rows) {
 
         Snapshot {
             Objects.requireNonNull(profile, "profile must not be null");
-            if (profile.contains("\n")) {
-                throw new IllegalArgumentException("profile must be a single line");
+            Objects.requireNonNull(probeHash, "probeHash must not be null");
+            if (profile.contains("\n") || probeHash.contains("\n")) {
+                throw new IllegalArgumentException("profile and probeHash must be single lines");
             }
             rows = List.copyOf(rows);
         }
@@ -115,6 +120,7 @@ final class PersistenceProbes {
         String toTsv() {
             var sb = new StringBuilder();
             sb.append("# profile: ").append(profile).append('\n');
+            sb.append("# probeHash: ").append(probeHash).append('\n');
             sb.append(SNAPSHOT_HEADER).append('\n');
             for (var row : rows) {
                 sb.append(row.toTsv()).append('\n');
@@ -125,11 +131,12 @@ final class PersistenceProbes {
         /** Parses {@link #toTsv()} strictly. */
         static Snapshot parseTsv(String tsv) {
             var lines = tsv.lines().toList();
-            if (lines.size() < 2 || !lines.get(0).startsWith("# profile: ") || !lines.get(1).equals(SNAPSHOT_HEADER)) {
-                throw new IllegalArgumentException("not a recall snapshot: profile line or header missing");
+            if (lines.size() < 3 || !lines.get(0).startsWith("# profile: ")
+                    || !lines.get(1).startsWith("# probeHash: ") || !lines.get(2).equals(SNAPSHOT_HEADER)) {
+                throw new IllegalArgumentException("not a recall snapshot: profile, probeHash or header line missing");
             }
-            var rows = new ArrayList<Row>(lines.size() - 2);
-            for (var index = 2; index < lines.size(); index++) {
+            var rows = new ArrayList<Row>(lines.size() - 3);
+            for (var index = 3; index < lines.size(); index++) {
                 var columns = lines.get(index).split("\t", -1);
                 if (columns.length != 5) {
                     throw new IllegalArgumentException("malformed snapshot row " + (index + 1));
@@ -137,7 +144,8 @@ final class PersistenceProbes {
                 rows.add(new Row(columns[0], columns[1], Integer.parseInt(columns[2]), columns[3],
                         Double.parseDouble(columns[4])));
             }
-            return new Snapshot(lines.get(0).substring("# profile: ".length()), rows);
+            return new Snapshot(lines.get(0).substring("# profile: ".length()),
+                    lines.get(1).substring("# probeHash: ".length()), rows);
         }
     }
 }

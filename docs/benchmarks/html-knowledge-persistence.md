@@ -76,6 +76,7 @@ The `reopen` phase adds the restart comparison:
 | Check | Verifies |
 | :--- | :--- |
 | `persistence.restartProfileEqual` | the persisted profile equals the one the seed process read |
+| `persistence.restartProbeSetEqual` | both processes ran the same probe set (equal `probeHash`) |
 | `persistence.restartRecallEqual` | direct results of every probe equal the seed's, compared on chunk ids mapped through the manifest, order and bit-exact scores; a failure shows the first differing row |
 | `neuron.restartEqual` | the same comparison for the adapter's results |
 | `persistence.freshHandleConsistency` | a second set of handles in the same JVM observes the identical snapshot; same-process only |
@@ -87,6 +88,11 @@ Each phase check appears in the report prefixed with `seed.` or `reopen.`.
 The probe set is fixed before any run and contains:
 - one **readback probe** per chunk, whose query is the chunk's own normalized text;
 - six hand-written **paraphrase probes** (`PersistenceProbes`).
+
+The probe set is versioned (`probes.version`, currently `html-kc-probes-v1`). Its `probes.hash` is a canonical SHA-256
+over the version, the `corpusHash`, the probe count and every probe id and query text, as length-prefixed fields (the
+same canonical form as `corpusHash`). A changed query text therefore changes the hash even when the ids and count
+stay the same. Each snapshot records the hash it was produced with.
 
 Probes carry no expected answer. They are compared across processes and paths, not judged. All probes use `k = 5` and
 `t = 0.0`.
@@ -129,11 +135,11 @@ Atom ids are never compared across roots, only chunk ids mapped through each roo
 | :--- | :--- |
 | `html-knowledge-persistence.json`, `.md` | checks, metadata and environment |
 | `html-kc-v1-persistence-manifest.tsv` | `chunkId → atomId → opaqueReference` written by the seed JVM |
-| `html-kc-v1-seed-recall.tsv`, `html-kc-v1-reopen-recall.tsv` | persisted profile, plus every probe result: probe, path (`direct` or `neuron`), rank, mapped chunk id and hex score |
+| `html-kc-v1-seed-recall.tsv`, `html-kc-v1-reopen-recall.tsv` | persisted profile and `probeHash`, plus every probe result: probe, path (`direct` or `neuron`), rank, mapped chunk id and hex score |
 
 The metadata includes:
 - `reopenMode`, plus `phase.{seed,reopen}.{pid,exit,nanos}`;
-- the codec description and scope, `probes.{count,topK,threshold}` and the ordering rules;
+- the codec description and scope, `probes.{version,hash,count,topK,threshold}` and the ordering rules;
 - `store.manifest.*` (version, encoder, normalizer, dimensions, vector format);
 - `store.implementationVersion` (`unknown` when the Store classes come from directories, not jars);
 - `store.checkoutCommit` and `neuron.commit` (`+dirty` when there are uncommitted changes), and `neuron.version`.
