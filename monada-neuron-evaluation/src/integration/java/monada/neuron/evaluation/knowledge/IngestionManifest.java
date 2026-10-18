@@ -1,5 +1,7 @@
 package monada.neuron.evaluation.knowledge;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -95,5 +97,45 @@ public final class IngestionManifest {
                     .append(entry.opaqueReference()).append('\n');
         }
         return sb.toString();
+    }
+
+    /**
+     * Parses a {@link #toTsv()} rendering, for example in a later process that reopens the same root. Parsing is
+     * strict: the provenance header, the column header and three non-empty columns per row are required, and the
+     * corpus version and hash must equal the expected ones.
+     *
+     * @throws IllegalArgumentException when the text is not a manifest of {@code expectedVersion} and
+     *     {@code expectedHash}, or maps an atom or reference to more than one chunk
+     */
+    public static IngestionManifest parseTsv(String tsv, String expectedVersion, String expectedHash) {
+        Objects.requireNonNull(tsv, "tsv must not be null");
+        var lines = tsv.lines().toList();
+        String version = null;
+        String hash = null;
+        var index = 0;
+        for (; index < lines.size() && lines.get(index).startsWith("#"); index++) {
+            var line = lines.get(index);
+            if (line.startsWith("# corpusVersion: ")) {
+                version = line.substring("# corpusVersion: ".length());
+            } else if (line.startsWith("# corpusHash: ")) {
+                hash = line.substring("# corpusHash: ".length());
+            }
+        }
+        if (!Objects.equals(version, expectedVersion) || !Objects.equals(hash, expectedHash)) {
+            throw new IllegalArgumentException("manifest is for corpus " + version + " (" + hash + "), expected "
+                    + expectedVersion + " (" + expectedHash + ")");
+        }
+        if (index >= lines.size() || !lines.get(index).equals(HEADER)) {
+            throw new IllegalArgumentException("manifest column header missing, expected: " + HEADER);
+        }
+        var entries = new ArrayList<Entry>(lines.size() - index - 1);
+        for (index++; index < lines.size(); index++) {
+            var columns = lines.get(index).split("\t", -1);
+            if (columns.length != 3 || Arrays.stream(columns).anyMatch(String::isEmpty)) {
+                throw new IllegalArgumentException("malformed manifest row " + (index + 1) + ": " + lines.get(index));
+            }
+            entries.add(new Entry(columns[0], columns[1], columns[2]));
+        }
+        return new IngestionManifest(version, hash, entries);
     }
 }

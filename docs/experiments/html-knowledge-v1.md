@@ -6,7 +6,7 @@
 | :--- | :--- |
 | Protocol version | `html-knowledge-protocol-v1` |
 | Issue | [#104](https://github.com/stevdrey/monada-neuron/issues/104) (Experiment Knowledge 1/8) |
-| Implementation | Corpus contract delivered by #105 ([ingestion](../benchmarks/html-knowledge-ingestion.md)); the rest of this document is the contract that issues #106 to #111 implement. |
+| Implementation | Corpus contract delivered by #105 ([ingestion](../benchmarks/html-knowledge-ingestion.md)); ingestion readback, post-reopen (restart) and L2 attribution delivered by #106 ([persistence](../benchmarks/html-knowledge-persistence.md)); the rest of this document is the contract that issues #107 to #111 implement. |
 | Scope | Monada Neuron `monada-neuron-evaluation` optional `integration` / `integrationTest` source sets only |
 | Extensions | `l3-evidence-v1` (#108), `l4-answer-v1` (#109), `feedback-v1` (#110), `scaling-v1` (#111) |
 
@@ -626,7 +626,8 @@ synonyms or weighting.
   same root and reruns the full query set. Mapped chunk ids, order and scores must equal the first run. The
   report records both processes (process id and exit status). A rerun through a fresh handle inside the same
   process is reported separately as `fresh-handle consistency` and is never presented as persistence evidence.
-  Delivered by #106.
+  Delivered by #106 ([`runHtmlKnowledgePersistence`](../benchmarks/html-knowledge-persistence.md)) over a fixed probe
+  set; #107 reruns its judged query set under the same restart condition.
 - **Warm / cold**: as defined by the [integration
   evaluation](../benchmarks/resonance-store-integration.md#measurement-method): "cold" is a freshly opened handle in
   an already warmed JVM, "warm" is repeated use of one open handle. Process-cold numbers, if ever reported, are a
@@ -822,7 +823,7 @@ issue fixes the exact task name in its own documentation.
 | Issue | Status | Command (provisional) | Purpose |
 | :--- | :--- | :--- | :--- |
 | #105 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeIngestion` | import `html-kc-v1` into a temporary Store, write the manifest |
-| #106 | planned | `./gradlew :monada-neuron-evaluation:integrationTest` | persistence, reopen and source-level readback through Neuron |
+| #106 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgePersistence` | persistence across separate JVMs, reopen and source-level readback through Neuron |
 | #107 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeRecall` | L1/L2 judged recall with B0/B1/B2 |
 | #108 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeEvidenceTrace` | L3 evidence use in a cognitive cycle |
 | #109 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeAnswers` | L4 grounded answers with B3 and abstention |
@@ -847,3 +848,6 @@ source set, and do not change `./gradlew test` when it is absent.
   behavior, parser-inserted script blocking, CSP nonces, hashes and `'strict-dynamic'`, landmark scope and `dl`
   groups. Its version is unchanged because no result was produced with the
   earlier text.
+- No version change (issue #106): the ingestion readback and post-reopen (restart) conditions are implemented by
+  `runHtmlKnowledgePersistence`, with a seed JVM and a separate reopen JVM, over a fixed probe set rather than the
+  #107 query set. No definition, formula, label rule or report field changes.

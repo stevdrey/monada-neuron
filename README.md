@@ -225,8 +225,10 @@ development-only module. It is not part of the published artifact and never a tr
 [HTML knowledge-memory evaluation protocol](docs/experiments/html-knowledge-v1.md) (issue #104) specifies how its
 planned knowledge experiments separate Store retrieval, Neuron recall, evidence use and grounded answers. Its
 versioned HTML corpus and offline ingestion are delivered
-([`runHtmlKnowledgeIngestion`](docs/benchmarks/html-knowledge-ingestion.md), issue #105); the scored experiments are
-still planned.
+([`runHtmlKnowledgeIngestion`](docs/benchmarks/html-knowledge-ingestion.md), issue #105), and its persistence across
+separate JVMs with Neuron recall traced to exact Store atoms is verified
+([`runHtmlKnowledgePersistence`](docs/benchmarks/html-knowledge-persistence.md), issue #106); the scored experiments
+are still planned.
 
 **Module path.** A JPMS host writes `requires monada.neuron;`. The jar is an automatic module, so it declares no
 `requires jdk.incubator.vector` and the scalar fallback applies unless the host adds the module itself.

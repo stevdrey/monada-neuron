@@ -128,7 +128,12 @@ public final class HtmlKnowledgeIngestion {
         return new Result(root, manifest, checks, ingestNanos, readbackNanos);
     }
 
-    private List<String> readback(MonadaMemory memory, IngestionManifest manifest) {
+    /**
+     * Reads every manifest entry back through {@code resonate(chunk text).topK(corpus size)} on {@code memory} and
+     * returns the chunk ids whose mapped atom was not recalled with content hashing to the chunk {@code sha256}, in
+     * manifest order; empty when every chunk was read back.
+     */
+    List<String> readback(MonadaMemory memory, IngestionManifest manifest) {
         var failures = new ArrayList<String>();
         var count = corpus.chunks().size();
         for (var entry : manifest.entries()) {

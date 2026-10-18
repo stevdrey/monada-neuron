@@ -9,7 +9,8 @@ mapped back from the atom the Store returned?
 This page covers ingestion only (Experiment Knowledge 2/8,
 [#105](https://github.com/stevdrey/monada-neuron/issues/105)). It implements the
 [corpus contract](../experiments/html-knowledge-v1.md#corpus-contract-html-kc-v1-delivered-by-105) of the
-HTML knowledge-memory protocol. It does not score recall, evidence use or answers (#106 to #109). Remembering
+HTML knowledge-memory protocol. It does not score recall, evidence use or answers (#107 to #109); persistence and reopen are
+[#106](html-knowledge-persistence.md). Remembering
 text is external memory, not training: nothing here learns HTML.
 
 ## Running
