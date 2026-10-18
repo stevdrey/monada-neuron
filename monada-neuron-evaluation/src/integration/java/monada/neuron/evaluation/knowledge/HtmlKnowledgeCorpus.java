@@ -50,6 +50,9 @@ public final class HtmlKnowledgeCorpus {
     /** Source value of originally authored documents. */
     public static final String AUTHORED_SOURCE = "authored-fixture";
 
+    /** License of originally authored documents. */
+    public static final String AUTHORED_LICENSE = "Apache-2.0";
+
     private static final String RESOURCE_ROOT = "/" + VERSION + "/";
     private static final int MAX_TABLE_BYTES = 64 * 1024;
     private static final Pattern DOCUMENT_ID = Pattern.compile("doc:([a-z0-9]+(?:-[a-z0-9]+)*)");
@@ -100,16 +103,27 @@ public final class HtmlKnowledgeCorpus {
     }
 
     /**
-     * Validates already chunked documents and builds a corpus, as an external source does.
+     * Validates already chunked documents and builds a corpus, as an external source does. The text policy follows
+     * from provenance, never from the caller: only a corpus whose every document is {@value #AUTHORED_SOURCE} under
+     * {@value #AUTHORED_LICENSE} is {@link TextPolicy#PUBLISHABLE}.
      *
      * @throws CorpusValidationException when any corpus invariant is violated
      */
-    static HtmlKnowledgeCorpus of(String version, CorpusBounds bounds, TextPolicy textPolicy,
-            List<CorpusDocument> documents, List<CorpusChunk> chunks) {
+    static HtmlKnowledgeCorpus of(String version, CorpusBounds bounds, List<CorpusDocument> documents,
+            List<CorpusChunk> chunks) {
         Objects.requireNonNull(version, "version must not be null");
         Objects.requireNonNull(bounds, "bounds must not be null");
-        Objects.requireNonNull(textPolicy, "textPolicy must not be null");
-        validate(version, bounds, List.copyOf(documents), List.copyOf(chunks));
+        validateDocuments(version, bounds, List.copyOf(documents));
+        return checkedOf(version, bounds, documents, chunks);
+    }
+
+    /** Builds a corpus whose documents are already validated: validates the chunks and derives the text policy. */
+    private static HtmlKnowledgeCorpus checkedOf(String version, CorpusBounds bounds, List<CorpusDocument> documents,
+            List<CorpusChunk> chunks) {
+        validateChunks(version, bounds, List.copyOf(documents), List.copyOf(chunks));
+        var publishable = documents.stream().allMatch(document -> document.source().equals(AUTHORED_SOURCE)
+                && document.license().equals(AUTHORED_LICENSE));
+        var textPolicy = publishable ? TextPolicy.PUBLISHABLE : TextPolicy.REDACTED;
         return new HtmlKnowledgeCorpus(version, bounds, textPolicy, documents, chunks);
     }
 
@@ -201,15 +215,13 @@ public final class HtmlKnowledgeCorpus {
             }
             var origin = "documents/" + file;
             var text = normalizer.normalize(files.read(origin, bounds.maxDocumentBytes()), origin);
-            var declared = row.required(6, "documentSha256");
-            var actual = CorpusDigests.sha256(text);
-            if (!declared.equals(actual)) {
-                throw row.reject("documentSha256 mismatch for " + origin + ": declared " + declared + ", actual " + actual);
-            }
             var references = row.optional(5).map(value -> List.of(value.split(" "))).orElse(List.of());
+            // The declared digest is verified once, by validate().
             documents.add(new CorpusDocument(documentId, file, row.required(2, "source"), row.required(3, "license"),
-                    row.required(4, "attribution"), references, actual, text));
+                    row.required(4, "attribution"), references, row.required(6, "documentSha256"), text));
         }
+
+        validateDocuments(VERSION, bounds, documents);
 
         var rowsByDocument = new LinkedHashMap<String, List<Row>>();
         documents.forEach(document -> rowsByDocument.put(document.documentId(), new ArrayList<>()));
@@ -234,7 +246,7 @@ public final class HtmlKnowledgeCorpus {
                 chunks.add(declaredChunk(document, spans.get(i), rows.get(i), i));
             }
         }
-        return of(VERSION, bounds, TextPolicy.PUBLISHABLE, documents, chunks);
+        return checkedOf(VERSION, bounds, documents, chunks);
     }
 
     private static CorpusChunk declaredChunk(CorpusDocument document, CorpusChunker.Span span, Row row, int ordinal) {
@@ -253,11 +265,8 @@ public final class HtmlKnowledgeCorpus {
             throw row.reject("span [" + start + ", " + end + ") differs from the canonical span ["
                     + span.start() + ", " + span.end() + ")");
         }
+        // The declared digest is verified once, by validate().
         var sha256 = row.required(6, "sha256");
-        var actual = CorpusDigests.sha256(span.text());
-        if (!sha256.equals(actual)) {
-            throw row.reject("sha256 mismatch: declared " + sha256 + ", actual " + actual);
-        }
         var pair = row.optional(7);
         var role = row.optional(8);
         if (pair.isPresent() != role.isPresent()) {
@@ -281,34 +290,50 @@ public final class HtmlKnowledgeCorpus {
         return String.format(Locale.ROOT, "chk:%s#%02d", slug, ordinal);
     }
 
-    private static void validate(String version, CorpusBounds bounds, List<CorpusDocument> documents,
-            List<CorpusChunk> chunks) {
+    /**
+     * Validates the documents: ids, bounds and each declared {@code documentSha256}. It is the only place a document
+     * digest is computed, and it runs before chunking, so a changed document is reported as such.
+     */
+    private static void validateDocuments(String version, CorpusBounds bounds, List<CorpusDocument> documents) {
         var origin = "corpus " + version;
-        if (documents.isEmpty() || chunks.isEmpty()) {
+        if (documents.isEmpty()) {
             throw new CorpusValidationException(origin, "corpus is empty");
         }
         if (documents.size() > bounds.maxDocuments()) {
             throw new CorpusValidationException(origin,
                     documents.size() + " documents exceed the bound of " + bounds.maxDocuments());
         }
+        var documentIds = new HashSet<String>();
+        for (var document : documents) {
+            if (!DOCUMENT_ID.matcher(document.documentId()).matches()) {
+                throw new CorpusValidationException(origin, "invalid documentId '" + document.documentId() + "'");
+            }
+            if (!documentIds.add(document.documentId())) {
+                throw new CorpusValidationException(origin, "duplicate documentId '" + document.documentId() + "'");
+            }
+            var documentDigest = CorpusDigests.sha256(document.text());
+            if (!document.documentSha256().equals(documentDigest)) {
+                throw new CorpusValidationException(origin, document.documentId() + " (documents/" + document.file()
+                        + "): documentSha256 mismatch: declared " + document.documentSha256() + ", actual "
+                        + documentDigest);
+            }
+        }
+    }
+
+    /**
+     * Validates the chunks against already validated documents: ids, ordinals, bounds, provenance, normalization,
+     * each declared {@code sha256} (the only place a chunk digest is computed), spans and the conflict pair.
+     */
+    private static void validateChunks(String version, CorpusBounds bounds, List<CorpusDocument> documents,
+            List<CorpusChunk> chunks) {
+        var origin = "corpus " + version;
         if (chunks.size() < bounds.minChunks() || chunks.size() > bounds.maxChunks()) {
             throw new CorpusValidationException(origin, chunks.size() + " chunks are outside the bound "
                     + bounds.minChunks() + ".." + bounds.maxChunks());
         }
         var normalizer = new CorpusNormalizer();
         var documentsById = new HashMap<String, CorpusDocument>();
-        for (var document : documents) {
-            if (!DOCUMENT_ID.matcher(document.documentId()).matches()) {
-                throw new CorpusValidationException(origin, "invalid documentId '" + document.documentId() + "'");
-            }
-            if (documentsById.put(document.documentId(), document) != null) {
-                throw new CorpusValidationException(origin, "duplicate documentId '" + document.documentId() + "'");
-            }
-            if (!document.documentSha256().equals(CorpusDigests.sha256(document.text()))) {
-                throw new CorpusValidationException(origin, document.documentId() + ": documentSha256 mismatch");
-            }
-        }
-
+        documents.forEach(document -> documentsById.put(document.documentId(), document));
         var chunkIds = new HashSet<String>();
         var textDigests = new HashMap<String, String>();
         var perDocument = new HashMap<String, Integer>();
@@ -351,8 +376,10 @@ public final class HtmlKnowledgeCorpus {
                 throw new CorpusValidationException(where, bytes + " UTF-8 bytes exceed the chunk bound of "
                         + bounds.maxChunkBytes());
             }
-            if (!chunk.sha256().equals(CorpusDigests.sha256(chunk.text()))) {
-                throw new CorpusValidationException(where, "sha256 does not match the chunk text");
+            var chunkDigest = CorpusDigests.sha256(chunk.text());
+            if (!chunk.sha256().equals(chunkDigest)) {
+                throw new CorpusValidationException(where, "sha256 mismatch: declared " + chunk.sha256() + ", actual "
+                        + chunkDigest);
             }
             var duplicate = textDigests.putIfAbsent(chunk.sha256(), chunk.chunkId());
             if (duplicate != null) {

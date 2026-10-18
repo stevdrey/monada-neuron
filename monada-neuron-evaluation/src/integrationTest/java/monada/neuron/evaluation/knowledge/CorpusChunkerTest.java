@@ -87,7 +87,8 @@ class CorpusChunkerTest {
         var headingSpans = new CorpusChunker(20).chunk(headings, "headings");
         assertEquals(List.of("# Top level title", "## Second heading", "Body."),
                 headingSpans.stream().map(CorpusChunker.Span::text).toList());
-        assertTrue(headingSpans.stream().allMatch(span -> span.section().equals("Second heading")));
+        assertEquals(List.of("Top level title", "Second heading", "Second heading"),
+                headingSpans.stream().map(CorpusChunker.Span::section).toList());
         assertSpansMatch(code, new CorpusChunker(30).chunk(code, "code"));
         assertSpansMatch(headings, headingSpans);
     }

@@ -17,7 +17,8 @@ import java.util.regex.Pattern;
  *       at sentence ends ({@code .}, {@code !} or {@code ?} followed by whitespace). When headings do not fit
  *       together with the paragraph that follows them, that paragraph is split at sentence ends so the headings
  *       keep its first sentences; when nothing after them fits (a code block or a single sentence), the headings
- *       form their own chunk.</li>
+ *       form their own chunk. A chunk's section is the last heading it contains, or its section's heading for a
+ *       continuation chunk.</li>
  *   <li>A fenced code block (opened by a line starting with three backticks, closed by a line of exactly three
  *       backticks) is never split; an oversize code block, heading or sentence is rejected, never truncated.</li>
  * </ol>
@@ -190,11 +191,11 @@ public final class CorpusChunker {
                 }
             }
             // A heading group that fits nothing after it becomes its own chunk instead of being rejected.
-            spans.add(span(document, offsets, units.get(first).start(), units.get(i - 1).end(), section.label()));
+            spans.add(span(document, offsets, units.subList(first, i), section));
             first = i;
             i++;
         }
-        spans.add(span(document, offsets, units.get(first).start(), units.getLast().end(), section.label()));
+        spans.add(span(document, offsets, units.subList(first, units.size()), section));
     }
 
     private List<Block> sentences(String document, Offsets offsets, Block paragraph, Section section, String origin) {
@@ -235,14 +236,20 @@ public final class CorpusChunker {
         return new Block(kind, start, end, heading);
     }
 
-    private Span span(String document, Offsets offsets, int start, int end, String section) {
-        while (start < end && Character.isWhitespace(document.charAt(start))) {
-            start++;
+    /**
+     * Emits the chunk spanning {@code units}, whose bounds are already trimmed. Its section is the last heading the
+     * chunk contains, or the section label for a continuation chunk without a heading.
+     */
+    private Span span(String document, Offsets offsets, List<Block> units, Section section) {
+        var label = section.label();
+        for (var unit : units) {
+            if (unit.kind() == Kind.HEADING) {
+                label = unit.heading();
+            }
         }
-        while (end > start && Character.isWhitespace(document.charAt(end - 1))) {
-            end--;
-        }
-        return new Span(offsets.codePoint(start), offsets.codePoint(end), section, document.substring(start, end));
+        var start = units.getFirst().start();
+        var end = units.getLast().end();
+        return new Span(offsets.codePoint(start), offsets.codePoint(end), label, document.substring(start, end));
     }
 
     private CorpusValidationException oversize(String origin, Section section, String what, int bytes) {

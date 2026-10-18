@@ -107,20 +107,42 @@ class HtmlKnowledgeCorpusTest {
                 HtmlKnowledgeCorpus.resolveInside(Path.of("src/.."), "documents.tsv"));
         assertMessage("escapes", () -> HtmlKnowledgeCorpus.resolveInside(directory, "../outside.md"));
 
-        copyBundledCorpus();
-        var outside = Files.writeString(directory.getParent().resolve(directory.getFileName() + "-outside.md"),
-                Files.readString(directory.resolve("documents/forms.md")));
+        // Both the corpus and the outside file live in the JUnit temporary directory.
+        var corpus = directory.resolve("corpus");
+        copyBundledCorpus(corpus);
+        var outside = Files.writeString(directory.resolve("outside.md"),
+                Files.readString(corpus.resolve("documents/forms.md")));
+        Files.delete(corpus.resolve("documents/forms.md"));
         try {
-            Files.delete(directory.resolve("documents/forms.md"));
-            try {
-                Files.createSymbolicLink(directory.resolve("documents/forms.md"), outside);
-            } catch (UnsupportedOperationException | IOException e) {
-                assumeTrue(false, "symbolic links are not supported here: " + e);
-            }
-            assertMessage("through a link", () -> HtmlKnowledgeCorpus.load(directory));
-        } finally {
-            Files.deleteIfExists(outside);
+            Files.createSymbolicLink(corpus.resolve("documents/forms.md"), outside);
+        } catch (UnsupportedOperationException | IOException e) {
+            assumeTrue(false, "symbolic links are not supported here: " + e);
         }
+        assertMessage("through a link", () -> HtmlKnowledgeCorpus.load(corpus));
+    }
+
+    @Test
+    void textPolicyFollowsProvenanceNotTheCaller() {
+        var corpus = HtmlKnowledgeCorpus.bundled();
+        var relicensed = corpus.documents().stream()
+                .map(document -> document.documentId().equals("doc:forms")
+                        ? new CorpusDocument(document.documentId(), document.file(), document.source(), "CC-BY-SA-2.5",
+                                document.attribution(), document.references(), document.documentSha256(),
+                                document.text())
+                        : document)
+                .toList();
+        var chunks = corpus.chunks().stream()
+                .map(chunk -> chunk.documentId().equals("doc:forms")
+                        ? new CorpusChunk(chunk.chunkId(), chunk.documentId(), chunk.topic(), chunk.section(),
+                                chunk.source(), "CC-BY-SA-2.5", chunk.attribution(), chunk.start(), chunk.end(),
+                                chunk.sha256(), chunk.documentSha256(), chunk.conflict(), chunk.text())
+                        : chunk)
+                .toList();
+
+        assertEquals(HtmlKnowledgeCorpus.TextPolicy.PUBLISHABLE, corpus.textPolicy());
+        var redacted = build(CorpusBounds.AUTHORED, relicensed, chunks);
+        assertEquals(HtmlKnowledgeCorpus.TextPolicy.REDACTED, redacted.textPolicy());
+        assertTrue(redacted.labelsTsv().contains("sha256:" + CorpusDigests.sha256("The form element")));
     }
 
     @Test
@@ -202,7 +224,7 @@ class HtmlKnowledgeCorpusTest {
 
     private HtmlKnowledgeCorpus build(CorpusBounds bounds, List<CorpusDocument> documents,
             List<CorpusChunk> chunks) {
-        return HtmlKnowledgeCorpus.of("v", bounds, HtmlKnowledgeCorpus.TextPolicy.PUBLISHABLE, documents, chunks);
+        return HtmlKnowledgeCorpus.of("v", bounds, documents, chunks);
     }
 
     private void assertRejected(String expected, String file, UnaryOperator<String> mutation) throws IOException {
@@ -222,12 +244,16 @@ class HtmlKnowledgeCorpusTest {
     }
 
     private void copyBundledCorpus() throws IOException {
-        Files.createDirectories(directory.resolve("documents"));
+        copyBundledCorpus(directory);
+    }
+
+    private void copyBundledCorpus(Path target) throws IOException {
+        Files.createDirectories(target.resolve("documents"));
         var names = new ArrayList<String>(List.of("documents.tsv", "chunks.tsv"));
         DOCUMENT_FILES.forEach(file -> names.add("documents/" + file));
         for (var name : names) {
             try (var input = HtmlKnowledgeCorpus.class.getResourceAsStream("/html-kc-v1/" + name)) {
-                Files.write(directory.resolve(name), input.readAllBytes());
+                Files.write(target.resolve(name), input.readAllBytes());
             }
         }
     }

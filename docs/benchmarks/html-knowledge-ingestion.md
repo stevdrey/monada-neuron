@@ -34,8 +34,13 @@ these tests, in the adapter job against Store `main`.
 | `--mdn-store-root <dir>` | keep the snapshot's own Store root |
 
 Exit status: `0` when all checks pass, `1` when a semantic check fails, `2` for invalid usage or rejected input.
-Rejected input includes an invalid corpus, a missing or mismatched requested snapshot, and a target root that
-already holds a store.
+Rejected input is an invalid corpus, a missing or mismatched requested snapshot, an occupied store root or an output
+location that cannot be written safely. Any other failure, for example the Store returning one atom for two chunks,
+ends the run with a non-zero status and a stack trace, never as rejected input.
+
+A run starts by checking the output directory and deleting every output of an earlier run from it. A run that is
+rejected or fails later therefore never leaves an earlier run's report, labels or manifests behind. Outputs are written
+only to that preflighted directory, and never through a symbolic link.
 
 ## Outputs
 
@@ -44,7 +49,7 @@ already holds a store.
 | `html-knowledge-ingestion.json`, `.md` | semantic checks, metadata (versions, `corpusHash`, bounds, chunking policy, licenses, Store manifest fields, commits), environment |
 | `html-kc-v1-chunks.tsv` | every chunk's labels and provenance: `chunkId`, `documentId`, `topic`, `section`, `source`, `license`, `attribution`, `[start, end)` code point span, `sha256`, `documentSha256`, conflict pair and role (no text) |
 | `html-kc-v1-manifest.tsv` | `chunkId → atomId → opaqueReference` for this import (no content hashes) |
-| `html-kc-ext-mdn-v1-*.tsv` | the same two files for a supplied snapshot, with `section` redacted to `sha256:<hex>`; deleted by a later run without a snapshot |
+| `html-kc-ext-mdn-v1-*.tsv` | the same two files for a supplied snapshot, with `section` redacted to `sha256:<hex>` |
 
 Semantic checks:
 

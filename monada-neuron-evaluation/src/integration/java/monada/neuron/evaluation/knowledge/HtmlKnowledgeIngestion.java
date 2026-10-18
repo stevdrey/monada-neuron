@@ -147,18 +147,18 @@ public final class HtmlKnowledgeIngestion {
     /**
      * Requires {@code root} to be absent or an empty directory, the duplicate-import guard.
      *
-     * @throws IllegalStateException when the root is not a directory or already holds files
+     * @throws IngestionInputException when the root is not a directory or already holds files
      */
     static void requireFreshRoot(Path root) {
         if (Files.notExists(root)) {
             return;
         }
         if (!Files.isDirectory(root)) {
-            throw new IllegalStateException("target root " + root + " is not a directory");
+            throw new IngestionInputException("target root " + root + " is not a directory");
         }
         try (var entries = Files.list(root)) {
             if (entries.findAny().isPresent()) {
-                throw new IllegalStateException("target root " + root
+                throw new IngestionInputException("target root " + root
                         + " already holds files (an existing store); duplicate import refused");
             }
         } catch (IOException e) {

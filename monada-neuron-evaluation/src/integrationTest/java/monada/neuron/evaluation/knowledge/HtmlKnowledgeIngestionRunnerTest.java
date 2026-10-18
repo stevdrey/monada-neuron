@@ -22,10 +22,10 @@ class HtmlKnowledgeIngestionRunnerTest {
 
     @Test
     void defaultRunPassesReportsExternalAsUnavailableAndWritesOutputs() throws IOException {
-        var options = HtmlKnowledgeIngestionRunner.Options.parse(new String[] {});
+        var options = HtmlKnowledgeIngestionRunner.Options.parse(new String[] {"--output-dir", directory.toString()});
 
         var outcome = HtmlKnowledgeIngestionRunner.run(options);
-        var written = HtmlKnowledgeIngestionRunner.write(outcome, directory);
+        var written = HtmlKnowledgeIngestionRunner.write(outcome);
 
         assertTrue(outcome.report().allPassed(), outcome.report().toMarkdown());
         assertTrue(outcome.external().isEmpty());
@@ -43,12 +43,30 @@ class HtmlKnowledgeIngestionRunnerTest {
     @Test
     void keepsARequestedStoreRootAndRefusesToImportIntoItAgain() {
         var root = directory.resolve("kept");
-        var options = HtmlKnowledgeIngestionRunner.Options.parse(new String[] {"--store-root", root.toString()});
+        var options = HtmlKnowledgeIngestionRunner.Options.parse(new String[] {
+                "--store-root", root.toString(), "--output-dir", directory.resolve("reports").toString()});
 
         HtmlKnowledgeIngestionRunner.run(options);
 
         assertTrue(Files.exists(root.resolve("manifest.json")));
-        assertThrows(IllegalStateException.class, () -> HtmlKnowledgeIngestionRunner.run(options));
+        assertThrows(IngestionInputException.class, () -> HtmlKnowledgeIngestionRunner.run(options));
+    }
+
+    @Test
+    void aRejectedRunLeavesNoOutputOfAnEarlierRun() throws IOException {
+        var output = directory.resolve("reports");
+        var occupied = Files.createDirectories(directory.resolve("occupied"));
+        Files.writeString(occupied.resolve("notes.txt"), "unrelated");
+        HtmlKnowledgeIngestionRunner.write(HtmlKnowledgeIngestionRunner.run(
+                HtmlKnowledgeIngestionRunner.Options.parse(new String[] {"--output-dir", output.toString()})));
+        assertTrue(Files.exists(output.resolve("html-knowledge-ingestion.json")));
+
+        assertThrows(IngestionInputException.class, () -> HtmlKnowledgeIngestionRunner.run(
+                HtmlKnowledgeIngestionRunner.Options.parse(new String[] {
+                        "--output-dir", output.toString(), "--store-root", occupied.toString()})));
+
+        assertFalse(Files.exists(output.resolve("html-knowledge-ingestion.json")));
+        assertFalse(Files.exists(output.resolve("html-kc-v1-manifest.tsv")));
     }
 
     @Test
@@ -56,12 +74,13 @@ class HtmlKnowledgeIngestionRunnerTest {
         var snapshot = Files.writeString(directory.resolve("index.md"), MdnSnapshotSourceTest.SYNTHETIC_SNAPSHOT);
         var output = directory.resolve("reports");
         var options = HtmlKnowledgeIngestionRunner.Options.parse(new String[] {
+                "--output-dir", output.toString(),
                 "--mdn-snapshot", snapshot.toString(),
                 "--mdn-revision", MdnSnapshotSourceTest.REVISION,
                 "--mdn-sha256", MdnSnapshotSourceTest.sha256(snapshot)});
 
         var outcome = HtmlKnowledgeIngestionRunner.run(options);
-        var written = HtmlKnowledgeIngestionRunner.write(outcome, output);
+        var written = HtmlKnowledgeIngestionRunner.write(outcome);
 
         assertTrue(outcome.report().allPassed(), outcome.report().toMarkdown());
         assertEquals(6, written.size());
@@ -80,12 +99,13 @@ class HtmlKnowledgeIngestionRunnerTest {
         var snapshot = Files.writeString(directory.resolve("index.md"), MdnSnapshotSourceTest.SYNTHETIC_SNAPSHOT);
         var output = directory.resolve("reports");
         HtmlKnowledgeIngestionRunner.write(HtmlKnowledgeIngestionRunner.run(HtmlKnowledgeIngestionRunner.Options.parse(
-                new String[] {"--mdn-snapshot", snapshot.toString(), "--mdn-revision", MdnSnapshotSourceTest.REVISION,
-                        "--mdn-sha256", MdnSnapshotSourceTest.sha256(snapshot)})), output);
+                new String[] {"--output-dir", output.toString(), "--mdn-snapshot", snapshot.toString(),
+                        "--mdn-revision", MdnSnapshotSourceTest.REVISION,
+                        "--mdn-sha256", MdnSnapshotSourceTest.sha256(snapshot)})));
         assertTrue(Files.exists(output.resolve("html-kc-ext-mdn-v1-manifest.tsv")));
 
-        HtmlKnowledgeIngestionRunner.write(
-                HtmlKnowledgeIngestionRunner.run(HtmlKnowledgeIngestionRunner.Options.parse(new String[] {})), output);
+        HtmlKnowledgeIngestionRunner.write(HtmlKnowledgeIngestionRunner.run(
+                HtmlKnowledgeIngestionRunner.Options.parse(new String[] {"--output-dir", output.toString()})));
 
         assertFalse(Files.exists(output.resolve("html-kc-ext-mdn-v1-manifest.tsv")));
         assertFalse(Files.exists(output.resolve("html-kc-ext-mdn-v1-chunks.tsv")));

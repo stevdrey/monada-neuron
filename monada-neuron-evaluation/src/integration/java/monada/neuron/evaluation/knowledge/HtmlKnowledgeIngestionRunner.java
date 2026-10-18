@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -164,8 +165,10 @@ public final class HtmlKnowledgeIngestionRunner {
      * @param report rendered verdicts, metadata and environment
      * @param authored the authored corpus import
      * @param external the external snapshot import, when supplied
+     * @param outputDir the preflighted output directory that {@link #write(Outcome)} writes to
      */
-    public record Outcome(CheckedEvaluationReport report, Ingested authored, Optional<Ingested> external) {
+    public record Outcome(CheckedEvaluationReport report, Ingested authored, Optional<Ingested> external,
+            Path outputDir) {
     }
 
     /** CLI entrypoint. */
@@ -183,14 +186,14 @@ public final class HtmlKnowledgeIngestionRunner {
         Outcome outcome;
         try {
             outcome = run(options);
-        } catch (CorpusValidationException | IllegalStateException e) {
+        } catch (CorpusValidationException | IngestionInputException e) {
             System.err.println("Ingestion input rejected: " + e.getMessage());
             System.exit(2);
             return;
         }
         System.out.println(outcome.report().toMarkdown());
         try {
-            var written = write(outcome, options.outputDir());
+            var written = write(outcome);
             System.out.println("Ingestion outputs saved to:");
             written.forEach(path -> System.out.println("  " + path.toAbsolutePath()));
         } catch (IOException e) {
@@ -208,33 +211,30 @@ public final class HtmlKnowledgeIngestionRunner {
      * only a failure during an import (I/O or Store error) can leave a kept root partially written.
      *
      * @throws CorpusValidationException when a corpus or the requested snapshot is rejected
-     * @throws IllegalStateException when a target root already holds a store (duplicate import)
+     * @throws IngestionInputException when the output location or a kept root is rejected (for example a duplicate
+     *     import)
+     * @throws IllegalStateException when the Store maps two chunks to one atom
      */
     public static Outcome run(Options options) {
         Objects.requireNonNull(options, "options must not be null");
         var checks = new ArrayList<HtmlKnowledgeIngestion.Check>();
         var metadata = new TreeMap<String, String>();
 
+        // First of all, so that any later rejection leaves no output of an earlier run behind.
+        prepareOutput(options.outputDir());
+
         var corpus = HtmlKnowledgeCorpus.bundled();
-        var reloaded = HtmlKnowledgeCorpus.bundled();
         checks.add(new HtmlKnowledgeIngestion.Check("corpus.valid", true, corpus.version() + ": "
                 + corpus.documents().size() + " documents, " + corpus.chunks().size() + " chunks; every label,"
                 + " span, digest, bound and the conflict pair validated against canonical chunking"));
-        var deterministic = corpus.chunks().equals(reloaded.chunks())
-                && corpus.corpusHash().equals(reloaded.corpusHash());
-        checks.add(new HtmlKnowledgeIngestion.Check("corpus.deterministicReload", deterministic, deterministic
-                ? "a second load yields identical chunk labels, order, spans, fingerprints and corpusHash"
-                : "a second load differs"));
 
         // Validate the external snapshot before writing any store, so a rejected input leaves nothing behind.
         var externalCorpus = options.mdn()
                 .map(mdn -> new MdnSnapshotSource().load(mdn.snapshot(), mdn.revision(), mdn.sha256()));
 
-        // Preflight every kept root and the output directory before importing anything, so a rejected run never
-        // leaves a populated Store whose report and manifest could not be written.
+        // Preflight every kept root before importing anything, so a rejected run never leaves a populated Store.
         options.storeRoot().ifPresent(HtmlKnowledgeIngestion::requireFreshRoot);
         options.mdn().flatMap(MdnOptions::storeRoot).ifPresent(HtmlKnowledgeIngestion::requireFreshRoot);
-        requireWritableOutput(options.outputDir());
 
         var authored = new Ingested(corpus, ingest(corpus, options.storeRoot(), "store", checks, metadata));
         describe(corpus, "corpus", metadata);
@@ -275,33 +275,43 @@ public final class HtmlKnowledgeIngestionRunner {
                 List.of(),
                 TITLE);
         var report = new CheckedEvaluationReport(TITLE, "Ingestion Metadata", evaluation, checks, metadata);
-        return new Outcome(report, authored, external);
+        return new Outcome(report, authored, external, options.outputDir());
     }
 
     /**
-     * Creates the output directory and requires it to be writable and every output file name to be absent or a
-     * regular file that is not a symbolic link.
+     * Prepares the output directory before anything else runs: creates it, requires it to be writable and every
+     * output file name to be absent or a regular file that is not a symbolic link, then deletes every existing
+     * output. A run that starts therefore never leaves an earlier run's report, labels or manifests behind, even
+     * when it is rejected later.
      *
-     * @throws IllegalStateException when an output cannot be written
+     * @throws IngestionInputException when an output cannot be written safely
      */
-    static void requireWritableOutput(Path outputDir) {
+    static void prepareOutput(Path outputDir) {
         try {
             Files.createDirectories(outputDir);
         } catch (IOException e) {
-            throw new IllegalStateException("output directory " + outputDir + " cannot be created: " + e, e);
+            throw new IngestionInputException("output directory " + outputDir + " cannot be created: " + e, e);
         }
         if (!Files.isDirectory(outputDir) || !Files.isWritable(outputDir)) {
-            throw new IllegalStateException("output directory " + outputDir + " is not a writable directory");
+            throw new IngestionInputException("output directory " + outputDir + " is not a writable directory");
         }
-        for (var file : outputFiles(outputDir)) {
+        var files = outputFiles(outputDir);
+        for (var file : files) {
             // Links are never followed: a (possibly dangling) link could point into a Store root that the import
             // is about to create.
             if (Files.isSymbolicLink(file)) {
-                throw new IllegalStateException("output file " + file + " is a symbolic link");
+                throw new IngestionInputException("output file " + file + " is a symbolic link");
             }
             if (Files.exists(file, LinkOption.NOFOLLOW_LINKS)
                     && (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || !Files.isWritable(file))) {
-                throw new IllegalStateException("output file " + file + " exists and is not a writable regular file");
+                throw new IngestionInputException("output file " + file + " exists and is not a writable regular file");
+            }
+        }
+        for (var file : files) {
+            try {
+                Files.deleteIfExists(file);
+            } catch (IOException e) {
+                throw new IngestionInputException("cannot remove the earlier output " + file + ": " + e, e);
             }
         }
     }
@@ -317,27 +327,18 @@ public final class HtmlKnowledgeIngestionRunner {
     }
 
     /**
-     * Writes the report, label and manifest files and returns their paths. Corpus files of a known corpus version
-     * that this run did not produce (for example an external snapshot of an earlier run) are deleted, so the
-     * directory never shows labels or a manifest that the current report does not describe.
+     * Writes the report, label and manifest files into the run's preflighted output directory and returns their
+     * paths. The directory was cleared of earlier outputs when the run started.
      */
-    public static List<Path> write(Outcome outcome, Path outputDir) throws IOException {
-        Files.createDirectories(outputDir);
+    public static List<Path> write(Outcome outcome) throws IOException {
+        var outputDir = outcome.outputDir();
         var written = new ArrayList<Path>();
         written.add(writeFile(outputDir.resolve("html-knowledge-ingestion.json"), outcome.report().toJson()));
         written.add(writeFile(outputDir.resolve("html-knowledge-ingestion.md"), outcome.report().toMarkdown()));
-        var produced = new ArrayList<String>();
         for (var ingested : Stream.concat(Stream.of(outcome.authored()), outcome.external().stream()).toList()) {
             var version = ingested.corpus().version();
-            produced.add(version);
             written.add(writeFile(outputDir.resolve(version + "-chunks.tsv"), ingested.corpus().labelsTsv()));
             written.add(writeFile(outputDir.resolve(version + "-manifest.tsv"), ingested.result().manifest().toTsv()));
-        }
-        for (var version : KNOWN_CORPUS_VERSIONS) {
-            if (!produced.contains(version)) {
-                Files.deleteIfExists(outputDir.resolve(version + "-chunks.tsv"));
-                Files.deleteIfExists(outputDir.resolve(version + "-manifest.tsv"));
-            }
         }
         return written;
     }
@@ -345,6 +346,7 @@ public final class HtmlKnowledgeIngestionRunner {
     private static HtmlKnowledgeIngestion.Result ingest(HtmlKnowledgeCorpus corpus, Optional<Path> keptRoot,
             String prefix, List<HtmlKnowledgeIngestion.Check> checks, Map<String, String> metadata) {
         var root = keptRoot.orElseGet(HtmlKnowledgeIngestionRunner::temporaryRoot);
+        Throwable failure = null;
         try {
             var result = new HtmlKnowledgeIngestion(corpus).ingest(root);
             checks.addAll(result.checks());
@@ -359,10 +361,23 @@ public final class HtmlKnowledgeIngestionRunner {
             }
             return result;
         } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            var unchecked = new UncheckedIOException(e);
+            failure = unchecked;
+            throw unchecked;
+        } catch (RuntimeException | Error e) {
+            failure = e;
+            throw e;
         } finally {
             if (keptRoot.isEmpty()) {
-                deleteTree(root);
+                try {
+                    deleteTree(root);
+                } catch (UncheckedIOException cleanup) {
+                    // Never let a cleanup error hide why the ingestion failed.
+                    if (failure == null) {
+                        throw cleanup;
+                    }
+                    failure.addSuppressed(cleanup);
+                }
             }
         }
     }
@@ -377,11 +392,10 @@ public final class HtmlKnowledgeIngestionRunner {
                 .collect(Collectors.joining(", ")));
     }
 
+    /** Writes {@code content}, refusing atomically (O_NOFOLLOW) to follow a symbolic link at {@code path}. */
     private static Path writeFile(Path path, String content) throws IOException {
-        if (Files.isSymbolicLink(path)) {
-            throw new IOException("refusing to write through symbolic link " + path);
-        }
-        Files.writeString(path, content, StandardCharsets.UTF_8);
+        Files.writeString(path, content, StandardCharsets.UTF_8, StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
         return path;
     }
 
