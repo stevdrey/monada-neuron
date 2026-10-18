@@ -67,8 +67,11 @@ public final class HtmlKnowledgeIngestionRunner {
         /**
          * Requires every component and rejects overlapping locations before anything is written: the kept Store
          * roots and the output directory must be pairwise distinct and not nested in each other, in either
-         * direction. Paths are compared in canonical form (see {@link #canonical}), so a symlink cannot hide an
-         * overlap.
+         * direction. The supplied snapshot must not be, or resolve to, one of the reserved output files, which a run
+         * deletes before it reads any input. Paths are compared in canonical form (see {@link #canonical}), so neither
+         * {@code ..} nor a symlinked directory or file can hide an overlap. Other inputs need no such check: kept
+         * roots are covered above, the authored corpus is read from the classpath, a snapshot under any other name is
+         * never touched, and output cleanup unlinks files instead of truncating them.
          */
         public Options {
             Objects.requireNonNull(outputDir, "outputDir must not be null");
@@ -83,6 +86,15 @@ public final class HtmlKnowledgeIngestionRunner {
                 if (overlap(outputDir, root)) {
                     throw new IllegalArgumentException(
                             "--output-dir and a store root must be separate, non-nested directories: " + root);
+                }
+            }
+            if (mdn.isPresent()) {
+                var snapshot = canonical(mdn.get().snapshot());
+                for (var output : outputFiles(outputDir)) {
+                    if (snapshot.equals(canonical(output))) {
+                        throw new IllegalArgumentException(
+                                "--mdn-snapshot must not be one of the output files of --output-dir: " + output);
+                    }
                 }
             }
         }

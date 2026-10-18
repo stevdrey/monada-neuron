@@ -40,7 +40,9 @@ ends the run with a non-zero status and a stack trace, never as rejected input.
 
 A run starts by checking the output directory and deleting every output of an earlier run from it. A run that is
 rejected or fails later therefore never leaves an earlier run's report, labels or manifests behind. Outputs are written
-only to that preflighted directory, and never through a symbolic link.
+only to that preflighted directory, and never through a symbolic link. Because of that cleanup, `--mdn-snapshot` must
+not be, or resolve to (through `..` or a symlinked directory or file), one of the output files of `--output-dir`;
+such a run is rejected with exit status 2 before anything is deleted, and the snapshot stays untouched.
 
 ## Outputs
 

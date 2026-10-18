@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -209,6 +210,53 @@ class HtmlKnowledgeIngestionRunnerTest {
 
         assertTrue(failure.getMessage().contains("symbolic link"), failure.getMessage());
         assertFalse(Files.exists(root));
+    }
+
+    @Test
+    void aSnapshotThatAliasesAnOutputFileIsRejectedBeforeCleanup() throws IOException {
+        var reports = Files.createDirectories(directory.resolve("reports"));
+        var kept = directory.resolve("kept");
+        var snapshot = Files.writeString(reports.resolve("html-knowledge-ingestion.md"),
+                MdnSnapshotSourceTest.SYNTHETIC_SNAPSHOT);
+        var manifest = Files.writeString(reports.resolve("html-kc-v1-manifest.tsv"),
+                MdnSnapshotSourceTest.SYNTHETIC_SNAPSHOT);
+        var aliases = new ArrayList<Path>(
+                List.of(snapshot, directory.resolve("reports/../reports/html-kc-v1-manifest.tsv")));
+        try {
+            aliases.add(Files.createSymbolicLink(directory.resolve("alias"), reports).resolve(snapshot.getFileName()));
+            aliases.add(Files.createSymbolicLink(directory.resolve("snap.md"), snapshot));
+        } catch (UnsupportedOperationException | IOException e) {
+            // Symbolic links are not supported here: the direct and normalized aliases still run.
+        }
+
+        for (var alias : aliases) {
+            var sha256 = MdnSnapshotSourceTest.sha256(alias);
+            var failure = assertThrows(IllegalArgumentException.class, () ->
+                    HtmlKnowledgeIngestionRunner.Options.parse(new String[] {
+                            "--output-dir", reports.toString(), "--store-root", kept.toString(),
+                            "--mdn-snapshot", alias.toString(), "--mdn-revision", MdnSnapshotSourceTest.REVISION,
+                            "--mdn-sha256", sha256}), alias.toString());
+            assertTrue(failure.getMessage().contains("must not be one of the output files"), failure.getMessage());
+        }
+        assertEquals(MdnSnapshotSourceTest.SYNTHETIC_SNAPSHOT, Files.readString(snapshot));
+        assertEquals(MdnSnapshotSourceTest.SYNTHETIC_SNAPSHOT, Files.readString(manifest));
+        assertFalse(Files.exists(kept));
+    }
+
+    @Test
+    void aSnapshotInsideTheOutputDirectoryUnderAnotherNameIsIngestedAndKept() throws IOException {
+        var reports = Files.createDirectories(directory.resolve("reports"));
+        var snapshot = Files.writeString(reports.resolve("index.md"), MdnSnapshotSourceTest.SYNTHETIC_SNAPSHOT);
+
+        var outcome = HtmlKnowledgeIngestionRunner.run(HtmlKnowledgeIngestionRunner.Options.parse(new String[] {
+                "--output-dir", reports.toString(), "--mdn-snapshot", snapshot.toString(),
+                "--mdn-revision", MdnSnapshotSourceTest.REVISION,
+                "--mdn-sha256", MdnSnapshotSourceTest.sha256(snapshot)}));
+        HtmlKnowledgeIngestionRunner.write(outcome);
+
+        assertTrue(outcome.report().allPassed(), outcome.report().toMarkdown());
+        assertTrue(outcome.external().isPresent());
+        assertEquals(MdnSnapshotSourceTest.SYNTHETIC_SNAPSHOT, Files.readString(snapshot));
     }
 
     @Test
