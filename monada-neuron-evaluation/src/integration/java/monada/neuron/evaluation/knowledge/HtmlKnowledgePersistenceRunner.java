@@ -4,6 +4,7 @@ import com.monada.api.MonadaMemory;
 import monada.neuron.evaluation.integration.StoreMetadata;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeIngestion.Check;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgePersistencePhase.Result;
+import monada.neuron.evaluation.knowledge.HtmlKnowledgePersistencePhase.WorkDirectory;
 import monada.neuron.evaluation.knowledge.PersistenceProbes.Snapshot;
 import monada.neuron.evaluation.metrics.CheckedEvaluationReport;
 import monada.neuron.evaluation.metrics.EnvironmentMetadata;
@@ -12,6 +13,7 @@ import monada.neuron.evaluation.metrics.EvaluationReport.RunConfiguration;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.lang.management.ManagementFactory;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -49,7 +51,14 @@ public final class HtmlKnowledgePersistenceRunner {
     private static final int STDERR_TAIL_LINES = 20;
     private static final String USAGE = "Usage: [--output-dir <dir>] [--store-root <dir>]";
 
-    private HtmlKnowledgePersistenceRunner() {
+    private final Options options;
+    private final HtmlKnowledgeCorpus corpus;
+    private final HtmlKnowledgePersistence persistence;
+
+    private HtmlKnowledgePersistenceRunner(Options options) {
+        this.options = Objects.requireNonNull(options, "options must not be null");
+        this.corpus = HtmlKnowledgeCorpus.bundled();
+        this.persistence = new HtmlKnowledgePersistence(corpus);
     }
 
     /**
@@ -158,62 +167,7 @@ public final class HtmlKnowledgePersistenceRunner {
      * @throws IngestionInputException when the output location or the kept root is rejected
      */
     public static Outcome run(Options options) {
-        Objects.requireNonNull(options, "options must not be null");
-        HtmlKnowledgeIngestionRunner.prepareOutput(options.outputDir(), outputFiles(options.outputDir()));
-        options.storeRoot().ifPresent(HtmlKnowledgeIngestion::requireFreshRoot);
-
-        var corpus = HtmlKnowledgeCorpus.bundled();
-        var persistence = new HtmlKnowledgePersistence(corpus);
-        var work = temporaryDirectory();
-        try {
-            var root = options.storeRoot().orElse(work.resolve("store"));
-            var checks = new ArrayList<Check>();
-            var metadata = new TreeMap<String, String>();
-            var files = new TreeMap<String, String>();
-
-            var seed = launch(HtmlKnowledgePersistencePhase.SEED, root, work);
-            collect(seed, work, checks, metadata);
-            Optional<PhaseRun> reopen = Optional.empty();
-            if (seed.exitStatus() == 0 || seed.exitStatus() == 1) {
-                var manifest = IngestionManifest.parseTsv(
-                        HtmlKnowledgePersistencePhase.read(work.resolve(HtmlKnowledgePersistencePhase.MANIFEST_FILE)),
-                        corpus.version(), corpus.corpusHash());
-                files.put(corpus.version() + "-persistence-manifest.tsv", manifest.toTsv());
-                files.put(corpus.version() + "-seed-recall.tsv", HtmlKnowledgePersistencePhase.read(
-                        HtmlKnowledgePersistencePhase.snapshotFile(work, HtmlKnowledgePersistencePhase.SEED)));
-
-                var reopened = launch(HtmlKnowledgePersistencePhase.REOPEN, root, work);
-                reopen = Optional.of(reopened);
-                collect(reopened, work, checks, metadata);
-                checks.add(restartCheck(seed, reopened));
-
-                var reopenSnapshot = HtmlKnowledgePersistencePhase.snapshotFile(work, HtmlKnowledgePersistencePhase.REOPEN);
-                if (Files.exists(reopenSnapshot)) {
-                    var snapshot = HtmlKnowledgePersistencePhase.read(reopenSnapshot);
-                    files.put(corpus.version() + "-reopen-recall.tsv", snapshot);
-                    var scratch = Files.createDirectories(work.resolve("audits"));
-                    checks.addAll(persistence.audit(root, manifest, Snapshot.parseTsv(snapshot), scratch));
-                }
-            } else {
-                checks.add(new Check("process.restart", false, "seed phase did not complete (exit "
-                        + seed.exitStatus() + "); no reopen was attempted: " + seed.stderr()));
-            }
-
-            describe(corpus, persistence, root, options, seed, reopen, metadata);
-            var evaluation = new EvaluationReport(
-                    Instant.now(),
-                    EnvironmentMetadata.current(),
-                    new RunConfiguration(0L, false, 0, 0, "one seed and one reopen JVM; timings in metadata are"
-                            + " single exploratory wall-clock samples and never part of a verdict"),
-                    List.of(),
-                    TITLE);
-            var report = new CheckedEvaluationReport(TITLE, "Persistence Metadata", evaluation, checks, metadata);
-            return new Outcome(report, seed, reopen, files, options.outputDir());
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        } finally {
-            HtmlKnowledgeIngestionRunner.deleteTree(work);
-        }
+        return new HtmlKnowledgePersistenceRunner(options).execute();
     }
 
     /** Writes the report and the manifest and snapshot files into the preflighted output directory. */
@@ -230,8 +184,65 @@ public final class HtmlKnowledgePersistenceRunner {
         return written;
     }
 
-    private static List<Path> outputFiles(Path outputDir) {
-        var version = HtmlKnowledgeCorpus.VERSION;
+    private Outcome execute() {
+        HtmlKnowledgeIngestionRunner.prepareOutput(options.outputDir(), outputFiles());
+        options.storeRoot().ifPresent(HtmlKnowledgeIngestion::requireFreshRoot);
+
+        var work = new WorkDirectory(temporaryDirectory());
+        try {
+            var root = options.storeRoot().orElse(work.path().resolve("store"));
+            var checks = new ArrayList<Check>();
+            var metadata = new TreeMap<String, String>();
+            var files = new TreeMap<String, String>();
+
+            var seed = launch(HtmlKnowledgePersistencePhase.SEED, root, work);
+            collect(seed, work, checks, metadata);
+            Optional<PhaseRun> reopen = Optional.empty();
+            if (seed.exitStatus() == 0 || seed.exitStatus() == 1) {
+                var manifest = IngestionManifest.parseTsv(work.read(work.manifest()), corpus.version(),
+                        corpus.corpusHash());
+                files.put(corpus.version() + "-persistence-manifest.tsv", manifest.toTsv());
+                files.put(corpus.version() + "-seed-recall.tsv",
+                        work.read(work.snapshot(HtmlKnowledgePersistencePhase.SEED)));
+
+                var reopened = launch(HtmlKnowledgePersistencePhase.REOPEN, root, work);
+                reopen = Optional.of(reopened);
+                collect(reopened, work, checks, metadata);
+                checks.add(restartCheck(seed, reopened));
+
+                var reopenSnapshot = work.snapshot(HtmlKnowledgePersistencePhase.REOPEN);
+                if (Files.exists(reopenSnapshot)) {
+                    var snapshot = work.read(reopenSnapshot);
+                    files.put(corpus.version() + "-reopen-recall.tsv", snapshot);
+                    var scratch = Files.createDirectories(work.path().resolve("audits"));
+                    checks.addAll(persistence.audit(root, manifest, Snapshot.parseTsv(snapshot), scratch));
+                }
+            } else {
+                checks.add(new Check("process.restart", false, "seed phase did not complete (exit "
+                        + seed.exitStatus() + "); no reopen was attempted: " + seed.stderr()));
+            }
+
+            describe(root, seed, reopen, metadata);
+            var evaluation = new EvaluationReport(
+                    Instant.now(),
+                    EnvironmentMetadata.current(),
+                    new RunConfiguration(0L, false, 0, 0, "one seed and one reopen JVM; the environment above is the"
+                            + " orchestrator's, each phase JVM's own is in <phase>.jvm.*; timings in metadata are"
+                            + " single exploratory wall-clock samples and never part of a verdict"),
+                    List.of(),
+                    TITLE);
+            var report = new CheckedEvaluationReport(TITLE, "Persistence Metadata", evaluation, checks, metadata);
+            return new Outcome(report, seed, reopen, files, options.outputDir());
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        } finally {
+            HtmlKnowledgeIngestionRunner.deleteTree(work.path());
+        }
+    }
+
+    private List<Path> outputFiles() {
+        var outputDir = options.outputDir();
+        var version = corpus.version();
         return List.of(outputDir.resolve("html-knowledge-persistence.json"),
                 outputDir.resolve("html-knowledge-persistence.md"),
                 outputDir.resolve(version + "-persistence-manifest.tsv"),
@@ -241,15 +252,19 @@ public final class HtmlKnowledgePersistenceRunner {
 
     /**
      * Runs one phase in a child JVM with this JVM's {@code java} executable and class path, so the child loads
-     * exactly the classes under test.
+     * exactly the classes under test, and with this JVM's heap, {@code -XX} and module flags (see
+     * {@link #forwardedJvmArguments()}), so both run with the same reported configuration.
      */
-    static PhaseRun launch(String phase, Path root, Path work) {
+    private PhaseRun launch(String phase, Path root, WorkDirectory work) {
         var java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
-        var stdout = work.resolve(phase + ".out");
-        var stderr = work.resolve(phase + ".err");
-        var command = List.of(java, "-cp", System.getProperty("java.class.path"),
+        var stdout = work.path().resolve(phase + ".out");
+        var stderr = work.path().resolve(phase + ".err");
+        var command = new ArrayList<String>();
+        command.add(java);
+        command.addAll(forwardedJvmArguments());
+        command.addAll(List.of("-cp", System.getProperty("java.class.path"),
                 HtmlKnowledgePersistencePhase.class.getName(), phase, root.toAbsolutePath().toString(),
-                work.toAbsolutePath().toString());
+                work.path().toAbsolutePath().toString()));
         var start = System.nanoTime();
         try {
             var process = new ProcessBuilder(command).redirectOutput(stdout.toFile()).redirectError(stderr.toFile())
@@ -267,20 +282,42 @@ public final class HtmlKnowledgePersistenceRunner {
         }
     }
 
-    private static void collect(PhaseRun run, Path work, List<Check> checks, Map<String, String> metadata) {
-        var resultFile = HtmlKnowledgePersistencePhase.resultFile(work, run.phase());
+    /**
+     * Returns the orchestrator's heap ({@code -Xms}, {@code -Xmx}, {@code -Xss}), {@code -XX:} and module
+     * ({@code --add-modules}, {@code --enable-preview}) arguments. System properties, agents and tool-specific
+     * arguments of a host such as a Gradle test worker are not forwarded.
+     */
+    private List<String> forwardedJvmArguments() {
+        var input = ManagementFactory.getRuntimeMXBean().getInputArguments();
+        var forwarded = new ArrayList<String>();
+        for (var index = 0; index < input.size(); index++) {
+            var argument = input.get(index);
+            if (argument.equals("--add-modules") && index + 1 < input.size()) {
+                forwarded.add(argument);
+                forwarded.add(input.get(++index));
+            } else if (argument.startsWith("--add-modules=") || argument.equals("--enable-preview")
+                    || argument.startsWith("-Xms") || argument.startsWith("-Xmx") || argument.startsWith("-Xss")
+                    || argument.startsWith("-XX:")) {
+                forwarded.add(argument);
+            }
+        }
+        return forwarded;
+    }
+
+    private void collect(PhaseRun run, WorkDirectory work, List<Check> checks, Map<String, String> metadata) {
+        var resultFile = work.result(run.phase());
         if (!Files.exists(resultFile)) {
             checks.add(new Check(run.phase() + ".completed", false, "the " + run.phase() + " JVM exited "
                     + run.exitStatus() + " without a result: " + run.stderr()));
             return;
         }
-        var result = Result.parse(HtmlKnowledgePersistencePhase.read(resultFile));
+        var result = Result.parse(work.read(resultFile));
         result.checks().forEach(check -> checks.add(
                 new Check(run.phase() + "." + check.name(), check.passed(), check.detail())));
         result.metadata().forEach((key, value) -> metadata.put(run.phase() + "." + key, value));
     }
 
-    private static Check restartCheck(PhaseRun seed, PhaseRun reopen) {
+    private Check restartCheck(PhaseRun seed, PhaseRun reopen) {
         var self = ProcessHandle.current().pid();
         var separate = seed.pid() != reopen.pid() && seed.pid() != self && reopen.pid() != self;
         var passed = separate && seed.exitStatus() == 0 && reopen.exitStatus() == 0;
@@ -289,8 +326,7 @@ public final class HtmlKnowledgePersistenceRunner {
                 + (separate ? "; three distinct processes" : "; processes are not distinct"));
     }
 
-    private static void describe(HtmlKnowledgeCorpus corpus, HtmlKnowledgePersistence persistence, Path root,
-            Options options, PhaseRun seed, Optional<PhaseRun> reopen, Map<String, String> metadata) {
+    private void describe(Path root, PhaseRun seed, Optional<PhaseRun> reopen, Map<String, String> metadata) {
         metadata.put("protocolVersion", HtmlKnowledgeIngestionRunner.PROTOCOL_VERSION);
         metadata.put("reopenMode", "restart (seed and reopen in separate JVM processes)");
         metadata.put("corpus.version", corpus.version());
@@ -304,6 +340,7 @@ public final class HtmlKnowledgePersistenceRunner {
         metadata.put("ordering.direct", "Store: score descending, then atom id ascending");
         metadata.put("ordering.neuron", "adapter: score descending, then query Signal index, then Store rank;"
                 + " deduplicated by atom");
+        metadata.put("phase.forwardedJvmArguments", String.join(" ", forwardedJvmArguments()));
         metadata.put("phase.seed.pid", Long.toString(seed.pid()));
         metadata.put("phase.seed.exit", Integer.toString(seed.exitStatus()));
         metadata.put("phase.seed.nanos", Long.toString(seed.nanos()));
@@ -316,8 +353,12 @@ public final class HtmlKnowledgePersistenceRunner {
                 : "temporary (deleted)");
         var manifest = root.resolve("manifest.json");
         if (Files.exists(manifest)) {
-            StoreMetadata.manifestFields(HtmlKnowledgePersistencePhase.read(manifest))
-                    .forEach((key, value) -> metadata.put("store.manifest." + key, value));
+            try {
+                StoreMetadata.manifestFields(Files.readString(manifest, StandardCharsets.UTF_8))
+                        .forEach((key, value) -> metadata.put("store.manifest." + key, value));
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
         }
         var storeVersion = MonadaMemory.class.getPackage().getImplementationVersion();
         metadata.put("store.implementationVersion", storeVersion == null ? "unknown" : storeVersion);
@@ -328,7 +369,7 @@ public final class HtmlKnowledgePersistenceRunner {
                 StoreMetadata.gitCommit(storeDirectory == null ? null : Path.of(storeDirectory)));
     }
 
-    private static String tail(Path file) {
+    private String tail(Path file) {
         try {
             var lines = Files.readAllLines(file, StandardCharsets.UTF_8);
             return String.join(" | ", lines.subList(Math.max(0, lines.size() - STDERR_TAIL_LINES), lines.size()));
@@ -337,7 +378,7 @@ public final class HtmlKnowledgePersistenceRunner {
         }
     }
 
-    private static Path temporaryDirectory() {
+    private Path temporaryDirectory() {
         try {
             return Files.createTempDirectory("monada-neuron-html-kc-persistence-");
         } catch (IOException e) {

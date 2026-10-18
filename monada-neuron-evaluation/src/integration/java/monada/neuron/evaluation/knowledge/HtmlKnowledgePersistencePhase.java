@@ -2,6 +2,7 @@ package monada.neuron.evaluation.knowledge;
 
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeIngestion.Check;
 import monada.neuron.evaluation.knowledge.PersistenceProbes.Snapshot;
+import monada.neuron.evaluation.metrics.EnvironmentMetadata;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -20,27 +21,24 @@ import java.util.Objects;
  *
  * <p>Arguments: {@code seed|reopen <store-root> <work-dir>}. {@code seed} imports the corpus into the fresh root and
  * writes the manifest, its recall snapshot and its result to the work directory. {@code reopen} reads those files,
- * observes the existing root with new handles and writes its own snapshot and result. Exit status: {@code 0} all
- * checks passed, {@code 1} a semantic check failed, {@code 2} invalid usage or rejected input (for example a root
- * without a Store manifest).
+ * observes the existing root with new handles and writes its own snapshot and result. Each result also records the
+ * phase JVM's own environment ({@code jvm.*}), because its timings were measured there and not in the orchestrator.
+ * Exit status: {@code 0} all checks passed, {@code 1} a semantic check failed, {@code 2} invalid usage or rejected
+ * input (for example a root without a Store manifest).
  */
 public final class HtmlKnowledgePersistencePhase {
 
     static final String SEED = "seed";
     static final String REOPEN = "reopen";
-    static final String MANIFEST_FILE = "manifest.tsv";
 
-    private HtmlKnowledgePersistencePhase() {
-    }
+    private final HtmlKnowledgeCorpus corpus;
+    private final HtmlKnowledgePersistence persistence;
+    private final WorkDirectory work;
 
-    /** Returns the snapshot file a phase writes into {@code work}. */
-    static Path snapshotFile(Path work, String phase) {
-        return work.resolve(phase + "-recall.tsv");
-    }
-
-    /** Returns the result file a phase writes into {@code work}. */
-    static Path resultFile(Path work, String phase) {
-        return work.resolve(phase + "-result.tsv");
+    private HtmlKnowledgePersistencePhase(Path work) {
+        this.corpus = HtmlKnowledgeCorpus.bundled();
+        this.persistence = new HtmlKnowledgePersistence(corpus);
+        this.work = new WorkDirectory(work);
     }
 
     /** Phase entrypoint. */
@@ -50,44 +48,96 @@ public final class HtmlKnowledgePersistencePhase {
             System.exit(2);
             return;
         }
-        var root = Path.of(args[1]);
-        var work = Path.of(args[2]);
-        var corpus = HtmlKnowledgeCorpus.bundled();
-        var persistence = new HtmlKnowledgePersistence(corpus);
-        List<Check> checks;
-        Map<String, String> metadata;
+        int status;
         try {
-            if (args[0].equals(SEED)) {
-                var seeded = persistence.seed(root);
-                write(work.resolve(MANIFEST_FILE), seeded.manifest().toTsv());
-                write(snapshotFile(work, SEED), seeded.observation().snapshot().toTsv());
-                checks = seeded.checks();
-                metadata = seeded.observation().metadata();
-            } else {
-                var manifest = IngestionManifest.parseTsv(read(work.resolve(MANIFEST_FILE)), corpus.version(),
-                        corpus.corpusHash());
-                var seededSnapshot = Snapshot.parseTsv(read(snapshotFile(work, SEED)));
-                var observation = persistence.reopen(root, manifest, seededSnapshot);
-                write(snapshotFile(work, REOPEN), observation.snapshot().toTsv());
-                checks = observation.checks();
-                metadata = observation.metadata();
-            }
+            status = new HtmlKnowledgePersistencePhase(Path.of(args[2])).run(args[0], Path.of(args[1]));
         } catch (IngestionInputException e) {
             System.err.println("Persistence input rejected: " + e.getMessage());
-            System.exit(2);
-            return;
+            status = 2;
         }
+        System.exit(status);
+    }
+
+    private int run(String phase, Path root) {
+        Result result;
+        if (phase.equals(SEED)) {
+            var seeded = persistence.seed(root);
+            work.write(work.manifest(), seeded.manifest().toTsv());
+            work.write(work.snapshot(SEED), seeded.observation().snapshot().toTsv());
+            result = new Result(seeded.checks(), environment(seeded.observation().metadata()));
+        } else {
+            var manifest = IngestionManifest.parseTsv(work.read(work.manifest()), corpus.version(),
+                    corpus.corpusHash());
+            var seededSnapshot = Snapshot.parseTsv(work.read(work.snapshot(SEED)));
+            var observation = persistence.reopen(root, manifest, seededSnapshot);
+            work.write(work.snapshot(REOPEN), observation.snapshot().toTsv());
+            result = new Result(observation.checks(), environment(observation.metadata()));
+        }
+        work.write(work.result(phase), result.render());
+        return result.checks().stream().allMatch(Check::passed) ? 0 : 1;
+    }
+
+    private Map<String, String> environment(Map<String, String> metadata) {
         var all = new LinkedHashMap<>(metadata);
+        var environment = EnvironmentMetadata.current();
         all.put("pid", Long.toString(ProcessHandle.current().pid()));
-        write(resultFile(work, args[0]), Result.render(checks, all));
-        System.exit(checks.stream().allMatch(Check::passed) ? 0 : 1);
+        all.put("jvm.version", environment.javaVendor() + " " + environment.javaVersion() + " ("
+                + environment.jvmName() + ")");
+        all.put("jvm.arguments", String.join(" ", environment.jvmArguments()));
+        all.put("jvm.availableProcessors", Integer.toString(environment.availableProcessors()));
+        all.put("jvm.maxMemoryBytes", Long.toString(environment.maxMemoryBytes()));
+        all.put("jvm.garbageCollectors", String.join(", ", environment.garbageCollectors()));
+        return all;
+    }
+
+    /**
+     * The files one run exchanges between the orchestrator and its phase JVMs.
+     *
+     * @param path the run's temporary work directory
+     */
+    record WorkDirectory(Path path) {
+
+        WorkDirectory {
+            Objects.requireNonNull(path, "path must not be null");
+        }
+
+        /** Returns the manifest file written by the seed phase. */
+        Path manifest() {
+            return path.resolve("manifest.tsv");
+        }
+
+        /** Returns the snapshot file of {@code phase}. */
+        Path snapshot(String phase) {
+            return path.resolve(phase + "-recall.tsv");
+        }
+
+        /** Returns the result file of {@code phase}. */
+        Path result(String phase) {
+            return path.resolve(phase + "-result.tsv");
+        }
+
+        String read(Path file) {
+            try {
+                return Files.readString(file, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                throw new UncheckedIOException("cannot read " + file, e);
+            }
+        }
+
+        void write(Path file, String content) {
+            try {
+                Files.writeString(file, content, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                throw new UncheckedIOException("cannot write " + file, e);
+            }
+        }
     }
 
     /**
      * A phase result as written by one JVM and read by the orchestrator.
      *
      * @param checks verdicts in phase order
-     * @param metadata exploratory values of the phase
+     * @param metadata exploratory values and the environment of the phase JVM
      */
     record Result(List<Check> checks, Map<String, String> metadata) {
 
@@ -96,8 +146,11 @@ public final class HtmlKnowledgePersistencePhase {
             metadata = Map.copyOf(metadata);
         }
 
-        /** Renders {@code check\tname\tpassed\tdetail} and {@code meta\tkey\tvalue} lines; tabs and newlines in values become spaces. */
-        static String render(List<Check> checks, Map<String, String> metadata) {
+        /**
+         * Renders {@code check\tname\tpassed\tdetail} and {@code meta\tkey\tvalue} lines; tabs and newlines in values
+         * become spaces.
+         */
+        String render() {
             var sb = new StringBuilder();
             for (var check : checks) {
                 sb.append("check\t").append(check.name()).append('\t').append(check.passed()).append('\t')
@@ -126,24 +179,8 @@ public final class HtmlKnowledgePersistencePhase {
             return new Result(checks, metadata);
         }
 
-        private static String flat(String value) {
+        private String flat(String value) {
             return Objects.requireNonNull(value).replace('\t', ' ').replace('\n', ' ').replace('\r', ' ');
-        }
-    }
-
-    static String read(Path file) {
-        try {
-            return Files.readString(file, StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw new UncheckedIOException("cannot read " + file, e);
-        }
-    }
-
-    private static void write(Path file, String content) {
-        try {
-            Files.writeString(file, content, StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw new UncheckedIOException("cannot write " + file, e);
         }
     }
 }

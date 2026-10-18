@@ -312,7 +312,8 @@ public final class HtmlKnowledgePersistence {
      * <p>Passes when the measurement shows the default is insufficient for recoverable text: the canonical query does
      * not reproduce the probe codec's top result for every probe, and each hashed Signal is only attributable by
      * re-hashing the external corpus (it equals {@code HashedSignalDecoder.decode} of the mapped chunk's text and
-     * carries no text itself). Every result's reference must still map to a persisted chunk.
+     * carries no text itself). Every probe must answer {@code COMPLETE} with at least one result whose reference maps
+     * to a persisted chunk, so a failed or empty default is reported as a failure, not as insufficiency.
      */
     public Check defaultCodecInsufficiency(Path root, IngestionManifest manifest, Snapshot snapshot) {
         requireExistingStore(root);
@@ -329,12 +330,16 @@ public final class HtmlKnowledgePersistence {
         var agreements = 0;
         var resultSets = new HashSet<List<String>>();
         var mismatches = new ArrayList<String>();
+        var unusable = new ArrayList<String>();
         var statuses = new LinkedHashMap<ResonanceMemoryStatus, Integer>();
         try (var adapter = ResonanceStoreMemoryAdapter.open(root, ResonanceStoreAdapterConfig.defaults())) {
             for (var probe : probes) {
                 var response = adapter.recall(new ResonanceMemoryRequest(
                         List.of(codec.querySignal(probe.probeId())), TOP_K));
                 statuses.merge(response.status(), 1, Integer::sum);
+                if (response.status() != ResonanceMemoryStatus.COMPLETE || response.results().isEmpty()) {
+                    unusable.add(probe.probeId() + "=" + response.status() + "/" + response.results().size());
+                }
                 var chunks = new ArrayList<String>();
                 for (var result : response.results()) {
                     var chunkId = manifest.chunkIdForReference(result.reference()).orElse(UNMAPPED);
@@ -351,13 +356,16 @@ public final class HtmlKnowledgePersistence {
             }
         }
         var insufficient = agreements < probes.size();
-        var passed = insufficient && mismatches.isEmpty();
+        // Disagreement is evidence only when the default produced usable, attributable output for every probe; a
+        // failed, unavailable or empty response would otherwise look like insufficiency.
+        var passed = insufficient && mismatches.isEmpty() && unusable.isEmpty();
         return new Check("neuron.defaultCodecInsufficient", passed, "defaults() on the same root: statuses "
                 + statuses + "; " + resultSets.size() + " distinct result lists over " + probes.size()
                 + " probes; top-1 agrees with the probe codec for " + agreements + "/" + probes.size()
                 + "; hashed Signals carry no text and were attributable only by re-hashing all " + corpus.chunks().size()
                 + " corpus chunks (" + collisions + " collisions)"
-                + (mismatches.isEmpty() ? "" : "; unattributable: " + mismatches));
+                + (mismatches.isEmpty() ? "" : "; unattributable: " + mismatches)
+                + (unusable.isEmpty() ? "" : "; not COMPLETE or empty: " + unusable));
     }
 
     /**
@@ -396,7 +404,7 @@ public final class HtmlKnowledgePersistence {
         var unread = ingestion.readback(memory, manifest);
         var count = corpus.chunks().size();
         var passed = refused.failure().filter(IngestionInputException.class::isInstance).isPresent()
-                && unread.size() == count;
+                && created && unread.size() == count;
         return new Check("audit.missingPath", passed, "harness preflight: " + refused.describe()
                 + "; raw MonadaMemory.open on the same missing path created an empty store (manifest.json written: "
                 + created + ") and readback failed for " + unread.size() + "/" + count + " chunks");
@@ -528,7 +536,7 @@ public final class HtmlKnowledgePersistence {
      *
      * @throws IngestionInputException when {@code root/manifest.json} is not a regular file
      */
-    static void requireExistingStore(Path root) {
+    void requireExistingStore(Path root) {
         Objects.requireNonNull(root, "root must not be null");
         if (!Files.isRegularFile(root.resolve(MANIFEST_FILE))) {
             throw new IngestionInputException("store root " + root + " holds no " + MANIFEST_FILE
@@ -546,11 +554,11 @@ public final class HtmlKnowledgePersistence {
         return probes;
     }
 
-    private static String profile(Manifest manifest) {
+    private String profile(Manifest manifest) {
         return manifest == null ? "unreadable" : manifest.encodingProfile() + " " + manifest.vectorFormatProfile();
     }
 
-    private static String findings(StorageIntegrityReport audit) {
+    private String findings(StorageIntegrityReport audit) {
         if (audit.findings().isEmpty()) {
             return "";
         }
@@ -559,7 +567,7 @@ public final class HtmlKnowledgePersistence {
                 .collect(Collectors.joining(", "));
     }
 
-    private static Check equalRows(String name, List<Row> expected, List<Row> actual, String passedDetail) {
+    private Check equalRows(String name, List<Row> expected, List<Row> actual, String passedDetail) {
         if (expected.equals(actual)) {
             return new Check(name, !expected.isEmpty(), passedDetail + " (" + expected.size() + " results)");
         }
@@ -573,7 +581,7 @@ public final class HtmlKnowledgePersistence {
                 + actual.size() + " results)");
     }
 
-    private static long median(long[] values) {
+    private long median(long[] values) {
         if (values.length == 0) {
             return 0L;
         }
@@ -582,9 +590,9 @@ public final class HtmlKnowledgePersistence {
         return sorted[sorted.length / 2];
     }
 
-    private static void rewriteAtomLog(Path root, String atomId,
+    private void rewriteAtomLog(Path root, String atomId,
             Function<String[], Optional<String>> rewrite) {
-        var log = root.resolve(new StorageIntegrityAuditor().audit(root).manifest().atomSegment());
+        var log = root.resolve(auditor.audit(root).manifest().atomSegment());
         try {
             var lines = Files.readAllLines(log, StandardCharsets.UTF_8);
             var rewritten = new ArrayList<String>(lines.size());
@@ -607,7 +615,7 @@ public final class HtmlKnowledgePersistence {
         }
     }
 
-    private static Path copy(Path root, Path scratch, String name) {
+    private Path copy(Path root, Path scratch, String name) {
         var target = scratch.resolve(name);
         try (Stream<Path> paths = Files.walk(root)) {
             for (var source : paths.toList()) {
@@ -624,7 +632,7 @@ public final class HtmlKnowledgePersistence {
         return target;
     }
 
-    private static void delete(Path file) {
+    private void delete(Path file) {
         try {
             Files.delete(file);
         } catch (IOException e) {
@@ -632,7 +640,7 @@ public final class HtmlKnowledgePersistence {
         }
     }
 
-    private static <T> Attempt<T> attempt(Supplier<T> action) {
+    private <T> Attempt<T> attempt(Supplier<T> action) {
         try {
             return new Attempt<>(Optional.ofNullable(action.get()), Optional.empty());
         } catch (RuntimeException e) {

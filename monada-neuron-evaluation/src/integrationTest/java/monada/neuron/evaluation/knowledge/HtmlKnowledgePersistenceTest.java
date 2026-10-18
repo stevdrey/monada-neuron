@@ -120,6 +120,19 @@ class HtmlKnowledgePersistenceTest {
         assertFalse(check(observation.checks(), "neuron.signalAttribution").passed());
     }
 
+    @Test
+    void anEmptyDefaultCodecResultIsAFailureNotEvidenceOfInsufficiency() throws IOException {
+        var root = directory.resolve("store");
+        var seeded = persistence.seed(root);
+        // With every atom record gone the default adapter recalls nothing; disagreement must not count as a pass.
+        Files.write(root.resolve("atoms/segment-000001.log"), new byte[0]);
+
+        var check = persistence.defaultCodecInsufficiency(root, seeded.manifest(), seeded.observation().snapshot());
+
+        assertFalse(check.passed());
+        assertTrue(check.detail().contains("not COMPLETE or empty"), check.detail());
+    }
+
     private static Check check(List<Check> checks, String name) {
         return checks.stream().filter(check -> check.name().equals(name)).findFirst().orElseThrow();
     }

@@ -92,7 +92,7 @@ class PersistenceFormatsTest {
 
     @Test
     void phaseResultRoundTripsWithFlattenedDetails() {
-        var text = Result.render(List.of(new Check("a.check", false, "line one\nline\ttwo")), Map.of("pid", "42"));
+        var text = new Result(List.of(new Check("a.check", false, "line one\nline\ttwo")), Map.of("pid", "42")).render();
 
         var parsed = Result.parse(text);
         assertEquals(List.of(new Check("a.check", false, "line one line two")), parsed.checks());

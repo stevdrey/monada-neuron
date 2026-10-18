@@ -45,8 +45,11 @@ deleted first, and nothing is ever written through a symbolic link.
 | `reopen` | child JVM 2 | requires `manifest.json`, parses the seed's manifest, opens a **new** `MonadaMemory` and a **separately opened** adapter, observes the root and compares it with the seed snapshot; then observes again with a second set of handles in the same JVM |
 | audits | orchestrator | measures the default codecs and records failure cases, each on its own copy of the root |
 
-Both child JVMs use the orchestrator's `java` and class path (`HtmlKnowledgePersistencePhase`). Their process ids and
-exit statuses are reported, and `process.restart` requires three distinct processes, both children having exited `0`.
+Both child JVMs use the orchestrator's `java` and class path (`HtmlKnowledgePersistencePhase`). They also get its heap,
+`-XX:` and module arguments (`phase.forwardedJvmArguments`), but not system properties or agents. Each child records
+its own environment as `<phase>.jvm.*` (version, arguments, processors, max memory, GCs), since its timings were
+measured there. The report's environment section describes the orchestrator. Process ids and exit statuses are
+reported, and `process.restart` requires three distinct processes, both children having exited `0`.
 
 The Store has no `close`, and `adapter.close()` only marks the adapter unavailable. Same-process reopening is
 therefore reported only as `persistence.freshHandleConsistency`, never as persistence evidence.
@@ -110,8 +113,8 @@ Atom ids are never compared across roots, only chunk ids mapped through each roo
 
 | Check | Records |
 | :--- | :--- |
-| `neuron.defaultCodecInsufficient` | `ResonanceStoreAdapterConfig.defaults()` (`CanonicalSignalQueryEncoder` + `HashedSignalDecoder`) on the same root, defaults unchanged. Records: statuses, the number of distinct result lists, top-1 agreement with the probe codec, and hashed-Signal collisions. Passes when the default does not recover the probe's top chunk for every probe, and every hashed Signal could be attributed only by re-hashing the external corpus. |
-| `audit.missingPath` | the harness preflight refuses the path. Raw `MonadaMemory.open` on the same path creates an empty store, and readback then fails for 33/33 chunks. |
+| `neuron.defaultCodecInsufficient` | `ResonanceStoreAdapterConfig.defaults()` (`CanonicalSignalQueryEncoder` + `HashedSignalDecoder`) on the same root, defaults unchanged. Records: statuses, the number of distinct result lists, top-1 agreement with the probe codec, and hashed-Signal collisions. Passes only when every probe answers `COMPLETE` with at least one attributable result, the default does not recover the probe's top chunk for every probe, and every hashed Signal could be attributed only by re-hashing the external corpus. A failed, unavailable or empty default response fails the check instead of counting as insufficiency. |
+| `audit.missingPath` | the harness preflight refuses the path. Raw `MonadaMemory.open` on the same path creates an empty store, with `manifest.json` written (required), and readback then fails for 33/33 chunks. |
 | `audit.pathIsFile` | the actual exception from a direct open, and a `ResonanceStoreAdapterException` from the adapter |
 | `audit.changedEncodingProfile` | opening with `NoOpTextNormalizer` options: the direct exception (`IllegalArgumentException`), a `ResonanceStoreAdapterException` from the adapter, and the persisted profile left unchanged |
 | `audit.removedVectorSegment` | the vector segment is deleted: the integrity audit reports `SEGMENT_MISSING`, and both opens fail (or a later recall fails); never a silent success |

@@ -97,7 +97,9 @@ class HtmlKnowledgePersistenceRunnerTest {
         assertEquals("5", metadata.get("probes.topK"));
         for (var key : List.of("store.manifest.version", "store.manifest.encoder", "store.manifest.normalizer",
                 "store.manifest.dimensions", "store.manifest.vectorScalarType", "store.implementationVersion",
-                "store.checkoutCommit", "neuron.commit", "neuron.version", "phase.seed.pid", "phase.reopen.pid")) {
+                "store.checkoutCommit", "neuron.commit", "neuron.version", "phase.seed.pid", "phase.reopen.pid",
+                "phase.forwardedJvmArguments", "seed.jvm.version", "seed.jvm.arguments", "seed.jvm.maxMemoryBytes",
+                "reopen.jvm.version", "reopen.jvm.arguments", "reopen.jvm.maxMemoryBytes")) {
             assertTrue(metadata.containsKey(key), key);
         }
         assertEquals("temporary (deleted)", metadata.get("store.root"));
