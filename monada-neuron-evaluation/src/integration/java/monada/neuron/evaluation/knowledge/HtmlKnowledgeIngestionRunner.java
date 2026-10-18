@@ -299,6 +299,11 @@ public final class HtmlKnowledgeIngestionRunner {
      * @throws IngestionInputException when an output cannot be written safely
      */
     static void prepareOutput(Path outputDir) {
+        prepareOutput(outputDir, outputFiles(outputDir));
+    }
+
+    /** {@link #prepareOutput(Path)} for an explicit set of reserved output {@code files} inside {@code outputDir}. */
+    static void prepareOutput(Path outputDir, List<Path> files) {
         try {
             Files.createDirectories(outputDir);
         } catch (IOException e) {
@@ -307,7 +312,6 @@ public final class HtmlKnowledgeIngestionRunner {
         if (!Files.isDirectory(outputDir) || !Files.isWritable(outputDir)) {
             throw new IngestionInputException("output directory " + outputDir + " is not a writable directory");
         }
-        var files = outputFiles(outputDir);
         for (var file : files) {
             // Links are never followed: a (possibly dangling) link could point into a Store root that the import
             // is about to create.
@@ -405,7 +409,7 @@ public final class HtmlKnowledgeIngestionRunner {
     }
 
     /** Writes {@code content}, refusing atomically (O_NOFOLLOW) to follow a symbolic link at {@code path}. */
-    private static Path writeFile(Path path, String content) throws IOException {
+    static Path writeFile(Path path, String content) throws IOException {
         Files.writeString(path, content, StandardCharsets.UTF_8, StandardOpenOption.CREATE,
                 StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
         return path;
@@ -420,7 +424,7 @@ public final class HtmlKnowledgeIngestionRunner {
         }
     }
 
-    private static void deleteTree(Path root) {
+    static void deleteTree(Path root) {
         if (Files.notExists(root)) {
             return;
         }

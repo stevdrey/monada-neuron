@@ -154,6 +154,18 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
         args(quotedBenchmarkArgs())
     }
 
+    // HTML knowledge persistence and reopen (Issue #106, docs/benchmarks/html-knowledge-persistence.md). Seeds a
+    // temporary Store in one child JVM, observes it from a second child JVM, then audits failure cases on copies.
+    tasks.register<JavaExec>("runHtmlKnowledgePersistence") {
+        group = "benchmark"
+        description = "Verifies html-kc-v1 persistence across separate JVMs and traces Neuron recall to Store atoms (Issue #106)"
+        classpath = integration.runtimeClasspath
+        mainClass.set("monada.neuron.evaluation.knowledge.HtmlKnowledgePersistenceRunner")
+        systemProperty("monada.neuron.version", project.version.toString())
+        systemProperty("monada.resonance.store.dir", rootProject.file("../monada-resonance-store").absolutePath)
+        args(quotedBenchmarkArgs())
+    }
+
     // Adapter-boundary JMH (Issue #49). Lives with the integration source set because it needs the
     // optional adapter; the generic `jmh` task only sees `main`.
     tasks.register<JavaExec>("jmhResonanceStoreAdapter") {
