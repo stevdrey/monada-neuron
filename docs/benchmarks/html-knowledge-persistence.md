@@ -10,7 +10,7 @@ This page covers Experiment Knowledge 3/8, [#106](https://github.com/stevdrey/mo
 the protocol's [ingestion readback and post-reopen (restart)](../experiments/html-knowledge-v1.md#run-conditions)
 conditions. It exercises the textual `MonadaMemory` API, not `ExecutionMemory`.
 
-It does **not** score retrieval quality (#107), evidence use (#108) or answers (#109). Recalling a stored chunk is
+It does **not** score retrieval quality ([#107](html-knowledge-recall.md)), evidence use (#108) or answers (#109). Recalling a stored chunk is
 external memory, not reasoning, and nothing here learns HTML.
 
 ## Running

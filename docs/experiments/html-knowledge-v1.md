@@ -6,7 +6,7 @@
 | :--- | :--- |
 | Protocol version | `html-knowledge-protocol-v1` |
 | Issue | [#104](https://github.com/stevdrey/monada-neuron/issues/104) (Experiment Knowledge 1/8) |
-| Implementation | Corpus contract delivered by #105 ([ingestion](../benchmarks/html-knowledge-ingestion.md)); ingestion readback, post-reopen (restart) and L2 attribution delivered by #106 ([persistence](../benchmarks/html-knowledge-persistence.md)); the rest of this document is the contract that issues #107 to #111 implement. |
+| Implementation | Corpus contract delivered by #105 ([ingestion](../benchmarks/html-knowledge-ingestion.md)); ingestion readback, post-reopen (restart) and L2 attribution delivered by #106 ([persistence](../benchmarks/html-knowledge-persistence.md)); query set `html-kq-v1`, L1/L2 judged recall and baselines B0 to B2c delivered by #107 ([recall](../benchmarks/html-knowledge-recall.md)); the rest of this document is the contract that issues #107 to #111 implement. |
 | Scope | Monada Neuron `monada-neuron-evaluation` optional `integration` / `integrationTest` source sets only |
 | Extensions | `l3-evidence-v1` (#108), `l4-answer-v1` (#109), `feedback-v1` (#110), `scaling-v1` (#111) |
 
@@ -824,7 +824,7 @@ issue fixes the exact task name in its own documentation.
 | :--- | :--- | :--- | :--- |
 | #105 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeIngestion` | import `html-kc-v1` into a temporary Store, write the manifest |
 | #106 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgePersistence` | persistence across separate JVMs, reopen and source-level readback through Neuron |
-| #107 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeRecall` | L1/L2 judged recall with B0/B1/B2 |
+| #107 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeRecall` | L1/L2 judged recall with B0/B1/B2/B2c over `html-kq-v1`, rerun in a separate JVM |
 | #108 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeEvidenceTrace` | L3 evidence use in a cognitive cycle |
 | #109 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeAnswers` | L4 grounded answers with B3 and abstention |
 | #110 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeFeedback` | [relevance feedback](#relevance-feedback-delivered-by-110) vs a no-feedback control |
@@ -851,3 +851,8 @@ source set, and do not change `./gradlew test` when it is absent.
 - No version change (issue #106): the ingestion readback and post-reopen (restart) conditions are implemented by
   `runHtmlKnowledgePersistence`, with a seed JVM and a separate reopen JVM, over a fixed probe set rather than the
   #107 query set. No definition, formula, label rule or report field changes.
+- No version change (issue #107): the query set is delivered as `html-kq-v1` (32 queries,
+  `monada-neuron-evaluation/src/integration/resources/html-kq-v1/queries.tsv`) and scored by `runHtmlKnowledgeRecall`
+  ([recall](../benchmarks/html-knowledge-recall.md)). The L2 codec is the documented, text-only `token-packing v1`.
+  Every operational failure is recorded as a failure marker, so the scorer gives that query no outcome rather than an
+  abstention. No definition, formula, label rule or report field changes.

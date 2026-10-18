@@ -227,7 +227,9 @@ planned knowledge experiments separate Store retrieval, Neuron recall, evidence 
 versioned HTML corpus and offline ingestion are delivered
 ([`runHtmlKnowledgeIngestion`](docs/benchmarks/html-knowledge-ingestion.md), issue #105), and its persistence across
 separate JVMs with Neuron recall traced to exact Store atoms is verified
-([`runHtmlKnowledgePersistence`](docs/benchmarks/html-knowledge-persistence.md), issue #106); the scored experiments
+([`runHtmlKnowledgePersistence`](docs/benchmarks/html-knowledge-persistence.md), issue #106). Judged L1/L2 recall
+over the curated `html-kq-v1` query set is measured against a lexical baseline
+([`runHtmlKnowledgeRecall`](docs/benchmarks/html-knowledge-recall.md), issue #107); evidence use and grounded answers
 are still planned.
 
 **Module path.** A JPMS host writes `requires monada.neuron;`. The jar is an automatic module, so it declares no

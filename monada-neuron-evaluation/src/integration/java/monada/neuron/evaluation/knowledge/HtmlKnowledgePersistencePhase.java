@@ -77,7 +77,8 @@ public final class HtmlKnowledgePersistencePhase {
         return result.checks().stream().allMatch(Check::passed) ? 0 : 1;
     }
 
-    private Map<String, String> environment(Map<String, String> metadata) {
+    /** Returns {@code metadata} followed by this phase JVM's process id and environment ({@code jvm.*}). */
+    static Map<String, String> environment(Map<String, String> metadata) {
         var all = new LinkedHashMap<>(metadata);
         var environment = EnvironmentMetadata.current();
         all.put("pid", Long.toString(ProcessHandle.current().pid()));

@@ -565,7 +565,7 @@ public final class HtmlKnowledgePersistence {
      *
      * @throws IngestionInputException when {@code root/manifest.json} is not a regular file
      */
-    void requireExistingStore(Path root) {
+    static void requireExistingStore(Path root) {
         Objects.requireNonNull(root, "root must not be null");
         if (!Files.isRegularFile(root.resolve(MANIFEST_FILE))) {
             throw new IngestionInputException("store root " + root + " holds no " + MANIFEST_FILE

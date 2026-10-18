@@ -1,0 +1,279 @@
+package monada.neuron.evaluation.knowledge;
+
+import monada.neuron.evaluation.knowledge.HtmlKnowledgeIngestion.Check;
+import monada.neuron.evaluation.knowledge.HtmlKnowledgePersistencePhase.WorkDirectory;
+import monada.neuron.evaluation.knowledge.HtmlKnowledgePersistenceRunner.Options;
+import monada.neuron.evaluation.knowledge.HtmlKnowledgePersistenceRunner.PhaseRun;
+import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.Snapshot;
+import monada.neuron.evaluation.metrics.CheckedEvaluationReport;
+import monada.neuron.evaluation.metrics.EnvironmentMetadata;
+import monada.neuron.evaluation.metrics.EvaluationReport;
+import monada.neuron.evaluation.metrics.EvaluationReport.RunConfiguration;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.TreeMap;
+
+/**
+ * CLI of the judged HTML recall experiment (Issue #107, protocol layers L1 and L2): imports {@code html-kc-v1} into a
+ * fresh Store root and runs the {@code html-kq-v1} query texts through B0, B1, B2 and B2c in one JVM ({@code seed}),
+ * reruns them against the same root from a second, separate JVM ({@code reopen}), and scores the seed results against
+ * the gold labels in this process. The phases never read gold labels; this orchestrator's scorer is the only reader.
+ *
+ * <p>Options: {@code --output-dir <dir>} (default {@code build/reports/benchmarks}) and {@code --store-root <dir>}
+ * (keep the Store there instead of a deleted temporary root; it must be absent or empty). Outputs:
+ * {@code html-knowledge-recall.{json,md}} (verdicts, metadata and, in Markdown, the scored summary),
+ * {@code html-kq-v1-recall-results.json} (aggregates and one row per query) and {@code html-kq-v1-recall.tsv} (every
+ * returned result of the seed phase). Exit status: {@code 0} all checks passed, {@code 1} a semantic check failed,
+ * {@code 2} invalid usage or rejected input.
+ */
+public final class HtmlKnowledgeRecallRunner {
+
+    /** Report title. */
+    public static final String TITLE = "Monada Neuron HTML Knowledge Judged Recall Report";
+
+    private static final String USAGE = "Usage: [--output-dir <dir>] [--store-root <dir>]";
+    private static final String REPORT_JSON = "html-knowledge-recall.json";
+    private static final String REPORT_MARKDOWN = "html-knowledge-recall.md";
+
+    private final Options options;
+    private final HtmlKnowledgeCorpus corpus;
+    private final HtmlKnowledgeQuerySet querySet;
+    private final PhaseJvm phaseJvm = new PhaseJvm();
+
+    HtmlKnowledgeRecallRunner(Options options) {
+        this.options = Objects.requireNonNull(options, "options must not be null");
+        this.corpus = HtmlKnowledgeCorpus.bundled();
+        this.querySet = HtmlKnowledgeQuerySet.bundled(corpus);
+    }
+
+    /**
+     * Outcome of a run.
+     *
+     * @param report verdicts, metadata and environment
+     * @param recall the scored results rendered as JSON and Markdown, when the seed phase left a snapshot
+     * @param seed the seed child process
+     * @param reopen the reopen child process, when the seed phase produced a usable root
+     * @param files further output file contents by file name
+     * @param outputDir the preflighted output directory
+     */
+    public record Outcome(CheckedEvaluationReport report, Optional<Rendered> recall, PhaseRun seed,
+            Optional<PhaseRun> reopen, Map<String, String> files, Path outputDir) {
+
+        public Outcome {
+            files = Map.copyOf(files);
+        }
+
+        /** Returns the full Markdown report: verdicts and metadata, then the scored summary. */
+        public String markdown() {
+            return report.toMarkdown() + recall.map(rendered -> "\n" + rendered.markdown()).orElse("");
+        }
+    }
+
+    /** The scored results as JSON and Markdown. */
+    public record Rendered(String json, String markdown) {
+    }
+
+    /** CLI entrypoint. */
+    public static void main(String[] args) {
+        Options options;
+        try {
+            options = Options.parse(args);
+        } catch (IllegalArgumentException e) {
+            System.err.println(e.getMessage());
+            System.err.println(USAGE);
+            System.exit(2);
+            return;
+        }
+        Outcome outcome;
+        try {
+            outcome = run(options);
+        } catch (IngestionInputException | CorpusValidationException e) {
+            System.err.println("Recall input rejected: " + e.getMessage());
+            System.exit(2);
+            return;
+        }
+        System.out.println(outcome.markdown());
+        try {
+            var written = write(outcome);
+            System.out.println("Recall outputs saved to:");
+            written.forEach(path -> System.out.println("  " + path.toAbsolutePath()));
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to write recall outputs", e);
+        }
+        if (!outcome.report().allPassed()) {
+            System.err.println("Semantic recall checks failed.");
+            System.exit(1);
+        }
+    }
+
+    /**
+     * Runs the experiment. The temporary work directory, and the Store root unless {@code --store-root} was given,
+     * are deleted before returning.
+     *
+     * @throws IngestionInputException when the output location or the kept root is rejected
+     * @throws CorpusValidationException when the corpus or the query set violates its contract
+     */
+    public static Outcome run(Options options) {
+        return new HtmlKnowledgeRecallRunner(options).execute();
+    }
+
+    /** Writes the reports and the result files into the preflighted output directory. */
+    public static List<Path> write(Outcome outcome) throws IOException {
+        var outputDir = outcome.outputDir();
+        var written = new ArrayList<Path>();
+        written.add(HtmlKnowledgeIngestionRunner.writeFile(outputDir.resolve(REPORT_JSON),
+                outcome.report().toJson()));
+        written.add(HtmlKnowledgeIngestionRunner.writeFile(outputDir.resolve(REPORT_MARKDOWN), outcome.markdown()));
+        for (var file : new TreeMap<>(outcome.files()).entrySet()) {
+            written.add(HtmlKnowledgeIngestionRunner.writeFile(outputDir.resolve(file.getKey()), file.getValue()));
+        }
+        return written;
+    }
+
+    private Outcome execute() {
+        HtmlKnowledgeIngestionRunner.prepareOutput(options.outputDir(), outputFiles());
+        options.storeRoot().ifPresent(HtmlKnowledgeIngestion::requireFreshRoot);
+
+        var work = new WorkDirectory(temporaryDirectory());
+        try {
+            var root = options.storeRoot().orElse(work.path().resolve("store"));
+            var checks = new ArrayList<Check>();
+            var metadata = new TreeMap<String, String>();
+            var files = new TreeMap<String, String>();
+
+            var seed = phaseJvm.launch(HtmlKnowledgeRecallPhase.class, HtmlKnowledgeRecallPhase.SEED, root, work);
+            HtmlKnowledgePersistenceRunner.collect(seed, work, checks, metadata);
+            var seedSnapshot = snapshot(work, HtmlKnowledgeRecallPhase.SEED);
+            Optional<PhaseRun> reopen = Optional.empty();
+            Optional<Rendered> recall = Optional.empty();
+            if (seedSnapshot.isPresent() && Files.exists(work.manifest())) {
+                files.put(querySet.version() + "-recall.tsv", seedSnapshot.get().toTsv());
+                var reopened = phaseJvm.launch(HtmlKnowledgeRecallPhase.class, HtmlKnowledgeRecallPhase.REOPEN,
+                        root, work);
+                reopen = Optional.of(reopened);
+                HtmlKnowledgePersistenceRunner.collect(reopened, work, checks, metadata);
+                checks.add(HtmlKnowledgePersistenceRunner.restartCheck(seed, reopened, work));
+                checks.add(restartEqual(seedSnapshot.get(), snapshot(work, HtmlKnowledgeRecallPhase.REOPEN)));
+
+                var scores = RecallMetrics.score(querySet, seedSnapshot.get());
+                var rendered = new HtmlKnowledgeRecallReport(querySet, scores);
+                recall = Optional.of(new Rendered(rendered.toJson(), rendered.toMarkdown()));
+                files.put(querySet.version() + "-recall-results.json", recall.get().json());
+            } else {
+                checks.add(new Check("process.restart", false, "seed phase did not complete (exit "
+                        + seed.exitStatus() + "; snapshot or manifest missing or unreadable); nothing was scored and"
+                        + " no reopen was attempted: " + seed.stderr()));
+            }
+
+            describe(root, seed, reopen, metadata);
+            var evaluation = new EvaluationReport(
+                    Instant.now(),
+                    EnvironmentMetadata.current(),
+                    new RunConfiguration(0L, false, 0, 0, "one seed and one reopen JVM; the environment above is the"
+                            + " orchestrator's, each phase JVM's own is in <phase>.jvm.*; timings in metadata are"
+                            + " exploratory wall-clock samples and never part of a verdict"),
+                    List.of(),
+                    TITLE);
+            var report = new CheckedEvaluationReport(TITLE, "Recall Metadata", evaluation, checks, metadata);
+            return new Outcome(report, recall, seed, reopen, files, options.outputDir());
+        } finally {
+            HtmlKnowledgeIngestionRunner.deleteTree(work.path());
+        }
+    }
+
+    /** Requires the reopen JVM to reproduce every seed result: mapped chunk ids, order and bit-exact scores. */
+    private Check restartEqual(Snapshot seed, Optional<Snapshot> reopened) {
+        if (reopened.isEmpty()) {
+            return new Check("determinism.restartEqual", false, "the reopen phase left no readable snapshot");
+        }
+        var rows = reopened.get().rows();
+        var equal = seed.equals(reopened.get());
+        var detail = equal
+                ? "all " + rows.size() + " results of B0, B1, B2 and B2c at limits 1, 3 and 5 are identical in the"
+                        + " reopen JVM: chunk ids through each phase's manifest, order and bit-exact scores"
+                : "first difference at row " + firstDifference(seed.rows(), rows) + " (seed " + seed.rows().size()
+                        + " rows, reopen " + rows.size() + " rows)";
+        return new Check("determinism.restartEqual", equal, detail);
+    }
+
+    private static int firstDifference(List<HtmlKnowledgeRecall.Row> left, List<HtmlKnowledgeRecall.Row> right) {
+        var index = 0;
+        while (index < left.size() && index < right.size() && left.get(index).equals(right.get(index))) {
+            index++;
+        }
+        return index;
+    }
+
+    /** Returns the snapshot of {@code phase} when its result and snapshot exist and the snapshot parses. */
+    private Optional<Snapshot> snapshot(WorkDirectory work, String phase) {
+        if (!Files.exists(work.result(phase)) || !Files.exists(work.snapshot(phase))) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(Snapshot.parseTsv(work.read(work.snapshot(phase))));
+        } catch (IllegalArgumentException | UncheckedIOException e) {
+            return Optional.empty();
+        }
+    }
+
+    private List<Path> outputFiles() {
+        var outputDir = options.outputDir();
+        return List.of(outputDir.resolve(REPORT_JSON), outputDir.resolve(REPORT_MARKDOWN),
+                outputDir.resolve(querySet.version() + "-recall.tsv"),
+                outputDir.resolve(querySet.version() + "-recall-results.json"));
+    }
+
+    private void describe(Path root, PhaseRun seed, Optional<PhaseRun> reopen, Map<String, String> metadata) {
+        metadata.put("protocolVersion", HtmlKnowledgeIngestionRunner.PROTOCOL_VERSION);
+        metadata.put("extensions", "none (L1 and L2 only)");
+        metadata.put("reopenMode", "restart (seed and reopen in separate JVM processes)");
+        metadata.put("corpus.version", corpus.version());
+        metadata.put("corpus.hash", corpus.corpusHash());
+        metadata.put("corpus.chunks", Integer.toString(corpus.chunks().size()));
+        metadata.put("query.version", querySet.version());
+        metadata.put("query.hash", querySet.queryHash());
+        metadata.put("query.count", Integer.toString(querySet.queries().size()));
+        metadata.put("query.heldOutHash", "none");
+        metadata.put("query.tuning", "not tuned: no parameter was chosen on this set (t is the Store default)");
+        metadata.put("seed", "none (no randomness)");
+        metadata.put("k", "1, 3, 5 (prefixes of one limit-5 list per system)");
+        metadata.put("threshold", Double.toString(HtmlKnowledgeRecall.THRESHOLD));
+        metadata.put("baseline.B0", "exact-token overlap over the normalized corpus chunks; score = distinct query"
+                + " tokens contained; score 0 dropped; score descending, then chunkId");
+        metadata.put("baseline.B1", "MonadaMemory.resonate(text).topK(limit).threshold(t), defaults options");
+        metadata.put("baseline.B2", "ResonanceStoreMemoryAdapter.recall(codec.querySignals(text), limit) with"
+                + " HashedSignalDecoder and default options");
+        metadata.put("baseline.B2c", "codec query texts sent directly to the Store with limit 5 and t, merged by the"
+                + " adapter rule");
+        metadata.put("codec", TokenPackingSignalCodec.describe());
+        metadata.put("codec.scope", "L2 quality: a function of the query text only; reads no query id or gold label");
+        metadata.put("ordering.direct", "Store: score descending, then atom id ascending");
+        metadata.put("ordering.neuron", "adapter: score descending, then query Signal index, then Store rank;"
+                + " deduplicated by atom");
+        metadata.put("phase.forwardedJvmArguments", String.join(" ", phaseJvm.forwardedJvmArguments()));
+        metadata.put("phase.seed.pid", Long.toString(seed.pid()));
+        metadata.put("phase.seed.exit", Integer.toString(seed.exitStatus()));
+        reopen.ifPresent(run -> {
+            metadata.put("phase.reopen.pid", Long.toString(run.pid()));
+            metadata.put("phase.reopen.exit", Integer.toString(run.exitStatus()));
+        });
+        HtmlKnowledgePersistenceRunner.describeStore(root, options.storeRoot(), metadata);
+    }
+
+    private Path temporaryDirectory() {
+        try {
+            return Files.createTempDirectory("monada-neuron-html-kq-recall-");
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+}
