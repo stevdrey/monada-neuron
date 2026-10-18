@@ -223,8 +223,10 @@ falls back to the scalar reference implementation; to opt into SIMD, run the JVM
 **Core library vs. evaluation.** `monada-neuron-evaluation` (benchmarks, JMH, baseline runners) is a
 development-only module. It is not part of the published artifact and never a transitive dependency. The
 [HTML knowledge-memory evaluation protocol](docs/experiments/html-knowledge-v1.md) (issue #104) specifies how its
-planned knowledge experiments separate Store retrieval, Neuron recall, evidence use and grounded answers; it is a
-specification only, with no implementation yet.
+planned knowledge experiments separate Store retrieval, Neuron recall, evidence use and grounded answers. Its
+versioned HTML corpus and offline ingestion are delivered
+([`runHtmlKnowledgeIngestion`](docs/benchmarks/html-knowledge-ingestion.md), issue #105); the scored experiments are
+still planned.
 
 **Module path.** A JPMS host writes `requires monada.neuron;`. The jar is an automatic module, so it declares no
 `requires jdk.incubator.vector` and the scalar fallback applies unless the host adds the module itself.

@@ -142,6 +142,18 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
         args(quotedBenchmarkArgs())
     }
 
+    // HTML knowledge corpus ingestion (Issue #105, docs/experiments/html-knowledge-v1.md). Imports the authored
+    // `html-kc-v1` corpus into a fresh embedded Store; an MDN snapshot is ingested only when the caller supplies it.
+    tasks.register<JavaExec>("runHtmlKnowledgeIngestion") {
+        group = "benchmark"
+        description = "Imports the html-kc-v1 HTML knowledge corpus into a temporary Resonance Store and writes its manifest (Issue #105)"
+        classpath = integration.runtimeClasspath
+        mainClass.set("monada.neuron.evaluation.knowledge.HtmlKnowledgeIngestionRunner")
+        systemProperty("monada.neuron.version", project.version.toString())
+        systemProperty("monada.resonance.store.dir", rootProject.file("../monada-resonance-store").absolutePath)
+        args(quotedBenchmarkArgs())
+    }
+
     // Adapter-boundary JMH (Issue #49). Lives with the integration source set because it needs the
     // optional adapter; the generic `jmh` task only sees `main`.
     tasks.register<JavaExec>("jmhResonanceStoreAdapter") {

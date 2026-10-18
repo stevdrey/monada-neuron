@@ -23,7 +23,7 @@ public final class StoreMetadata {
     }
 
     /** Extracts the compatibility-relevant manifest fields, sorted by name. */
-    static Map<String, String> manifestFields(String manifestJson) {
+    public static Map<String, String> manifestFields(String manifestJson) {
         var fields = new TreeMap<String, String>();
         var matcher = FIELD.matcher(manifestJson);
         while (matcher.find()) {
