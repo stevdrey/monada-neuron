@@ -55,7 +55,7 @@ public final class HtmlKnowledgePersistenceRunner {
     private final HtmlKnowledgeCorpus corpus;
     private final HtmlKnowledgePersistence persistence;
 
-    private HtmlKnowledgePersistenceRunner(Options options) {
+    HtmlKnowledgePersistenceRunner(Options options) {
         this.options = Objects.requireNonNull(options, "options must not be null");
         this.corpus = HtmlKnowledgeCorpus.bundled();
         this.persistence = new HtmlKnowledgePersistence(corpus);
@@ -198,9 +198,11 @@ public final class HtmlKnowledgePersistenceRunner {
             var seed = launch(HtmlKnowledgePersistencePhase.SEED, root, work);
             collect(seed, work, checks, metadata);
             Optional<PhaseRun> reopen = Optional.empty();
-            if (seed.exitStatus() == 0 || seed.exitStatus() == 1) {
-                var manifest = IngestionManifest.parseTsv(work.read(work.manifest()), corpus.version(),
-                        corpus.corpusHash());
+            // An uncaught exception also exits 1, so the exit status cannot tell a completed seed from a crashed one;
+            // its result and exchange files can. Reopening without them would only throw here.
+            var seeded = seedArtifacts(work);
+            if (seeded.isPresent()) {
+                var manifest = seeded.get();
                 files.put(corpus.version() + "-persistence-manifest.tsv", manifest.toTsv());
                 files.put(corpus.version() + "-seed-recall.tsv",
                         work.read(work.snapshot(HtmlKnowledgePersistencePhase.SEED)));
@@ -211,15 +213,20 @@ public final class HtmlKnowledgePersistenceRunner {
                 checks.add(restartCheck(seed, reopened));
 
                 var reopenSnapshot = work.snapshot(HtmlKnowledgePersistencePhase.REOPEN);
-                if (Files.exists(reopenSnapshot)) {
-                    var snapshot = work.read(reopenSnapshot);
-                    files.put(corpus.version() + "-reopen-recall.tsv", snapshot);
+                var reopenedSnapshot = Files.exists(work.result(HtmlKnowledgePersistencePhase.REOPEN))
+                        ? readSnapshot(work, reopenSnapshot) : Optional.<Snapshot>empty();
+                if (reopenedSnapshot.isPresent()) {
+                    files.put(corpus.version() + "-reopen-recall.tsv", work.read(reopenSnapshot));
                     var scratch = Files.createDirectories(work.path().resolve("audits"));
-                    checks.addAll(persistence.audit(root, manifest, Snapshot.parseTsv(snapshot), scratch));
+                    checks.addAll(persistence.audit(root, manifest, reopenedSnapshot.get(), scratch));
+                } else {
+                    checks.add(new Check("audits.skipped", false, "the reopen phase left no result or snapshot"
+                            + " (exit " + reopened.exitStatus() + "), so no audit ran on its root"));
                 }
             } else {
                 checks.add(new Check("process.restart", false, "seed phase did not complete (exit "
-                        + seed.exitStatus() + "); no reopen was attempted: " + seed.stderr()));
+                        + seed.exitStatus() + "; result, manifest or snapshot missing or unreadable); no reopen was"
+                        + " attempted: " + seed.stderr()));
             }
 
             describe(root, seed, reopen, metadata);
@@ -237,6 +244,36 @@ public final class HtmlKnowledgePersistenceRunner {
             throw new UncheckedIOException(e);
         } finally {
             HtmlKnowledgeIngestionRunner.deleteTree(work.path());
+        }
+    }
+
+    /**
+     * Returns the seed's manifest when the seed phase completed: its result, manifest and snapshot exist and the
+     * manifest and snapshot parse for this corpus; empty otherwise.
+     */
+    Optional<IngestionManifest> seedArtifacts(WorkDirectory work) {
+        var seed = HtmlKnowledgePersistencePhase.SEED;
+        if (!Files.exists(work.result(seed)) || !Files.exists(work.manifest())
+                || readSnapshot(work, work.snapshot(seed)).isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(IngestionManifest.parseTsv(work.read(work.manifest()), corpus.version(),
+                    corpus.corpusHash()));
+        } catch (IllegalArgumentException | UncheckedIOException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** Returns the snapshot in {@code file} when it exists and parses; empty otherwise. */
+    private Optional<Snapshot> readSnapshot(WorkDirectory work, Path file) {
+        if (!Files.exists(file)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(Snapshot.parseTsv(work.read(file)));
+        } catch (IllegalArgumentException | UncheckedIOException e) {
+            return Optional.empty();
         }
     }
 

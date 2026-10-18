@@ -54,6 +54,12 @@ reported, and `process.restart` requires three distinct processes, both children
 The Store has no `close`, and `adapter.close()` only marks the adapter unavailable. Same-process reopening is
 therefore reported only as `persistence.freshHandleConsistency`, never as persistence evidence.
 
+Reopen runs only if the seed left its result, manifest and snapshot and they parse. A seed JVM that crashed exits `1`,
+the same as a semantic failure, so the exit status alone cannot decide this; a crashed seed is reported as a failed
+`process.restart`. Each audit runs guarded: an exception it did not expect becomes a failed check carrying that
+exception, so one audit cannot abort the run. `audit.removedVectorSegment` also counts a failure on first use
+(readback or recall) as visible.
+
 The harness checks `manifest.json` before every open, because `MonadaMemory.open` on a missing path silently creates
 an empty store.
 

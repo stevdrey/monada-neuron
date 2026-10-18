@@ -381,15 +381,19 @@ public final class HtmlKnowledgePersistence {
     public List<Check> audit(Path root, IngestionManifest manifest, Snapshot snapshot, Path scratch) {
         requireExistingStore(root);
         var checks = new ArrayList<Check>();
-        checks.add(defaultCodecInsufficiency(copy(root, scratch, "default-codec"), manifest, snapshot));
-        checks.add(missingPath(manifest, scratch));
-        checks.add(pathIsFile(scratch));
-        checks.add(changedEncodingProfile(copy(root, scratch, "changed-profile")));
-        checks.add(removedVectorSegment(copy(root, scratch, "removed-vectors"), manifest));
-        checks.add(duplicateRemember(copy(root, scratch, "duplicate"), manifest));
-        checks.add(closedAdapter(copy(root, scratch, "closed-adapter")));
-        checks.add(alteredAtom(copy(root, scratch, "altered-atom"), manifest));
-        checks.add(removedAtom(copy(root, scratch, "removed-atom"), manifest));
+        checks.add(guarded("neuron.defaultCodecInsufficient",
+                () -> defaultCodecInsufficiency(copy(root, scratch, "default-codec"), manifest, snapshot)));
+        checks.add(guarded("audit.missingPath", () -> missingPath(manifest, scratch)));
+        checks.add(guarded("audit.pathIsFile", () -> pathIsFile(scratch)));
+        checks.add(guarded("audit.changedEncodingProfile",
+                () -> changedEncodingProfile(copy(root, scratch, "changed-profile"))));
+        checks.add(guarded("audit.removedVectorSegment",
+                () -> removedVectorSegment(copy(root, scratch, "removed-vectors"), manifest)));
+        checks.add(guarded("audit.duplicateRemember",
+                () -> duplicateRemember(copy(root, scratch, "duplicate"), manifest)));
+        checks.add(guarded("audit.closedAdapter", () -> closedAdapter(copy(root, scratch, "closed-adapter"))));
+        checks.add(guarded("audit.alteredAtom", () -> alteredAtom(copy(root, scratch, "altered-atom"), manifest)));
+        checks.add(guarded("audit.removedAtom", () -> removedAtom(copy(root, scratch, "removed-atom"), manifest)));
         // Temporary locations differ per run; keep details comparable across runs.
         var location = scratch.toAbsolutePath().toString();
         return checks.stream()
@@ -447,15 +451,21 @@ public final class HtmlKnowledgePersistence {
         delete(copy.resolve(persisted.vectorSegment()));
         var audit = auditor.audit(copy);
         var flagged = audit.findings().stream().anyMatch(f -> f.category() == StorageIntegrityCategory.SEGMENT_MISSING);
+        // The Store may fail at open or only on first use; either is a visible failure, a full readback is not.
         var direct = attempt(() -> MonadaMemory.open(copy));
-        var directVisible = direct.failure().isPresent()
-                || !ingestion.readback(direct.value().orElseThrow(), manifest).isEmpty();
+        var directUse = direct.value().map(memory -> attempt(() -> ingestion.readback(memory, manifest)));
+        var directVisible = direct.failure().isPresent() || directUse.orElseThrow().failure().isPresent()
+                || !directUse.orElseThrow().value().orElseThrow().isEmpty();
         var adapter = attempt(() -> ResonanceStoreMemoryAdapter.open(copy, config()));
-        var adapterVisible = adapter.failure().isPresent() || failedRecall(adapter.value().orElseThrow());
+        var adapterUse = adapter.value().map(opened -> attempt(() -> failedRecall(opened)));
+        var adapterVisible = adapter.failure().isPresent() || adapterUse.orElseThrow().failure().isPresent()
+                || adapterUse.orElseThrow().value().orElseThrow();
         var passed = !audit.isHealthy() && flagged && directVisible && adapterVisible;
         return new Check("audit.removedVectorSegment", passed, "deleted " + persisted.vectorSegment()
                 + "; integrity audit healthy=" + audit.isHealthy() + ", SEGMENT_MISSING=" + flagged + "; direct open: "
-                + direct.describe() + "; adapter open: " + adapter.describe());
+                + direct.describe() + directUse.map(use -> ", first use: " + use.describe()).orElse("")
+                + "; adapter open: " + adapter.describe()
+                + adapterUse.map(use -> ", first recall: " + use.describe()).orElse(""));
     }
 
     private Check duplicateRemember(Path copy, IngestionManifest manifest) {
@@ -656,6 +666,15 @@ public final class HtmlKnowledgePersistence {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /**
+     * Runs one audit; an exception it did not expect becomes a failed check carrying the actual exception, so one
+     * audit can never abort the run and hide the others' results.
+     */
+    private Check guarded(String name, Supplier<Check> audit) {
+        var outcome = attempt(audit);
+        return outcome.value().orElseGet(() -> new Check(name, false, "audit aborted: " + outcome.describe()));
     }
 
     private <T> Attempt<T> attempt(Supplier<T> action) {

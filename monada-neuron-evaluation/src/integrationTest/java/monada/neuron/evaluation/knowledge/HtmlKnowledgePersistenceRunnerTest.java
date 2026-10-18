@@ -144,6 +144,26 @@ class HtmlKnowledgePersistenceRunnerTest {
     }
 
     @Test
+    void reopensOnlyAfterTheSeedLeftAResultManifestAndSnapshot(@TempDir Path other) throws IOException {
+        var runner = new HtmlKnowledgePersistenceRunner(
+                HtmlKnowledgePersistenceRunner.Options.parse(new String[] {"--output-dir", other.toString()}));
+        var work = new HtmlKnowledgePersistencePhase.WorkDirectory(Files.createDirectories(other.resolve("work")));
+        var seed = HtmlKnowledgePersistencePhase.SEED;
+
+        // A crashed seed JVM exits 1 like a semantic failure but leaves no artifacts.
+        assertTrue(runner.seedArtifacts(work).isEmpty());
+        Files.writeString(work.result(seed), "");
+        Files.writeString(work.manifest(), "not a manifest");
+        Files.writeString(work.snapshot(seed), outcome.files().get("html-kc-v1-seed-recall.tsv"));
+        assertTrue(runner.seedArtifacts(work).isEmpty());
+        Files.writeString(work.manifest(), outcome.files().get("html-kc-v1-persistence-manifest.tsv"));
+        Files.writeString(work.snapshot(seed), "truncated");
+        assertTrue(runner.seedArtifacts(work).isEmpty());
+        Files.writeString(work.snapshot(seed), outcome.files().get("html-kc-v1-seed-recall.tsv"));
+        assertTrue(runner.seedArtifacts(work).isPresent());
+    }
+
+    @Test
     void rejectsAnOutputDirectoryNestedInTheStoreRoot(@TempDir Path other) {
         assertThrows(IllegalArgumentException.class, () -> HtmlKnowledgePersistenceRunner.Options.parse(new String[] {
                 "--store-root", other.toString(), "--output-dir", other.resolve("reports").toString()}));
