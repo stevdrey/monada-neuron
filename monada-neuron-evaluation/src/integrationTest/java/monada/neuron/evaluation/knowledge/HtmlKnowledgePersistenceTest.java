@@ -1,5 +1,6 @@
 package monada.neuron.evaluation.knowledge;
 
+import com.monada.storage.audit.StorageIntegrityAuditor;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeIngestion.Check;
 import monada.neuron.evaluation.knowledge.PersistenceProbes.Row;
 import monada.neuron.evaluation.knowledge.PersistenceProbes.Snapshot;
@@ -89,10 +90,11 @@ class HtmlKnowledgePersistenceTest {
         var root = directory.resolve("store");
         var seeded = persistence.seed(root);
         var target = seeded.manifest().entries().get(5);
-        var log = root.resolve("atoms/segment-000001.log");
+        var log = atomLog(root);
         var kept = Files.readAllLines(log, StandardCharsets.UTF_8).stream()
                 .filter(line -> !line.startsWith(target.atomId() + "\t")).toList();
-        Files.write(log, kept, StandardCharsets.UTF_8);
+        // The Store separates records by '\n' only.
+        Files.writeString(log, String.join("\n", kept) + "\n", StandardCharsets.UTF_8);
 
         var observation = persistence.observe(root, seeded.manifest());
 
@@ -126,12 +128,44 @@ class HtmlKnowledgePersistenceTest {
         var root = directory.resolve("store");
         var seeded = persistence.seed(root);
         // With every atom record gone the default adapter recalls nothing; disagreement must not count as a pass.
-        Files.write(root.resolve("atoms/segment-000001.log"), new byte[0]);
+        Files.write(atomLog(root), new byte[0]);
 
         var check = persistence.defaultCodecInsufficiency(root, seeded.manifest(), seeded.observation().snapshot());
 
         assertFalse(check.passed());
         assertTrue(check.detail().contains("not COMPLETE or empty"), check.detail());
+    }
+
+    @Test
+    void defaultCodecVerdictReportsReadbackRecallAgainstItsThreshold() {
+        var root = directory.resolve("store");
+        var seeded = persistence.seed(root);
+
+        var check = persistence.defaultCodecInsufficiency(root, seeded.manifest(), seeded.observation().snapshot());
+
+        assertTrue(check.passed(), check.detail());
+        assertTrue(check.detail().contains("readback recall@1 "), check.detail());
+        assertTrue(check.detail().contains("insufficient below " + HtmlKnowledgePersistence.DEFAULT_CODEC_MAX_RECALL_AT_1),
+                check.detail());
+        assertTrue(check.detail().contains("probe codec " + corpus.chunks().size() + "/" + corpus.chunks().size()),
+                check.detail());
+    }
+
+    @Test
+    void auditOfARootWithoutAStoreManifestReportsInsteadOfThrowing() throws IOException {
+        var seeded = persistence.seed(directory.resolve("store"));
+        var missing = directory.resolve("missing");
+
+        var checks = persistence.audit(missing, seeded.manifest(), seeded.observation().snapshot(),
+                Files.createDirectories(directory.resolve("scratch")));
+
+        assertEquals(List.of("audit.preflight"), checks.stream().map(Check::name).toList());
+        assertFalse(checks.getFirst().passed());
+        assertFalse(Files.exists(missing), "the preflight must not create a store");
+    }
+
+    private static Path atomLog(Path root) {
+        return root.resolve(new StorageIntegrityAuditor().audit(root).manifest().atomSegment());
     }
 
     private static Check check(List<Check> checks, String name) {

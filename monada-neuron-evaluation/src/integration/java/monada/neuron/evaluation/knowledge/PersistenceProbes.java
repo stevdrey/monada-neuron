@@ -18,6 +18,9 @@ final class PersistenceProbes {
     /** Version of the probe set; bump with any change to the probe ids, the paraphrases or the readback probe rule. */
     static final String VERSION = "html-kc-probes-v1";
 
+    /** Id prefix of a readback probe; the rest of the id is the chunk whose exact text is the query. */
+    static final String READBACK_PREFIX = "readback:";
+
     /** Upper bound on the probe count, so the probe codec and every snapshot stay bounded. */
     static final int MAX_PROBES = 256;
 
@@ -54,7 +57,7 @@ final class PersistenceProbes {
     static List<Probe> of(HtmlKnowledgeCorpus corpus) {
         var probes = new ArrayList<Probe>(corpus.chunks().size() + PARAPHRASES.size());
         for (var chunk : corpus.chunks()) {
-            probes.add(new Probe("readback:" + chunk.chunkId(), chunk.text()));
+            probes.add(new Probe(READBACK_PREFIX + chunk.chunkId(), chunk.text()));
         }
         probes.addAll(PARAPHRASES);
         if (probes.size() > MAX_PROBES) {

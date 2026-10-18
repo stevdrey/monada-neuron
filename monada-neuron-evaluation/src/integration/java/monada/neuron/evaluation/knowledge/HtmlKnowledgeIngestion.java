@@ -11,8 +11,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Imports a validated corpus into one Store root through the published {@code MonadaMemory.remember} API and links
@@ -134,19 +136,42 @@ public final class HtmlKnowledgeIngestion {
      * manifest order; empty when every chunk was read back.
      */
     List<String> readback(MonadaMemory memory, IngestionManifest manifest) {
+        return readbackSweep(memory, manifest).unread();
+    }
+
+    /**
+     * Result of one readback pass.
+     *
+     * @param unread chunk ids that were not read back, in manifest order
+     * @param recalledAtomIds every atom id any readback query returned
+     */
+    record Readback(List<String> unread, Set<String> recalledAtomIds) {
+
+        Readback {
+            unread = List.copyOf(unread);
+            recalledAtomIds = Set.copyOf(recalledAtomIds);
+        }
+    }
+
+    /** {@link #readback} that also collects every recalled atom id, from the same queries. */
+    Readback readbackSweep(MonadaMemory memory, IngestionManifest manifest) {
         var failures = new ArrayList<String>();
+        var recalled = new HashSet<String>();
         var count = corpus.chunks().size();
         for (var entry : manifest.entries()) {
             var chunk = corpus.chunk(entry.chunkId()).orElseThrow();
-            var recalled = memory.resonate(chunk.text()).topK(count).threshold(READBACK_THRESHOLD).execute()
-                    .results().stream()
-                    .anyMatch(result -> result.atom().id().equals(entry.atomId())
-                            && CorpusDigests.sha256(result.atom().content()).equals(chunk.sha256()));
-            if (!recalled) {
+            var found = false;
+            for (var result : memory.resonate(chunk.text()).topK(count).threshold(READBACK_THRESHOLD).execute()
+                    .results()) {
+                recalled.add(result.atom().id());
+                found |= result.atom().id().equals(entry.atomId())
+                        && CorpusDigests.sha256(result.atom().content()).equals(chunk.sha256());
+            }
+            if (!found) {
                 failures.add(entry.chunkId());
             }
         }
-        return failures;
+        return new Readback(failures, recalled);
     }
 
     /**

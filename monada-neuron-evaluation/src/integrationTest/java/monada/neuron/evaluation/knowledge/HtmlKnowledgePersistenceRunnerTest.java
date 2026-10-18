@@ -1,5 +1,6 @@
 package monada.neuron.evaluation.knowledge;
 
+import monada.neuron.evaluation.metrics.EvaluationCheck;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -24,7 +25,6 @@ class HtmlKnowledgePersistenceRunnerTest {
             "seed.ingestion.readback",
             "seed.persistence.atomCount",
             "seed.neuron.signalAttribution",
-            "reopen.persistence.manifestPresent",
             "reopen.persistence.atomCount",
             "reopen.persistence.encodingProfile",
             "reopen.persistence.readback",
@@ -127,10 +127,15 @@ class HtmlKnowledgePersistenceRunnerTest {
         var again = HtmlKnowledgePersistenceRunner.run(
                 HtmlKnowledgePersistenceRunner.Options.parse(new String[] {"--output-dir", other.toString()}));
 
-        assertEquals(outcome.report().checks().stream().map(check -> check.name() + "=" + check.passed()).toList(),
-                again.report().checks().stream().map(check -> check.name() + "=" + check.passed()).toList());
+        // Every detail must be run-independent except process.restart, which names the process ids.
+        assertEquals(comparable(outcome.report().checks()), comparable(again.report().checks()));
         // Snapshots of independent roots agree because they map atoms through each root's own manifest.
         assertEquals(outcome.files().get("html-kc-v1-reopen-recall.tsv"), again.files().get("html-kc-v1-reopen-recall.tsv"));
+    }
+
+    private static List<String> comparable(List<? extends EvaluationCheck> checks) {
+        return checks.stream().map(check -> check.name() + "=" + check.passed()
+                + (check.name().equals("process.restart") ? "" : ": " + check.detail())).toList();
     }
 
     @Test

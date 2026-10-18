@@ -49,7 +49,9 @@ Both child JVMs use the orchestrator's `java` and class path (`HtmlKnowledgePers
 `-XX:` and module arguments (`phase.forwardedJvmArguments`), but not system properties or agents. Each child records
 its own environment as `<phase>.jvm.*` (version, arguments, processors, max memory, GCs), since its timings were
 measured there. The report's environment section describes the orchestrator. Process ids and exit statuses are
-reported, and `process.restart` requires three distinct processes, both children having exited `0`.
+reported. `process.restart` judges isolation and completion only: it requires three distinct processes and both
+children to have finished their phase (result written, exit `0` or `1`). Semantic failures fail their own `seed.*` or
+`reopen.*` checks, not this one.
 
 The Store has no `close`, and `adapter.close()` only marks the adapter unavailable. Same-process reopening is
 therefore reported only as `persistence.freshHandleConsistency`, never as persistence evidence.
@@ -61,13 +63,14 @@ exception, so one audit cannot abort the run. `audit.removedVectorSegment` also 
 (readback or recall) as visible.
 
 The harness checks `manifest.json` before every open, because `MonadaMemory.open` on a missing path silently creates
-an empty store.
+an empty store. A phase that finds no manifest exits `2` without a result, which the report shows as
+`<phase>.completed` failing. If the root has lost its manifest by the time the audits run, they report a single failed
+`audit.preflight`.
 
 ### Observation (each phase)
 
 | Check | Verifies |
 | :--- | :--- |
-| `persistence.manifestPresent` | the root holds a Store `manifest.json` before any open |
 | `persistence.atomCount` | the Store's own `StorageIntegrityAuditor` is healthy, with 33 active atoms, 33 with a vector, no orphans and no duplicate vector ids |
 | `persistence.encodingProfile` | the persisted `EncodingProfile` equals `MonadaMemory.getExpectedProfile(dims, defaults())`, and the vector format is the current `FIXED_RAW` |
 | `persistence.readback` | every chunk recalls its manifest atom through `resonate(text).topK(33).threshold(0.0)`, and the content hash matches the corpus `sha256`; a failure names the chunk |
@@ -125,7 +128,7 @@ Atom ids are never compared across roots, only chunk ids mapped through each roo
 
 | Check | Records |
 | :--- | :--- |
-| `neuron.defaultCodecInsufficient` | `ResonanceStoreAdapterConfig.defaults()` (`CanonicalSignalQueryEncoder` + `HashedSignalDecoder`) on the same root, defaults unchanged. Records: statuses, the number of distinct result lists, top-1 agreement with the probe codec, and hashed-Signal collisions. Passes only when every probe answers `COMPLETE` with at least one attributable result, the default does not recover the probe's top chunk for every probe, and every hashed Signal could be attributed only by re-hashing the external corpus. A failed, unavailable or empty default response fails the check instead of counting as insufficiency. |
+| `neuron.defaultCodecInsufficient` | `ResonanceStoreAdapterConfig.defaults()` (`CanonicalSignalQueryEncoder` + `HashedSignalDecoder`) on the same root, defaults unchanged. Records: statuses, the number of distinct result lists, top-1 agreement with the probe codec, and hashed-Signal collisions. Passes only when every probe answers `COMPLETE` with at least one attributable result, the default's readback recall@1 is below `DEFAULT_CODEC_MAX_RECALL_AT_1 = 0.5`, and every hashed Signal could be attributed only by re-hashing the external corpus. Readback recall@1 is the share of `readback:<chunkId>` probes whose top result is that chunk; the label is the probe itself, not a curated answer. The probe codec's own readback recall@1 is reported next to it. A failed, unavailable or empty default response fails the check instead of counting as insufficiency. |
 | `audit.missingPath` | the harness preflight refuses the path. Raw `MonadaMemory.open` on the same path creates an empty store, with `manifest.json` written (required), and readback then fails for 33/33 chunks. |
 | `audit.pathIsFile` | the actual exception from a direct open, and a `ResonanceStoreAdapterException` from the adapter |
 | `audit.changedEncodingProfile` | opening with `NoOpTextNormalizer` options: the direct exception (`IllegalArgumentException`), a `ResonanceStoreAdapterException` from the adapter, and the persisted profile left unchanged |
@@ -160,7 +163,8 @@ affect a verdict.
 - **Attribution:** every adapter result maps to an exact persisted atom by reference and by content-derived Signal,
   and equals the direct `MonadaMemory` results.
 - **Default codecs:** the canonical query text is unrelated to the probes, giving 20 distinct result lists over 39
-  probes, and the top-1 chunk agrees with the probe codec for only 1 of 39 probes. `HashedSignalDecoder` Signals
+  probes. The top-1 chunk agrees with the probe codec for only 1 of 39 probes, against 33/33 readback recall@1 for the
+  probe codec. `HashedSignalDecoder` Signals
   carry no text and had no collisions on this corpus; mapping them back to text requires the external corpus.
 - **Failures** are visible as real errors:
   - a profile mismatch raises `IllegalArgumentException`;

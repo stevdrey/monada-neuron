@@ -18,6 +18,7 @@ import monada.neuron.resonance.adapter.HashedSignalDecoder;
 import monada.neuron.resonance.adapter.ResonanceStoreAdapterConfig;
 import monada.neuron.resonance.adapter.ResonanceStoreAdapterException;
 import monada.neuron.resonance.adapter.ResonanceStoreMemoryAdapter;
+import monada.neuron.signal.Signal;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -70,6 +71,13 @@ public final class HtmlKnowledgePersistence {
 
     /** Snapshot path name of Neuron adapter {@code recall} results. */
     public static final String NEURON = "neuron";
+
+    /**
+     * Readback recall@1 below which the default codecs count as insufficient for recoverable text. A readback probe
+     * queries with a chunk's exact text, so a codec that carries text must return that chunk first; the label is the
+     * probe itself, not a curated answer.
+     */
+    public static final double DEFAULT_CODEC_MAX_RECALL_AT_1 = 0.5;
 
     /** Chunk id recorded for a result that maps to no manifest entry. */
     static final String UNMAPPED = "<unmapped>";
@@ -177,9 +185,6 @@ public final class HtmlKnowledgePersistence {
         var metadata = new LinkedHashMap<String, String>();
         var count = corpus.chunks().size();
 
-        checks.add(new Check("persistence.manifestPresent", true,
-                root.getFileName() + "/" + MANIFEST_FILE + " present before any open"));
-
         var audit = auditor.audit(root);
         var stats = audit.statistics();
         var counted = audit.isHealthy() && stats.activeUniqueAtoms() == count && stats.activeAtomsWithVector() == count
@@ -206,24 +211,16 @@ public final class HtmlKnowledgePersistence {
         var openStart = System.nanoTime();
         var memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
         metadata.put("perf.directOpenNanos", Long.toString(System.nanoTime() - openStart));
-        var unread = ingestion.readback(memory, manifest);
+        var readback = ingestion.readbackSweep(memory, manifest);
+        var unread = readback.unread();
         checks.add(new Check("persistence.readback", unread.isEmpty(), unread.isEmpty()
                 ? "all " + count + " chunks recalled their manifest atom with content sha256 equal to the corpus,"
                         + " via resonate(text).topK(" + count + ").threshold(" + HtmlKnowledgeIngestion.READBACK_THRESHOLD
                         + ")"
                 : "readback failed (atom missing or content changed) for " + unread));
 
-        var seen = new HashSet<String>();
-        var unmapped = new HashSet<String>();
-        for (var chunk : corpus.chunks()) {
-            for (var result : memory.resonate(chunk.text()).topK(count)
-                    .threshold(HtmlKnowledgeIngestion.READBACK_THRESHOLD).execute().results()) {
-                seen.add(result.atom().id());
-                if (manifest.chunkIdForAtom(result.atom().id()).isEmpty()) {
-                    unmapped.add(result.atom().id());
-                }
-            }
-        }
+        var seen = readback.recalledAtomIds();
+        var unmapped = seen.stream().filter(id -> manifest.chunkIdForAtom(id).isEmpty()).collect(Collectors.toSet());
         checks.add(new Check("persistence.noUnmappedAtoms", unmapped.isEmpty(), unmapped.isEmpty()
                 ? seen.size() + " distinct atoms recalled across the readback sweep, all in the manifest"
                 : unmapped.size() + " recalled atoms are not in the manifest: " + unmapped.stream().sorted().toList()));
@@ -313,8 +310,9 @@ public final class HtmlKnowledgePersistence {
      * Measures what the adapter's default interim codecs ({@code CanonicalSignalQueryEncoder} and
      * {@code HashedSignalDecoder}) return on {@code root} for the probe Signals, without changing either default.
      *
-     * <p>Passes when the measurement shows the default is insufficient for recoverable text: the canonical query does
-     * not reproduce the probe codec's top result for every probe, and each hashed Signal is only attributable by
+     * <p>Passes when the measurement shows the default is insufficient for recoverable text: its readback recall@1
+     * (the share of {@code readback:<chunkId>} probes whose top result is that chunk) is below
+     * {@link #DEFAULT_CODEC_MAX_RECALL_AT_1}, and each hashed Signal is only attributable by
      * re-hashing the external corpus (it equals {@code HashedSignalDecoder.decode} of the mapped chunk's text and
      * carries no text itself). Every probe must answer {@code COMPLETE} with at least one result whose reference maps
      * to a persisted chunk, so a failed or empty default is reported as a failure, not as insufficiency.
@@ -322,7 +320,7 @@ public final class HtmlKnowledgePersistence {
     public Check defaultCodecInsufficiency(Path root, IngestionManifest manifest, Snapshot snapshot) {
         requireExistingStore(root);
         var hashed = new HashedSignalDecoder();
-        var chunkBySignal = new HashMap<Object, List<String>>();
+        var chunkBySignal = new HashMap<Signal, List<String>>();
         for (var chunk : corpus.chunks()) {
             chunkBySignal.computeIfAbsent(hashed.decode(chunk.text()), _ -> new ArrayList<>()).add(chunk.chunkId());
         }
@@ -330,8 +328,12 @@ public final class HtmlKnowledgePersistence {
         var topByProbe = new HashMap<String, String>();
         snapshot.rows(NEURON).stream().filter(row -> row.rank() == 0)
                 .forEach(row -> topByProbe.put(row.probeId(), row.chunkId()));
+        var readbackProbes = corpus.chunks().size();
+        var probeCodecHits = corpus.chunks().stream()
+                .filter(chunk -> chunk.chunkId().equals(topByProbe.get(PersistenceProbes.READBACK_PREFIX + chunk.chunkId()))).count();
 
         var agreements = 0;
+        var defaultHits = 0;
         var resultSets = new HashSet<List<String>>();
         var mismatches = new ArrayList<String>();
         var unusable = new ArrayList<String>();
@@ -357,14 +359,21 @@ public final class HtmlKnowledgePersistence {
                 if (!chunks.isEmpty() && chunks.getFirst().equals(topByProbe.get(probe.probeId()))) {
                     agreements++;
                 }
+                if (probe.probeId().startsWith(PersistenceProbes.READBACK_PREFIX) && !chunks.isEmpty()
+                        && chunks.getFirst().equals(probe.probeId().substring(PersistenceProbes.READBACK_PREFIX.length()))) {
+                    defaultHits++;
+                }
             }
         }
-        var insufficient = agreements < probes.size();
+        var defaultRecall = (double) defaultHits / readbackProbes;
+        var insufficient = defaultRecall < DEFAULT_CODEC_MAX_RECALL_AT_1;
         // Disagreement is evidence only when the default produced usable, attributable output for every probe; a
         // failed, unavailable or empty response would otherwise look like insufficiency.
         var passed = insufficient && mismatches.isEmpty() && unusable.isEmpty();
         return new Check("neuron.defaultCodecInsufficient", passed, "defaults() on the same root: statuses "
-                + statuses + "; " + resultSets.size() + " distinct result lists over " + probes.size()
+                + statuses + "; readback recall@1 " + defaultHits + "/" + readbackProbes + " (insufficient below "
+                + DEFAULT_CODEC_MAX_RECALL_AT_1 + "; probe codec " + probeCodecHits + "/" + readbackProbes + "); "
+                + resultSets.size() + " distinct result lists over " + probes.size()
                 + " probes; top-1 agrees with the probe codec for " + agreements + "/" + probes.size()
                 + "; hashed Signals carry no text and were attributable only by re-hashing all " + corpus.chunks().size()
                 + " corpus chunks (" + collisions + " collisions)"
@@ -379,7 +388,13 @@ public final class HtmlKnowledgePersistence {
      * @param snapshot the probe codec's snapshot of {@code root}, the reference the default codecs are compared with
      */
     public List<Check> audit(Path root, IngestionManifest manifest, Snapshot snapshot, Path scratch) {
-        requireExistingStore(root);
+        var preflight = attempt(() -> {
+            requireExistingStore(root);
+            return null;
+        });
+        if (preflight.failure().isPresent()) {
+            return List.of(new Check("audit.preflight", false, "no audit ran: " + preflight.describe()));
+        }
         var checks = new ArrayList<Check>();
         checks.add(guarded("neuron.defaultCodecInsufficient",
                 () -> defaultCodecInsufficiency(copy(root, scratch, "default-codec"), manifest, snapshot)));
@@ -637,7 +652,9 @@ public final class HtmlKnowledgePersistence {
             if (!found) {
                 throw new IllegalStateException("atom " + atomId + " has no record in " + log);
             }
-            Files.write(log, rewritten, StandardCharsets.UTF_8);
+            // The Store separates records by '\n' only; never write the platform line separator.
+            Files.writeString(log, rewritten.isEmpty() ? "" : String.join("\n", rewritten) + "\n",
+                    StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

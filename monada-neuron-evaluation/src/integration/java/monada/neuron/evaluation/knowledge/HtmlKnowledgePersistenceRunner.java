@@ -210,7 +210,7 @@ public final class HtmlKnowledgePersistenceRunner {
                 var reopened = launch(HtmlKnowledgePersistencePhase.REOPEN, root, work);
                 reopen = Optional.of(reopened);
                 collect(reopened, work, checks, metadata);
-                checks.add(restartCheck(seed, reopened));
+                checks.add(restartCheck(seed, reopened, work));
 
                 var reopenSnapshot = work.snapshot(HtmlKnowledgePersistencePhase.REOPEN);
                 var reopenedSnapshot = Files.exists(work.result(HtmlKnowledgePersistencePhase.REOPEN))
@@ -303,19 +303,40 @@ public final class HtmlKnowledgePersistenceRunner {
                 HtmlKnowledgePersistencePhase.class.getName(), phase, root.toAbsolutePath().toString(),
                 work.path().toAbsolutePath().toString()));
         var start = System.nanoTime();
+        Process process;
         try {
-            var process = new ProcessBuilder(command).redirectOutput(stdout.toFile()).redirectError(stderr.toFile())
+            process = new ProcessBuilder(command).redirectOutput(stdout.toFile()).redirectError(stderr.toFile())
                     .start();
-            var exit = process.waitFor(PHASE_TIMEOUT_SECONDS, TimeUnit.SECONDS) ? process.exitValue() : -1;
-            if (exit == -1) {
-                process.destroyForcibly().waitFor();
-            }
-            return new PhaseRun(phase, process.pid(), exit, System.nanoTime() - start, tail(stderr));
         } catch (IOException e) {
             throw new UncheckedIOException("cannot start the " + phase + " phase JVM", e);
+        }
+        try {
+            var exit = process.waitFor(PHASE_TIMEOUT_SECONDS, TimeUnit.SECONDS) ? process.exitValue() : -1;
+            if (exit == -1) {
+                terminate(process);
+            }
+            return new PhaseRun(phase, process.pid(), exit, System.nanoTime() - start, tail(stderr));
         } catch (InterruptedException e) {
+            // Never leave a phase JVM writing into the work directory (or a kept root) that is about to be deleted.
+            terminate(process);
             Thread.currentThread().interrupt();
             throw new IllegalStateException("interrupted while waiting for the " + phase + " phase", e);
+        }
+    }
+
+    /** Kills {@code process} and waits for it to exit, even if this thread is interrupted meanwhile. */
+    private void terminate(Process process) {
+        process.destroyForcibly();
+        var interrupted = false;
+        while (process.isAlive()) {
+            try {
+                process.waitFor();
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -348,19 +369,38 @@ public final class HtmlKnowledgePersistenceRunner {
                     + run.exitStatus() + " without a result: " + run.stderr()));
             return;
         }
-        var result = Result.parse(work.read(resultFile));
+        Result result;
+        try {
+            result = Result.parse(work.read(resultFile));
+        } catch (IllegalArgumentException | UncheckedIOException e) {
+            checks.add(new Check(run.phase() + ".completed", false, "the " + run.phase() + " JVM exited "
+                    + run.exitStatus() + " with an unreadable result: " + e.getMessage()));
+            return;
+        }
         result.checks().forEach(check -> checks.add(
                 new Check(run.phase() + "." + check.name(), check.passed(), check.detail())));
         result.metadata().forEach((key, value) -> metadata.put(run.phase() + "." + key, value));
     }
 
-    private Check restartCheck(PhaseRun seed, PhaseRun reopen) {
+    /**
+     * Judges process isolation and completion only: three distinct processes, and each phase JVM finished its phase
+     * (wrote its result and exited {@code 0} or {@code 1}). Semantic failures are reported by the phases' own checks
+     * and do not fail this one.
+     */
+    private Check restartCheck(PhaseRun seed, PhaseRun reopen, WorkDirectory work) {
         var self = ProcessHandle.current().pid();
         var separate = seed.pid() != reopen.pid() && seed.pid() != self && reopen.pid() != self;
-        var passed = separate && seed.exitStatus() == 0 && reopen.exitStatus() == 0;
-        return new Check("process.restart", passed, "seed JVM pid " + seed.pid() + " exited " + seed.exitStatus()
-                + "; reopen JVM pid " + reopen.pid() + " exited " + reopen.exitStatus() + "; orchestrator pid " + self
+        var seedCompleted = completed(seed, work);
+        var reopenCompleted = completed(reopen, work);
+        return new Check("process.restart", separate && seedCompleted && reopenCompleted, "seed JVM pid "
+                + seed.pid() + " exited " + seed.exitStatus() + (seedCompleted ? " after its phase" : " without a result")
+                + "; reopen JVM pid " + reopen.pid() + " exited " + reopen.exitStatus()
+                + (reopenCompleted ? " after its phase" : " without a result") + "; orchestrator pid " + self
                 + (separate ? "; three distinct processes" : "; processes are not distinct"));
+    }
+
+    private boolean completed(PhaseRun run, WorkDirectory work) {
+        return (run.exitStatus() == 0 || run.exitStatus() == 1) && Files.exists(work.result(run.phase()));
     }
 
     private void describe(Path root, PhaseRun seed, Optional<PhaseRun> reopen, Map<String, String> metadata) {
