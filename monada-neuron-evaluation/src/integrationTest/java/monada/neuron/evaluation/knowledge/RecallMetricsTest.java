@@ -112,6 +112,51 @@ class RecallMetricsTest {
     }
 
     @Test
+    void theKEqualsFiveTieIsReadFromTheLookaheadList() {
+        var querySet = HtmlKnowledgeQuerySet.bundled(HtmlKnowledgeCorpus.bundled());
+        var rows = new ArrayList<Row>();
+        var ids = List.of("chk:links#00", "chk:links#01", "chk:links#02", "chk:links#03", "chk:links#04",
+                "chk:forms#00");
+        for (var rank = 1; rank <= 6; rank++) {
+            var score = rank <= 4 ? 1.0 - rank * 0.1 : 0.5;
+            if (rank <= 5) {
+                rows.add(new Row("q:exact-term-01", Layer.B0, 5, rank, ids.get(rank - 1), score));
+            }
+            rows.add(new Row("q:exact-term-01", Layer.B0, 6, rank, ids.get(rank - 1), score));
+        }
+        var score = RecallMetrics.score(querySet, new Snapshot(querySet.queryHash(), rows)).queries().stream()
+                .filter(value -> value.layer() == Layer.B0 && value.query().queryId().equals("q:exact-term-01"))
+                .findFirst().orElseThrow();
+
+        assertTrue(score.byK().get(5).tieAtCutoff(), "ranks 5 and 6 share score 0.5");
+        assertFalse(score.byK().get(3).tieAtCutoff());
+        assertEquals(5, score.returned().orElseThrow().size(), "the lookahead row is never scored");
+    }
+
+    @Test
+    void metricAggregatesAreReportedPerCategory() {
+        var querySet = HtmlKnowledgeQuerySet.bundled(HtmlKnowledgeCorpus.bundled());
+        var rows = List.of(
+                new Row("q:exact-term-01", Layer.B1, 5, 1, "chk:links#00", 0.9),
+                new Row("q:exact-term-02", Layer.B1, 5, 1, "chk:links#00", 0.9),
+                new Row("q:out-of-domain-01", Layer.B1, 5, 1, "chk:forms#00", 0.1));
+        var b1 = RecallMetrics.score(querySet, new Snapshot(querySet.queryHash(), rows)).aggregates().stream()
+                .filter(aggregate -> aggregate.layer() == Layer.B1 && aggregate.k() == 5).findFirst().orElseThrow();
+
+        var exact = b1.byCategory().get(Category.EXACT_TERM);
+        assertEquals(5, exact.scoredA());
+        assertEquals(OptionalDouble.of(0.2), exact.answerable().get("Recall@5").value(), "1 of 5 exact-term hits");
+        assertEquals(OptionalDouble.empty(), exact.noAnswerFalsePositiveRate(), "no U query in exact-term");
+        var outOfDomain = b1.byCategory().get(Category.OUT_OF_DOMAIN);
+        assertEquals(0, outOfDomain.scoredA());
+        assertEquals(OptionalDouble.empty(), outOfDomain.answerable().get("Recall@5").value(), "undefined, never 0");
+        assertEquals(OptionalDouble.of(1.0 / 3), outOfDomain.noAnswerFalsePositiveRate());
+        assertEquals(OptionalDouble.of(0.0), b1.byCategory().get(Category.MULTI_EVIDENCE).fullEvidence().value(),
+                "multi-evidence queries without results have FullEvidence 0");
+        assertEquals(OptionalDouble.empty(), exact.fullEvidence().value(), "only multi-evidence carries FullEvidence");
+    }
+
+    @Test
     void aSnapshotOfAnotherQuerySetIsRefused() {
         var querySet = HtmlKnowledgeQuerySet.bundled(HtmlKnowledgeCorpus.bundled());
         assertThrows(IllegalArgumentException.class,

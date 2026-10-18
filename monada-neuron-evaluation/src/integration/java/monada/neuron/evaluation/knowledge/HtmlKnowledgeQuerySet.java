@@ -190,7 +190,7 @@ public final class HtmlKnowledgeQuerySet {
                 throw new CorpusValidationException(where, "evidence span '" + span + "' has a non-integer bound");
             }
         }
-        return new JudgedQuery(queryId, category, unescape(where, cells[3]),
+        return new JudgedQuery(queryId, category, HtmlKnowledgeRecall.QueryText.unescape(where, cells[3]),
                 new LinkedHashSet<>(list(where, "required", cells[4])),
                 new LinkedHashSet<>(list(where, "supporting", cells[5])),
                 spans,
@@ -217,28 +217,6 @@ public final class HtmlKnowledgeQuerySet {
             throw new CorpusValidationException(where, name + " repeats an entry");
         }
         return elements;
-    }
-
-    /** Decodes the text escapes {@code \\}, {@code \t} and {@code \n}; any other backslash sequence is rejected. */
-    static String unescape(String where, String cell) {
-        var text = new StringBuilder(cell.length());
-        for (var i = 0; i < cell.length(); i++) {
-            var c = cell.charAt(i);
-            if (c != '\\') {
-                text.append(c);
-                continue;
-            }
-            if (i + 1 == cell.length()) {
-                throw new CorpusValidationException(where, "text ends with a lone backslash");
-            }
-            text.append(switch (cell.charAt(++i)) {
-                case '\\' -> '\\';
-                case 't' -> '\t';
-                case 'n' -> '\n';
-                default -> throw new CorpusValidationException(where, "unknown text escape '\\" + cell.charAt(i) + "'");
-            });
-        }
-        return text.toString();
     }
 
     private static void validate(String version, HtmlKnowledgeCorpus corpus, List<JudgedQuery> queries) {

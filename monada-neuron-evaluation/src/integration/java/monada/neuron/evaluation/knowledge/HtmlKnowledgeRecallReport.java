@@ -5,10 +5,12 @@ import monada.neuron.evaluation.knowledge.JudgedQuery.Category;
 import monada.neuron.evaluation.knowledge.RecallMetrics.Aggregate;
 import monada.neuron.evaluation.knowledge.RecallMetrics.LayerAggregate;
 import monada.neuron.evaluation.knowledge.RecallMetrics.Outcome;
+import monada.neuron.evaluation.knowledge.RecallMetrics.PopulationAggregate;
 import monada.neuron.evaluation.knowledge.RecallMetrics.QueryScore;
 import monada.neuron.evaluation.knowledge.RecallMetrics.Ranked;
 import monada.neuron.evaluation.knowledge.RecallMetrics.Scores;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
@@ -20,7 +22,7 @@ import java.util.stream.Collectors;
 
 /**
  * Renders the scored judged recall as machine-readable JSON and a concise Markdown summary (protocol section "Report
- * shape"): aggregates per layer, {@code k} and category, outcome counts, the set-level abstention metrics, the B1
+ * shape"): aggregates per layer and {@code k}, metric aggregates and outcome counts per category, the set-level abstention metrics, the B1
  * versus B2c codec effect, and one row per query with expected and returned chunk ids, ranks, scores,
  * {@code tieAtCutoff}, outcome and miss diagnostics. Undefined values are JSON {@code null} and {@code n/a} in
  * Markdown.
@@ -70,23 +72,15 @@ final class HtmlKnowledgeRecallReport {
                 }
                 json.append(", \"FullEvidence@").append(aggregate.k()).append("\": ")
                         .append(aggregateJson(aggregate.fullEvidence())).append(" },\n");
-                json.append("          \"outcomesByCategory\": {");
-                first = true;
-                for (var category : Category.values()) {
-                    var counts = aggregate.outcomes().getOrDefault(category, Map.of());
-                    json.append(first ? " " : ", ").append(string(category.label())).append(": {");
-                    var firstOutcome = true;
-                    for (var outcome : Outcome.values()) {
-                        if (counts.containsKey(outcome)) {
-                            json.append(firstOutcome ? " " : ", ").append(string(outcome.name())).append(": ")
-                                    .append(counts.get(outcome));
-                            firstOutcome = false;
-                        }
-                    }
-                    json.append(" }");
-                    first = false;
+                json.append("          \"byCategory\": {\n");
+                var categories = List.of(Category.values());
+                for (var c = 0; c < categories.size(); c++) {
+                    var category = categories.get(c);
+                    json.append("            ").append(string(category.label())).append(": ")
+                            .append(populationJson(aggregate.k(), aggregate.byCategory().get(category)))
+                            .append(c < categories.size() - 1 ? ",\n" : "\n");
                 }
-                json.append(" } }").append(a < aggregates.size() - 1 ? ",\n" : "\n");
+                json.append("          } }").append(a < aggregates.size() - 1 ? ",\n" : "\n");
             }
             json.append("      ] }").append(l < layers.size() - 1 ? ",\n" : "\n");
         }
@@ -163,6 +157,27 @@ final class HtmlKnowledgeRecallReport {
                 md.append(' ').append(counts.isEmpty() ? "-" : List.of(Outcome.values()).stream()
                         .filter(counts::containsKey).map(outcome -> outcome.name() + " " + counts.get(outcome))
                         .collect(Collectors.joining(", "))).append(" |");
+            }
+            md.append('\n');
+        }
+        md.append("\n### Quality at k = 5 by category\n\nRecall@5 and MRR@5 over a category's answerable queries;"
+                + " NoAnswerFPR@5 over its queries without a relevant chunk; `n/a` when the category has none.\n\n"
+                + "| Category | ");
+        md.append(List.of(Layer.values()).stream().map(Layer::label).collect(Collectors.joining(" | ")));
+        md.append(" |\n| :--- |").append(" :--- |".repeat(Layer.values().length)).append('\n');
+        for (var category : Category.values()) {
+            md.append("| ").append(category.label()).append(" |");
+            for (var layer : Layer.values()) {
+                var population = aggregates(layer).getLast().byCategory().get(category);
+                var cell = new ArrayList<String>();
+                if (population.scoredA() > 0) {
+                    cell.add("R " + cell(population.answerable().get("Recall@5")));
+                    cell.add("MRR " + cell(population.answerable().get("MRR@5")));
+                }
+                if (population.scoredU() > 0) {
+                    cell.add("FPR " + format(population.noAnswerFalsePositiveRate()));
+                }
+                md.append(' ').append(cell.isEmpty() ? "n/a" : String.join(", ", cell)).append(" |");
             }
             md.append('\n');
         }
@@ -265,6 +280,27 @@ final class HtmlKnowledgeRecallReport {
 
     private static List<String> ids(QueryScore score) {
         return score.returned().map(returned -> returned.stream().map(Ranked::chunkId).toList()).orElse(List.of());
+    }
+
+    private static String populationJson(int k, PopulationAggregate population) {
+        var json = new StringBuilder("{ \"nA\": ").append(population.scoredA())
+                .append(", \"nU\": ").append(population.scoredU());
+        for (var metric : population.answerable().entrySet()) {
+            json.append(", ").append(string(metric.getKey())).append(": ").append(aggregateJson(metric.getValue()));
+        }
+        json.append(", \"FullEvidence@").append(k).append("\": ").append(aggregateJson(population.fullEvidence()))
+                .append(", \"NoAnswerFalsePositiveRate@").append(k).append("\": ")
+                .append(number(population.noAnswerFalsePositiveRate()))
+                .append(", \"outcomes\": {");
+        var first = true;
+        for (var outcome : Outcome.values()) {
+            if (population.outcomes().containsKey(outcome)) {
+                json.append(first ? " " : ", ").append(string(outcome.name())).append(": ")
+                        .append(population.outcomes().get(outcome));
+                first = false;
+            }
+        }
+        return json.append(" } }").toString();
     }
 
     private static String aggregateJson(Aggregate aggregate) {

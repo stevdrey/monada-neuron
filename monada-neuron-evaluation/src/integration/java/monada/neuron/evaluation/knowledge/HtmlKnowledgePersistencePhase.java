@@ -107,6 +107,11 @@ public final class HtmlKnowledgePersistencePhase {
             return path.resolve("manifest.tsv");
         }
 
+        /** Returns the labels-free query workload file the judged recall orchestrator writes for its phases. */
+        Path workload() {
+            return path.resolve("queries.tsv");
+        }
+
         /** Returns the snapshot file of {@code phase}. */
         Path snapshot(String phase) {
             return path.resolve(phase + "-recall.tsv");

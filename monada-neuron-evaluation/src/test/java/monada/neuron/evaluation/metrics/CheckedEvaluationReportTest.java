@@ -70,6 +70,18 @@ class CheckedEvaluationReportTest {
     }
 
     @Test
+    void sectionsAreTopLevelMembersBetweenMetadataAndEvaluation() throws IOException {
+        var report = report("Feedback Loop Metadata", CHECKS);
+        var json = report.toJson(Map.of("z.section", "null", "recall", "{ \"k\": [1, 3, 5] }\n"));
+
+        var golden = golden("checked-evaluation-report.json");
+        var at = golden.indexOf("  \"evaluation\": ");
+        assertEquals(golden.substring(0, at) + "  \"recall\": { \"k\": [1, 3, 5] },\n  \"z.section\": null,\n"
+                + golden.substring(at), json);
+        assertEquals(golden, report.toJson(Map.of()));
+    }
+
+    @Test
     void passesOnlyWhenEveryCheckPassesAndSortsMetadataByKey() {
         var passing = report("Metadata", List.of(new Check("ok", true, "fine")));
 

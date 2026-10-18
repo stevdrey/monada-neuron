@@ -20,7 +20,8 @@ import java.util.Set;
  * The scorer of the judged recall experiment (protocol sections "Retrieval metrics (L1 and L2)"): the only component
  * that reads gold labels. It scores a {@link Snapshot} recorded by {@link HtmlKnowledgeRecall}.
  *
- * <p>{@code Ret_k(q)} is the prefix of length {@code k} of the limit-5 list in returned order. A per-query ratio with
+ * <p>{@code Ret_k(q)} is the prefix of length {@code k} of the limit-5 list in returned order. The limit-6 lookahead list
+ * is read only to flag a score tie straddling the k = 5 cutoff. A per-query ratio with
  * a zero denominator is undefined ({@link OptionalDouble#empty()}, JSON {@code null}); an aggregate is the macro mean
  * of the defined values with {@code nDefined} and {@code nUndefined}, undefined when nothing is defined. A query whose
  * layer failed operationally gets no outcome for that layer.
@@ -61,7 +62,8 @@ final class RecallMetrics {
      * Scores of one query at one {@code k}.
      *
      * @param outcome the per-query outcome
-     * @param tieAtCutoff whether the score at rank {@code k} equals the score at rank {@code k + 1}
+     * @param tieAtCutoff whether the score at rank {@code k} equals the score at rank {@code k + 1} (for {@code k = 5},
+     *     rank 6 of the lookahead list)
      * @param metrics per-query values by metric name, in report order; empty values are undefined
      */
     record KScore(Outcome outcome, boolean tieAtCutoff, Map<String, OptionalDouble> metrics) {
@@ -84,6 +86,21 @@ final class RecallMetrics {
     }
 
     /**
+     * Aggregates of one population (a whole layer, or one category of it) at one {@code k}.
+     *
+     * @param answerable means over the population's {@code A} queries by metric name, in report order; undefined
+     *     with {@code nDefined = 0} when the population has no {@code A} query
+     * @param fullEvidence {@code FullEvidence@k} over its {@code multi-evidence} queries
+     * @param noAnswerFalsePositiveRate fraction of its {@code U} queries with a non-empty {@code Ret_k}
+     * @param outcomes outcome counts
+     * @param scoredA scored queries with a non-empty relevant set
+     * @param scoredU scored queries with an empty relevant set
+     */
+    record PopulationAggregate(Map<String, Aggregate> answerable, Aggregate fullEvidence,
+            OptionalDouble noAnswerFalsePositiveRate, Map<Outcome, Integer> outcomes, int scoredA, int scoredU) {
+    }
+
+    /**
      * Aggregates of one layer at one {@code k}.
      *
      * @param answerable aggregates over {@code A} by metric name, in report order
@@ -95,7 +112,7 @@ final class RecallMetrics {
      */
     record LayerAggregate(Layer layer, int k, Map<String, Aggregate> answerable, Aggregate fullEvidence,
             OptionalDouble noAnswerFalsePositiveRate, Map<Category, Map<Outcome, Integer>> outcomes, int scoredA,
-            int scoredU) {
+            int scoredU, Map<Category, PopulationAggregate> byCategory) {
     }
 
     /**
@@ -134,7 +151,8 @@ final class RecallMetrics {
             var layerScores = new ArrayList<QueryScore>();
             for (var query : querySet.queries()) {
                 layerScores.add(layerScore(query, layer,
-                        snapshot.rows(query.queryId(), layer, HtmlKnowledgeRecall.MAX_LIMIT)));
+                        snapshot.rows(query.queryId(), layer, HtmlKnowledgeRecall.MAX_LIMIT),
+                        snapshot.rows(query.queryId(), layer, HtmlKnowledgeRecall.LOOKAHEAD_LIMIT)));
             }
             queries.addAll(layerScores);
             for (var k : KS) {
@@ -146,18 +164,19 @@ final class RecallMetrics {
     }
 
     /** Returns the score of one query through one layer; a failure marker row leaves it without an outcome. */
-    private static QueryScore layerScore(JudgedQuery query, Layer layer, List<Row> rows) {
+    private static QueryScore layerScore(JudgedQuery query, Layer layer, List<Row> rows, List<Row> lookahead) {
         if (rows.stream().anyMatch(row -> row.chunkId().equals(HtmlKnowledgeRecall.FAILED))) {
             return new QueryScore(query, layer, Optional.empty(), Map.of());
         }
         var returned = rows.stream().map(row -> new Ranked(row.chunkId(), row.score())).toList();
         var chunkIds = returned.stream().map(Ranked::chunkId).toList();
         var scores = returned.stream().map(Ranked::score).toList();
+        var lookaheadScores = lookahead.stream().map(Row::score).toList();
         var byK = new LinkedHashMap<Integer, KScore>();
         for (var k : KS) {
             var prefix = chunkIds.subList(0, Math.min(k, chunkIds.size()));
-            byK.put(k, new KScore(outcome(query.required(), query.relevant(), prefix), tieAtCutoff(scores, k),
-                    perQuery(query, prefix, k)));
+            var tie = k < HtmlKnowledgeRecall.MAX_LIMIT ? tieAtCutoff(scores, k) : tieAtCutoff(lookaheadScores, k);
+            byK.put(k, new KScore(outcome(query.required(), query.relevant(), prefix), tie, perQuery(query, prefix, k)));
         }
         return new QueryScore(query, layer, Optional.of(returned), Map.copyOf(byK));
     }
@@ -258,6 +277,23 @@ final class RecallMetrics {
     }
 
     private static LayerAggregate aggregate(Layer layer, int k, List<QueryScore> scores) {
+        var whole = population(k, scores);
+        var outcomes = new EnumMap<Category, Map<Outcome, Integer>>(Category.class);
+        var byCategory = new EnumMap<Category, PopulationAggregate>(Category.class);
+        for (var category : Category.values()) {
+            var aggregate = population(k, scores.stream().filter(score -> score.query().category() == category)
+                    .toList());
+            byCategory.put(category, aggregate);
+            if (!aggregate.outcomes().isEmpty()) {
+                outcomes.put(category, aggregate.outcomes());
+            }
+        }
+        return new LayerAggregate(layer, k, whole.answerable(), whole.fullEvidence(),
+                whole.noAnswerFalsePositiveRate(), outcomes, whole.scoredA(), whole.scoredU(), byCategory);
+    }
+
+    /** Aggregates one population of query scores at {@code k}; failed queries are left out. */
+    private static PopulationAggregate population(int k, List<QueryScore> scores) {
         var scored = scores.stream().filter(QueryScore::completed).toList();
         var answerable = scored.stream().filter(score -> !score.query().relevant().isEmpty()).toList();
         var unanswerable = scored.stream().filter(score -> score.query().relevant().isEmpty()).toList();
@@ -271,13 +307,10 @@ final class RecallMetrics {
                 .map(score -> score.byK().get(k).metrics().get("FullEvidence@" + k)).toList());
         var falsePositives = (int) unanswerable.stream()
                 .filter(score -> score.byK().get(k).outcome() == Outcome.FALSE_EVIDENCE).count();
-        var outcomes = new EnumMap<Category, Map<Outcome, Integer>>(Category.class);
-        for (var score : scored) {
-            outcomes.computeIfAbsent(score.query().category(), ignored -> new EnumMap<>(Outcome.class))
-                    .merge(score.byK().get(k).outcome(), 1, Integer::sum);
-        }
-        return new LayerAggregate(layer, k, metrics, fullEvidence, ratio(falsePositives, unanswerable.size()),
-                outcomes, answerable.size(), unanswerable.size());
+        var outcomes = new EnumMap<Outcome, Integer>(Outcome.class);
+        scored.forEach(score -> outcomes.merge(score.byK().get(k).outcome(), 1, Integer::sum));
+        return new PopulationAggregate(metrics, fullEvidence, ratio(falsePositives, unanswerable.size()), outcomes,
+                answerable.size(), unanswerable.size());
     }
 
     private static LayerAbstention abstention(Layer layer, List<QueryScore> scores) {

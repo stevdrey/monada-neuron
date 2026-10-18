@@ -26,14 +26,16 @@ import java.util.TreeMap;
  * CLI of the judged HTML recall experiment (Issue #107, protocol layers L1 and L2): imports {@code html-kc-v1} into a
  * fresh Store root and runs the {@code html-kq-v1} query texts through B0, B1, B2 and B2c in one JVM ({@code seed}),
  * reruns them against the same root from a second, separate JVM ({@code reopen}), and scores the seed results against
- * the gold labels in this process. The phases never read gold labels; this orchestrator's scorer is the only reader.
+ * the gold labels in this process. The phases receive only a labels-free workload (query ids and texts); this
+ * orchestrator's scorer is the only reader of gold labels.
  *
  * <p>Options: {@code --output-dir <dir>} (default {@code build/reports/benchmarks}) and {@code --store-root <dir>}
  * (keep the Store there instead of a deleted temporary root; it must be absent or empty). Outputs:
- * {@code html-knowledge-recall.{json,md}} (verdicts, metadata and, in Markdown, the scored summary),
- * {@code html-kq-v1-recall-results.json} (aggregates and one row per query) and {@code html-kq-v1-recall.tsv} (every
- * returned result of the seed phase). Exit status: {@code 0} all checks passed, {@code 1} a semantic check failed,
- * {@code 2} invalid usage or rejected input.
+ * {@code html-knowledge-recall.json} (one object: verdicts, run identity and metadata, and the scored payload under
+ * {@code recall}, which is {@code null} when nothing was scored), {@code html-knowledge-recall.md} (the same, readable)
+ * and {@code html-kq-v1-recall.tsv} (every raw result of the seed phase, headed by the run's hashes and verdict).
+ * Exit status: {@code 0} all checks passed, {@code 1} a semantic check failed, {@code 2} invalid usage or rejected
+ * input.
  */
 public final class HtmlKnowledgeRecallRunner {
 
@@ -70,6 +72,11 @@ public final class HtmlKnowledgeRecallRunner {
 
         public Outcome {
             files = Map.copyOf(files);
+        }
+
+        /** Returns the single JSON report: verdicts and metadata with the scored payload as {@code recall}. */
+        public String json() {
+            return report.toJson(Map.of("recall", recall.map(Rendered::json).orElse("null")));
         }
 
         /** Returns the full Markdown report: verdicts and metadata, then the scored summary. */
@@ -130,8 +137,7 @@ public final class HtmlKnowledgeRecallRunner {
     public static List<Path> write(Outcome outcome) throws IOException {
         var outputDir = outcome.outputDir();
         var written = new ArrayList<Path>();
-        written.add(HtmlKnowledgeIngestionRunner.writeFile(outputDir.resolve(REPORT_JSON),
-                outcome.report().toJson()));
+        written.add(HtmlKnowledgeIngestionRunner.writeFile(outputDir.resolve(REPORT_JSON), outcome.json()));
         written.add(HtmlKnowledgeIngestionRunner.writeFile(outputDir.resolve(REPORT_MARKDOWN), outcome.markdown()));
         for (var file : new TreeMap<>(outcome.files()).entrySet()) {
             written.add(HtmlKnowledgeIngestionRunner.writeFile(outputDir.resolve(file.getKey()), file.getValue()));
@@ -146,6 +152,9 @@ public final class HtmlKnowledgeRecallRunner {
         var work = new WorkDirectory(temporaryDirectory());
         try {
             var root = options.storeRoot().orElse(work.path().resolve("store"));
+            work.write(work.workload(), HtmlKnowledgeRecall.QueryText.renderTsv(querySet.queryHash(),
+                    querySet.queries().stream()
+                            .map(query -> new HtmlKnowledgeRecall.QueryText(query.queryId(), query.text())).toList()));
             var checks = new ArrayList<Check>();
             var metadata = new TreeMap<String, String>();
             var files = new TreeMap<String, String>();
@@ -156,7 +165,6 @@ public final class HtmlKnowledgeRecallRunner {
             Optional<PhaseRun> reopen = Optional.empty();
             Optional<Rendered> recall = Optional.empty();
             if (seedSnapshot.isPresent() && Files.exists(work.manifest())) {
-                files.put(querySet.version() + "-recall.tsv", seedSnapshot.get().toTsv());
                 var reopened = phaseJvm.launch(HtmlKnowledgeRecallPhase.class, HtmlKnowledgeRecallPhase.REOPEN,
                         root, work);
                 reopen = Optional.of(reopened);
@@ -167,7 +175,6 @@ public final class HtmlKnowledgeRecallRunner {
                 var scores = RecallMetrics.score(querySet, seedSnapshot.get());
                 var rendered = new HtmlKnowledgeRecallReport(querySet, scores);
                 recall = Optional.of(new Rendered(rendered.toJson(), rendered.toMarkdown()));
-                files.put(querySet.version() + "-recall-results.json", recall.get().json());
             } else {
                 checks.add(new Check("process.restart", false, "seed phase did not complete (exit "
                         + seed.exitStatus() + "; snapshot or manifest missing or unreadable); nothing was scored and"
@@ -184,6 +191,10 @@ public final class HtmlKnowledgeRecallRunner {
                     List.of(),
                     TITLE);
             var report = new CheckedEvaluationReport(TITLE, "Recall Metadata", evaluation, checks, metadata);
+            seedSnapshot.ifPresent(snapshot -> files.put(querySet.version() + "-recall.tsv",
+                    "# raw seed-phase rows, not a verified result on their own: corpusHash " + corpus.corpusHash()
+                            + ", allChecksPassed " + report.allPassed() + " (see " + REPORT_JSON + ")\n"
+                            + snapshot.toTsv()));
             return new Outcome(report, recall, seed, reopen, files, options.outputDir());
         } finally {
             HtmlKnowledgeIngestionRunner.deleteTree(work.path());
@@ -229,6 +240,7 @@ public final class HtmlKnowledgeRecallRunner {
         var outputDir = options.outputDir();
         return List.of(outputDir.resolve(REPORT_JSON), outputDir.resolve(REPORT_MARKDOWN),
                 outputDir.resolve(querySet.version() + "-recall.tsv"),
+                // Written by an earlier version of this runner; removed so no stale scores are left behind.
                 outputDir.resolve(querySet.version() + "-recall-results.json"));
     }
 
@@ -245,7 +257,8 @@ public final class HtmlKnowledgeRecallRunner {
         metadata.put("query.heldOutHash", "none");
         metadata.put("query.tuning", "not tuned: no parameter was chosen on this set (t is the Store default)");
         metadata.put("seed", "none (no randomness)");
-        metadata.put("k", "1, 3, 5 (prefixes of one limit-5 list per system)");
+        metadata.put("k", "1, 3, 5 (prefixes of one limit-5 list per system; a limit-6 lookahead only flags a tie"
+                + " straddling the k = 5 cutoff)");
         metadata.put("threshold", Double.toString(HtmlKnowledgeRecall.THRESHOLD));
         metadata.put("baseline.B0", "exact-token overlap over the normalized corpus chunks; score = distinct query"
                 + " tokens contained; score 0 dropped; score descending, then chunkId");

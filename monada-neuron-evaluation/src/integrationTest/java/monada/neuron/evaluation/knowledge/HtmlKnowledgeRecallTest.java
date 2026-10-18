@@ -1,13 +1,20 @@
 package monada.neuron.evaluation.knowledge;
 
+import com.monada.api.MonadaMemory;
+import com.monada.api.MonadaMemoryOptions;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.Layer;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.QueryText;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.Row;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.Snapshot;
+import monada.neuron.resonance.adapter.ResonanceStoreMemoryAdapter;
+import monada.neuron.resonance.adapter.ResonanceStoreRecall;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,7 +43,7 @@ class HtmlKnowledgeRecallTest {
         root = directory.resolve("store");
         manifest = new HtmlKnowledgeIngestion(CORPUS).ingest(root).manifest();
         observation = new HtmlKnowledgeRecall(CORPUS).observe(root, manifest, QUERY_SET.queryHash(),
-                QueryText.of(QUERY_SET));
+                texts(QUERY_SET));
     }
 
     @Test
@@ -83,7 +90,7 @@ class HtmlKnowledgeRecallTest {
     @Test
     void repeatedObservationThroughFreshHandlesIsIdentical() {
         var again = new HtmlKnowledgeRecall(CORPUS).observe(root, manifest, QUERY_SET.queryHash(),
-                QueryText.of(QUERY_SET));
+                texts(QUERY_SET));
 
         assertEquals(observation.snapshot(), again.snapshot());
         assertEquals(observation.snapshot(), Snapshot.parseTsv(observation.snapshot().toTsv()));
@@ -111,6 +118,87 @@ class HtmlKnowledgeRecallTest {
     void aRootWithoutAStoreIsRejectedInsteadOfCreated() {
         assertThrows(IngestionInputException.class, () -> new HtmlKnowledgeRecall(CORPUS)
                 .observe(directory.resolve("missing"), manifest, "x", List.of(new QueryText("x", "a"))));
+    }
+
+    @Test
+    void lookaheadRowsAreRecordedButNeverScoredAsResults() {
+        var snapshot = observation.snapshot();
+        for (var query : QUERY_SET.queries()) {
+            for (var layer : Layer.values()) {
+                var scored = snapshot.rows(query.queryId(), layer, HtmlKnowledgeRecall.MAX_LIMIT);
+                var lookahead = snapshot.rows(query.queryId(), layer, HtmlKnowledgeRecall.LOOKAHEAD_LIMIT);
+                assertTrue(lookahead.size() <= HtmlKnowledgeRecall.LOOKAHEAD_LIMIT);
+                assertEquals(scored.stream().map(Row::score).toList(),
+                        lookahead.stream().limit(scored.size()).map(Row::score).toList(), query.queryId() + " " + layer);
+            }
+        }
+        // B0's integer scores tie widely: "the" occurs in more than six chunks.
+        var ties = new HtmlKnowledgeRecall(CORPUS).observe(root, manifest, "probe", List.of(new QueryText("probe", "the")));
+        var lookahead = ties.snapshot().rows("probe", Layer.B0, HtmlKnowledgeRecall.LOOKAHEAD_LIMIT);
+        assertEquals(6, lookahead.size());
+        assertEquals(lookahead.get(4).score(), lookahead.get(5).score());
+    }
+
+    @Test
+    void aFailureAtAnyLimitLeavesTheQueryUnscoredInThatLayer() {
+        var memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
+        ResonanceStoreRecall failingAtThree = (query, limit, threshold) -> {
+            if (limit == 3) {
+                throw new UncheckedIOException(new IOException("injected limit-3 failure"));
+            }
+            return memory.resonate(query).topK(limit).threshold(threshold).execute().results();
+        };
+        var recall = new HtmlKnowledgeRecall(CORPUS);
+        var adapter = ResonanceStoreMemoryAdapter.using(failingAtThree, recall.adapterConfig());
+        var observed = recall.observe(memory, adapter, manifest, "probe",
+                List.of(new QueryText("probe", "What does the fieldset element do?")));
+
+        var completed = observed.checks().stream().filter(check -> check.name().equals("recall.completed"))
+                .findFirst().orElseThrow();
+        assertFalse(completed.passed());
+        assertTrue(completed.detail().contains("probe B2 limit 3: answered FAILED"), completed.detail());
+        var b2 = observed.snapshot().rows("probe", Layer.B2, HtmlKnowledgeRecall.MAX_LIMIT);
+        assertTrue(b2.stream().anyMatch(row -> row.chunkId().equals(HtmlKnowledgeRecall.FAILED)), b2.toString());
+        assertEquals(1, b2.stream().filter(row -> row.chunkId().equals(HtmlKnowledgeRecall.FAILED)).count());
+        assertTrue(observed.snapshot().rows("probe", Layer.B1, HtmlKnowledgeRecall.MAX_LIMIT).stream()
+                .noneMatch(row -> row.chunkId().equals(HtmlKnowledgeRecall.FAILED)), "B1 did not fail");
+    }
+
+    @Test
+    void theWorkloadCarriesIdsAndTextsOnly() {
+        var texts = texts(QUERY_SET);
+        var tsv = QueryText.renderTsv(QUERY_SET.queryHash(), texts);
+        var workload = QueryText.parseTsv(tsv);
+
+        assertEquals(QUERY_SET.queryHash(), workload.queryHash());
+        assertEquals(texts, workload.queries());
+        for (var query : QUERY_SET.queries()) {
+            for (var chunkId : query.relevant()) {
+                assertFalse(tsv.contains(chunkId), "workload leaks " + chunkId);
+            }
+            query.keyClaims().forEach(claim -> assertFalse(tsv.contains(claim), "workload leaks " + claim));
+        }
+        assertThrows(IngestionInputException.class, () -> QueryText.parseTsv("queryId\ttext\n"));
+        assertThrows(IngestionInputException.class,
+                () -> QueryText.parseTsv("# queryHash x\nqueryId\ttext\nq\ta\nq\tb\n"));
+    }
+
+    @Test
+    void theRecallSideReferencesNoGoldLabelType() throws IOException {
+        for (var type : List.of("HtmlKnowledgeRecallPhase", "HtmlKnowledgeRecall", "HtmlKnowledgeRecall$Run",
+                "HtmlKnowledgeRecall$QueryText", "HtmlKnowledgeRecall$QueryText$Workload", "LexicalOverlapBaseline",
+                "TokenPackingSignalCodec")) {
+            try (var input = HtmlKnowledgeRecall.class.getResourceAsStream(type + ".class")) {
+                var bytes = new String(input.readAllBytes(), StandardCharsets.ISO_8859_1);
+                assertFalse(bytes.contains("HtmlKnowledgeQuerySet"), type);
+                assertFalse(bytes.contains("JudgedQuery"), type);
+                assertFalse(bytes.contains("RecallMetrics"), type);
+            }
+        }
+    }
+
+    private static List<QueryText> texts(HtmlKnowledgeQuerySet querySet) {
+        return querySet.queries().stream().map(query -> new QueryText(query.queryId(), query.text())).toList();
     }
 
     private static List<String> chunkIds(Snapshot snapshot, String queryId, Layer layer) {

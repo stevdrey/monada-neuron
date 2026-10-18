@@ -82,18 +82,33 @@ class HtmlKnowledgeRecallRunnerTest {
     @Test
     void outputsCarryEveryQueryAndUndefinedValuesAsNull() throws IOException {
         var out = directory.resolve("out");
-        assertEquals(Set.of("html-knowledge-recall.json", "html-knowledge-recall.md", "html-kq-v1-recall.tsv",
-                        "html-kq-v1-recall-results.json"),
+        assertEquals(Set.of("html-knowledge-recall.json", "html-knowledge-recall.md", "html-kq-v1-recall.tsv"),
                 written.stream().map(path -> path.getFileName().toString()).collect(Collectors.toSet()));
-        var results = Files.readString(out.resolve("html-kq-v1-recall-results.json"));
+        var results = Files.readString(out.resolve("html-knowledge-recall.json"));
+        assertTrue(results.contains("\"allChecksPassed\": true"), "verdict and scores share one object");
+        assertTrue(results.contains("\"recall\": {"), "scored payload embedded in the report");
+        assertTrue(results.contains("\"byCategory\": {"), "metric aggregates per category");
+        assertTrue(Files.readString(out.resolve("html-kq-v1-recall.tsv")).startsWith("# raw seed-phase rows"));
         for (var query : HtmlKnowledgeQuerySet.bundled(HtmlKnowledgeCorpus.bundled()).queries()) {
             assertTrue(results.contains("\"queryId\": \"" + query.queryId() + "\""), query.queryId());
         }
         assertTrue(results.contains("\"HitPrecision@1\": { \"value\": "), "aggregates carry nDefined/nUndefined");
+        assertTrue(markdown(out).contains("### Quality at k = 5 by category"));
         assertTrue(!results.contains("NaN"), "undefined values are null, never NaN");
-        var markdown = Files.readString(out.resolve("html-knowledge-recall.md"));
+        var markdown = markdown(out);
         assertTrue(markdown.contains("## Judged Recall (`html-kq-v1`)"), markdown);
         assertTrue(markdown.contains("### Follow-up candidates"), markdown);
+    }
+
+    @Test
+    void timingsAreWarmAndLabeledAsSuch() {
+        var sampling = outcome.report().metadata().get("seed.perf.sampling");
+        assertTrue(sampling.startsWith("warm: one unmeasured pass"), sampling);
+        assertEquals("32", outcome.report().metadata().get("seed.perf.warmupQueries"));
+    }
+
+    private static String markdown(Path out) throws IOException {
+        return Files.readString(out.resolve("html-knowledge-recall.md"));
     }
 
     @Test

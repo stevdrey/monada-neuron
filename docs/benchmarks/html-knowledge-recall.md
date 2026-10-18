@@ -33,10 +33,9 @@ Options, exit statuses and output preparation are the same as for
 
 | File | Content |
 | :--- | :--- |
-| `html-knowledge-recall.json` | semantic checks, required metadata and the orchestrator environment |
-| `html-knowledge-recall.md` | the same, followed by the scored summary (aggregates, outcomes, codec effect, per-query table, follow-ups) |
-| `html-kq-v1-recall-results.json` | aggregates per layer and `k` with `nDefined`/`nUndefined`, outcome counts per category, abstention metrics, one row per query (expected chunk ids, returned ids with rank and score, `tieAtCutoff`, outcome, per-query metrics, miss diagnostics), the B1/B2c codec effect and the follow-up candidates |
-| `html-kq-v1-recall.tsv` | every result the seed phase recorded: query, layer, limit, rank, chunk id, hexadecimal score |
+| `html-knowledge-recall.json` | the single machine-readable report. It holds `allChecksPassed`, the semantic checks, the required metadata (run identity, versions, hashes, codec, phase JVMs) and the orchestrator environment. The scored payload sits in the same object under `recall`, or is `null` when nothing was scored. That payload has: aggregates per layer and `k` with `nDefined`/`nUndefined`; a `byCategory` object with every metric aggregate, `NoAnswerFalsePositiveRate` and the outcome counts per category; the abstention metrics; one row per query (expected chunk ids, returned ids with rank and score, `tieAtCutoff`, outcome, per-query metrics, miss diagnostics); the B1/B2c codec effect; and the follow-up candidates |
+| `html-knowledge-recall.md` | the same, readable: checks and metadata, then the scored summary (aggregates, quality and outcomes by category, codec effect, per-query table, follow-ups) |
+| `html-kq-v1-recall.tsv` | raw rows of the seed phase (query, layer, limit, rank, chunk id, hexadecimal score), including the limit-6 lookahead and any `<failed>` markers. Its first line states `corpusHash` and `allChecksPassed`: it is not a verified result on its own |
 
 ## Query set `html-kq-v1`
 
@@ -66,14 +65,18 @@ encodability. Any violation fails the run with exit `2`. `keyClaims` are curated
 
 | Id | System | Limits |
 | :--- | :--- | :--- |
-| B0 | `LexicalOverlapBaseline`: distinct query tokens contained in each chunk; score 0 dropped; score descending, then `chunkId` | 5 |
-| B1 | `MonadaMemory.resonate(text).topK(limit).threshold(0.0)` with default options | 1, 3, 5 |
-| B2 | `ResonanceStoreMemoryAdapter.recall` with `TokenPackingSignalCodec` as query encoder, the production `HashedSignalDecoder`, default options and `t = 0.0` | 1, 3, 5 |
-| B2c | the codec's query texts sent directly to the Store with limit 5 and `t`, merged by the adapter's rule | 5 |
+| B0 | `LexicalOverlapBaseline`: distinct query tokens contained in each chunk; score 0 dropped; score descending, then `chunkId` | 5, 6 |
+| B1 | `MonadaMemory.resonate(text).topK(limit).threshold(0.0)` with default options | 1, 3, 5, 6 |
+| B2 | `ResonanceStoreMemoryAdapter.recall` with `TokenPackingSignalCodec` as query encoder, the production `HashedSignalDecoder`, default options and `t = 0.0` | 1, 3, 5, 6 |
+| B2c | the codec's query texts sent directly to the Store with the same limit and `t`, merged by the adapter's rule | 5, 6 |
 
 Tokens are maximal `Character.isLetterOrDigit` runs lowercased with `Locale.ROOT` (`HtmlTokens`), shared by B0, the
 paraphrase check and the codec. `t = 0.0` is the Store's `MonadaQuery` default; nothing was tuned on this set, and no
 threshold sweep was run.
+
+Every system is **scored only on its limit-5 list**: `Ret_k` is a prefix of that list, as the protocol requires. The
+limit-6 **lookahead** exists only to set `tieAtCutoff` at k = 5, that is, whether ranks 5 and 6 share a score. Without
+it, a tie that straddles the k = 5 cutoff could never be seen. Limits 1 and 3 serve the prefix-stability check.
 
 ### L2 codec `token-packing v1`
 
@@ -99,16 +102,24 @@ text. That difference is the codec effect, and B2c isolates it.
 
 ## Checks
 
-The phases see query ids and texts only (`HtmlKnowledgeRecall.QueryText`). The gold labels are read by the
-orchestrator's scorer (`RecallMetrics`) alone. Each phase reports:
+The phase JVMs never load the query set. The orchestrator writes a labels-free workload to the work directory: the
+`queryHash`, a header and `queryId<TAB>text` rows. The phases read only that file (`HtmlKnowledgeRecall.QueryText`),
+so no gold label is ever present in a phase JVM. The orchestrator's scorer (`RecallMetrics`) is the only reader of the
+labels. A test checks that the recall-side classes reference no label type and that the workload leaks no gold chunk
+id or claim. Each phase reports:
 
 | Check | Pass condition |
 | :--- | :--- |
-| `recall.completed` | every B1/B2c Store call returned and every B2 recall answered `COMPLETE`. A failure leaves a `<failed>` marker, and the scorer gives that query no outcome for that layer, so a failure is never counted as an abstention. |
+| `recall.completed` | every B1/B2c Store call returned and every B2 recall answered `COMPLETE`, at every limit. |
 | `fidelity.source` | every B1 and B2c atom maps through the manifest, and its returned content hashes to the corpus `sha256`, as returned. |
 | `fidelity.reference` | every B2 reference maps through the manifest. |
-| `neuron.b2EqualsB2c` | B2 equals the codec-direct control: same atoms, same order, bit-exact scores. A difference would be an adapter defect. |
-| `recall.prefixStability` | the limit-1 and limit-3 lists are prefixes of the limit-5 list. The only allowed exception is an equal-score substitution at the cutoff. |
+| `neuron.b2EqualsB2c` | at limits 5 and 6, B2 equals the codec-direct control: same atoms, same order, bit-exact scores. A difference would be an adapter defect. |
+| `recall.prefixStability` | each shorter list is the prefix of the next longer one: B1/B2 limits 1 and 3 against 5, and B1/B2/B2c limit 5 against the lookahead. The only allowed exception is an equal-score substitution at the cutoff. |
+
+Any failure of a query in a layer, at any limit, leaves exactly one `<failed>` marker for that query and layer. This
+covers an exception, a non-`COMPLETE` status, an unmapped atom or reference, and a content mismatch. The scorer then
+gives the query no outcome in that layer: it is excluded from every aggregate and counted as unscored, never as an
+abstention.
 
 The orchestrator adds two checks:
 - `process.restart`: seed and reopen ran in separate JVMs, as for [persistence](html-knowledge-persistence.md).
@@ -116,15 +127,16 @@ The orchestrator adds two checks:
 
 The seed phase also carries the three `ingestion.*` checks of #105.
 
-## Results (first run, 2026-10-17)
+## Results (2026-10-18, after review round 1)
 
 Environment:
-- Neuron `0043148+dirty` (this change, uncommitted);
+- Neuron `97002b3+dirty` (this change, uncommitted);
 - Store checkout `7d971ea`;
 - Azul OpenJDK 27 on Linux;
 - one seed JVM and one reopen JVM.
 
-Two full runs gave byte-identical results files and snapshots, and every check passed.
+Two full runs gave byte-identical `recall` payloads and raw rows, and every check passed. Scores are unchanged from
+the first edition: scoring still reads the limit-5 lists.
 
 | Layer | Recall@1 | Recall@5 | MRR@5 | Coverage@5 | FullEvidence@5 | NoAnswerFPR@5 | AbstentionRecall |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -134,6 +146,19 @@ Two full runs gave byte-identical results files and snapshots, and every check p
 
 Means are over the 22 answerable queries. FullEvidence is over the 3 `multi-evidence` queries, and the abstention
 values are over the 10 queries with an empty relevant set.
+
+| Category (k = 5) | B0 Recall / MRR | B1 Recall / MRR | B2 Recall / MRR |
+| :--- | :--- | :--- | :--- |
+| `exact-term` | 0.800 / 0.600 | 0.800 / 0.667 | 0.600 / 0.120 |
+| `paraphrase` | 0.250 / 0.250 | 0.250 / 0.250 | 0.000 / 0.000 |
+| `multi-evidence` | 1.000 / 0.667 | 1.000 / 0.833 | 0.722 / 0.611 |
+| `code-example` | 1.000 / 0.667 | 1.000 / 0.778 | 1.000 / 0.667 |
+| `distractor` | 1.000 / 1.000 | 1.000 / 0.778 | 0.667 / 0.400 |
+| `false-premise` (refuted) | 1.000 / 1.000 | 1.000 / 1.000 | 1.000 / 0.750 |
+| `conflicting-source` | 1.000 / 1.000 | 0.750 / 0.267 | 0.500 / 0.292 |
+
+`NoAnswerFalsePositiveRate@5` is `1.000` for `no-answer`, `out-of-domain` and the unrefuted `false-premise` query in
+every layer, and `0.000` for `blank`.
 
 Observations, not tuned away:
 
@@ -153,10 +178,13 @@ Observations, not tuned away:
   - B2 retrieves only one side of both conflicting-source queries.
 
   This measures the codec, not the adapter: B2 = B2c held for every query.
-- **Latency.** Warm limit-5 latency is a single exploratory sample per query, recorded as `<phase>.perf.*` and never
-  part of a verdict:
-  - B1: median about 0.3 ms;
-  - B2: median about 2.5 ms, since it makes one Store query per token.
+- **Ties.** The lookahead flags a tie straddling the k = 5 cutoff for 23 queries in B0, whose integer overlap scores
+  tie widely, and for none in B1, B2 or B2c.
+- **Latency.** Each query is first sent once through B1 and B2, unmeasured (`perf.warmupQueries`). The measured pass
+  then takes one warm limit-5 sample per query on the same open handles. The samples are recorded as
+  `<phase>.perf.*` and are never part of a verdict:
+  - B1: median about 0.2 ms;
+  - B2: median about 1.5 ms, since it makes one Store query per token.
 
 Follow-up candidates (listed in the report and never relabeled):
 - B1 misses `q:exact-term-02` and `q:paraphrase-01/03/04`, and returns `q:conflicting-source-01` only `PARTIAL`.

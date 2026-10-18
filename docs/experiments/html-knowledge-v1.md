@@ -854,5 +854,7 @@ source set, and do not change `./gradlew test` when it is absent.
 - No version change (issue #107): the query set is delivered as `html-kq-v1` (32 queries,
   `monada-neuron-evaluation/src/integration/resources/html-kq-v1/queries.tsv`) and scored by `runHtmlKnowledgeRecall`
   ([recall](../benchmarks/html-knowledge-recall.md)). The L2 codec is the documented, text-only `token-packing v1`.
-  Every operational failure is recorded as a failure marker, so the scorer gives that query no outcome rather than an
-  abstention. No definition, formula, label rule or report field changes.
+  Any operational or fidelity failure of a query in a layer, at any limit, is recorded as a failure marker, so the
+  scorer gives that query no outcome rather than an abstention. Each system is also queried with a limit-6 lookahead,
+  used only for `tieAtCutoff` at k = 5 and never for `Ret_k`. The phase JVMs read a labels-free workload, so only the
+  scorer reads gold labels. No definition, formula, label rule or report field changes.

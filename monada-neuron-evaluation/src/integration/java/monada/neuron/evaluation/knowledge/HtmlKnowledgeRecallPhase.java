@@ -15,8 +15,10 @@ import java.util.ArrayList;
  * <p>Arguments: {@code seed|reopen <store-root> <work-dir>}. {@code seed} imports the corpus into the fresh root,
  * writes the manifest, then runs every query and writes its recall snapshot and result. {@code reopen} reads the
  * manifest, runs every query against the existing root with new handles and writes its own snapshot and result.
- * Phases see query ids and texts only; gold labels are read by the orchestrator's scorer. Exit status: {@code 0} all
- * checks passed, {@code 1} a semantic check failed, {@code 2} invalid usage or rejected input.
+ *
+ * <p>A phase never loads the query set: it reads only the labels-free workload ({@code queryHash}, query ids and
+ * texts) that the orchestrator wrote to the work directory, so no gold label exists in a phase JVM. Exit status:
+ * {@code 0} all checks passed, {@code 1} a semantic check failed, {@code 2} invalid usage or rejected input.
  */
 public final class HtmlKnowledgeRecallPhase {
 
@@ -24,12 +26,10 @@ public final class HtmlKnowledgeRecallPhase {
     static final String REOPEN = "reopen";
 
     private final HtmlKnowledgeCorpus corpus;
-    private final HtmlKnowledgeQuerySet querySet;
     private final WorkDirectory work;
 
     private HtmlKnowledgeRecallPhase(Path work) {
         this.corpus = HtmlKnowledgeCorpus.bundled();
-        this.querySet = HtmlKnowledgeQuerySet.bundled(corpus);
         this.work = new WorkDirectory(work);
     }
 
@@ -51,6 +51,7 @@ public final class HtmlKnowledgeRecallPhase {
     }
 
     private int run(String phase, Path root) {
+        var workload = QueryText.parseTsv(work.read(work.workload()));
         var checks = new ArrayList<Check>();
         IngestionManifest manifest;
         if (phase.equals(SEED)) {
@@ -61,8 +62,8 @@ public final class HtmlKnowledgeRecallPhase {
         } else {
             manifest = IngestionManifest.parseTsv(work.read(work.manifest()), corpus.version(), corpus.corpusHash());
         }
-        var observation = new HtmlKnowledgeRecall(corpus).observe(root, manifest, querySet.queryHash(),
-                QueryText.of(querySet));
+        var observation = new HtmlKnowledgeRecall(corpus).observe(root, manifest, workload.queryHash(),
+                workload.queries());
         checks.addAll(observation.checks());
         work.write(work.snapshot(phase), observation.snapshot().toTsv());
         var result = new Result(checks, HtmlKnowledgePersistencePhase.environment(observation.metadata()));
