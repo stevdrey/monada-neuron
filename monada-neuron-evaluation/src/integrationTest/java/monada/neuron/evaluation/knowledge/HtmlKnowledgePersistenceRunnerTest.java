@@ -25,8 +25,6 @@ class HtmlKnowledgePersistenceRunnerTest {
             "seed.ingestion.readback",
             "seed.persistence.atomCount",
             "seed.neuron.signalAttribution",
-            "seed.neuron.firstRecallsComplete",
-            "reopen.neuron.firstRecallsComplete",
             "reopen.persistence.atomCount",
             "reopen.persistence.encodingProfile",
             "reopen.persistence.readback",

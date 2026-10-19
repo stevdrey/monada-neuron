@@ -151,4 +151,29 @@ class HtmlKnowledgeIngestionTest {
             parent.toFile().setWritable(true);
         }
     }
+
+    @Test
+    void aScratchCleanupFailureIsInTheReturnedDiagnostics() throws IOException {
+        var ingestion = new HtmlKnowledgeIngestion(HtmlKnowledgeCorpus.bundled());
+        var imported = ingestion.ingest(directory.resolve("store"));
+        var scratch = Files.createDirectories(directory.resolve("scratch"));
+        var locked = Files.createDirectories(scratch.resolve("locked"));
+        Files.writeString(locked.resolve("pinned"), "x");
+        assumeTrue(locked.toFile().setWritable(false), "the platform must honour a read-only directory");
+        try {
+            assumeFalse(Files.isWritable(locked), "a privileged user ignores directory permissions");
+            var diagnostics = new ArrayList<String>();
+
+            var timings = ingestion.timings(imported, scratch, diagnostics);
+            var metadata = new TreeMap<String, String>();
+            timings.describe("perf", "readback", "env.timingScratch", metadata);
+
+            assertTrue(metadata.get("perf.ingest.excludedSamples").contains("scratch cleanup failed, left behind: "
+                    + scratch), metadata.get("perf.ingest.excludedSamples"));
+            assertEquals(Integer.toString(LatencyRow.REPETITIONS), metadata.get("perf.ingest.measurementIterations"),
+                    "a cleanup failure does not exclude any sample");
+        } finally {
+            locked.toFile().setWritable(true);
+        }
+    }
 }

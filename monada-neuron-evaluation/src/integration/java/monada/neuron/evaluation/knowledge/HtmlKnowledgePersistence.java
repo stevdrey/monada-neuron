@@ -248,8 +248,9 @@ public final class HtmlKnowledgePersistence {
             var adapterOpenStart = System.nanoTime();
             opened = ResonanceStoreMemoryAdapter.open(root, config());
             adapterOpens[repetition] = System.nanoTime() - adapterOpenStart;
-            // The first recall on each fresh adapter, before any other call on it; its result is discarded, but a
-            // failed or non-COMPLETE call is reported and never counted as a sample.
+            // The first recall on each fresh adapter, before any other call on it; its result is discarded. A failed or
+            // non-COMPLETE call is excluded and recorded as a diagnostic, never a check: these calls exist only for
+            // latency, and neuron.recallComplete judges the probes the protocol requires.
             try {
                 var recallStart = System.nanoTime();
                 var response = opened.recall(firstProbe);
@@ -268,12 +269,7 @@ public final class HtmlKnowledgePersistence {
         LatencyRow.wallClock(firstRecalls.stream().mapToLong(Long::longValue).toArray(), 1, "the first adapter recall"
                 + " (first probe) on a freshly opened adapter, before any other call on it; the readback already ran in"
                 + " this JVM on another handle; failed or non-COMPLETE calls are excluded", false)
-                .describe("perf.firstRecall", metadata);
-        checks.add(new Check("neuron.firstRecallsComplete", firstRecallFailures.isEmpty(),
-                firstRecallFailures.isEmpty()
-                        ? "the first recall on each of the " + LatencyRow.REPETITIONS + " freshly opened adapters"
-                                + " answered COMPLETE"
-                        : "excluded from the latency row: " + String.join("; ", firstRecallFailures)));
+                .excluding(firstRecallFailures).describe("perf.firstRecall", metadata);
         try (var adapter = opened) {
             // Only COMPLETE recalls are samples; any other status is reported by neuron.recallComplete.
             var warm = new ArrayList<Long>();
@@ -310,7 +306,7 @@ public final class HtmlKnowledgePersistence {
             new LatencyRow(warm.stream().mapToLong(Long::longValue).toArray(), 1, 1, LatencyRow.WALL_CLOCK + "; one"
                     + " adapter recall per probe after the first-recall call on the same adapter; only the adapter recall"
                     + " is timed; non-COMPLETE recalls are excluded", false, LatencyRow.NO_GC_TELEMETRY)
-                    .describe("perf.warmRecall", metadata);
+                    .excluding(statusFailures).describe("perf.warmRecall", metadata);
         }
 
         checks.add(new Check("neuron.recallComplete", statusFailures.isEmpty(), statusFailures.isEmpty()

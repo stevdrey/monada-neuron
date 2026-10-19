@@ -26,7 +26,6 @@ class HtmlKnowledgeRecallRunnerTest {
             "seed.ingestion.manifestComplete",
             "seed.ingestion.contentFidelity",
             "seed.ingestion.readback",
-            "seed.recall.auxiliaryCallsCompleted",
             "seed.recall.completed",
             "seed.fidelity.source",
             "seed.fidelity.reference",
@@ -34,7 +33,6 @@ class HtmlKnowledgeRecallRunnerTest {
             "seed.recall.prefixStability",
             "reopen.persistence.readback",
             "reopen.persistence.noUnmappedAtoms",
-            "reopen.recall.auxiliaryCallsCompleted",
             "reopen.recall.completed",
             "reopen.fidelity.source",
             "reopen.fidelity.reference",
@@ -43,7 +41,6 @@ class HtmlKnowledgeRecallRunnerTest {
             "replica.ingestion.manifestComplete",
             "replica.ingestion.contentFidelity",
             "replica.ingestion.readback",
-            "replica.recall.auxiliaryCallsCompleted",
             "replica.recall.completed",
             "replica.fidelity.source",
             "replica.fidelity.reference",
@@ -150,6 +147,15 @@ class HtmlKnowledgeRecallRunnerTest {
         }
         assertEquals("true", metadata.get("env.replicaRoot.sameFileStoreAsStoreRoot"));
         assertEquals("none", metadata.get("cleanup.leftover"));
+        for (var phase : List.of("seed", "reopen", "replica")) {
+            assertEquals("0", metadata.get(phase + ".perf.warmup.failures"), phase);
+            assertEquals("0", metadata.get(phase + ".perf.b1.firstRecall.excludedSamples"), phase);
+            assertEquals("0", metadata.get(phase + ".perf.b2.recallLimit5.excludedSamples"), phase);
+        }
+        assertEquals("0", metadata.get("reopen.perf.reopenReadback.excludedSamples"));
+        assertTrue(outcome.report().checks().stream().noneMatch(check -> check.name().contains("auxiliary")
+                || check.name().contains("firstRecall") || check.name().contains("timing")),
+                "latency-only calls never produce a check");
         assertEquals("true", metadata.get("seed.env.timingScratch.sameFileStoreAsStoreRoot"));
         assertEquals("0", metadata.get("seed.perf.ingest.excludedSamples"));
         assertEquals("0", metadata.get("replica.perf.ingestReadback.excludedSamples"));

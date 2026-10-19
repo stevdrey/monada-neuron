@@ -194,11 +194,8 @@ public final class HtmlKnowledgeIngestion {
          * test as {@code <scratchKey>.sameFileStoreAsStoreRoot}. All of it is metadata, never a semantic check.
          */
         void describe(String prefix, String readbackRow, String scratchKey, Map<String, String> metadata) {
-            var diagnostic = excluded.isEmpty() ? "0" : excluded.size() + ": " + String.join("; ", excluded);
-            ingest.describe(prefix + ".ingest", metadata);
-            metadata.put(prefix + ".ingest.excludedSamples", diagnostic);
-            readback.describe(prefix + "." + readbackRow, metadata);
-            metadata.put(prefix + "." + readbackRow + ".excludedSamples", diagnostic);
+            ingest.excluding(excluded).describe(prefix + ".ingest", metadata);
+            readback.excluding(excluded).describe(prefix + "." + readbackRow, metadata);
             metadata.put(scratchKey + ".sameFileStoreAsStoreRoot", scratchSameFileStore);
         }
     }
@@ -224,13 +221,7 @@ public final class HtmlKnowledgeIngestion {
             diagnostics.add("scratch directory could not be created beside the root (" + e + "); only the import"
                     + " under test is sampled");
         }
-        try {
-            return timings(first, scratch, diagnostics);
-        } finally {
-            if (scratch != null) {
-                deleteQuietly(scratch, diagnostics);
-            }
-        }
+        return timings(first, scratch, diagnostics);
     }
 
     /** Deletes a timing-only path; a failure is recorded in {@code diagnostics} and never thrown. */
@@ -242,7 +233,11 @@ public final class HtmlKnowledgeIngestion {
         }
     }
 
-    private ImportTimings timings(Result first, Path scratch, List<String> failures) {
+    /**
+     * Samples into {@code scratch} (null when it could not be created), deletes it, and only then builds the result,
+     * so a cleanup failure recorded in {@code failures} is part of the returned diagnostics.
+     */
+    ImportTimings timings(Result first, Path scratch, List<String> failures) {
         var sameStore = scratch == null ? Optional.<Boolean>empty()
                 : new RunEnvironment().sameFileStore(first.root(), scratch);
         var comparable = sameStore.orElse(false);
@@ -270,6 +265,9 @@ public final class HtmlKnowledgeIngestion {
             } finally {
                 deleteQuietly(root, failures);
             }
+        }
+        if (scratch != null) {
+            deleteQuietly(scratch, failures);
         }
         var chunks = corpus.chunks().size();
         return new ImportTimings(

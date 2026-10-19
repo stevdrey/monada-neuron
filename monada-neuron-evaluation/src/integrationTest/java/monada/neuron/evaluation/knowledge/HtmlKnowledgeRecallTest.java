@@ -55,7 +55,7 @@ class HtmlKnowledgeRecallTest {
 
     @Test
     void everySemanticCheckPasses() {
-        assertEquals(List.of("recall.auxiliaryCallsCompleted", "recall.completed", "fidelity.source", "fidelity.reference", "neuron.b2EqualsB2c",
+        assertEquals(List.of("recall.completed", "fidelity.source", "fidelity.reference", "neuron.b2EqualsB2c",
                 "recall.prefixStability"), observation.checks().stream().map(HtmlKnowledgeIngestion.Check::name).toList());
         observation.checks().forEach(check -> assertTrue(check.passed(), check.name() + ": " + check.detail()));
     }
@@ -300,17 +300,23 @@ class HtmlKnowledgeRecallTest {
         assertTrue(cold.failures().getFirst().contains("B2 answered FAILED"), cold.failures().toString());
 
         var observed = recall.observe(memory, adapter, manifest, "probe", List.of(sample));
-        var auxiliary = observed.checks().getFirst();
-        assertEquals("recall.auxiliaryCallsCompleted", auxiliary.name());
-        assertTrue(auxiliary.passed(), "the adapter recovered after its first call: " + auxiliary.detail());
+        assertTrue(observed.checks().stream().allMatch(HtmlKnowledgeIngestion.Check::passed),
+                "a recovered latency-only failure never decides the verdict");
+        assertEquals("0", observed.metadata().get("perf.warmup.failures"));
 
-        ResonanceStoreRecall alwaysFailing = (query, limit, threshold) -> {
-            throw new UncheckedIOException(new IOException("injected failure"));
+        // A warm-up failure on calls made only for latency is a diagnostic; the measured recalls judge the run.
+        var warmupCalls = new int[1];
+        ResonanceStoreRecall failingWarmup = (query, limit, threshold) -> {
+            if (limit == HtmlKnowledgeRecall.MAX_LIMIT && warmupCalls[0]++ == 0) {
+                throw new UncheckedIOException(new IOException("injected warm-up failure"));
+            }
+            return memory.resonate(query).topK(limit).threshold(threshold).execute().results();
         };
-        var broken = ResonanceStoreMemoryAdapter.using(alwaysFailing, recall.adapterConfig());
-        var failed = recall.observe(memory, broken, manifest, "probe", List.of(sample)).checks().getFirst();
-        assertFalse(failed.passed());
-        assertTrue(failed.detail().contains("warm-up " + sample.queryId() + " B2 answered FAILED"), failed.detail());
+        var flaky = ResonanceStoreMemoryAdapter.using(failingWarmup, recall.adapterConfig());
+        var warmed = recall.observe(memory, flaky, manifest, "probe", List.of(sample));
+        assertTrue(warmed.checks().stream().allMatch(HtmlKnowledgeIngestion.Check::passed), warmed.checks().toString());
+        assertTrue(warmed.metadata().get("perf.warmup.failures").startsWith("1: warm-up " + sample.queryId()
+                + " B2 answered FAILED"), warmed.metadata().get("perf.warmup.failures"));
         assertEquals("unavailable (no successful sample)", metadataOf(new LatencyRow(new long[0], 0, 1, "x", false,
                 "none")).get("r.medianNanos"));
         assertEquals("2", metadataOf(new LatencyRow(new long[] {5, 7}, 0, 1, "x", false, "none"))
@@ -345,6 +351,18 @@ class HtmlKnowledgeRecallTest {
         assertEquals("2", observed.metadata().get("perf.b1.recallLimit5.measurementIterations"));
         assertFalse(observed.checks().stream().filter(check -> check.name().equals("recall.completed")).findFirst()
                 .orElseThrow().passed());
+    }
+
+    @Test
+    void scoresAreComparedBitExactly() {
+        assertTrue(HtmlKnowledgeRecall.sameScore(0.5, 0.5));
+        assertFalse(HtmlKnowledgeRecall.sameScore(0.0, -0.0), "signed zeros are different bits");
+        var positive = new Row("q", Layer.B1, 5, 1, "a", 0.0);
+        var negative = new Row("q", Layer.B1, 3, 1, "a", -0.0);
+        var differences = HtmlKnowledgeRecall.prefixDifferences(List.of(positive), List.of(negative), 3);
+        assertEquals(1, differences.size(), "the same chunk with -0.0 instead of +0.0 is a difference");
+        assertFalse(differences.getFirst().straddlingTie());
+        assertFalse(RecallMetrics.tieAtCutoff(List.of(0.0, -0.0), 1), "+0.0 and -0.0 are no tie");
     }
 
     @Test

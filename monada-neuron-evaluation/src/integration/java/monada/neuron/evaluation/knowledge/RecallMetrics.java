@@ -250,7 +250,7 @@ final class RecallMetrics {
 
     /** Whether the tie group at rank {@code k} straddles the cutoff: the scores at ranks {@code k} and {@code k+1} are equal. */
     static boolean tieAtCutoff(List<Double> scores, int k) {
-        return scores.size() > k && scores.get(k - 1).doubleValue() == scores.get(k).doubleValue();
+        return scores.size() > k && HtmlKnowledgeRecall.sameScore(scores.get(k - 1), scores.get(k));
     }
 
     /** Returns the macro mean of the defined {@code values}. */

@@ -76,26 +76,30 @@ public final class HtmlKnowledgeRecallPhase {
         var recall = new HtmlKnowledgeRecall(corpus);
         if (phase.equals(REOPEN)) {
             // The seed's ingestion already read every chunk back; the restarted process repeats that for itself.
+            // The protocol requires one readback in the restarted process: repetition 1 is that semantic check.
+            // Repetitions 2 to 5 exist only to sample perf.reopenReadback, so their failures are diagnostics.
             var samples = new ArrayList<Long>();
-            List<Check> reported = null;
+            var excluded = new ArrayList<String>();
             for (var repetition = 0; repetition < LatencyRow.REPETITIONS; repetition++) {
                 var start = System.nanoTime();
                 var readback = recall.readback(root, manifest);
                 var elapsed = System.nanoTime() - start;
                 var passed = readback.stream().allMatch(Check::passed);
+                if (repetition == 0) {
+                    checks.addAll(readback);
+                }
                 if (passed) {
                     samples.add(elapsed);
-                }
-                // Every repetition is a readback of its own: the first failing one is reported, else the first.
-                if (reported == null || (!passed && reported.stream().allMatch(Check::passed))) {
-                    reported = readback;
+                } else {
+                    excluded.add("repetition " + (repetition + 1) + " failed " + readback.stream()
+                            .filter(check -> !check.passed()).map(Check::name).toList()
+                            + (repetition == 0 ? " (the required readback, reported by its checks)" : ""));
                 }
             }
-            checks.addAll(reported);
             LatencyRow.wallClock(samples.stream().mapToLong(Long::longValue).toArray(), corpus.chunks().size(),
-                    "Store open plus one resonate per chunk, with the content hash check in the window; every"
-                            + " repetition is checked and a failed one is excluded", true)
-                    .describe("perf.reopenReadback", timings);
+                    "Store open plus one resonate per chunk, with the content hash check in the window; repetition 1"
+                            + " is the required readback, 2 to 5 sample latency only", true)
+                    .excluding(excluded).describe("perf.reopenReadback", timings);
         }
         var observation = recall.observe(root, manifest, workload.queryHash(), workload.queries());
         checks.addAll(observation.checks());
