@@ -2,6 +2,9 @@ package monada.neuron.evaluation.knowledge;
 
 import com.monada.api.MonadaMemory;
 import com.monada.api.MonadaMemoryOptions;
+import com.monada.core.AtomType;
+import com.monada.core.KnowledgeAtom;
+import com.monada.core.ResonanceResult;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.Layer;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.QueryText;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.Row;
@@ -16,6 +19,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -316,6 +320,43 @@ class HtmlKnowledgeRecallTest {
         var metadata = new TreeMap<String, String>();
         row.describe("r", metadata);
         return metadata;
+    }
+
+    @Test
+    void aFailedMeasuredCallIsNeverALatencySample() {
+        var recall = new HtmlKnowledgeRecall(CORPUS);
+        var memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
+        var fieldsetCalls = new int[1];
+        ResonanceStoreRecall failingMeasured = (query, limit, threshold) -> {
+            // The second limit-5 call for "fieldset" is the measured one (the first is the warm-up's).
+            if (query.equals("fieldset") && limit == HtmlKnowledgeRecall.MAX_LIMIT && ++fieldsetCalls[0] == 2) {
+                throw new UncheckedIOException(new IOException("injected measured failure"));
+            }
+            return memory.resonate(query).topK(limit).threshold(threshold).execute().results();
+        };
+        var adapter = ResonanceStoreMemoryAdapter.using(failingMeasured, recall.adapterConfig());
+
+        var observed = recall.observe(memory, adapter, manifest, "probe",
+                List.of(new QueryText("a", "fieldset"), new QueryText("b", "legend")));
+
+        assertEquals("1", observed.metadata().get("perf.b2.recallLimit5.measurementIterations"),
+                "the failed measured B2 call is excluded; " + observed.metadata());
+        assertEquals("2", observed.metadata().get("perf.b1.recallLimit5.measurementIterations"));
+        assertFalse(observed.checks().stream().filter(check -> check.name().equals("recall.completed")).findFirst()
+                .orElseThrow().passed());
+    }
+
+    @Test
+    void aNonFiniteStoreScoreIsNeverAResult() {
+        var atom = new KnowledgeAtom("atom", AtomType.values()[0], "text", Map.of(), 1.0, Instant.EPOCH);
+
+        assertTrue(HtmlKnowledgeRecall.allFinite(List.of(new ResonanceResult(atom, 0.5))));
+        assertFalse(HtmlKnowledgeRecall.allFinite(List.of(new ResonanceResult(atom, 0.5),
+                new ResonanceResult(atom, Double.NaN))));
+        assertFalse(HtmlKnowledgeRecall.allFinite(List.of(new ResonanceResult(atom, Double.POSITIVE_INFINITY))));
+        assertEquals("null", HtmlKnowledgeRecallReport.number(Double.NaN));
+        assertEquals("null", HtmlKnowledgeRecallReport.number(Double.NEGATIVE_INFINITY));
+        assertEquals("0.25", HtmlKnowledgeRecallReport.number(0.25));
     }
 
     @Test

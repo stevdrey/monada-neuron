@@ -32,6 +32,7 @@ class HtmlKnowledgeIngestionRunnerTest {
         assertTrue(outcome.report().checks().stream()
                 .anyMatch(check -> check.name().equals("ingestion.timingImportsCompleted") && check.passed()));
         assertTrue(outcome.report().toJson().contains("timed scratch imports; latency rows report median and p95"));
+        assertEquals("true", outcome.report().metadata().get("env.timingScratch.sameFileStoreAsStoreRoot"));
         assertTrue(outcome.external().isEmpty());
         assertEquals(4, written.size());
         var json = Files.readString(directory.resolve("html-knowledge-ingestion.json"));

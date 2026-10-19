@@ -372,14 +372,11 @@ public final class HtmlKnowledgeIngestionRunner {
             checks.addAll(result.checks());
             metadata.put(prefix + ".root",
                     keptRoot.isPresent() ? root.toAbsolutePath().toString() : "temporary (deleted)");
-            var scratch = Files.createTempDirectory("monada-neuron-html-kc-timing-");
-            try {
-                var timings = new HtmlKnowledgeIngestion(corpus).timings(result, scratch);
-                timings.describe(prefix + ".perf", "readback", metadata);
-                checks.add(timings.check());
-            } finally {
-                deleteTree(scratch);
-            }
+            var timings = new HtmlKnowledgeIngestion(corpus).timings(result);
+            var scratchKey = "env." + (prefix.equals("store") ? "" : prefix.substring(0, prefix.lastIndexOf('.') + 1))
+                    + "timingScratch";
+            timings.describe(prefix + ".perf", "readback", scratchKey, metadata);
+            checks.add(timings.check());
             new RunEnvironment().describeStoreRoot("env." + prefix + "Root", root, metadata);
             var manifest = root.resolve("manifest.json");
             if (Files.exists(manifest)) {

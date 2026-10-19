@@ -120,7 +120,7 @@ id or claim. Each phase reports:
 | Check | Pass condition |
 | :--- | :--- |
 | `recall.auxiliaryCallsCompleted` | every unmeasured warm-up call and every cold first-recall sample returned, and every B2 call among them answered `COMPLETE`. A failed call is reported here at once, never left to the measured pass, and is excluded from its latency row. |
-| `recall.completed` | every B1/B2c Store call returned and every B2 recall answered `COMPLETE`, at every limit. |
+| `recall.completed` | every B1/B2c Store call returned with finite scores and every B2 recall answered `COMPLETE`, at every limit. A non-finite Store score fails the layer, as the production adapter does. |
 | `fidelity.source` | every B1 and B2c atom maps through the manifest, and its returned content hashes to the corpus `sha256`, as returned. |
 | `fidelity.reference` | every B2 reference maps through the manifest. |
 | `neuron.b2EqualsB2c` | all `4 × queries` comparisons were made (limits 1, 3, 5 and 6), and in each B2 equals the codec-direct control: same atoms, same order, bit-exact scores. A difference would be an adapter defect. A comparison skipped because a call failed is a failure, never a silent pass. |
@@ -153,7 +153,9 @@ The seed and replica phases also carry the three `ingestion.*` checks of #105, p
 every one of the 5 timed imports passed its checks, and a failed one is excluded from the ingest rows. Each of the
 5 reopen readback repetitions is checked; if any fails, that repetition's checks are reported and its sample is
 excluded. No failed or incomplete call is ever published as a latency sample: a latency row's
-`measurementIterations` counts the successful samples only. Before it runs any query, the reopen phase repeats
+`measurementIterations` counts the successful samples only. This covers the measured warm rows too: a measured call that throws or
+is not `COMPLETE` is excluded. The report writes every number through one helper that turns a non-finite value into
+`null`, so the JSON stays valid even for a failed run. Before it runs any query, the reopen phase repeats
 the protocol's full-corpus readback on the existing root:
 - `reopen.persistence.readback`: every manifest chunk, queried with its own text, returns its atom with content
   hashing to the corpus `sha256`;
@@ -161,10 +163,14 @@ the protocol's full-corpus readback on the existing root:
 
 A chunk lost or corrupted on disk therefore fails the run even when no judged query would return it.
 
-The replica root is always a fresh temporary directory. Its storage is recorded as `env.replicaRoot.{fileSystem,
-storageType}`, next to the seed root's. `env.replicaRoot.sameFileStoreAsStoreRoot` says whether both roots share a
-file store; replica latency rows are comparable with seed rows only when it is `true`. With `--store-root` on another
-device it can be `false`.
+The replica root and the scratch roots of the timed imports are fresh temporary directories created **beside the root
+under test**, in its parent directory, so every latency row is measured on the same storage. They are deleted with the
+run; with `--store-root`, nothing but the kept root remains in its parent.
+
+The replica root's storage is recorded as `env.replicaRoot.{fileSystem,storageType}`, next to the seed root's.
+`env.replicaRoot.sameFileStoreAsStoreRoot` and `<phase>.env.timingScratch.sameFileStoreAsStoreRoot` confirm that the
+roots share a file store. If the scratch directory were ever on another file store, its imports would be skipped and
+only the import under test sampled.
 
 The metadata records the protocol's required fields. Besides versions, hashes, the codec, the commits and the Store
 manifest, these are:
@@ -237,9 +243,10 @@ Observations, not tuned away:
   - `perf.open` and the first-recall rows open 5 fresh handle pairs. Each pair's first B1 and B2 call is timed before
     any other call on it, for the first query that has a token, so blank queries cannot warm the handles. The JVM
     has already run the import or reopen readback on other handles.
-  - `perf.ingest` and `perf.ingestReadback` take the import under test plus 4 further imports into deleted scratch
-    roots.
-  - `perf.reopenReadback` repeats the full-corpus readback 5 times; its checks come from the first.
+  - `perf.ingest` and `perf.ingestReadback` take the import under test plus 4 further imports into scratch roots
+    beside it, deleted afterwards.
+  - `perf.reopenReadback` repeats the full-corpus readback 5 times. Every repetition is checked, and a failed one is
+    reported and excluded.
 
   | Row (seed; reopen for the readback) | Samples | Timed operation | Median | p95 |
   | :--- | ---: | :--- | ---: | ---: |

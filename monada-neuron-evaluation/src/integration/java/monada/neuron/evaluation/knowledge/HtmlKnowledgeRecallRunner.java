@@ -152,8 +152,9 @@ public final class HtmlKnowledgeRecallRunner {
         var work = new WorkDirectory(temporaryDirectory());
         try {
             var root = options.storeRoot().orElse(work.path().resolve("store"));
-            // Always a fresh root of its own; its file store is recorded next to the seed root's.
-            var replicaRoot = work.path().resolve("replica-store");
+            // A fresh root of its own beside the seed root, in the same parent and so on the same storage; its file store
+            // is recorded next to the seed root's, and it is deleted with the run.
+            var replicaRoot = replicaRoot(root);
             work.write(work.workload(), HtmlKnowledgeRecall.QueryText.renderTsv(querySet.queryHash(),
                     querySet.queries().stream()
                             .map(query -> new HtmlKnowledgeRecall.QueryText(query.queryId(), query.text())).toList()));
@@ -207,6 +208,7 @@ public final class HtmlKnowledgeRecallRunner {
                             + snapshot.toTsv()));
             return new Outcome(report, recall, seed, reopen, replica, files, options.outputDir());
         } finally {
+            replicaCleanup.forEach(HtmlKnowledgeIngestionRunner::deleteTree);
             HtmlKnowledgeIngestionRunner.deleteTree(work.path());
         }
     }
@@ -328,6 +330,22 @@ public final class HtmlKnowledgeRecallRunner {
             metadata.put("env.replicaRoot.sameFileStoreAsStoreRoot",
                     environment.sameFileStore(root, replicaRoot).map(String::valueOf).orElse("unknown"));
         });
+    }
+
+    /** Paths beside a kept root that the run created and must delete. */
+    private final List<Path> replicaCleanup = new ArrayList<>();
+
+    /** Creates an empty replica root beside {@code root}; the import accepts an empty directory as a fresh root. */
+    private Path replicaRoot(Path root) {
+        var parent = root.toAbsolutePath().normalize().getParent();
+        try {
+            Files.createDirectories(parent);
+            var replica = Files.createTempDirectory(parent, ".replica-store-");
+            replicaCleanup.add(replica);
+            return replica;
+        } catch (IOException e) {
+            throw new UncheckedIOException("cannot create the replica root beside " + root, e);
+        }
     }
 
     private Path temporaryDirectory() {

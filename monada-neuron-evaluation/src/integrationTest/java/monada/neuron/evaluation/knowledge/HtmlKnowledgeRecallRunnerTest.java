@@ -151,6 +151,8 @@ class HtmlKnowledgeRecallRunnerTest {
                     + ".medianNanos")), row);
         }
         assertEquals("true", metadata.get("env.replicaRoot.sameFileStoreAsStoreRoot"));
+        assertEquals("true", metadata.get("seed.env.timingScratch.sameFileStoreAsStoreRoot"));
+        assertEquals("true", metadata.get("replica.env.timingScratch.sameFileStoreAsStoreRoot"));
         assertTrue(outcome.report().evaluation().runConfiguration().toString().contains("median and p95"),
                 "the run configuration describes the sampled rows");
         assertTrue(metadata.containsKey("env.replicaRoot.fileSystem"));
@@ -171,6 +173,20 @@ class HtmlKnowledgeRecallRunnerTest {
 
     private static String markdown(Path out) throws IOException {
         return Files.readString(out.resolve("html-knowledge-recall.md"));
+    }
+
+    @Test
+    void aKeptRootGetsItsReplicaAndScratchRootsBesideItAndNothingIsLeftBehind() throws IOException {
+        var parent = Files.createDirectories(directory.resolve("kept-parent"));
+        var kept = parent.resolve("store");
+        var keptOutcome = HtmlKnowledgeRecallRunner.run(HtmlKnowledgePersistenceRunner.Options.parse(new String[] {
+                "--output-dir", directory.resolve("kept-out").toString(), "--store-root", kept.toString()}));
+
+        assertTrue(keptOutcome.report().allPassed(), keptOutcome.markdown());
+        assertEquals("true", keptOutcome.report().metadata().get("env.replicaRoot.sameFileStoreAsStoreRoot"));
+        try (var children = Files.list(parent)) {
+            assertEquals(List.of(kept), children.toList(), "only the kept root remains beside it");
+        }
     }
 
     @Test

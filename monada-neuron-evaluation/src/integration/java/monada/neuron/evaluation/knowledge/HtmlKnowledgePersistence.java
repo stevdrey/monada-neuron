@@ -207,6 +207,7 @@ public final class HtmlKnowledgePersistence {
                         + ", defaults()) and the vector format is the current FIXED_RAW"
                 : "persisted [" + profile + "] differs from the expected default profile [" + expected + "]"));
 
+        // Fixed-size: a failed open throws and fails the phase, so no zero can be recorded.
         var directOpens = new long[LatencyRow.REPETITIONS];
         MonadaMemory memory = null;
         for (var repetition = 0; repetition < LatencyRow.REPETITIONS; repetition++) {
@@ -234,6 +235,7 @@ public final class HtmlKnowledgePersistence {
         var referenceFailures = new ArrayList<String>();
         var signalFailures = new ArrayList<String>();
         var statusFailures = new ArrayList<String>();
+        // Fixed-size: a failed open throws and fails the phase, so no zero can be recorded.
         var adapterOpens = new long[LatencyRow.REPETITIONS];
         var firstRecalls = new ArrayList<Long>();
         var firstRecallFailures = new ArrayList<String>();
@@ -273,7 +275,8 @@ public final class HtmlKnowledgePersistence {
                                 + " answered COMPLETE"
                         : "excluded from the latency row: " + String.join("; ", firstRecallFailures)));
         try (var adapter = opened) {
-            var warm = new long[probes.size()];
+            // Only COMPLETE recalls are samples; any other status is reported by neuron.recallComplete.
+            var warm = new ArrayList<Long>();
             for (var index = 0; index < probes.size(); index++) {
                 var probe = probes.get(index);
                 var direct = memory.resonate(probe.query()).topK(TOP_K).threshold(THRESHOLD).execute().results();
@@ -285,9 +288,11 @@ public final class HtmlKnowledgePersistence {
                 var recallStart = System.nanoTime();
                 var response = adapter.recall(new ResonanceMemoryRequest(
                         List.of(codec.querySignal(probe.probeId())), TOP_K));
-                warm[index] = System.nanoTime() - recallStart;
+                var duration = System.nanoTime() - recallStart;
                 if (response.status() != ResonanceMemoryStatus.COMPLETE) {
                     statusFailures.add(probe.probeId() + "=" + response.status());
+                } else {
+                    warm.add(duration);
                 }
                 for (var rank = 0; rank < response.results().size(); rank++) {
                     var result = response.results().get(rank);
@@ -302,8 +307,9 @@ public final class HtmlKnowledgePersistence {
                     rows.add(new Row(probe.probeId(), NEURON, rank, byReference.orElse(UNMAPPED), result.score()));
                 }
             }
-            new LatencyRow(warm, 1, 1, LatencyRow.WALL_CLOCK + "; one adapter recall per probe after the first-recall"
-                    + " call on the same adapter; only the adapter recall is timed", false, LatencyRow.NO_GC_TELEMETRY)
+            new LatencyRow(warm.stream().mapToLong(Long::longValue).toArray(), 1, 1, LatencyRow.WALL_CLOCK + "; one"
+                    + " adapter recall per probe after the first-recall call on the same adapter; only the adapter recall"
+                    + " is timed; non-COMPLETE recalls are excluded", false, LatencyRow.NO_GC_TELEMETRY)
                     .describe("perf.warmRecall", metadata);
         }
 

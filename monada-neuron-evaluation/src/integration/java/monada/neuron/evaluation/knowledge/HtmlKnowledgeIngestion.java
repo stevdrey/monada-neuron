@@ -180,22 +180,46 @@ public final class HtmlKnowledgeIngestion {
      * (one {@code resonate} per chunk, hashing in the window), each with up to {@link LatencyRow#REPETITIONS}
      * samples, and {@code ingestion.timingImportsCompleted}, which fails when a scratch import failed.
      */
-    record ImportTimings(LatencyRow ingest, LatencyRow readback, Check check) {
+    record ImportTimings(LatencyRow ingest, LatencyRow readback, Check check, String scratchSameFileStore) {
 
-        /** Records both rows as {@code <prefix>.ingest} and {@code <prefix>.<readbackRow>}. */
-        void describe(String prefix, String readbackRow, Map<String, String> metadata) {
+        /**
+         * Records both rows as {@code <prefix>.ingest} and {@code <prefix>.<readbackRow>}, and whether the scratch
+         * roots shared the file store of the root under test as {@code <scratchKey>.sameFileStoreAsStoreRoot}.
+         */
+        void describe(String prefix, String readbackRow, String scratchKey, Map<String, String> metadata) {
             ingest.describe(prefix + ".ingest", metadata);
             readback.describe(prefix + "." + readbackRow, metadata);
+            metadata.put(scratchKey + ".sameFileStoreAsStoreRoot", scratchSameFileStore);
         }
     }
 
     /**
      * Times {@code first}, an import already made, together with {@link LatencyRow#REPETITIONS} − 1 further imports
-     * of the same corpus into fresh roots under {@code scratch}. Each extra root is deleted right after its import. A
+     * of the same corpus into fresh scratch roots. The scratch roots live in a temporary directory beside
+     * {@code first}'s root, in the same parent, so every sample of a row uses the same storage; if that directory is
+     * nevertheless on another file store, the scratch imports are skipped and only {@code first} is sampled. The
+     * directory is deleted afterwards, and each extra root right after its import. A
      * sample counts only when its import passed every check; a failed or throwing scratch import is excluded from both
      * rows and reported by the returned check, so a broken import is never published as a latency sample.
      */
-    ImportTimings timings(Result first, Path scratch) {
+    ImportTimings timings(Result first) {
+        var parent = first.root().toAbsolutePath().normalize().getParent();
+        Path scratch;
+        try {
+            scratch = Files.createTempDirectory(parent, ".timing-scratch-");
+        } catch (IOException e) {
+            throw new UncheckedIOException("cannot create timing scratch roots beside " + first.root(), e);
+        }
+        try {
+            return timings(first, scratch);
+        } finally {
+            HtmlKnowledgeIngestionRunner.deleteTree(scratch);
+        }
+    }
+
+    private ImportTimings timings(Result first, Path scratch) {
+        var sameStore = new RunEnvironment().sameFileStore(first.root(), scratch);
+        var comparable = sameStore.orElse(false);
         var ingest = new ArrayList<Long>();
         var readback = new ArrayList<Long>();
         var failures = new ArrayList<String>();
@@ -205,7 +229,7 @@ public final class HtmlKnowledgeIngestion {
         } else {
             failures.add("the import under test failed a check");
         }
-        for (var repetition = 1; repetition < LatencyRow.REPETITIONS; repetition++) {
+        for (var repetition = 1; comparable && repetition < LatencyRow.REPETITIONS; repetition++) {
             var root = scratch.resolve("timing-import-" + repetition);
             try {
                 var extra = ingest(root);
@@ -233,7 +257,8 @@ public final class HtmlKnowledgeIngestion {
                         + " go to deleted scratch roots; failed imports are excluded", false),
                 LatencyRow.wallClock(readback.stream().mapToLong(Long::longValue).toArray(), chunks, "one resonate"
                         + " per chunk on the just-imported root, with the content hash check in the window", true),
-                check);
+                check, sameStore.map(String::valueOf).orElse("unknown") + (comparable ? ""
+                        : " (scratch imports skipped: only the import under test is sampled)"));
     }
 
     /**

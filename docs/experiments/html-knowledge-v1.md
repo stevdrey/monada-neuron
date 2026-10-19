@@ -870,4 +870,6 @@ source set, and do not change `./gradlew test` when it is absent.
   not already sampled once per query). The cold first recall is taken on fresh handles before any other call, and
   the replica root's storage is recorded. A failed or incomplete auxiliary call (cold sample, warm-up, timed
   repetition) is reported at once by its own check and is never a latency sample. A codec-effect row is
-  comparable only when both layers completed. No definition, formula, label rule or report field changes.
+  comparable only when both layers completed. Measured warm samples exclude failed calls, timing scratch roots and
+  the replica root sit beside the root under test, and a non-finite Store score fails its B1/B2c layer. No
+  definition, formula, label rule or report field changes.

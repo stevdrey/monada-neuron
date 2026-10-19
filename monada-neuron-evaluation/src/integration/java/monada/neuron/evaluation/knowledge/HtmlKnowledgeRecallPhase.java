@@ -67,9 +67,8 @@ public final class HtmlKnowledgeRecallPhase {
             checks.addAll(imported.checks());
             manifest = imported.manifest();
             work.write(work.manifest(phase), manifest.toTsv());
-            var importTimings = new HtmlKnowledgeIngestion(corpus)
-                    .timings(imported, work.path().resolve(phase + "-timing"));
-            importTimings.describe("perf", "ingestReadback", timings);
+            var importTimings = new HtmlKnowledgeIngestion(corpus).timings(imported);
+            importTimings.describe("perf", "ingestReadback", "env.timingScratch", timings);
             checks.add(importTimings.check());
         } else {
             manifest = IngestionManifest.parseTsv(work.read(work.manifest()), corpus.version(), corpus.corpusHash())

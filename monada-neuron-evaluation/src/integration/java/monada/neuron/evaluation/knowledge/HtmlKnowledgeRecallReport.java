@@ -44,7 +44,7 @@ final class HtmlKnowledgeRecallReport {
         json.append("  \"queryVersion\": ").append(string(querySet.version())).append(",\n");
         json.append("  \"queryHash\": ").append(string(querySet.queryHash())).append(",\n");
         json.append("  \"k\": [1, 3, 5],\n");
-        json.append("  \"threshold\": ").append(HtmlKnowledgeRecall.THRESHOLD).append(",\n");
+        json.append("  \"threshold\": ").append(number(HtmlKnowledgeRecall.THRESHOLD)).append(",\n");
         json.append("  \"layers\": [\n");
         var layers = List.of(Layer.values());
         for (var l = 0; l < layers.size(); l++) {
@@ -251,7 +251,7 @@ final class HtmlKnowledgeRecallReport {
         for (var i = 0; i < returned.size(); i++) {
             var ranked = returned.get(i);
             json.append(i == 0 ? "" : ", ").append("{ \"rank\": ").append(i + 1).append(", \"chunkId\": ")
-                    .append(string(ranked.chunkId())).append(", \"score\": ").append(ranked.score()).append(" }");
+                    .append(string(ranked.chunkId())).append(", \"score\": ").append(number(ranked.score())).append(" }");
         }
         json.append("], \"byK\": {");
         var first = true;
@@ -344,8 +344,13 @@ final class HtmlKnowledgeRecallReport {
         return value.isPresent() ? String.format(Locale.ROOT, "%.3f", value.getAsDouble()) : "n/a";
     }
 
+    /** Every double the report writes goes through here: a non-finite value is JSON {@code null}, never bare NaN. */
+    static String number(double value) {
+        return Double.isFinite(value) ? Double.toString(value) : "null";
+    }
+
     private static String number(OptionalDouble value) {
-        return value.isPresent() ? Double.toString(value.getAsDouble()) : "null";
+        return value.isPresent() ? number(value.getAsDouble()) : "null";
     }
 
     private static String strings(Collection<String> values) {

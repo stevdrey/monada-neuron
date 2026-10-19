@@ -66,7 +66,9 @@ Semantic checks:
 | `ingestion.timingImportsCompleted` | each of the 5 timed imports (the import under test plus 4 scratch imports) passed its checks; a failed one is excluded from the `perf.ingest` and `perf.readback` rows |
 
 The `perf.ingest` and `perf.readback` rows are exploratory wall-clock measurements and never affect a verdict. Each
-reports `medianNanos` and `p95Nanos` over 5 imports: the import under test plus 4 imports into deleted scratch roots.
+reports `medianNanos` and `p95Nanos` over 5 imports: the import under test plus 4 imports into scratch roots. The
+scratch roots are created beside the root under test, in its parent directory, so they share its storage, and are
+deleted afterwards. `env.timingScratch.sameFileStoreAsStoreRoot` records this.
 Each row records its sampling (`warmupIterations`, `measurementIterations`, `operationsPerIteration`,
 `measurementMethod`, `validationInWindow`, `gcTelemetryScope`).
 

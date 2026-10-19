@@ -313,6 +313,7 @@ final class HtmlKnowledgeRecall {
      */
     Observation observe(Path root, IngestionManifest manifest, String queryHash, List<QueryText> queries) {
         HtmlKnowledgePersistence.requireExistingStore(root);
+        // Fixed-size: a failed open throws and fails the phase, so no zero can be recorded.
         var opens = new long[LatencyRow.REPETITIONS];
         var firstB1 = new ArrayList<Long>();
         var firstB2 = new ArrayList<Long>();
@@ -424,8 +425,9 @@ final class HtmlKnowledgeRecall {
         var run = new Run(manifest, queries.size());
         run.auxiliaryFailures.addAll(auxiliaryFailures);
         warmUp(run, memory, adapter, queries);
-        var b1Nanos = new long[queries.size()];
-        var b2Nanos = new long[queries.size()];
+        // Only calls that returned (B1) or answered COMPLETE (B2) report a duration; failures are in recall.completed.
+        var b1Nanos = new ArrayList<Long>();
+        var b2Nanos = new ArrayList<Long>();
         for (var index = 0; index < queries.size(); index++) {
             var query = queries.get(index);
             var b0 = lexical(run, query, MAX_LIMIT);
@@ -433,13 +435,12 @@ final class HtmlKnowledgeRecall {
                 run.prefix(query, Layer.B0, limit, b0, lexical(run, query, limit));
             }
             run.prefix(query, Layer.B0, MAX_LIMIT, lexical(run, query, LOOKAHEAD_LIMIT), b0);
-            var sample = index;
-            var b1 = direct(run, memory, query, MAX_LIMIT, nanos -> b1Nanos[sample] = nanos);
+            var b1 = direct(run, memory, query, MAX_LIMIT, b1Nanos::add);
             for (var limit : PREFIX_LIMITS) {
                 run.prefix(query, Layer.B1, limit, b1, direct(run, memory, query, limit));
             }
             run.prefix(query, Layer.B1, MAX_LIMIT, direct(run, memory, query, LOOKAHEAD_LIMIT), b1);
-            var b2 = neuron(run, adapter, query, MAX_LIMIT, nanos -> b2Nanos[sample] = nanos);
+            var b2 = neuron(run, adapter, query, MAX_LIMIT, b2Nanos::add);
             var b2c = codecDirect(run, memory, query, MAX_LIMIT);
             run.compareControl(query, MAX_LIMIT, b2, b2c);
             for (var limit : PREFIX_LIMITS) {
@@ -459,9 +460,9 @@ final class HtmlKnowledgeRecall {
         metadata.put("perf.warmupQueries", Integer.toString(queries.size()));
         var timed = LatencyRow.WALL_CLOCK + "; one limit-5 call per query, only the Store call (B1) or the adapter"
                 + " recall (B2) is timed";
-        new LatencyRow(b1Nanos, 1, 1, timed, false, LatencyRow.NO_GC_TELEMETRY)
+        new LatencyRow(samples(b1Nanos), 1, 1, timed, false, LatencyRow.NO_GC_TELEMETRY)
                 .describe("perf.b1.recallLimit5", metadata);
-        new LatencyRow(b2Nanos, 1, 1, timed, false, LatencyRow.NO_GC_TELEMETRY)
+        new LatencyRow(samples(b2Nanos), 1, 1, timed, false, LatencyRow.NO_GC_TELEMETRY)
                 .describe("perf.b2.recallLimit5", metadata);
         metadata.put("perf.sampling", "warm: one unmeasured pass of every query through B1 and B2, then one measured"
                 + " limit-5 call per query and layer on the same open handles; median and p95 over those samples;"
@@ -546,7 +547,12 @@ final class HtmlKnowledgeRecall {
         try {
             var start = System.nanoTime();
             results = memory.resonate(query.text()).topK(limit).threshold(THRESHOLD).execute().results();
-            elapsed.accept(System.nanoTime() - start);
+            var duration = System.nanoTime() - start;
+            if (!allFinite(results)) {
+                run.failure(query, Layer.B1, limit, "the Store returned a non-finite score");
+                return null;
+            }
+            elapsed.accept(duration);
         } catch (RuntimeException e) {
             run.failure(query, Layer.B1, limit, "threw " + e);
             return null;
@@ -573,11 +579,12 @@ final class HtmlKnowledgeRecall {
             var request = new ResonanceMemoryRequest(codec.querySignals(query.text()), limit);
             var start = System.nanoTime();
             var response = adapter.recall(request);
-            elapsed.accept(System.nanoTime() - start);
+            var duration = System.nanoTime() - start;
             if (response.status() != ResonanceMemoryStatus.COMPLETE) {
                 run.failure(query, Layer.B2, limit, "answered " + response.status());
                 return null;
             }
+            elapsed.accept(duration);
             var referenced = new ArrayList<Referenced>(response.results().size());
             for (var rank = 0; rank < response.results().size(); rank++) {
                 var result = response.results().get(rank);
@@ -604,6 +611,10 @@ final class HtmlKnowledgeRecall {
             for (var signalIndex = 0; signalIndex < signals.size(); signalIndex++) {
                 var text = codec.encode(signals.get(signalIndex));
                 var results = memory.resonate(text).topK(limit).threshold(THRESHOLD).execute().results();
+                if (!allFinite(results)) {
+                    run.failure(query, Layer.B2C, limit, "the Store returned a non-finite score");
+                    return null;
+                }
                 for (var rank = 0; rank < results.size(); rank++) {
                     var candidate = new Candidate(results.get(rank), signalIndex, rank);
                     best.merge(candidate.result().atom().id(), candidate,
@@ -675,6 +686,14 @@ final class HtmlKnowledgeRecall {
                     + (got.score() == want.score() ? " (equal score, but no tie straddles the cutoff)" : ""))));
         }
         return differences;
+    }
+
+    /**
+     * Returns whether every score is finite. The production adapter treats a non-finite Store score as malformed output
+     * ({@code FAILED}); B1 and B2c apply the same rule, so such a score fails the layer instead of becoming a result.
+     */
+    static boolean allFinite(List<ResonanceResult> results) {
+        return results.stream().allMatch(result -> Double.isFinite(result.score()));
     }
 
     /** A query and layer left without an outcome. */
