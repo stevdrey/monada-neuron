@@ -154,8 +154,11 @@ The metadata includes:
 - `store.checkoutCommit` and `neuron.commit` (`+dirty` when there are uncommitted changes), and `neuron.version`;
 - run identity: `runMode`, and best-effort environment fields `env.cpuModel`, `env.totalPhysicalMemoryBytes`, `env.hostId` (salted, truncated SHA-256 of the host name; the name itself is never written) and the Store root's `env.storeRoot.{fileSystem,storageType}`. A value that cannot be read is `unknown (<reason>)` and never fails a run.
 
-The `*.perf.*` values (open, first recall, warm-recall median) are single exploratory wall-clock samples. They never
-affect a verdict.
+The `*.perf.*` values (open, first recall, warm-recall median) are exploratory wall-clock samples. They never affect a
+verdict. Each row records its sampling as `<row>.{warmupIterations,measurementIterations,operationsPerIteration,`
+`measurementMethod,validationInWindow,gcTelemetryScope}`. A phase result ends with a line stating its counts, so an
+empty or truncated result counts as an incomplete phase. The reopen phase also requires a manifest entry for every
+chunk.
 
 ## Observed behaviour (Store `main`, 2026-10-17)
 

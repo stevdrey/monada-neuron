@@ -7,13 +7,22 @@ import monada.neuron.evaluation.knowledge.PersistenceProbes.Snapshot;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
+import monada.neuron.evaluation.knowledge.HtmlKnowledgePersistencePhase.WorkDirectory;
+import monada.neuron.evaluation.knowledge.HtmlKnowledgePersistenceRunner.PhaseRun;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -116,5 +125,48 @@ class PersistenceFormatsTest {
         assertEquals(List.of(new Check("a.check", false, "line one line two")), parsed.checks());
         assertEquals(Map.of("pid", "42"), parsed.metadata());
         assertThrows(IllegalArgumentException.class, () -> Result.parse("check\tonly-two"));
+    }
+
+    @Test
+    void anEmptyTruncatedOrInconsistentPhaseResultIsRejected() {
+        var text = new Result(List.of(new Check("a", true, "x"), new Check("b", true, "y")), Map.of("pid", "1")).render();
+
+        assertThrows(IllegalArgumentException.class, () -> Result.parse(""));
+        assertThrows(IllegalArgumentException.class, () -> Result.parse(text.substring(0, text.indexOf("check\tb"))));
+        assertThrows(IllegalArgumentException.class, () -> Result.parse(text.replace("end\t2\t1", "end\t3\t1")));
+        assertThrows(IllegalArgumentException.class, () -> Result.parse(new Result(List.of(), Map.of()).render()),
+                "a result without any check is not a completed phase");
+        assertEquals(2, Result.parse(text).checks().size());
+    }
+
+    @Test
+    void anEmptySeedResultIsReportedAsAnIncompletePhase(@TempDir Path directory) throws IOException {
+        var work = new WorkDirectory(directory);
+        Files.writeString(work.result("seed"), "");
+        Files.writeString(work.result("reopen"),
+                new Result(List.of(new Check("ok", true, "fine")), Map.of()).render());
+        var seed = new PhaseRun("seed", 1L, 1, 0L, "");
+        var reopen = new PhaseRun("reopen", 2L, 0, 0L, "");
+        var checks = new ArrayList<Check>();
+
+        HtmlKnowledgePersistenceRunner.collect(seed, work, checks, new TreeMap<>());
+        var restart = HtmlKnowledgePersistenceRunner.restartCheck(seed, reopen, work);
+
+        assertEquals(List.of("seed.completed"), checks.stream().map(Check::name).toList());
+        assertFalse(checks.getFirst().passed());
+        assertFalse(restart.passed(), restart.detail());
+    }
+
+    @Test
+    void aTruncatedManifestIsRejected() {
+        var corpus = HtmlKnowledgeCorpus.bundled();
+        var entries = corpus.chunks().stream()
+                .map(chunk -> new IngestionManifest.Entry(chunk.chunkId(), "atom-" + chunk.chunkId(), "rs-" + chunk.chunkId()))
+                .toList();
+        var complete = new IngestionManifest(corpus.version(), corpus.corpusHash(), entries);
+        var truncated = new IngestionManifest(corpus.version(), corpus.corpusHash(), entries.subList(0, 10));
+
+        assertEquals(complete, complete.requireComplete(corpus));
+        assertThrows(IngestionInputException.class, () -> truncated.requireComplete(corpus));
     }
 }

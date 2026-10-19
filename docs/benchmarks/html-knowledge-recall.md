@@ -114,13 +114,20 @@ id or claim. Each phase reports:
 | `recall.completed` | every B1/B2c Store call returned and every B2 recall answered `COMPLETE`, at every limit. |
 | `fidelity.source` | every B1 and B2c atom maps through the manifest, and its returned content hashes to the corpus `sha256`, as returned. |
 | `fidelity.reference` | every B2 reference maps through the manifest. |
-| `neuron.b2EqualsB2c` | at every limit (1, 3, 5 and 6), B2 equals the codec-direct control: same atoms, same order, bit-exact scores. A difference would be an adapter defect. |
-| `recall.prefixStability` | for every system, the limit-1 and limit-3 lists are prefixes of the limit-5 list, and the limit-5 list is the prefix of the lookahead. The only allowed exception is an equal-score substitution at the cutoff. |
+| `neuron.b2EqualsB2c` | all `4 × queries` comparisons were made (limits 1, 3, 5 and 6), and in each B2 equals the codec-direct control: same atoms, same order, bit-exact scores. A difference would be an adapter defect. A comparison skipped because a call failed is a failure, never a silent pass. |
+| `recall.prefixStability` | all `12 × queries` comparisons were made: for every system, the limit-1 and limit-3 lists are prefixes of the limit-5 list, and the limit-5 list is the prefix of the lookahead. The only allowed exception is an equal-score substitution at the cutoff. A skipped comparison is a failure. |
 
 Any failure of a query in a layer, at any limit, leaves exactly one `<failed>` marker for that query and layer. This
 covers an exception, a non-`COMPLETE` status, an unmapped atom or reference, and a content mismatch. The scorer then
 gives the query no outcome in that layer: it is excluded from every aggregate and counted as unscored, never as an
 abstention.
+
+The files the orchestrator and the phase JVMs exchange are checked for completeness:
+- the phase result, the recall snapshot and the query workload end with a line that states their entry count;
+- the manifest must map every corpus chunk in order.
+
+An empty or truncated file is therefore rejected, and a phase that left one counts as not completed. It is never read
+as a result with fewer checks, rows or queries.
 
 The orchestrator adds two checks:
 - `process.restart`: seed and reopen ran in separate JVMs, as for [persistence](html-knowledge-persistence.md).
@@ -138,10 +145,10 @@ The metadata records the protocol's required fields. Besides versions, hashes, t
 manifest, these are:
 - run identity: `runMode`, and best-effort environment fields `env.cpuModel`, `env.totalPhysicalMemoryBytes`, `env.hostId` (salted, truncated SHA-256 of the host name; the name itself is never written) and the Store root's `env.storeRoot.{fileSystem,storageType}`. A value that cannot be read is `unknown (<reason>)` and never fails a run.
 
-## Results (2026-10-18, after review round 2)
+## Results (2026-10-18, after review round 3)
 
 Environment:
-- Neuron `7d65e35+dirty` (this change, uncommitted);
+- Neuron `566966b+dirty` (this change, uncommitted);
 - Store checkout `7d971ea`;
 - Azul OpenJDK 27 on Linux, AMD Ryzen 7 7730U, Store root on `tmpfs` (memory-backed);
 - one seed JVM and one reopen JVM.
@@ -192,10 +199,12 @@ Observations, not tuned away:
 - **Ties.** The lookahead flags a tie straddling the k = 5 cutoff for 23 queries in B0, whose integer overlap scores
   tie widely, and for none in B1, B2 or B2c.
 - **Latency.** Each query is first sent once through B1 and B2, unmeasured (`perf.warmupQueries`). The measured pass
-  then takes one warm limit-5 sample per query on the same open handles. The samples are recorded as
-  `<phase>.perf.*` and are never part of a verdict:
+  then takes one warm limit-5 sample per query on the same open handles. Only the Store call (B1) or the adapter
+  recall (B2) is timed; manifest mapping and hash validation run outside the window. Each row records its sampling as
+  `<phase>.perf.<row>.{warmupIterations,measurementIterations,operationsPerIteration,measurementMethod,validationInWindow,gcTelemetryScope}`, as the protocol requires. No GC or allocation telemetry is
+  collected. The samples are never part of a verdict:
   - B1: median about 0.2 ms;
-  - B2: median about 1.5 ms, since it makes one Store query per token.
+  - B2: median about 1.6 ms, since it makes one Store query per token.
 
 Follow-up candidates (listed in the report and never relabeled):
 - B1 misses `q:exact-term-02` and `q:paraphrase-01/03/04`, and returns `q:conflicting-source-01` only `PARTIAL`.

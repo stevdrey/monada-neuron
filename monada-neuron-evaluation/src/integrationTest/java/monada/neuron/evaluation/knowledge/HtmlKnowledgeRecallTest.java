@@ -190,6 +190,13 @@ class HtmlKnowledgeRecallTest {
         assertEquals(1, b2.stream().filter(row -> row.chunkId().equals(HtmlKnowledgeRecall.FAILED)).count());
         assertTrue(observed.snapshot().rows("probe", Layer.B1, HtmlKnowledgeRecall.MAX_LIMIT).stream()
                 .noneMatch(row -> row.chunkId().equals(HtmlKnowledgeRecall.FAILED)), "B1 did not fail");
+        for (var name : List.of("neuron.b2EqualsB2c", "recall.prefixStability")) {
+            var check = observed.checks().stream().filter(value -> value.name().equals(name)).findFirst()
+                    .orElseThrow();
+            assertFalse(check.passed(), name + " must not pass with a skipped comparison");
+            assertTrue(check.detail().contains("probe") && check.detail().contains("limit 3: not compared"),
+                    check.detail());
+        }
     }
 
     @Test
@@ -208,7 +215,12 @@ class HtmlKnowledgeRecallTest {
         }
         assertThrows(IngestionInputException.class, () -> QueryText.parseTsv("queryId\ttext\n"));
         assertThrows(IngestionInputException.class,
-                () -> QueryText.parseTsv("# queryHash x\nqueryId\ttext\nq\ta\nq\tb\n"));
+                () -> QueryText.parseTsv("# queryHash x\nqueryId\ttext\nq\ta\nq\tb\nend\t2\n"), "duplicate id");
+        assertThrows(IngestionInputException.class,
+                () -> QueryText.parseTsv(tsv.substring(0, tsv.indexOf("q:paraphrase-01"))), "truncated at a row");
+        var snapshot = observation.snapshot().toTsv();
+        assertThrows(IllegalArgumentException.class,
+                () -> Snapshot.parseTsv(snapshot.substring(0, snapshot.indexOf("\nq:paraphrase-01") + 1)));
     }
 
     @Test

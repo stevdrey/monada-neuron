@@ -64,7 +64,9 @@ Semantic checks:
 | `ingestion.contentFidelity` | each returned atom's content hashes to the chunk `sha256` |
 | `ingestion.readback` | `resonate(<chunk text>).topK(<corpus size>).threshold(0.0)` returns the mapped atom with matching content |
 
-The `perf.*` metadata values are a single exploratory wall-clock sample and never affect a verdict.
+The `perf.*` metadata values are a single exploratory wall-clock sample and never affect a verdict. Each row records
+its sampling (`warmupIterations`, `measurementIterations`, `operationsPerIteration`, `measurementMethod`,
+`validationInWindow`, `gcTelemetryScope`).
 
 ## Corpus
 

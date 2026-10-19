@@ -108,6 +108,18 @@ class HtmlKnowledgeRecallRunnerTest {
         var sampling = outcome.report().metadata().get("seed.perf.sampling");
         assertTrue(sampling.startsWith("warm: one unmeasured pass"), sampling);
         assertEquals("32", outcome.report().metadata().get("seed.perf.warmupQueries"));
+        for (var phase : List.of("seed", "reopen")) {
+            for (var row : List.of("perf.b1.recallLimit5", "perf.b2.recallLimit5")) {
+                var prefix = phase + "." + row + ".";
+                var metadata = outcome.report().metadata();
+                assertEquals("1", metadata.get(prefix + "warmupIterations"), prefix);
+                assertEquals("32", metadata.get(prefix + "measurementIterations"), prefix);
+                assertEquals("1", metadata.get(prefix + "operationsPerIteration"), prefix);
+                assertEquals("false", metadata.get(prefix + "validationInWindow"), prefix);
+                assertTrue(metadata.get(prefix + "measurementMethod").startsWith("System.nanoTime"), prefix);
+                assertEquals("none collected", metadata.get(prefix + "gcTelemetryScope"), prefix);
+            }
+        }
     }
 
     private static String markdown(Path out) throws IOException {

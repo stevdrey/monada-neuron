@@ -211,6 +211,7 @@ public final class HtmlKnowledgePersistence {
         var openStart = System.nanoTime();
         var memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
         metadata.put("perf.directOpenNanos", Long.toString(System.nanoTime() - openStart));
+        LatencySampling.single(0, false).describe("perf.directOpenNanos", metadata);
         var readback = ingestion.readbackSweep(memory, manifest);
         var unread = readback.unread();
         checks.add(new Check("persistence.readback", unread.isEmpty(), unread.isEmpty()
@@ -232,6 +233,7 @@ public final class HtmlKnowledgePersistence {
         var adapterOpenStart = System.nanoTime();
         try (var adapter = ResonanceStoreMemoryAdapter.open(root, config())) {
             metadata.put("perf.adapterOpenNanos", Long.toString(System.nanoTime() - adapterOpenStart));
+            LatencySampling.single(0, false).describe("perf.adapterOpenNanos", metadata);
             var warm = new long[probes.size()];
             for (var index = 0; index < probes.size(); index++) {
                 var probe = probes.get(index);
@@ -262,7 +264,10 @@ public final class HtmlKnowledgePersistence {
                 }
             }
             metadata.put("perf.firstRecallNanos", Long.toString(warm[0]));
+            LatencySampling.single(0, false).describe("perf.firstRecallNanos", metadata);
             metadata.put("perf.warmRecallMedianNanos", Long.toString(median(Arrays.copyOfRange(warm, 1, warm.length))));
+            new LatencySampling(1, warm.length - 1, 1, LatencySampling.WALL_CLOCK + "; only the adapter recall is"
+                    + " timed", false, LatencySampling.NO_GC_TELEMETRY).describe("perf.warmRecallMedianNanos", metadata);
         }
 
         checks.add(new Check("neuron.recallComplete", statusFailures.isEmpty(), statusFailures.isEmpty()

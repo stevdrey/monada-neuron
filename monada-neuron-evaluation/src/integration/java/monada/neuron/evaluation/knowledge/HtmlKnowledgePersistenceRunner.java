@@ -324,8 +324,17 @@ public final class HtmlKnowledgePersistenceRunner {
                 + (separate ? "; three distinct processes" : "; processes are not distinct"));
     }
 
+    /** A phase completed when it exited {@code 0} or {@code 1} and left a complete, parseable result. */
     private static boolean completed(PhaseRun run, WorkDirectory work) {
-        return (run.exitStatus() == 0 || run.exitStatus() == 1) && Files.exists(work.result(run.phase()));
+        if ((run.exitStatus() != 0 && run.exitStatus() != 1) || !Files.exists(work.result(run.phase()))) {
+            return false;
+        }
+        try {
+            Result.parse(work.read(work.result(run.phase())));
+            return true;
+        } catch (IllegalArgumentException | UncheckedIOException e) {
+            return false;
+        }
     }
 
     private void describe(Path root, PhaseRun seed, Optional<PhaseRun> reopen, Map<String, String> metadata) {

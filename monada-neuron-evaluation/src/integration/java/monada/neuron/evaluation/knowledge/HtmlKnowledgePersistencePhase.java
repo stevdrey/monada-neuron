@@ -67,7 +67,7 @@ public final class HtmlKnowledgePersistencePhase {
             result = new Result(seeded.checks(), environment(seeded.observation().metadata()));
         } else {
             var manifest = IngestionManifest.parseTsv(work.read(work.manifest()), corpus.version(),
-                    corpus.corpusHash());
+                    corpus.corpusHash()).requireComplete(corpus);
             var seededSnapshot = Snapshot.parseTsv(work.read(work.snapshot(SEED)));
             var observation = persistence.reopen(root, manifest, seededSnapshot);
             work.write(work.snapshot(REOPEN), observation.snapshot().toTsv());
@@ -153,8 +153,9 @@ public final class HtmlKnowledgePersistencePhase {
         }
 
         /**
-         * Renders {@code check\tname\tpassed\tdetail} and {@code meta\tkey\tvalue} lines; tabs and newlines in values
-         * become spaces.
+         * Renders {@code check\tname\tpassed\tdetail} and {@code meta\tkey\tvalue} lines, then the terminator
+         * {@code end\t<checks>\t<metadata>}; tabs and newlines in values become spaces. The terminator lets a reader
+         * tell a complete result from an empty or truncated file.
          */
         String render() {
             var sb = new StringBuilder();
@@ -164,14 +165,23 @@ public final class HtmlKnowledgePersistencePhase {
             }
             metadata.forEach((key, value) -> sb.append("meta\t").append(key).append('\t').append(flat(value))
                     .append('\n'));
-            return sb.toString();
+            return sb.append("end\t").append(checks.size()).append('\t').append(metadata.size()).append('\n')
+                    .toString();
         }
 
-        /** Parses {@link #render} output strictly. */
+        /**
+         * Parses {@link #render} output strictly: the terminator must be the last line and match the counts, and at
+         * least one check must be present, so an empty or truncated file is rejected.
+         */
         static Result parse(String text) {
             var checks = new ArrayList<Check>();
             var metadata = new LinkedHashMap<String, String>();
-            for (var line : text.lines().toList()) {
+            var lines = text.lines().toList();
+            if (lines.isEmpty() || !lines.getLast().startsWith("end\t")) {
+                throw new IllegalArgumentException("phase result is empty or truncated (no end line)");
+            }
+            var end = lines.getLast().split("\t", -1);
+            for (var line : lines.subList(0, lines.size() - 1)) {
                 var columns = line.split("\t", -1);
                 if (columns.length == 4 && columns[0].equals("check")
                         && (columns[2].equals("true") || columns[2].equals("false"))) {
@@ -181,6 +191,11 @@ public final class HtmlKnowledgePersistencePhase {
                 } else {
                     throw new IllegalArgumentException("malformed phase result line: " + line);
                 }
+            }
+            if (end.length != 3 || !end[1].equals(Integer.toString(checks.size()))
+                    || !end[2].equals(Integer.toString(metadata.size())) || checks.isEmpty()) {
+                throw new IllegalArgumentException("phase result is incomplete: end line " + lines.getLast()
+                        + " after " + checks.size() + " checks and " + metadata.size() + " metadata lines");
             }
             return new Result(checks, metadata);
         }

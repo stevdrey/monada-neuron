@@ -61,7 +61,8 @@ public final class HtmlKnowledgeRecallPhase {
             manifest = imported.manifest();
             work.write(work.manifest(), manifest.toTsv());
         } else {
-            manifest = IngestionManifest.parseTsv(work.read(work.manifest()), corpus.version(), corpus.corpusHash());
+            manifest = IngestionManifest.parseTsv(work.read(work.manifest()), corpus.version(), corpus.corpusHash())
+                    .requireComplete(corpus);
         }
         var recall = new HtmlKnowledgeRecall(corpus);
         if (phase.equals(REOPEN)) {

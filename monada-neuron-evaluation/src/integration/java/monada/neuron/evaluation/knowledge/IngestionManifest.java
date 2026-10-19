@@ -107,6 +107,22 @@ public final class IngestionManifest {
      * @throws IllegalArgumentException when the text is not a manifest of {@code expectedVersion} and
      *     {@code expectedHash}, or maps an atom or reference to more than one chunk
      */
+    /**
+     * Requires one entry per chunk of {@code corpus}, in the corpus's {@code chunkId} order, so a manifest file cut at a
+     * row boundary is rejected instead of silently mapping fewer chunks.
+     *
+     * @throws IngestionInputException when an entry is missing, extra or out of order
+     */
+    public IngestionManifest requireComplete(HtmlKnowledgeCorpus corpus) {
+        var expected = corpus.chunks().stream().map(CorpusChunk::chunkId).toList();
+        var actual = entries.stream().map(Entry::chunkId).toList();
+        if (!actual.equals(expected)) {
+            throw new IngestionInputException("manifest maps " + actual.size() + " chunks, expected all "
+                    + expected.size() + " chunks of " + corpus.version() + " in chunkId order");
+        }
+        return this;
+    }
+
     public static IngestionManifest parseTsv(String tsv, String expectedVersion, String expectedHash) {
         Objects.requireNonNull(tsv, "tsv must not be null");
         var lines = tsv.lines().toList();

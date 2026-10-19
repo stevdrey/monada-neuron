@@ -860,4 +860,6 @@ source set, and do not change `./gradlew test` when it is absent.
   scorer reads gold labels. Every system, B0 and B2c included, is also queried at limits 1 and 3, and B2 = B2c is
   checked at every limit. The reopen JVM repeats the full-corpus readback. The knowledge runners now record the
   required run-mode and environment fields (CPU model, total physical memory, hashed `hostId`, and storage type and
-  file system of the Store root). No definition, formula, label rule or report field changes.
+  file system of the Store root). Every latency row records its sampling fields. The comparison checks require their
+  full expected count, so a skipped comparison is a failure. Exchanged phase files carry a terminating count line,
+  so a truncated file is rejected. No definition, formula, label rule or report field changes.

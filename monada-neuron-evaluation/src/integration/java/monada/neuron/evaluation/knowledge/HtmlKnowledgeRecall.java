@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.LongConsumer;
 import java.util.stream.Collectors;
 
 /**
@@ -60,6 +61,12 @@ final class HtmlKnowledgeRecall {
 
     /** Lookahead limit, used only to flag a score tie straddling the k = 5 cutoff; never part of {@code Ret_k}. */
     static final int LOOKAHEAD_LIMIT = MAX_LIMIT + 1;
+
+    /** B2 = B2c comparisons per query: every prefix limit, {@link #MAX_LIMIT} and {@link #LOOKAHEAD_LIMIT}. */
+    static final int CONTROL_COMPARISONS_PER_QUERY = PREFIX_LIMITS.size() + 2;
+
+    /** Prefix comparisons per query: each system, every prefix limit against 5 and 5 against the lookahead. */
+    static final int PREFIX_COMPARISONS_PER_QUERY = Layer.values().length * (PREFIX_LIMITS.size() + 1);
 
     /** Threshold {@code t} passed explicitly to B1, B2 and B2c; the Store's {@code MonadaQuery} default. */
     static final double THRESHOLD = 0.0;
@@ -121,7 +128,7 @@ final class HtmlKnowledgeRecall {
             for (var query : queries) {
                 tsv.append(query.queryId()).append('\t').append(escape(query.text())).append('\n');
             }
-            return tsv.toString();
+            return tsv.append("end\t").append(queries.size()).append('\n').toString();
         }
 
         /** A parsed workload: the {@code queryHash} it was rendered for and its queries in run order. */
@@ -143,13 +150,16 @@ final class HtmlKnowledgeRecall {
                 throw new IngestionInputException("workload exceeds " + MAX_WORKLOAD_BYTES + " characters");
             }
             var lines = tsv.split("\n", -1);
-            if (lines.length < 3 || !lines[0].startsWith(HASH_PREFIX) || !lines[1].equals(HEADER)
+            if (lines.length < 4 || !lines[0].startsWith(HASH_PREFIX) || !lines[1].equals(HEADER)
                     || !lines[lines.length - 1].isEmpty()) {
                 throw new IngestionInputException("not a query workload");
             }
+            if (!lines[lines.length - 2].equals("end\t" + (lines.length - 4))) {
+                throw new IngestionInputException("query workload is truncated: no matching end line");
+            }
             var queries = new ArrayList<QueryText>();
             var ids = new HashSet<String>();
-            for (var i = 2; i < lines.length - 1; i++) {
+            for (var i = 2; i < lines.length - 2; i++) {
                 var cells = lines[i].split("\t", -1);
                 if (cells.length != 2 || cells[0].isEmpty() || !ids.add(cells[0])) {
                     throw new IngestionInputException("malformed or duplicate workload row " + (i + 1));
@@ -234,17 +244,20 @@ final class HtmlKnowledgeRecall {
                         .append('\t').append(row.rank()).append('\t').append(row.chunkId()).append('\t')
                         .append(Double.toHexString(row.score())).append('\n');
             }
-            return sb.toString();
+            return sb.append("end\t").append(rows.size()).append('\n').toString();
         }
 
-        /** Parses {@link #toTsv} output strictly. */
+        /** Parses {@link #toTsv} output strictly; a snapshot without its matching end line is truncated. */
         static Snapshot parseTsv(String tsv) {
             var lines = tsv.lines().toList();
-            if (lines.size() < 2 || !lines.get(0).startsWith("# queryHash ") || !lines.get(1).equals(HEADER)) {
+            if (lines.size() < 3 || !lines.get(0).startsWith("# queryHash ") || !lines.get(1).equals(HEADER)) {
                 throw new IllegalArgumentException("not a recall snapshot");
             }
+            if (!lines.getLast().equals("end\t" + (lines.size() - 3))) {
+                throw new IllegalArgumentException("recall snapshot is truncated: last line " + lines.getLast());
+            }
             var rows = new ArrayList<Row>();
-            for (var line : lines.subList(2, lines.size())) {
+            for (var line : lines.subList(2, lines.size() - 1)) {
                 var cells = line.split("\t", -1);
                 if (cells.length != 6) {
                     throw new IllegalArgumentException("malformed recall snapshot row: " + line);
@@ -323,16 +336,13 @@ final class HtmlKnowledgeRecall {
                 run.prefix(query, Layer.B0, limit, b0, lexical(run, query, limit));
             }
             run.prefix(query, Layer.B0, MAX_LIMIT, lexical(run, query, LOOKAHEAD_LIMIT), b0);
-            var start = System.nanoTime();
-            var b1 = direct(run, memory, query, MAX_LIMIT);
-            b1Nanos[index] = System.nanoTime() - start;
+            var sample = index;
+            var b1 = direct(run, memory, query, MAX_LIMIT, nanos -> b1Nanos[sample] = nanos);
             for (var limit : PREFIX_LIMITS) {
                 run.prefix(query, Layer.B1, limit, b1, direct(run, memory, query, limit));
             }
             run.prefix(query, Layer.B1, MAX_LIMIT, direct(run, memory, query, LOOKAHEAD_LIMIT), b1);
-            start = System.nanoTime();
-            var b2 = neuron(run, adapter, query, MAX_LIMIT);
-            b2Nanos[index] = System.nanoTime() - start;
+            var b2 = neuron(run, adapter, query, MAX_LIMIT, nanos -> b2Nanos[sample] = nanos);
             var b2c = codecDirect(run, memory, query, MAX_LIMIT);
             run.compareControl(query, MAX_LIMIT, b2, b2c);
             for (var limit : PREFIX_LIMITS) {
@@ -354,9 +364,13 @@ final class HtmlKnowledgeRecall {
         metadata.put("perf.b1.recallLimit5.p95Nanos", Long.toString(percentile(b1Nanos, 95)));
         metadata.put("perf.b2.recallLimit5.medianNanos", Long.toString(percentile(b2Nanos, 50)));
         metadata.put("perf.b2.recallLimit5.p95Nanos", Long.toString(percentile(b2Nanos, 95)));
+        var sampling = new LatencySampling(1, queries.size(), 1, LatencySampling.WALL_CLOCK + "; only the Store call"
+                + " (B1) or the adapter recall (B2) is timed", false, LatencySampling.NO_GC_TELEMETRY);
+        sampling.describe("perf.b1.recallLimit5", metadata);
+        sampling.describe("perf.b2.recallLimit5", metadata);
         metadata.put("perf.sampling", "warm: one unmeasured pass of every query through B1 and B2, then one measured"
-                + " limit-5 call per query and layer on the same open handles; single samples, exploratory, never"
-                + " part of a verdict");
+                + " limit-5 call per query and layer on the same open handles; median and p95 over those samples;"
+                + " exploratory, never part of a verdict");
         return new Observation(new Snapshot(queryHash, run.rowsWithFailureMarkers()), run.checks(), metadata);
     }
 
@@ -419,9 +433,16 @@ final class HtmlKnowledgeRecall {
 
     /** B1 at {@code limit}; returns its mapped rows, or {@code null} after a recorded failure. */
     private List<Row> direct(Run run, MonadaMemory memory, QueryText query, int limit) {
+        return direct(run, memory, query, limit, nanos -> { });
+    }
+
+    /** {@link #direct} that reports the duration of the Store call alone, without mapping or validation. */
+    private List<Row> direct(Run run, MonadaMemory memory, QueryText query, int limit, LongConsumer elapsed) {
         List<ResonanceResult> results;
         try {
+            var start = System.nanoTime();
             results = memory.resonate(query.text()).topK(limit).threshold(THRESHOLD).execute().results();
+            elapsed.accept(System.nanoTime() - start);
         } catch (RuntimeException e) {
             run.failure(query, Layer.B1, limit, "threw " + e);
             return null;
@@ -438,8 +459,17 @@ final class HtmlKnowledgeRecall {
 
     /** B2 at {@code limit}; returns its mapped rows with references, or {@code null} after a recorded failure. */
     private List<Referenced> neuron(Run run, ResonanceStoreMemoryAdapter adapter, QueryText query, int limit) {
+        return neuron(run, adapter, query, limit, nanos -> { });
+    }
+
+    /** {@link #neuron} that reports the duration of the adapter recall alone, without mapping or validation. */
+    private List<Referenced> neuron(Run run, ResonanceStoreMemoryAdapter adapter, QueryText query, int limit,
+            LongConsumer elapsed) {
         try {
-            var response = adapter.recall(new ResonanceMemoryRequest(codec.querySignals(query.text()), limit));
+            var request = new ResonanceMemoryRequest(codec.querySignals(query.text()), limit);
+            var start = System.nanoTime();
+            var response = adapter.recall(request);
+            elapsed.accept(System.nanoTime() - start);
             if (response.status() != ResonanceMemoryStatus.COMPLETE) {
                 run.failure(query, Layer.B2, limit, "answered " + response.status());
                 return null;
@@ -594,6 +624,8 @@ final class HtmlKnowledgeRecall {
          */
         void prefix(QueryText query, Layer layer, int limit, List<Row> fullRows, List<Row> limitedRows) {
             if (fullRows == null || limitedRows == null) {
+                prefixFailures.add(query.queryId() + " " + layer.label() + " limit " + limit
+                        + ": not compared (a call failed)");
                 return;
             }
             prefixComparisons++;
@@ -621,6 +653,7 @@ final class HtmlKnowledgeRecall {
 
         void compareControl(QueryText query, int limit, List<Referenced> neuron, List<Referenced> control) {
             if (neuron == null || control == null) {
+                controlFailures.add(query.queryId() + " limit " + limit + ": not compared (a call failed)");
                 return;
             }
             controlComparisons++;
@@ -636,6 +669,8 @@ final class HtmlKnowledgeRecall {
         }
 
         List<Check> checks() {
+            var expectedControl = queryCount * CONTROL_COMPARISONS_PER_QUERY;
+            var expectedPrefix = queryCount * PREFIX_COMPARISONS_PER_QUERY;
             return List.of(
                     new Check("recall.completed", failures.isEmpty(), failures.isEmpty()
                             ? "every B1/B2c Store call returned and every B2 recall answered COMPLETE"
@@ -648,16 +683,17 @@ final class HtmlKnowledgeRecall {
                     new Check("fidelity.reference", referenceFailures.isEmpty(), referenceFailures.isEmpty()
                             ? "every B2 reference maps through the manifest to a chunk"
                             : first(referenceFailures)),
-                    new Check("neuron.b2EqualsB2c", controlFailures.isEmpty() && controlComparisons > 0,
-                            controlFailures.isEmpty()
-                                    ? controlComparisons + " comparisons (limits 1, 3, 5 and 6): B2 equals the"
-                                            + " codec-direct control (atoms, order, bit-exact scores)"
-                                    : "adapter defect: " + first(controlFailures)),
-                    new Check("recall.prefixStability", prefixFailures.isEmpty() && prefixComparisons > 0,
-                            (prefixFailures.isEmpty()
-                                    ? prefixComparisons + " shorter lists (every system at limits 1 and 3 against 5, and"
-                                            + " 5 against the lookahead 6) equal the prefix of the longer list"
-                                    : first(prefixFailures))
+                    new Check("neuron.b2EqualsB2c", controlFailures.isEmpty() && controlComparisons == expectedControl,
+                            controlComparisons + " of " + expectedControl + " comparisons (limits 1, 3, 5 and 6) made; "
+                                    + (controlFailures.isEmpty()
+                                            ? "B2 equals the codec-direct control (atoms, order, bit-exact scores)"
+                                            : "unequal (an adapter defect) or not compared: " + first(controlFailures))),
+                    new Check("recall.prefixStability", prefixFailures.isEmpty() && prefixComparisons == expectedPrefix,
+                            prefixComparisons + " of " + expectedPrefix + " comparisons (every system at limits 1 and 3"
+                                    + " against 5, and 5 against the lookahead 6) made; "
+                                    + (prefixFailures.isEmpty()
+                                            ? "each shorter list equals the prefix of the longer list"
+                                            : first(prefixFailures))
                                     + "; tie substitutions at the cutoff: " + (ties.isEmpty() ? "none" : first(ties))
                                     + " (" + queryCount + " queries)"));
         }

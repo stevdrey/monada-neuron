@@ -36,6 +36,12 @@ class HtmlKnowledgeIngestionRunnerTest {
         assertTrue(json.contains("\"corpus.hash\": \"" + HtmlKnowledgeCorpus.bundled().corpusHash() + "\""));
         assertTrue(json.contains("\"protocolVersion\": \"html-knowledge-protocol-v1\""));
         assertTrue(json.contains("\"store.root\": \"temporary (deleted)\""));
+        for (var row : List.of("store.perf.ingestNanos", "store.perf.readbackNanos")) {
+            for (var field : List.of("warmupIterations", "measurementIterations", "operationsPerIteration",
+                    "measurementMethod", "validationInWindow", "gcTelemetryScope")) {
+                assertTrue(outcome.report().metadata().containsKey(row + "." + field), row + "." + field);
+            }
+        }
         for (var key : List.of("runMode", "env.cpuModel", "env.totalPhysicalMemoryBytes", "env.hostId",
                 "env.storeRoot.fileSystem", "env.storeRoot.storageType")) {
             assertTrue(outcome.report().metadata().containsKey(key), key);
