@@ -67,13 +67,8 @@ public final class HtmlKnowledgeRecallPhase {
             checks.addAll(imported.checks());
             manifest = imported.manifest();
             work.write(work.manifest(phase), manifest.toTsv());
-            var chunks = corpus.chunks().size();
-            timings.put("perf.ingestNanos", Long.toString(imported.ingestNanos()));
-            new LatencySampling(0, 1, chunks, LatencySampling.WALL_CLOCK + "; one Store open plus one remember per"
-                    + " chunk", false, LatencySampling.NO_GC_TELEMETRY).describe("perf.ingestNanos", timings);
-            timings.put("perf.ingestReadbackNanos", Long.toString(imported.readbackNanos()));
-            new LatencySampling(0, 1, chunks, LatencySampling.WALL_CLOCK + "; one resonate per chunk", true,
-                    LatencySampling.NO_GC_TELEMETRY).describe("perf.ingestReadbackNanos", timings);
+            new HtmlKnowledgeIngestion(corpus).timings(imported, work.path().resolve(phase + "-timing"))
+                    .describe("perf", "ingestReadback", timings);
         } else {
             manifest = IngestionManifest.parseTsv(work.read(work.manifest()), corpus.version(), corpus.corpusHash())
                     .requireComplete(corpus);
@@ -81,12 +76,18 @@ public final class HtmlKnowledgeRecallPhase {
         var recall = new HtmlKnowledgeRecall(corpus);
         if (phase.equals(REOPEN)) {
             // The seed's ingestion already read every chunk back; the restarted process repeats that for itself.
-            var start = System.nanoTime();
-            checks.addAll(recall.readback(root, manifest));
-            timings.put("perf.reopenReadbackNanos", Long.toString(System.nanoTime() - start));
-            new LatencySampling(0, 1, corpus.chunks().size(), LatencySampling.WALL_CLOCK + "; Store open plus one"
-                    + " resonate per chunk", true, LatencySampling.NO_GC_TELEMETRY)
-                    .describe("perf.reopenReadbackNanos", timings);
+            var samples = new long[LatencyRow.REPETITIONS];
+            for (var repetition = 0; repetition < LatencyRow.REPETITIONS; repetition++) {
+                var start = System.nanoTime();
+                var readback = recall.readback(root, manifest);
+                samples[repetition] = System.nanoTime() - start;
+                if (repetition == 0) {
+                    checks.addAll(readback);
+                }
+            }
+            LatencyRow.wallClock(samples, corpus.chunks().size(), "Store open plus one resonate per chunk, with the"
+                    + " content hash check in the window; the checks come from sample 1", true)
+                    .describe("perf.reopenReadback", timings);
         }
         var observation = recall.observe(root, manifest, workload.queryHash(), workload.queries());
         checks.addAll(observation.checks());

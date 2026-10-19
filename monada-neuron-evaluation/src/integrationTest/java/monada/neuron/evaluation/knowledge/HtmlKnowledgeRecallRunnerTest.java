@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -124,26 +125,33 @@ class HtmlKnowledgeRecallRunnerTest {
         var metadata = outcome.report().metadata();
         var rows = new ArrayList<String>();
         for (var phase : List.of("seed", "reopen", "replica")) {
-            for (var row : List.of("perf.openNanos", "perf.b1.firstRecallNanos", "perf.b2.firstRecallNanos")) {
+            for (var row : List.of("perf.open", "perf.b1.firstRecall", "perf.b2.firstRecall")) {
                 rows.add(phase + "." + row);
             }
-            rows.add("phase." + phase + ".nanos");
+            assertTrue(Long.parseLong(metadata.get("process." + phase + ".wallNanos")) > 0, phase);
+            assertFalse(metadata.containsKey("phase." + phase + ".nanos"), "process time is not a latency row");
         }
         for (var phase : List.of("seed", "replica")) {
-            rows.add(phase + ".perf.ingestNanos");
-            rows.add(phase + ".perf.ingestReadbackNanos");
+            rows.add(phase + ".perf.ingest");
+            rows.add(phase + ".perf.ingestReadback");
         }
-        rows.add("reopen.perf.reopenReadbackNanos");
+        rows.add("reopen.perf.reopenReadback");
         for (var row : rows) {
-            assertTrue(metadata.containsKey(row), row);
-            for (var field : List.of("warmupIterations", "measurementIterations", "operationsPerIteration",
-                    "measurementMethod", "validationInWindow", "gcTelemetryScope")) {
+            for (var field : List.of("medianNanos", "p95Nanos", "warmupIterations", "measurementIterations",
+                    "operationsPerIteration", "measurementMethod", "validationInWindow", "gcTelemetryScope")) {
                 assertTrue(metadata.containsKey(row + "." + field), row + "." + field);
             }
+            assertEquals(Integer.toString(LatencyRow.REPETITIONS), metadata.get(row + ".measurementIterations"), row);
+            assertTrue(Long.parseLong(metadata.get(row + ".p95Nanos")) >= Long.parseLong(metadata.get(row
+                    + ".medianNanos")), row);
         }
-        for (var phase : List.of("seed", "reopen")) {
+        assertEquals("true", metadata.get("env.replicaRoot.sameFileStoreAsStoreRoot"));
+        assertTrue(metadata.containsKey("env.replicaRoot.fileSystem"));
+        assertTrue(metadata.containsKey("env.replicaRoot.storageType"));
+        for (var phase : List.of("seed", "reopen", "replica")) {
             for (var row : List.of("perf.b1.recallLimit5", "perf.b2.recallLimit5")) {
                 var prefix = phase + "." + row + ".";
+                assertTrue(metadata.containsKey(prefix + "medianNanos") && metadata.containsKey(prefix + "p95Nanos"));
                 assertEquals("1", metadata.get(prefix + "warmupIterations"), prefix);
                 assertEquals("32", metadata.get(prefix + "measurementIterations"), prefix);
                 assertEquals("1", metadata.get(prefix + "operationsPerIteration"), prefix);

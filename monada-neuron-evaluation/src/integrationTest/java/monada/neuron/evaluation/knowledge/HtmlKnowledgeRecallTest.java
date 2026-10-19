@@ -250,6 +250,29 @@ class HtmlKnowledgeRecallTest {
     }
 
     @Test
+    void theColdSampleIsTheFirstCallOnFreshHandlesAndNeverABlankQuery() {
+        var recall = new HtmlKnowledgeRecall(CORPUS);
+        var memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
+        var calls = new ArrayList<String>();
+        ResonanceStoreRecall recording = (query, limit, threshold) -> {
+            calls.add(query);
+            return memory.resonate(query).topK(limit).threshold(threshold).execute().results();
+        };
+        var adapter = ResonanceStoreMemoryAdapter.using(recording, recall.adapterConfig());
+        var queries = texts(QUERY_SET);
+        var sample = HtmlKnowledgeRecall.firstWithToken(queries).orElseThrow();
+
+        assertTrue(queries.getFirst().text().isBlank(), "blank queries sort first");
+        assertFalse(sample.text().isBlank());
+        var durations = recall.coldFirstRecall(memory, adapter, sample);
+
+        assertTrue(durations[0] > 0 && durations[1] > 0);
+        assertEquals(List.copyOf(HtmlTokens.distinct(sample.text())), calls,
+                "the adapter's first calls are exactly the cold sample's token queries");
+        assertTrue(HtmlKnowledgeRecall.firstWithToken(List.of(new QueryText("b", "  "))).isEmpty());
+    }
+
+    @Test
     void theRecallSideReferencesNoGoldLabelType() throws IOException {
         for (var type : List.of("HtmlKnowledgeRecallPhase", "HtmlKnowledgeRecall", "HtmlKnowledgeRecall$Run",
                 "HtmlKnowledgeRecall$QueryText", "HtmlKnowledgeRecall$QueryText$Workload", "LexicalOverlapBaseline",

@@ -109,10 +109,9 @@ class HtmlKnowledgePersistenceRunnerTest {
         }
         assertEquals("temporary (deleted)", metadata.get("store.root"));
         for (var phase : List.of("seed", "reopen")) {
-            for (var row : List.of("perf.directOpenNanos", "perf.adapterOpenNanos", "perf.firstRecallNanos",
-                    "perf.warmRecallMedianNanos")) {
-                for (var field : List.of("warmupIterations", "measurementIterations", "operationsPerIteration",
-                        "measurementMethod", "validationInWindow", "gcTelemetryScope")) {
+            for (var row : List.of("perf.directOpen", "perf.adapterOpen", "perf.firstRecall", "perf.warmRecall")) {
+                for (var field : List.of("medianNanos", "p95Nanos", "warmupIterations", "measurementIterations",
+                    "operationsPerIteration", "measurementMethod", "validationInWindow", "gcTelemetryScope")) {
                     assertTrue(metadata.containsKey(phase + "." + row + "." + field), phase + "." + row + "." + field);
                 }
             }

@@ -152,6 +152,8 @@ public final class HtmlKnowledgeRecallRunner {
         var work = new WorkDirectory(temporaryDirectory());
         try {
             var root = options.storeRoot().orElse(work.path().resolve("store"));
+            // Always a fresh root of its own; its file store is recorded next to the seed root's.
+            var replicaRoot = work.path().resolve("replica-store");
             work.write(work.workload(), HtmlKnowledgeRecall.QueryText.renderTsv(querySet.queryHash(),
                     querySet.queries().stream()
                             .map(query -> new HtmlKnowledgeRecall.QueryText(query.queryId(), query.text())).toList()));
@@ -174,7 +176,7 @@ public final class HtmlKnowledgeRecallRunner {
                 checks.add(restartEqual(seedSnapshot.get(), snapshot(work, HtmlKnowledgeRecallPhase.REOPEN)));
 
                 var replicated = phaseJvm.launch(HtmlKnowledgeRecallPhase.class, HtmlKnowledgeRecallPhase.REPLICA,
-                        work.path().resolve("replica-store"), work);
+                        replicaRoot, work);
                 replica = Optional.of(replicated);
                 HtmlKnowledgePersistenceRunner.collect(replicated, work, checks, metadata);
                 checks.add(freshRootEqual(seed, replicated, seedSnapshot.get(),
@@ -189,7 +191,7 @@ public final class HtmlKnowledgeRecallRunner {
                         + " no reopen or replica was attempted: " + seed.stderr()));
             }
 
-            describe(root, seed, reopen, replica, metadata);
+            describe(root, replicaRoot, seed, reopen, replica, metadata);
             var evaluation = new EvaluationReport(
                     Instant.now(),
                     EnvironmentMetadata.current(),
@@ -273,8 +275,8 @@ public final class HtmlKnowledgeRecallRunner {
                 outputDir.resolve(querySet.version() + "-recall-results.json"));
     }
 
-    private void describe(Path root, PhaseRun seed, Optional<PhaseRun> reopen, Optional<PhaseRun> replica,
-            Map<String, String> metadata) {
+    private void describe(Path root, Path replicaRoot, PhaseRun seed, Optional<PhaseRun> reopen,
+            Optional<PhaseRun> replica, Map<String, String> metadata) {
         metadata.put("protocolVersion", HtmlKnowledgeIngestionRunner.PROTOCOL_VERSION);
         metadata.put("extensions", "none (L1 and L2 only)");
         metadata.put("reopenMode", "restart (seed and reopen in separate JVM processes)");
@@ -311,10 +313,10 @@ public final class HtmlKnowledgeRecallRunner {
             var prefix = "phase." + run.phase();
             metadata.put(prefix + ".pid", Long.toString(run.pid()));
             metadata.put(prefix + ".exit", Integer.toString(run.exitStatus()));
-            metadata.put(prefix + ".nanos", Long.toString(run.nanos()));
-            new LatencySampling(0, 1, 1, LatencySampling.WALL_CLOCK + "; the whole child JVM, from process start to"
-                    + " exit, including JVM startup", true, LatencySampling.NO_GC_TELEMETRY)
-                    .describe(prefix + ".nanos", metadata);
+        }
+        for (var run : phases) {
+            // Process bookkeeping, not a latency row: one child JVM per phase, from start to exit, including startup.
+            metadata.put("process." + run.phase() + ".wallNanos", Long.toString(run.nanos()));
         }
         HtmlKnowledgePersistenceRunner.describeStore(root, options.storeRoot(), metadata);
         metadata.put("runMode", (options.storeRoot().isPresent() ? "kept Store root" : "default (temporary Store root)")
@@ -322,6 +324,11 @@ public final class HtmlKnowledgeRecallRunner {
         var environment = new RunEnvironment();
         environment.describeHost(metadata);
         environment.describeStoreRoot("env.storeRoot", root, metadata);
+        replica.ifPresent(run -> {
+            environment.describeStoreRoot("env.replicaRoot", replicaRoot, metadata);
+            metadata.put("env.replicaRoot.sameFileStoreAsStoreRoot",
+                    environment.sameFileStore(root, replicaRoot).map(String::valueOf).orElse("unknown"));
+        });
     }
 
     private Path temporaryDirectory() {

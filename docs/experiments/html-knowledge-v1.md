@@ -824,7 +824,7 @@ issue fixes the exact task name in its own documentation.
 | :--- | :--- | :--- | :--- |
 | #105 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeIngestion` | import `html-kc-v1` into a temporary Store, write the manifest |
 | #106 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgePersistence` | persistence across separate JVMs, reopen and source-level readback through Neuron |
-| #107 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeRecall` | L1/L2 judged recall with B0/B1/B2/B2c over `html-kq-v1`, rerun in a separate JVM |
+| #107 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeRecall` | L1/L2 judged recall with B0/B1/B2/B2c over `html-kq-v1`, rerun in a reopen JVM and in a fresh-root replica JVM |
 | #108 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeEvidenceTrace` | L3 evidence use in a cognitive cycle |
 | #109 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeAnswers` | L4 grounded answers with B3 and abstention |
 | #110 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeFeedback` | [relevance feedback](#relevance-feedback-delivered-by-110) vs a no-feedback control |
@@ -866,4 +866,6 @@ source set, and do not change `./gradlew test` when it is absent.
   across roots and not only across a restart. Setup, ingestion, reopen and first-recall timings are separate rows.
   Errata before merge: `q:false-premise-03` gained its required refutation keyClaim. `html-kq-v1` keeps its version
   because nothing had been merged; its `queryHash` changed from `97b29b68…` to `e91b0404…`, and no L1/L2 result
-  changed. No definition, formula, label rule or report field changes.
+  changed. Every knowledge latency row reports median and p95 over its samples (5 repetitions where an operation is
+  not already sampled once per query). The cold first recall is taken on fresh handles before any other call, and
+  the replica root's storage is recorded. No definition, formula, label rule or report field changes.

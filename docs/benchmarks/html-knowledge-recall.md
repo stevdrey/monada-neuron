@@ -156,20 +156,28 @@ the protocol's full-corpus readback on the existing root:
 
 A chunk lost or corrupted on disk therefore fails the run even when no judged query would return it.
 
+The replica root is always a fresh temporary directory. Its storage is recorded as `env.replicaRoot.{fileSystem,
+storageType}`, next to the seed root's. `env.replicaRoot.sameFileStoreAsStoreRoot` says whether both roots share a
+file store; replica latency rows are comparable with seed rows only when it is `true`. With `--store-root` on another
+device it can be `false`.
+
 The metadata records the protocol's required fields. Besides versions, hashes, the codec, the commits and the Store
 manifest, these are:
 - run identity: `runMode`, and best-effort environment fields `env.cpuModel`, `env.totalPhysicalMemoryBytes`, `env.hostId` (salted, truncated SHA-256 of the host name; the name itself is never written) and the Store root's `env.storeRoot.{fileSystem,storageType}`. A value that cannot be read is `unknown (<reason>)` and never fails a run.
 
-## Results (2026-10-18, after review round 3)
+## Results (2026-10-19, three-JVM harness after review round 5)
 
 Environment:
-- Neuron `989266a+dirty` (this change, uncommitted);
-- Store checkout `7d971ea`;
-- Azul OpenJDK 27 on Linux, AMD Ryzen 7 7730U, Store root on `tmpfs` (memory-backed);
-- one seed JVM and one reopen JVM.
+- Neuron `6503541+dirty` (this change, uncommitted);
+- Store checkout `573aeab`;
+- Azul OpenJDK 27 on Linux, AMD Ryzen 7 7730U;
+- seed root and replica root both on `tmpfs` (memory-backed), on the same file store
+  (`env.replicaRoot.sameFileStoreAsStoreRoot = true`);
+- one seed, one reopen and one replica JVM, about 1 s each from process start to exit (`process.<p>.wallNanos`).
 
-Two full runs gave byte-identical `recall` payloads and raw rows, and every check passed. Scores are unchanged from
-the first edition: scoring still reads the limit-5 lists.
+Two full runs gave byte-identical `recall` payloads and raw rows. All 26 checks passed, including
+`determinism.freshRootEqual`: the replica reproduced all 1800 seed rows. Scores are unchanged from the first edition,
+and also with the newer Store checkout; scoring still reads the limit-5 lists.
 
 | Layer | Recall@1 | Recall@5 | MRR@5 | Coverage@5 | FullEvidence@5 | NoAnswerFPR@5 | AbstentionRecall |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -213,28 +221,35 @@ Observations, not tuned away:
   This measures the codec, not the adapter: B2 = B2c held for every query at every limit.
 - **Ties.** The lookahead flags a tie straddling the k = 5 cutoff for 23 queries in B0, whose integer overlap scores
   tie widely, and for none in B1, B2 or B2c.
-- **Latency.** Each query is first sent once through B1 and B2, unmeasured (`perf.warmupQueries`). The measured pass
-  then takes one warm limit-5 sample per query on the same open handles. Only the Store call (B1) or the adapter
-  recall (B2) is timed; manifest mapping and hash validation run outside the window. Each row records its sampling as
-  `<phase>.perf.<row>.{warmupIterations,measurementIterations,operationsPerIteration,measurementMethod,validationInWindow,gcTelemetryScope}`, as the protocol requires. No GC or allocation telemetry is
-  collected. The samples are never part of a verdict:
-  - B1: median about 0.2 ms;
-  - B2: median about 1.6 ms, since it makes one Store query per token.
+- **Latency.** Every latency row reports median and p95 over its samples, and records its sampling:
+  `warmupIterations`, `measurementIterations`, `operationsPerIteration`, `measurementMethod`, `validationInWindow`
+  and `gcTelemetryScope`. No GC or allocation telemetry is collected, and no row is ever part of a verdict.
 
-  Every other phase is a separate row with the same sampling fields:
+  The rows:
+  - `perf.b1.recallLimit5` and `perf.b2.recallLimit5` take one sample per query (32), after one unmeasured pass of
+    every query (`perf.warmupQueries`), on the same handles. Only the Store call (B1) or the adapter recall (B2) is
+    timed.
+  - `perf.open` and the first-recall rows open 5 fresh handle pairs. Each pair's first B1 and B2 call is timed before
+    any other call on it, for the first query that has a token, so blank queries cannot warm the handles. The JVM
+    has already run the import or reopen readback on other handles.
+  - `perf.ingest` and `perf.ingestReadback` take the import under test plus 4 further imports into deleted scratch
+    roots.
+  - `perf.reopenReadback` repeats the full-corpus readback 5 times; its checks come from the first.
 
-  | Row | Phases | Timed operation |
-  | :--- | :--- | :--- |
-  | `perf.ingestNanos` | seed, replica | Store open plus one `remember` per chunk (33 operations) |
-  | `perf.ingestReadbackNanos` | seed, replica | the import readback, one `resonate` per chunk; validation in the window |
-  | `perf.reopenReadbackNanos` | reopen | Store open plus the full-corpus readback; validation in the window |
-  | `perf.openNanos` | all | `MonadaMemory.open` plus the adapter's own open, before the queries (setup or reopen) |
-  | `perf.b1.firstRecallNanos`, `perf.b2.firstRecallNanos` | all | the cold first call on those handles, for the first query with a token |
-  | `phase.<p>.nanos` | orchestrator | the whole child JVM, from process start to exit |
+  | Row (seed; reopen for the readback) | Samples | Timed operation | Median | p95 |
+  | :--- | ---: | :--- | ---: | ---: |
+  | `perf.b1.recallLimit5` | 32 | warm Store call, limit 5 | 0.18 ms | 0.37 ms |
+  | `perf.b2.recallLimit5` | 32 | warm adapter recall, limit 5 | 1.44 ms | 2.33 ms |
+  | `perf.b1.firstRecall` | 5 | first Store call on fresh handles | 1.67 ms | 2.32 ms |
+  | `perf.b2.firstRecall` | 5 | first adapter recall on fresh handles | 3.16 ms | 10.39 ms |
+  | `perf.open` | 5 | `MonadaMemory.open` plus the adapter's own open | 2.60 ms | 15.22 ms |
+  | `perf.ingest` | 5 | Store open plus 33 `remember` calls | 17.74 ms | 66.97 ms |
+  | `perf.ingestReadback` | 5 | 33 `resonate` calls with hash checks | 14.02 ms | 35.26 ms |
+  | `perf.reopenReadback` (reopen) | 5 | Store open plus 33 `resonate` calls with hash checks | 22.28 ms | 87.05 ms |
 
-  In this run:
-  - cold first recall: about 4 ms for B1 and 9 to 12 ms for B2, against the warm 0.2 ms and 1.6 ms;
-  - each child JVM: about 1 s from process start to exit.
+  The reopen and replica rows are in the same range. With 5 samples, a p95 is the slowest sample, so it mostly
+  shows the first, colder repetition. B2 is slower than B1 because it makes one Store query per token. The
+  whole-JVM time is process bookkeeping (`process.<p>.wallNanos`), not a latency row.
 
 Follow-up candidates (listed in the report and never relabeled):
 - B1 misses `q:exact-term-02` and `q:paraphrase-01/03/04`, and returns `q:conflicting-source-01` only `PARTIAL`.

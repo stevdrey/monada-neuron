@@ -22,6 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.LongConsumer;
 import java.util.stream.Collectors;
@@ -311,17 +312,65 @@ final class HtmlKnowledgeRecall {
      */
     Observation observe(Path root, IngestionManifest manifest, String queryHash, List<QueryText> queries) {
         HtmlKnowledgePersistence.requireExistingStore(root);
-        var start = System.nanoTime();
-        var memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
-        try (var adapter = ResonanceStoreMemoryAdapter.open(root, adapterConfig())) {
-            var openNanos = System.nanoTime() - start;
-            var observed = observe(memory, adapter, manifest, queryHash, queries);
+        var opens = new long[LatencyRow.REPETITIONS];
+        var firstB1 = new long[LatencyRow.REPETITIONS];
+        var firstB2 = new long[LatencyRow.REPETITIONS];
+        var sample = firstWithToken(queries);
+        MonadaMemory memory = null;
+        ResonanceStoreMemoryAdapter adapter = null;
+        for (var repetition = 0; repetition < LatencyRow.REPETITIONS; repetition++) {
+            if (adapter != null) {
+                adapter.close();
+            }
+            var start = System.nanoTime();
+            memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
+            adapter = ResonanceStoreMemoryAdapter.open(root, adapterConfig());
+            opens[repetition] = System.nanoTime() - start;
+            if (sample.isPresent()) {
+                var cold = coldFirstRecall(memory, adapter, sample.get());
+                firstB1[repetition] = cold[0];
+                firstB2[repetition] = cold[1];
+            }
+        }
+        try (var observing = adapter) {
+            var observed = observe(memory, observing, manifest, queryHash, queries);
             var metadata = new LinkedHashMap<>(observed.metadata());
-            metadata.put("perf.openNanos", Long.toString(openNanos));
-            new LatencySampling(0, 1, 2, LatencySampling.WALL_CLOCK + "; MonadaMemory.open plus the adapter's own"
-                    + " open", false, LatencySampling.NO_GC_TELEMETRY).describe("perf.openNanos", metadata);
+            LatencyRow.wallClock(opens, 2, "MonadaMemory.open plus the adapter's own open on the same root, a fresh"
+                    + " pair per sample", false).describe("perf.open", metadata);
+            var cold = "the first call on a freshly opened handle pair, made before any other call on it, for the"
+                    + " first query with at least one token at limit 5; earlier in this JVM the ingestion or reopen"
+                    + " readback already ran on other handles, and sample 1 is the phase's first query call";
+            LatencyRow.wallClock(sample.isPresent() ? firstB1 : new long[0], 1, "B1 Store call; " + cold, false)
+                    .describe("perf.b1.firstRecall", metadata);
+            LatencyRow.wallClock(sample.isPresent() ? firstB2 : new long[0], 1, "B2 adapter recall; " + cold, false)
+                    .describe("perf.b2.firstRecall", metadata);
             return new Observation(observed.snapshot(), observed.checks(), metadata);
         }
+    }
+
+    /** Returns the first query with at least one token: a blank query never reaches the encoder or the index. */
+    static Optional<QueryText> firstWithToken(List<QueryText> queries) {
+        return queries.stream().filter(query -> !HtmlTokens.distinct(query.text()).isEmpty()).findFirst();
+    }
+
+    /**
+     * Times one B1 call and one B2 call for {@code query} at limit 5 on handles that have served no call yet, and
+     * returns both durations; results are discarded and failures are left to the measured pass.
+     */
+    long[] coldFirstRecall(MonadaMemory memory, ResonanceStoreMemoryAdapter adapter, QueryText query) {
+        var durations = new long[2];
+        try {
+            var start = System.nanoTime();
+            memory.resonate(query.text()).topK(MAX_LIMIT).threshold(THRESHOLD).execute();
+            durations[0] = System.nanoTime() - start;
+            var request = new ResonanceMemoryRequest(codec.querySignals(query.text()), MAX_LIMIT);
+            start = System.nanoTime();
+            adapter.recall(request);
+            durations[1] = System.nanoTime() - start;
+        } catch (RuntimeException ignored) {
+            // Recorded by the measured pass.
+        }
+        return durations;
     }
 
     /**
@@ -333,7 +382,7 @@ final class HtmlKnowledgeRecall {
         Objects.requireNonNull(manifest, "manifest must not be null");
         Objects.requireNonNull(queryHash, "queryHash must not be null");
         var run = new Run(manifest, queries.size());
-        var first = warmUp(memory, adapter, queries);
+        warmUp(memory, adapter, queries);
         var b1Nanos = new long[queries.size()];
         var b2Nanos = new long[queries.size()];
         for (var index = 0; index < queries.size(); index++) {
@@ -367,21 +416,12 @@ final class HtmlKnowledgeRecall {
         }
         var metadata = new LinkedHashMap<String, String>();
         metadata.put("perf.warmupQueries", Integer.toString(queries.size()));
-        metadata.put("perf.b1.firstRecallNanos", Long.toString(first[0]));
-        metadata.put("perf.b2.firstRecallNanos", Long.toString(first[1]));
-        var cold = new LatencySampling(0, 1, 1, LatencySampling.WALL_CLOCK + "; the first call of this observation"
-                + " on freshly opened handles, for the first query with at least one token (warm-up pass, limit 5)",
-                false, LatencySampling.NO_GC_TELEMETRY);
-        cold.describe("perf.b1.firstRecallNanos", metadata);
-        cold.describe("perf.b2.firstRecallNanos", metadata);
-        metadata.put("perf.b1.recallLimit5.medianNanos", Long.toString(percentile(b1Nanos, 50)));
-        metadata.put("perf.b1.recallLimit5.p95Nanos", Long.toString(percentile(b1Nanos, 95)));
-        metadata.put("perf.b2.recallLimit5.medianNanos", Long.toString(percentile(b2Nanos, 50)));
-        metadata.put("perf.b2.recallLimit5.p95Nanos", Long.toString(percentile(b2Nanos, 95)));
-        var sampling = new LatencySampling(1, queries.size(), 1, LatencySampling.WALL_CLOCK + "; only the Store call"
-                + " (B1) or the adapter recall (B2) is timed", false, LatencySampling.NO_GC_TELEMETRY);
-        sampling.describe("perf.b1.recallLimit5", metadata);
-        sampling.describe("perf.b2.recallLimit5", metadata);
+        var timed = LatencyRow.WALL_CLOCK + "; one limit-5 call per query, only the Store call (B1) or the adapter"
+                + " recall (B2) is timed";
+        new LatencyRow(b1Nanos, 1, 1, timed, false, LatencyRow.NO_GC_TELEMETRY)
+                .describe("perf.b1.recallLimit5", metadata);
+        new LatencyRow(b2Nanos, 1, 1, timed, false, LatencyRow.NO_GC_TELEMETRY)
+                .describe("perf.b2.recallLimit5", metadata);
         metadata.put("perf.sampling", "warm: one unmeasured pass of every query through B1 and B2, then one measured"
                 + " limit-5 call per query and layer on the same open handles; median and p95 over those samples;"
                 + " exploratory, never part of a verdict");
@@ -419,32 +459,19 @@ final class HtmlKnowledgeRecall {
 
     /**
      * Sends every query once through B1 and B2 at limit 5 and discards the results, so the measured pass does not
-     * time class loading, JIT compilation or first Store reads, and returns the cold durations of the B1 and B2 calls
-     * of the first query with at least one token (the first-recall rows). Failures are ignored here; the measured pass records them. Recall writes nothing ({@code feedback} is never called), so warming cannot change a later result.
+     * time class loading, JIT compilation or first Store reads. The cold first-recall samples are taken before this
+     * pass, by {@link #coldFirstRecall}. Failures are ignored here; the measured pass records them. Recall writes
+     * nothing ({@code feedback} is never called), so warming cannot change a later result.
      */
-    private long[] warmUp(MonadaMemory memory, ResonanceStoreMemoryAdapter adapter, List<QueryText> queries) {
-        var first = new long[2];
-        var cold = true;
+    private void warmUp(MonadaMemory memory, ResonanceStoreMemoryAdapter adapter, List<QueryText> queries) {
         for (var query : queries) {
             try {
-                var start = System.nanoTime();
                 memory.resonate(query.text()).topK(MAX_LIMIT).threshold(THRESHOLD).execute();
-                var direct = System.nanoTime() - start;
-                var request = new ResonanceMemoryRequest(codec.querySignals(query.text()), MAX_LIMIT);
-                start = System.nanoTime();
-                adapter.recall(request);
-                // A query without tokens never reaches the encoder (the Store answers it at once), so the cold
-                // first-recall row is the first query that does.
-                if (cold && !HtmlTokens.distinct(query.text()).isEmpty()) {
-                    first[0] = direct;
-                    first[1] = System.nanoTime() - start;
-                    cold = false;
-                }
+                adapter.recall(new ResonanceMemoryRequest(codec.querySignals(query.text()), MAX_LIMIT));
             } catch (RuntimeException ignored) {
                 // Recorded by the measured pass.
             }
         }
-        return first;
     }
 
     /** B0 at {@code limit}; returns its rows. */
@@ -608,16 +635,6 @@ final class HtmlKnowledgeRecall {
     /** Returns the rows of {@code referenced}, or {@code null} after a recorded failure. */
     private static List<Row> rowsOf(List<Referenced> referenced) {
         return referenced == null ? null : referenced.stream().map(Referenced::row).toList();
-    }
-
-    private static long percentile(long[] values, int percent) {
-        if (values.length == 0) {
-            return 0L;
-        }
-        var sorted = values.clone();
-        Arrays.sort(sorted);
-        var index = (int) Math.ceil(percent / 100.0 * sorted.length) - 1;
-        return sorted[Math.max(0, index)];
     }
 
     /** Mutable state of one observation: the rows and the evidence behind each check. */

@@ -372,13 +372,13 @@ public final class HtmlKnowledgeIngestionRunner {
             checks.addAll(result.checks());
             metadata.put(prefix + ".root",
                     keptRoot.isPresent() ? root.toAbsolutePath().toString() : "temporary (deleted)");
-            metadata.put(prefix + ".perf.ingestNanos", Long.toString(result.ingestNanos()));
-            var chunks = corpus.chunks().size();
-            new LatencySampling(0, 1, chunks, LatencySampling.WALL_CLOCK + "; one Store open plus one remember per"
-                    + " chunk", false, LatencySampling.NO_GC_TELEMETRY).describe(prefix + ".perf.ingestNanos", metadata);
-            metadata.put(prefix + ".perf.readbackNanos", Long.toString(result.readbackNanos()));
-            new LatencySampling(0, 1, chunks, LatencySampling.WALL_CLOCK + "; one resonate per chunk", true,
-                    LatencySampling.NO_GC_TELEMETRY).describe(prefix + ".perf.readbackNanos", metadata);
+            var scratch = Files.createTempDirectory("monada-neuron-html-kc-timing-");
+            try {
+                new HtmlKnowledgeIngestion(corpus).timings(result, scratch)
+                        .describe(prefix + ".perf", "readback", metadata);
+            } finally {
+                deleteTree(scratch);
+            }
             new RunEnvironment().describeStoreRoot("env." + prefix + "Root", root, metadata);
             var manifest = root.resolve("manifest.json");
             if (Files.exists(manifest)) {

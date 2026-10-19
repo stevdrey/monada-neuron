@@ -26,7 +26,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -208,10 +207,15 @@ public final class HtmlKnowledgePersistence {
                         + ", defaults()) and the vector format is the current FIXED_RAW"
                 : "persisted [" + profile + "] differs from the expected default profile [" + expected + "]"));
 
-        var openStart = System.nanoTime();
-        var memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
-        metadata.put("perf.directOpenNanos", Long.toString(System.nanoTime() - openStart));
-        LatencySampling.single(0, false).describe("perf.directOpenNanos", metadata);
+        var directOpens = new long[LatencyRow.REPETITIONS];
+        MonadaMemory memory = null;
+        for (var repetition = 0; repetition < LatencyRow.REPETITIONS; repetition++) {
+            var openStart = System.nanoTime();
+            memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
+            directOpens[repetition] = System.nanoTime() - openStart;
+        }
+        LatencyRow.wallClock(directOpens, 1, "MonadaMemory.open on the same root, a fresh handle per sample; the"
+                + " last handle serves the observation", false).describe("perf.directOpen", metadata);
         var readback = ingestion.readbackSweep(memory, manifest);
         var unread = readback.unread();
         checks.add(new Check("persistence.readback", unread.isEmpty(), unread.isEmpty()
@@ -230,10 +234,28 @@ public final class HtmlKnowledgePersistence {
         var referenceFailures = new ArrayList<String>();
         var signalFailures = new ArrayList<String>();
         var statusFailures = new ArrayList<String>();
-        var adapterOpenStart = System.nanoTime();
-        try (var adapter = ResonanceStoreMemoryAdapter.open(root, config())) {
-            metadata.put("perf.adapterOpenNanos", Long.toString(System.nanoTime() - adapterOpenStart));
-            LatencySampling.single(0, false).describe("perf.adapterOpenNanos", metadata);
+        var adapterOpens = new long[LatencyRow.REPETITIONS];
+        var firstRecalls = new long[LatencyRow.REPETITIONS];
+        var firstProbe = new ResonanceMemoryRequest(List.of(codec.querySignal(probes.getFirst().probeId())), TOP_K);
+        ResonanceStoreMemoryAdapter opened = null;
+        for (var repetition = 0; repetition < LatencyRow.REPETITIONS; repetition++) {
+            if (opened != null) {
+                opened.close();
+            }
+            var adapterOpenStart = System.nanoTime();
+            opened = ResonanceStoreMemoryAdapter.open(root, config());
+            adapterOpens[repetition] = System.nanoTime() - adapterOpenStart;
+            // The first recall on each fresh adapter, before any other call on it; its result is discarded.
+            var recallStart = System.nanoTime();
+            opened.recall(firstProbe);
+            firstRecalls[repetition] = System.nanoTime() - recallStart;
+        }
+        LatencyRow.wallClock(adapterOpens, 1, "ResonanceStoreMemoryAdapter.open on the same root, a fresh adapter per"
+                + " sample; the last adapter serves the observation", false).describe("perf.adapterOpen", metadata);
+        LatencyRow.wallClock(firstRecalls, 1, "the first adapter recall (first probe) on a freshly opened adapter,"
+                + " before any other call on it; the readback already ran in this JVM on another handle", false)
+                .describe("perf.firstRecall", metadata);
+        try (var adapter = opened) {
             var warm = new long[probes.size()];
             for (var index = 0; index < probes.size(); index++) {
                 var probe = probes.get(index);
@@ -263,11 +285,9 @@ public final class HtmlKnowledgePersistence {
                     rows.add(new Row(probe.probeId(), NEURON, rank, byReference.orElse(UNMAPPED), result.score()));
                 }
             }
-            metadata.put("perf.firstRecallNanos", Long.toString(warm[0]));
-            LatencySampling.single(0, false).describe("perf.firstRecallNanos", metadata);
-            metadata.put("perf.warmRecallMedianNanos", Long.toString(median(Arrays.copyOfRange(warm, 1, warm.length))));
-            new LatencySampling(1, warm.length - 1, 1, LatencySampling.WALL_CLOCK + "; only the adapter recall is"
-                    + " timed", false, LatencySampling.NO_GC_TELEMETRY).describe("perf.warmRecallMedianNanos", metadata);
+            new LatencyRow(warm, 1, 1, LatencyRow.WALL_CLOCK + "; one adapter recall per probe after the first-recall"
+                    + " call on the same adapter; only the adapter recall is timed", false, LatencyRow.NO_GC_TELEMETRY)
+                    .describe("perf.warmRecall", metadata);
         }
 
         checks.add(new Check("neuron.recallComplete", statusFailures.isEmpty(), statusFailures.isEmpty()
@@ -627,15 +647,6 @@ public final class HtmlKnowledgePersistence {
                 + (index < expected.size() ? expected.get(index).toTsv() : "<none>") + ", now "
                 + (index < actual.size() ? actual.get(index).toTsv() : "<none>") + " (" + expected.size() + " vs "
                 + actual.size() + " results)");
-    }
-
-    private long median(long[] values) {
-        if (values.length == 0) {
-            return 0L;
-        }
-        var sorted = values.clone();
-        Arrays.sort(sorted);
-        return sorted[sorted.length / 2];
     }
 
     private void rewriteAtomLog(Path root, String atomId,

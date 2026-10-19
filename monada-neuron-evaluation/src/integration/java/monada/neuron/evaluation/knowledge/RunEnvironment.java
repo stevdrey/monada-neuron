@@ -54,10 +54,7 @@ final class RunEnvironment {
      */
     void describeStoreRoot(String prefix, Path root, Map<String, String> metadata) {
         Objects.requireNonNull(prefix, "prefix must not be null");
-        var existing = root.toAbsolutePath().normalize();
-        while (existing != null && !Files.exists(existing)) {
-            existing = existing.getParent();
-        }
+        var existing = existingAncestor(root);
         if (existing == null) {
             metadata.put(prefix + ".fileSystem", "unknown (no existing ancestor)");
             metadata.put(prefix + ".storageType", "unknown (no existing ancestor)");
@@ -71,6 +68,31 @@ final class RunEnvironment {
             metadata.put(prefix + ".fileSystem", "unknown (" + e.getClass().getSimpleName() + ")");
             metadata.put(prefix + ".storageType", "unknown (" + e.getClass().getSimpleName() + ")");
         }
+    }
+
+    /**
+     * Returns whether {@code first} and {@code second} (or their nearest existing ancestors) live on the same file
+     * store, so latency rows measured on them are comparable; empty when either cannot be resolved.
+     */
+    Optional<Boolean> sameFileStore(Path first, Path second) {
+        try {
+            var a = existingAncestor(first);
+            var b = existingAncestor(second);
+            if (a == null || b == null) {
+                return Optional.empty();
+            }
+            return Optional.of(Files.getFileStore(a).equals(Files.getFileStore(b)));
+        } catch (IOException | RuntimeException e) {
+            return Optional.empty();
+        }
+    }
+
+    private Path existingAncestor(Path path) {
+        var existing = path.toAbsolutePath().normalize();
+        while (existing != null && !Files.exists(existing)) {
+            existing = existing.getParent();
+        }
+        return existing;
     }
 
     /** Returns the first {@code model name} of the CPU information file. */
