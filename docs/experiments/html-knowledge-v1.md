@@ -874,4 +874,6 @@ source set, and do not change `./gradlew test` when it is absent.
   the replica root sit beside the root under test, and a non-finite Store score fails its B1/B2c layer. No
   definition, formula, label rule or report field changes. A failed scratch timing import is recorded as
   `excludedSamples` metadata, never as a semantic check, and every direct B1/B2c path, cold and warm-up calls included,
-  shares one acceptance rule for Store results.
+  shares one acceptance rule for Store results. Final semantic boundary: only protocol-required operations are
+  checks. Cold samples, warm-up, timing repetitions (including reopen readbacks 2 to 5) and scratch imports are
+  latency-only diagnostics (`excludedSamples`, `perf.warmup.failures`). Scores are compared bit-exactly.

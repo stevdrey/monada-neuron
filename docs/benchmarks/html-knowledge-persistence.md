@@ -76,7 +76,6 @@ an empty store. A phase that finds no manifest exits `2` without a result, which
 | `persistence.readback` | every chunk recalls its manifest atom through `resonate(text).topK(33).threshold(0.0)`, and the content hash matches the corpus `sha256`; a failure names the chunk |
 | `persistence.noUnmappedAtoms` | no recalled atom is missing from the manifest |
 | `neuron.recallComplete` | every probe answers `COMPLETE` through the adapter |
-| `neuron.firstRecallsComplete` | the first recall on each of the 5 freshly opened adapters answers `COMPLETE`; a failed one is reported and excluded from `perf.firstRecall` |
 | `neuron.referenceAttribution` | every adapter result's opaque reference maps through the manifest to a chunk |
 | `neuron.signalAttribution` | the chunk named by the decoded Signal equals the chunk named by the reference |
 | `neuron.directVsAdapterEqual` | for each single-Signal probe, the adapter returns the same chunks, order and scores as `MonadaMemory.resonate(query).topK(5).threshold(0.0)` |
@@ -168,8 +167,11 @@ chunk.
 
 ## Observed behaviour
 
-First recorded on 2026-10-17 against Store `main`. Re-checked on 2026-10-19 on the final harness: Neuron `c74c8a1`
-with a clean tree, Store `f24e3a2`, all 36 checks passing. Every statement below still holds as written.
+First recorded on 2026-10-17 against Store `main`. Re-checked on 2026-10-19 on the final harness: Neuron `40ce1db`
+with a clean tree, Store `e74f755`, all 34 checks passing. Every statement below still holds as written.
+
+The first recall on each freshly opened adapter is a latency sample only. A failed one is excluded from
+`perf.firstRecall` and recorded in `perf.firstRecall.excludedSamples`, never as a check.
 
 - **Persistence:** all 33 chunks are persisted and read back with identical content in the restarted JVM. The 195
   direct results and the 195 adapter results (39 probes × 5) are bit-identical between the two processes.

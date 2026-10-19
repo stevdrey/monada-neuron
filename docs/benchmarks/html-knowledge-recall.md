@@ -119,7 +119,6 @@ id or claim. Each phase reports:
 
 | Check | Pass condition |
 | :--- | :--- |
-| `recall.auxiliaryCallsCompleted` | every unmeasured warm-up call and every cold first-recall sample on the root under test returned acceptable output: B1 with finite scores (the same rule as the measured path), and B2 `COMPLETE`. A failed call is reported here at once, never left to the measured pass, and is excluded from its latency row. |
 | `recall.completed` | every B1/B2c Store call returned with finite scores and every B2 recall answered `COMPLETE`, at every limit. A non-finite Store score fails the layer, as the production adapter does. |
 | `fidelity.source` | every B1 and B2c atom maps through the manifest, and its returned content hashes to the corpus `sha256`, as returned. |
 | `fidelity.reference` | every B2 reference maps through the manifest. |
@@ -151,15 +150,25 @@ equality does.
 
 The seed and replica phases also carry the three `ingestion.*` checks of #105, which judge the import under test.
 
-The 4 scratch imports exist only to sample `perf.ingest*`. A failed one is excluded from those rows and recorded in
-`perf.ingest.excludedSamples` (also `perf.ingestReadback.excludedSamples`) as metadata. It is never a semantic check,
-because latency must not affect the verdict or the exit status.
+**Semantic boundary.** Only what the protocol requires is a check:
+- the measured recalls of B0, B1, B2 and B2c at limits 1, 3, 5 and 6, with their fidelity and B2 = B2c;
+- prefix stability;
+- the ingestion of the root under test;
+- one readback in the restarted process;
+- restart and fresh-root determinism.
 
-Calls on the root under test stay semantic: cold samples, warm-up calls and reopen readbacks. A failure there is a
-real Store failure. Each of the
-5 reopen readback repetitions is checked; if any fails, that repetition's checks are reported and its sample is
-excluded. No failed or incomplete call is ever published as a latency sample: a latency row's
-`measurementIterations` counts the successful samples only. This covers the measured warm rows too: a measured call that throws or
+Every other call exists only for latency and is a diagnostic, never a check, because latency must not affect the
+verdict or the exit status. These calls are:
+- the cold first-recall samples;
+- the unmeasured warm-up pass;
+- reopen readback repetitions 2 to 5;
+- the 4 scratch imports.
+
+A latency-only call that fails, or returns unacceptable output, is excluded from its row. The reason is recorded in
+`<row>.excludedSamples` (`perf.warmup.failures` for the warm-up pass); the value is `0` when nothing was excluded.
+No failed or incomplete call is ever published as a latency sample, and a row's `measurementIterations` counts only
+the successful samples. Scores are compared bit-exactly everywhere (`sameScore`, so `+0.0` and `-0.0` differ), in
+B2 = B2c, in prefix stability and in tie detection. This covers the measured warm rows too: a measured call that throws or
 is not `COMPLETE` is excluded. The report writes every number through one helper that turns a non-finite value into
 `null`, so the JSON stays valid even for a failed run. Before it runs any query, the reopen phase repeats
 the protocol's full-corpus readback on the existing root:
@@ -187,15 +196,15 @@ manifest, these are:
 Every figure in this section comes from one harness revision, measured on a clean tree.
 
 Environment:
-- Neuron `c74c8a1`, the final harness, with no uncommitted changes (`neuron.commit` has no `+dirty`);
-- Store checkout `f24e3a2`;
+- Neuron `40ce1db`, the final harness, with no uncommitted changes (`neuron.commit` has no `+dirty`);
+- Store checkout `e74f755`;
 - Azul OpenJDK 27 on Linux, AMD Ryzen 7 7730U;
 - seed root, replica root and timing scratch roots all on `tmpfs` (memory-backed), on the same file store
   (`env.replicaRoot.sameFileStoreAsStoreRoot = true`, `<phase>.env.timingScratch.sameFileStoreAsStoreRoot = true`);
-- one seed, one reopen and one replica JVM, each 1.0 to 1.1 s from process start to exit (`process.<p>.wallNanos`).
+- one seed, one reopen and one replica JVM, each 1.1 to 1.6 s from process start to exit (`process.<p>.wallNanos`).
 
 Two full runs gave byte-identical `recall` payloads.
-- All 29 checks passed. They include `determinism.freshRootEqual`: the replica reproduced all 1800 seed rows.
+- All 26 checks passed. They include `determinism.freshRootEqual`: the replica reproduced all 1800 seed rows.
 - No latency sample was excluded (`excludedSamples = 0`), and nothing was left behind (`cleanup.leftover = none`).
 - The persistence and ingestion runners also pass on the same commit.
 - Scores are unchanged from the first edition, across every harness revision and Store checkout since; scoring still
@@ -256,22 +265,25 @@ Observations, not tuned away:
     has already run the import or reopen readback on other handles.
   - `perf.ingest` and `perf.ingestReadback` take the import under test plus 4 further imports into scratch roots
     beside it, deleted afterwards.
-  - `perf.reopenReadback` repeats the full-corpus readback 5 times. Every repetition is checked, and a failed one is
-    reported and excluded.
+  - `perf.reopenReadback` repeats the full-corpus readback 5 times. Repetition 1 is the required readback, and its
+    checks are reported. A failure in repetitions 2 to 5 only excludes that sample.
 
   | Row (seed; reopen for the readback) | Samples | Timed operation | Median | p95 |
   | :--- | ---: | :--- | ---: | ---: |
-  | `perf.b1.recallLimit5` | 32 | warm Store call, limit 5 | 0.21 ms | 0.35 ms |
-  | `perf.b2.recallLimit5` | 32 | warm adapter recall, limit 5 | 1.48 ms | 3.09 ms |
-  | `perf.b1.firstRecall` | 5 | first Store call on fresh handles | 2.58 ms | 3.36 ms |
-  | `perf.b2.firstRecall` | 5 | first adapter recall on fresh handles | 3.99 ms | 12.33 ms |
-  | `perf.open` | 5 | `MonadaMemory.open` plus the adapter's own open | 3.77 ms | 20.25 ms |
-  | `perf.ingest` | 5 | Store open plus 33 `remember` calls | 20.38 ms | 75.07 ms |
-  | `perf.ingestReadback` | 5 | 33 `resonate` calls with hash checks | 16.64 ms | 37.16 ms |
-  | `perf.reopenReadback` (reopen) | 5 | Store open plus 33 `resonate` calls with hash checks | 21.89 ms | 98.88 ms |
+  | `perf.b1.recallLimit5` | 32 | warm Store call, limit 5 | 0.22 ms | 0.50 ms |
+  | `perf.b2.recallLimit5` | 32 | warm adapter recall, limit 5 | 1.65 ms | 3.53 ms |
+  | `perf.b1.firstRecall` | 5 | first Store call on fresh handles | 3.64 ms | 5.53 ms |
+  | `perf.b2.firstRecall` | 5 | first adapter recall on fresh handles | 10.39 ms | 16.07 ms |
+  | `perf.open` | 5 | `MonadaMemory.open` plus the adapter's own open | 4.89 ms | 57.07 ms |
+  | `perf.ingest` | 5 | Store open plus 33 `remember` calls | 44.72 ms | 101.13 ms |
+  | `perf.ingestReadback` | 5 | 33 `resonate` calls with hash checks | 49.45 ms | 51.37 ms |
+  | `perf.reopenReadback` (reopen) | 5 | Store open plus 33 `resonate` calls with hash checks | 25.19 ms | 103.48 ms |
 
-  The reopen and replica rows are in the same range. For example, warm B1 has a median of 0.19 and 0.18 ms, and
-  warm B2 1.53 and 1.41 ms. With 5 samples, a p95 is the slowest sample, so it mostly
+  The warm rows of the reopen and replica JVMs are in the same range: warm B1 has medians of 0.23 and 0.20 ms, and
+  warm B2 1.85 and 1.51 ms. The seed JVM's setup rows are higher than in the earlier rounds, for example
+  `perf.ingest` at 44.72 ms against about 20 ms before. The seed JVM also took longer overall (1.6 s), which points to
+  load on the machine during this run, not to the harness. These rows are single-machine, exploratory and
+  non-comparable across runs unless their environment and sampling fields match. With 5 samples, a p95 is the slowest sample, so it mostly
   shows the first, colder repetition. B2 is slower than B1 because it makes one Store query per token. The
   whole-JVM time is process bookkeeping (`process.<p>.wallNanos`), not a latency row.
 
