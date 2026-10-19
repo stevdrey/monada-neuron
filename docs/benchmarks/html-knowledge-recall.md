@@ -196,12 +196,12 @@ manifest, these are:
 Every figure in this section comes from one harness revision, measured on a clean tree.
 
 Environment:
-- Neuron `40ce1db`, the final harness, with no uncommitted changes (`neuron.commit` has no `+dirty`);
-- Store checkout `e74f755`;
+- Neuron `26974b6`, the final harness, with no uncommitted changes (`neuron.commit` has no `+dirty`);
+- Store checkout `879bd95`;
 - Azul OpenJDK 27 on Linux, AMD Ryzen 7 7730U;
 - seed root, replica root and timing scratch roots all on `tmpfs` (memory-backed), on the same file store
   (`env.replicaRoot.sameFileStoreAsStoreRoot = true`, `<phase>.env.timingScratch.sameFileStoreAsStoreRoot = true`);
-- one seed, one reopen and one replica JVM, each 1.1 to 1.6 s from process start to exit (`process.<p>.wallNanos`).
+- one seed, one reopen and one replica JVM, each 1.0 to 1.1 s from process start to exit (`process.<p>.wallNanos`).
 
 Two full runs gave byte-identical `recall` payloads.
 - All 26 checks passed. They include `determinism.freshRootEqual`: the replica reproduced all 1800 seed rows.
@@ -260,9 +260,14 @@ Observations, not tuned away:
   - `perf.b1.recallLimit5` and `perf.b2.recallLimit5` take one sample per query (32), after one unmeasured pass of
     every query (`perf.warmupQueries`), on the same handles. Only the Store call (B1) or the adapter recall (B2) is
     timed.
-  - `perf.open` and the first-recall rows open 5 fresh handle pairs. Each pair's first B1 and B2 call is timed before
-    any other call on it, for the first query that has a token, so blank queries cannot warm the handles. The JVM
-    has already run the import or reopen readback on other handles.
+  - `perf.open` and the first-recall rows open 5 fresh handle pairs used only for timing. Each pair's first B1 and B2
+    call is timed before any other call on it, for the first query that has a token, so blank queries cannot warm
+    the handles. The JVM has already run the import or reopen readback on other handles. The observation then opens
+    a pair of its own, untimed.
+  - Every latency-only step catches its own exceptions: a timed open, a cold or warm-up call, a readback repetition
+    or a scratch import. A failure excludes that sample and is recorded in `excludedSamples`. Only the
+    protocol-required steps can fail the run: the observation's handles, the measured recalls, readback 1 and the
+    import under test.
   - `perf.ingest` and `perf.ingestReadback` take the import under test plus 4 further imports into scratch roots
     beside it, deleted afterwards.
   - `perf.reopenReadback` repeats the full-corpus readback 5 times. Repetition 1 is the required readback, and its
@@ -270,20 +275,19 @@ Observations, not tuned away:
 
   | Row (seed; reopen for the readback) | Samples | Timed operation | Median | p95 |
   | :--- | ---: | :--- | ---: | ---: |
-  | `perf.b1.recallLimit5` | 32 | warm Store call, limit 5 | 0.22 ms | 0.50 ms |
-  | `perf.b2.recallLimit5` | 32 | warm adapter recall, limit 5 | 1.65 ms | 3.53 ms |
-  | `perf.b1.firstRecall` | 5 | first Store call on fresh handles | 3.64 ms | 5.53 ms |
-  | `perf.b2.firstRecall` | 5 | first adapter recall on fresh handles | 10.39 ms | 16.07 ms |
-  | `perf.open` | 5 | `MonadaMemory.open` plus the adapter's own open | 4.89 ms | 57.07 ms |
-  | `perf.ingest` | 5 | Store open plus 33 `remember` calls | 44.72 ms | 101.13 ms |
-  | `perf.ingestReadback` | 5 | 33 `resonate` calls with hash checks | 49.45 ms | 51.37 ms |
-  | `perf.reopenReadback` (reopen) | 5 | Store open plus 33 `resonate` calls with hash checks | 25.19 ms | 103.48 ms |
+  | `perf.b1.recallLimit5` | 32 | warm Store call, limit 5 | 0.21 ms | 0.25 ms |
+  | `perf.b2.recallLimit5` | 32 | warm adapter recall, limit 5 | 1.48 ms | 3.07 ms |
+  | `perf.b1.firstRecall` | 5 | first Store call on fresh handles | 1.56 ms | 2.46 ms |
+  | `perf.b2.firstRecall` | 5 | first adapter recall on fresh handles | 3.13 ms | 8.90 ms |
+  | `perf.open` | 5 | `MonadaMemory.open` plus the adapter's own open | 2.63 ms | 15.11 ms |
+  | `perf.ingest` | 5 | Store open plus 33 `remember` calls | 17.17 ms | 64.30 ms |
+  | `perf.ingestReadback` | 5 | 33 `resonate` calls with hash checks | 14.65 ms | 40.18 ms |
+  | `perf.reopenReadback` (reopen) | 5 | Store open plus 33 `resonate` calls with hash checks | 21.44 ms | 91.89 ms |
 
-  The warm rows of the reopen and replica JVMs are in the same range: warm B1 has medians of 0.23 and 0.20 ms, and
-  warm B2 1.85 and 1.51 ms. The seed JVM's setup rows are higher than in the earlier rounds, for example
-  `perf.ingest` at 44.72 ms against about 20 ms before. The seed JVM also took longer overall (1.6 s), which points to
-  load on the machine during this run, not to the harness. These rows are single-machine, exploratory and
-  non-comparable across runs unless their environment and sampling fields match. With 5 samples, a p95 is the slowest sample, so it mostly
+  The warm rows of the reopen and replica JVMs are in the same range: warm B1 has medians of 0.20 and 0.20 ms, and
+  warm B2 1.56 and 1.51 ms. These rows are single-machine and exploratory. They vary with machine load between
+  runs; one earlier run on a busy machine measured `perf.ingest` at about 45 ms. They are comparable across runs only
+  when their environment and sampling fields match. With 5 samples, a p95 is the slowest sample, so it mostly
   shows the first, colder repetition. B2 is slower than B1 because it makes one Store query per token. The
   whole-JVM time is process bookkeeping (`process.<p>.wallNanos`), not a latency row.
 

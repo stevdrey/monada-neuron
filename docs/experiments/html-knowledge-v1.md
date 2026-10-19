@@ -876,4 +876,5 @@ source set, and do not change `./gradlew test` when it is absent.
   `excludedSamples` metadata, never as a semantic check, and every direct B1/B2c path, cold and warm-up calls included,
   shares one acceptance rule for Store results. Final semantic boundary: only protocol-required operations are
   checks. Cold samples, warm-up, timing repetitions (including reopen readbacks 2 to 5) and scratch imports are
-  latency-only diagnostics (`excludedSamples`, `perf.warmup.failures`). Scores are compared bit-exactly.
+  latency-only diagnostics (`excludedSamples`, `perf.warmup.failures`); each catches its own exceptions, and the
+  observation opens its own handles separately. Scores are compared bit-exactly.
