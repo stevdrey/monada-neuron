@@ -167,13 +167,14 @@ chunk.
 
 ## Observed behaviour
 
-First recorded on 2026-10-17 against Store `main`. Re-checked on 2026-10-19 on the final harness: Neuron `26974b6`
-with a clean tree, Store `879bd95`, all 34 checks passing. Every statement below still holds as written.
+First recorded on 2026-10-17 against Store `main`. Re-checked on 2026-10-19 on the final harness: Neuron `a7d612b`
+with a clean tree, Store `c3e98d1`, all 34 checks passing. Every statement below still holds as written.
 
 The timed opens (`perf.directOpen`, `perf.adapterOpen`) and the first recall on each freshly opened adapter are latency
 samples only. Each catches its own exceptions: a failed one is excluded from its row and recorded in
 `<row>.excludedSamples`, never as a check. The observation uses handles opened separately, which the protocol
-requires.
+requires. Its adapter serves one unmeasured recall before the probes, so every `perf.warmRecall` sample is a warm
+call.
 
 - **Persistence:** all 33 chunks are persisted and read back with identical content in the restarted JVM. The 195
   direct results and the 195 adapter results (39 probes × 5) are bit-identical between the two processes.

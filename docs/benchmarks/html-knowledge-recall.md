@@ -196,12 +196,14 @@ manifest, these are:
 Every figure in this section comes from one harness revision, measured on a clean tree.
 
 Environment:
-- Neuron `26974b6`, the final harness, with no uncommitted changes (`neuron.commit` has no `+dirty`);
-- Store checkout `879bd95`;
+- Neuron `a7d612b`, the final harness, with no uncommitted changes (`neuron.commit` has no `+dirty`);
+- Store checkout `c3e98d1`;
 - Azul OpenJDK 27 on Linux, AMD Ryzen 7 7730U;
 - seed root, replica root and timing scratch roots all on `tmpfs` (memory-backed), on the same file store
   (`env.replicaRoot.sameFileStoreAsStoreRoot = true`, `<phase>.env.timingScratch.sameFileStoreAsStoreRoot = true`);
-- one seed, one reopen and one replica JVM, each 1.0 to 1.1 s from process start to exit (`process.<p>.wallNanos`).
+- one seed, one reopen and one replica JVM, each 1.1 to 1.2 s from process start to exit (`process.<p>.wallNanos`).
+  The run configuration lists the phase JVMs actually launched ("phase JVMs launched: seed, reopen, replica"). A run
+  that skips a phase names it as not launched.
 
 Two full runs gave byte-identical `recall` payloads.
 - All 26 checks passed. They include `determinism.freshRootEqual`: the replica reproduced all 1800 seed rows.
@@ -275,17 +277,17 @@ Observations, not tuned away:
 
   | Row (seed; reopen for the readback) | Samples | Timed operation | Median | p95 |
   | :--- | ---: | :--- | ---: | ---: |
-  | `perf.b1.recallLimit5` | 32 | warm Store call, limit 5 | 0.21 ms | 0.25 ms |
-  | `perf.b2.recallLimit5` | 32 | warm adapter recall, limit 5 | 1.48 ms | 3.07 ms |
-  | `perf.b1.firstRecall` | 5 | first Store call on fresh handles | 1.56 ms | 2.46 ms |
-  | `perf.b2.firstRecall` | 5 | first adapter recall on fresh handles | 3.13 ms | 8.90 ms |
-  | `perf.open` | 5 | `MonadaMemory.open` plus the adapter's own open | 2.63 ms | 15.11 ms |
-  | `perf.ingest` | 5 | Store open plus 33 `remember` calls | 17.17 ms | 64.30 ms |
-  | `perf.ingestReadback` | 5 | 33 `resonate` calls with hash checks | 14.65 ms | 40.18 ms |
-  | `perf.reopenReadback` (reopen) | 5 | Store open plus 33 `resonate` calls with hash checks | 21.44 ms | 91.89 ms |
+  | `perf.b1.recallLimit5` | 32 | warm Store call, limit 5 | 0.22 ms | 0.33 ms |
+  | `perf.b2.recallLimit5` | 32 | warm adapter recall, limit 5 | 1.55 ms | 3.04 ms |
+  | `perf.b1.firstRecall` | 5 | first Store call on fresh handles | 2.26 ms | 3.51 ms |
+  | `perf.b2.firstRecall` | 5 | first adapter recall on fresh handles | 4.02 ms | 13.06 ms |
+  | `perf.open` | 5 | `MonadaMemory.open` plus the adapter's own open | 3.51 ms | 21.84 ms |
+  | `perf.ingest` | 5 | Store open plus 33 `remember` calls | 21.53 ms | 77.15 ms |
+  | `perf.ingestReadback` | 5 | 33 `resonate` calls with hash checks | 15.74 ms | 41.77 ms |
+  | `perf.reopenReadback` (reopen) | 5 | Store open plus 33 `resonate` calls with hash checks | 23.48 ms | 97.44 ms |
 
-  The warm rows of the reopen and replica JVMs are in the same range: warm B1 has medians of 0.20 and 0.20 ms, and
-  warm B2 1.56 and 1.51 ms. These rows are single-machine and exploratory. They vary with machine load between
+  The warm rows of the reopen and replica JVMs are in the same range: warm B1 has medians of 0.23 and 0.22 ms, and
+  warm B2 1.70 and 1.64 ms. These rows are single-machine and exploratory. They vary with machine load between
   runs; one earlier run on a busy machine measured `perf.ingest` at about 45 ms. They are comparable across runs only
   when their environment and sampling fields match. With 5 samples, a p95 is the slowest sample, so it mostly
   shows the first, colder repetition. B2 is slower than B1 because it makes one Store query per token. The
