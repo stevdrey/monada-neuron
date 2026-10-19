@@ -25,9 +25,11 @@ class HtmlKnowledgeQuerySetTest {
 
     /**
      * Frozen fingerprint of {@code html-kq-v1}, fixed when its labels were approved and before any system output was
-     * inspected. Any label change must come with a new query-set version, never with an edited constant.
+     * inspected, and revised once before merge by a recorded errata (the missing refutation claim of
+     * {@code q:false-premise-03}; previous hash {@code 97b29b68…}). Any later label change must come with a new
+     * query-set version, never with an edited constant.
      */
-    private static final String HTML_KQ_V1_HASH = "97b29b684bc6d1e9943c4578613467ccae8d8a0dbc393cc291153bcf6a714dab";
+    private static final String HTML_KQ_V1_HASH = "e91b04045664c48695f34e16bc74e63879ddbe8e11ca4613914538cff9e9060f";
 
     @TempDir
     Path directory;
@@ -89,6 +91,7 @@ class HtmlKnowledgeQuerySetTest {
         rejects(text -> row(text, "q:exact-term-01", 5, "chk:links#00"), "overlap");
         rejects(text -> row(text, "q:exact-term-01", 6, "-"), "every required chunk needs an evidence span");
         rejects(text -> row(text, "q:exact-term-01", 7, "-"), "at least one keyClaim");
+        rejects(text -> row(text, "q:false-premise-03", 7, "-"), "refutes its premise");
         rejects(text -> row(text, "q:exact-term-01", 8, "hyperlink"), "avoidedTerms are required exactly");
         rejects(text -> row(text, "q:conflicting-source-01", 4, "chk:images-and-media#01"), "conflict pair");
         rejects(text -> row(text, "q:exact-term-01", 3, " "), "blank exactly for blank queries");

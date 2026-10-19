@@ -311,9 +311,16 @@ final class HtmlKnowledgeRecall {
      */
     Observation observe(Path root, IngestionManifest manifest, String queryHash, List<QueryText> queries) {
         HtmlKnowledgePersistence.requireExistingStore(root);
+        var start = System.nanoTime();
         var memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
         try (var adapter = ResonanceStoreMemoryAdapter.open(root, adapterConfig())) {
-            return observe(memory, adapter, manifest, queryHash, queries);
+            var openNanos = System.nanoTime() - start;
+            var observed = observe(memory, adapter, manifest, queryHash, queries);
+            var metadata = new LinkedHashMap<>(observed.metadata());
+            metadata.put("perf.openNanos", Long.toString(openNanos));
+            new LatencySampling(0, 1, 2, LatencySampling.WALL_CLOCK + "; MonadaMemory.open plus the adapter's own"
+                    + " open", false, LatencySampling.NO_GC_TELEMETRY).describe("perf.openNanos", metadata);
+            return new Observation(observed.snapshot(), observed.checks(), metadata);
         }
     }
 
@@ -326,7 +333,7 @@ final class HtmlKnowledgeRecall {
         Objects.requireNonNull(manifest, "manifest must not be null");
         Objects.requireNonNull(queryHash, "queryHash must not be null");
         var run = new Run(manifest, queries.size());
-        warmUp(memory, adapter, queries);
+        var first = warmUp(memory, adapter, queries);
         var b1Nanos = new long[queries.size()];
         var b2Nanos = new long[queries.size()];
         for (var index = 0; index < queries.size(); index++) {
@@ -360,6 +367,13 @@ final class HtmlKnowledgeRecall {
         }
         var metadata = new LinkedHashMap<String, String>();
         metadata.put("perf.warmupQueries", Integer.toString(queries.size()));
+        metadata.put("perf.b1.firstRecallNanos", Long.toString(first[0]));
+        metadata.put("perf.b2.firstRecallNanos", Long.toString(first[1]));
+        var cold = new LatencySampling(0, 1, 1, LatencySampling.WALL_CLOCK + "; the first call of this observation"
+                + " on freshly opened handles, for the first query with at least one token (warm-up pass, limit 5)",
+                false, LatencySampling.NO_GC_TELEMETRY);
+        cold.describe("perf.b1.firstRecallNanos", metadata);
+        cold.describe("perf.b2.firstRecallNanos", metadata);
         metadata.put("perf.b1.recallLimit5.medianNanos", Long.toString(percentile(b1Nanos, 50)));
         metadata.put("perf.b1.recallLimit5.p95Nanos", Long.toString(percentile(b1Nanos, 95)));
         metadata.put("perf.b2.recallLimit5.medianNanos", Long.toString(percentile(b2Nanos, 50)));
@@ -405,18 +419,32 @@ final class HtmlKnowledgeRecall {
 
     /**
      * Sends every query once through B1 and B2 at limit 5 and discards the results, so the measured pass does not
-     * time class loading, JIT compilation or first Store reads. Failures are ignored here; the measured pass records
-     * them. Recall writes nothing ({@code feedback} is never called), so warming cannot change a later result.
+     * time class loading, JIT compilation or first Store reads, and returns the cold durations of the B1 and B2 calls
+     * of the first query with at least one token (the first-recall rows). Failures are ignored here; the measured pass records them. Recall writes nothing ({@code feedback} is never called), so warming cannot change a later result.
      */
-    private void warmUp(MonadaMemory memory, ResonanceStoreMemoryAdapter adapter, List<QueryText> queries) {
+    private long[] warmUp(MonadaMemory memory, ResonanceStoreMemoryAdapter adapter, List<QueryText> queries) {
+        var first = new long[2];
+        var cold = true;
         for (var query : queries) {
             try {
+                var start = System.nanoTime();
                 memory.resonate(query.text()).topK(MAX_LIMIT).threshold(THRESHOLD).execute();
-                adapter.recall(new ResonanceMemoryRequest(codec.querySignals(query.text()), MAX_LIMIT));
+                var direct = System.nanoTime() - start;
+                var request = new ResonanceMemoryRequest(codec.querySignals(query.text()), MAX_LIMIT);
+                start = System.nanoTime();
+                adapter.recall(request);
+                // A query without tokens never reaches the encoder (the Store answers it at once), so the cold
+                // first-recall row is the first query that does.
+                if (cold && !HtmlTokens.distinct(query.text()).isEmpty()) {
+                    first[0] = direct;
+                    first[1] = System.nanoTime() - start;
+                    cold = false;
+                }
             } catch (RuntimeException ignored) {
                 // Recorded by the measured pass.
             }
         }
+        return first;
     }
 
     /** B0 at {@code limit}; returns its rows. */
@@ -534,6 +562,45 @@ final class HtmlKnowledgeRecall {
     private record Referenced(String reference, Row row) {
     }
 
+    /**
+     * One position where a limit-{@code limit} list differs from the prefix of a longer list.
+     *
+     * @param straddlingTie whether the difference is an allowed equal-score substitution inside a tie group that
+     *     straddles the cutoff
+     * @param detail where and how the lists differ
+     */
+    record PrefixDifference(boolean straddlingTie, String detail) {
+    }
+
+    /**
+     * Compares the limit-{@code limit} list with the prefix of the longer {@code fullRows} list. Lengths must match
+     * {@code min(limit, |fullRows|)}. A position may differ only by an equal-score substitution inside a tie group that
+     * straddles the cutoff: the longer list must hold a result beyond the cutoff with the cutoff's score. Without such a
+     * result no tie can straddle the cutoff, and any difference is a failure.
+     */
+    static List<PrefixDifference> prefixDifferences(List<Row> fullRows, List<Row> limitedRows, int limit) {
+        var expectedSize = Math.min(limit, fullRows.size());
+        if (limitedRows.size() != expectedSize) {
+            return List.of(new PrefixDifference(false, "length: " + limitedRows.size() + " results, expected "
+                    + expectedSize));
+        }
+        var differences = new ArrayList<PrefixDifference>();
+        for (var i = 0; i < expectedSize; i++) {
+            var got = limitedRows.get(i);
+            var want = fullRows.get(i);
+            if (got.chunkId().equals(want.chunkId()) && got.score() == want.score()) {
+                continue;
+            }
+            var cutoffScore = fullRows.get(expectedSize - 1).score();
+            var straddles = fullRows.size() > expectedSize && fullRows.get(expectedSize).score() == cutoffScore;
+            var tie = straddles && got.score() == want.score() && want.score() == cutoffScore;
+            differences.add(new PrefixDifference(tie, "rank " + (i + 1) + (tie ? "" : ": " + got.chunkId() + " "
+                    + got.score() + " instead of " + want.chunkId() + " " + want.score()
+                    + (got.score() == want.score() ? " (equal score, but no tie straddles the cutoff)" : ""))));
+        }
+        return differences;
+    }
+
     /** A query and layer left without an outcome. */
     private record FailedLayer(String queryId, Layer layer) {
     }
@@ -629,25 +696,9 @@ final class HtmlKnowledgeRecall {
                 return;
             }
             prefixComparisons++;
-            var expectedSize = Math.min(limit, fullRows.size());
             var where = query.queryId() + " " + layer.label() + " limit " + limit;
-            if (limitedRows.size() != expectedSize) {
-                prefixFailures.add(where + ": " + limitedRows.size() + " results, expected " + expectedSize);
-                return;
-            }
-            for (var i = 0; i < expectedSize; i++) {
-                var got = limitedRows.get(i);
-                var want = fullRows.get(i);
-                if (got.chunkId().equals(want.chunkId()) && got.score() == want.score()) {
-                    continue;
-                }
-                var cutoffScore = fullRows.get(expectedSize - 1).score();
-                if (got.score() == want.score() && want.score() == cutoffScore) {
-                    ties.add(where + " rank " + (i + 1));
-                } else {
-                    prefixFailures.add(where + " rank " + (i + 1) + ": " + got.chunkId() + " " + got.score()
-                            + " instead of " + want.chunkId() + " " + want.score());
-                }
+            for (var difference : prefixDifferences(fullRows, limitedRows, limit)) {
+                (difference.straddlingTie() ? ties : prefixFailures).add(where + " " + difference.detail());
             }
         }
 

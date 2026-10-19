@@ -8,6 +8,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -36,8 +37,17 @@ class HtmlKnowledgeRecallRunnerTest {
             "reopen.fidelity.reference",
             "reopen.neuron.b2EqualsB2c",
             "reopen.recall.prefixStability",
+            "replica.ingestion.manifestComplete",
+            "replica.ingestion.contentFidelity",
+            "replica.ingestion.readback",
+            "replica.recall.completed",
+            "replica.fidelity.source",
+            "replica.fidelity.reference",
+            "replica.neuron.b2EqualsB2c",
+            "replica.recall.prefixStability",
             "process.restart",
-            "determinism.restartEqual");
+            "determinism.restartEqual",
+            "determinism.freshRootEqual");
 
     @TempDir
     static Path directory;
@@ -62,6 +72,9 @@ class HtmlKnowledgeRecallRunnerTest {
     @Test
     void seedAndReopenRanInSeparateProcesses() {
         var reopen = outcome.reopen().orElseThrow();
+        var replica = outcome.replica().orElseThrow();
+        assertEquals(3, Set.of(outcome.seed().pid(), reopen.pid(), replica.pid()).size());
+        assertEquals(0, replica.exitStatus());
         assertNotEquals(outcome.seed().pid(), reopen.pid());
         assertNotEquals(ProcessHandle.current().pid(), reopen.pid());
         assertEquals(0, outcome.seed().exitStatus());
@@ -108,10 +121,29 @@ class HtmlKnowledgeRecallRunnerTest {
         var sampling = outcome.report().metadata().get("seed.perf.sampling");
         assertTrue(sampling.startsWith("warm: one unmeasured pass"), sampling);
         assertEquals("32", outcome.report().metadata().get("seed.perf.warmupQueries"));
+        var metadata = outcome.report().metadata();
+        var rows = new ArrayList<String>();
+        for (var phase : List.of("seed", "reopen", "replica")) {
+            for (var row : List.of("perf.openNanos", "perf.b1.firstRecallNanos", "perf.b2.firstRecallNanos")) {
+                rows.add(phase + "." + row);
+            }
+            rows.add("phase." + phase + ".nanos");
+        }
+        for (var phase : List.of("seed", "replica")) {
+            rows.add(phase + ".perf.ingestNanos");
+            rows.add(phase + ".perf.ingestReadbackNanos");
+        }
+        rows.add("reopen.perf.reopenReadbackNanos");
+        for (var row : rows) {
+            assertTrue(metadata.containsKey(row), row);
+            for (var field : List.of("warmupIterations", "measurementIterations", "operationsPerIteration",
+                    "measurementMethod", "validationInWindow", "gcTelemetryScope")) {
+                assertTrue(metadata.containsKey(row + "." + field), row + "." + field);
+            }
+        }
         for (var phase : List.of("seed", "reopen")) {
             for (var row : List.of("perf.b1.recallLimit5", "perf.b2.recallLimit5")) {
                 var prefix = phase + "." + row + ".";
-                var metadata = outcome.report().metadata();
                 assertEquals("1", metadata.get(prefix + "warmupIterations"), prefix);
                 assertEquals("32", metadata.get(prefix + "measurementIterations"), prefix);
                 assertEquals("1", metadata.get(prefix + "operationsPerIteration"), prefix);

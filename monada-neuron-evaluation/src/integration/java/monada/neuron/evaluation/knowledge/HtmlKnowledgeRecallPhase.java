@@ -7,12 +7,15 @@ import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.QueryText;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 
 /**
  * Entrypoint of one judged-recall phase, run by {@link HtmlKnowledgeRecallRunner} in its own JVM so that the
  * {@code reopen} phase shares no heap, handle or cache with the {@code seed} phase that wrote the root.
  *
- * <p>Arguments: {@code seed|reopen <store-root> <work-dir>}. {@code seed} imports the corpus into the fresh root,
+ * <p>Arguments: {@code seed|reopen|replica <store-root> <work-dir>}. {@code replica} does what {@code seed} does in its
+ * own fresh root, so the orchestrator can compare two independent imports. {@code seed} imports the corpus into the fresh root,
  * writes the manifest, then runs every query and writes its recall snapshot and result. {@code reopen} reads the
  * manifest, reads every corpus chunk back from the existing root (the protocol's ingestion readback, repeated in the
  * restarted process), runs every query with new handles and writes its own snapshot and result.
@@ -26,6 +29,9 @@ public final class HtmlKnowledgeRecallPhase {
     static final String SEED = "seed";
     static final String REOPEN = "reopen";
 
+    /** A second, independent import into its own fresh root, compared with the seed for fresh-root determinism. */
+    static final String REPLICA = "replica";
+
     private final HtmlKnowledgeCorpus corpus;
     private final WorkDirectory work;
 
@@ -36,8 +42,8 @@ public final class HtmlKnowledgeRecallPhase {
 
     /** Phase entrypoint. */
     public static void main(String[] args) {
-        if (args.length != 3 || !(args[0].equals(SEED) || args[0].equals(REOPEN))) {
-            System.err.println("Usage: seed|reopen <store-root> <work-dir>");
+        if (args.length != 3 || !List.of(SEED, REOPEN, REPLICA).contains(args[0])) {
+            System.err.println("Usage: seed|reopen|replica <store-root> <work-dir>");
             System.exit(2);
             return;
         }
@@ -54,12 +60,20 @@ public final class HtmlKnowledgeRecallPhase {
     private int run(String phase, Path root) {
         var workload = QueryText.parseTsv(work.read(work.workload()));
         var checks = new ArrayList<Check>();
+        var timings = new LinkedHashMap<String, String>();
         IngestionManifest manifest;
-        if (phase.equals(SEED)) {
+        if (!phase.equals(REOPEN)) {
             var imported = new HtmlKnowledgeIngestion(corpus).ingest(root);
             checks.addAll(imported.checks());
             manifest = imported.manifest();
-            work.write(work.manifest(), manifest.toTsv());
+            work.write(work.manifest(phase), manifest.toTsv());
+            var chunks = corpus.chunks().size();
+            timings.put("perf.ingestNanos", Long.toString(imported.ingestNanos()));
+            new LatencySampling(0, 1, chunks, LatencySampling.WALL_CLOCK + "; one Store open plus one remember per"
+                    + " chunk", false, LatencySampling.NO_GC_TELEMETRY).describe("perf.ingestNanos", timings);
+            timings.put("perf.ingestReadbackNanos", Long.toString(imported.readbackNanos()));
+            new LatencySampling(0, 1, chunks, LatencySampling.WALL_CLOCK + "; one resonate per chunk", true,
+                    LatencySampling.NO_GC_TELEMETRY).describe("perf.ingestReadbackNanos", timings);
         } else {
             manifest = IngestionManifest.parseTsv(work.read(work.manifest()), corpus.version(), corpus.corpusHash())
                     .requireComplete(corpus);
@@ -67,12 +81,18 @@ public final class HtmlKnowledgeRecallPhase {
         var recall = new HtmlKnowledgeRecall(corpus);
         if (phase.equals(REOPEN)) {
             // The seed's ingestion already read every chunk back; the restarted process repeats that for itself.
+            var start = System.nanoTime();
             checks.addAll(recall.readback(root, manifest));
+            timings.put("perf.reopenReadbackNanos", Long.toString(System.nanoTime() - start));
+            new LatencySampling(0, 1, corpus.chunks().size(), LatencySampling.WALL_CLOCK + "; Store open plus one"
+                    + " resonate per chunk", true, LatencySampling.NO_GC_TELEMETRY)
+                    .describe("perf.reopenReadbackNanos", timings);
         }
         var observation = recall.observe(root, manifest, workload.queryHash(), workload.queries());
         checks.addAll(observation.checks());
         work.write(work.snapshot(phase), observation.snapshot().toTsv());
-        var result = new Result(checks, HtmlKnowledgePersistencePhase.environment(observation.metadata()));
+        timings.putAll(observation.metadata());
+        var result = new Result(checks, HtmlKnowledgePersistencePhase.environment(timings));
         work.write(work.result(phase), result.render());
         return checks.stream().allMatch(Check::passed) ? 0 : 1;
     }

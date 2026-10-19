@@ -68,7 +68,7 @@ public final class HtmlKnowledgeRecallRunner {
      * @param outputDir the preflighted output directory
      */
     public record Outcome(CheckedEvaluationReport report, Optional<Rendered> recall, PhaseRun seed,
-            Optional<PhaseRun> reopen, Map<String, String> files, Path outputDir) {
+            Optional<PhaseRun> reopen, Optional<PhaseRun> replica, Map<String, String> files, Path outputDir) {
 
         public Outcome {
             files = Map.copyOf(files);
@@ -163,6 +163,7 @@ public final class HtmlKnowledgeRecallRunner {
             HtmlKnowledgePersistenceRunner.collect(seed, work, checks, metadata);
             var seedSnapshot = snapshot(work, HtmlKnowledgeRecallPhase.SEED);
             Optional<PhaseRun> reopen = Optional.empty();
+            Optional<PhaseRun> replica = Optional.empty();
             Optional<Rendered> recall = Optional.empty();
             if (seedSnapshot.isPresent() && Files.exists(work.manifest())) {
                 var reopened = phaseJvm.launch(HtmlKnowledgeRecallPhase.class, HtmlKnowledgeRecallPhase.REOPEN,
@@ -172,20 +173,28 @@ public final class HtmlKnowledgeRecallRunner {
                 checks.add(HtmlKnowledgePersistenceRunner.restartCheck(seed, reopened, work));
                 checks.add(restartEqual(seedSnapshot.get(), snapshot(work, HtmlKnowledgeRecallPhase.REOPEN)));
 
+                var replicated = phaseJvm.launch(HtmlKnowledgeRecallPhase.class, HtmlKnowledgeRecallPhase.REPLICA,
+                        work.path().resolve("replica-store"), work);
+                replica = Optional.of(replicated);
+                HtmlKnowledgePersistenceRunner.collect(replicated, work, checks, metadata);
+                checks.add(freshRootEqual(seed, replicated, seedSnapshot.get(),
+                        snapshot(work, HtmlKnowledgeRecallPhase.REPLICA)));
+
                 var scores = RecallMetrics.score(querySet, seedSnapshot.get());
                 var rendered = new HtmlKnowledgeRecallReport(querySet, scores);
                 recall = Optional.of(new Rendered(rendered.toJson(), rendered.toMarkdown()));
             } else {
                 checks.add(new Check("process.restart", false, "seed phase did not complete (exit "
                         + seed.exitStatus() + "; snapshot or manifest missing or unreadable); nothing was scored and"
-                        + " no reopen was attempted: " + seed.stderr()));
+                        + " no reopen or replica was attempted: " + seed.stderr()));
             }
 
-            describe(root, seed, reopen, metadata);
+            describe(root, seed, reopen, replica, metadata);
             var evaluation = new EvaluationReport(
                     Instant.now(),
                     EnvironmentMetadata.current(),
-                    new RunConfiguration(0L, false, 0, 0, "one seed and one reopen JVM; the environment above is the"
+                    new RunConfiguration(0L, false, 0, 0, "one seed, one reopen and one replica JVM; the environment above"
+                            + " is the"
                             + " orchestrator's, each phase JVM's own is in <phase>.jvm.*; timings in metadata are"
                             + " exploratory wall-clock samples and never part of a verdict"),
                     List.of(),
@@ -195,10 +204,30 @@ public final class HtmlKnowledgeRecallRunner {
                     "# raw seed-phase rows, not a verified result on their own: corpusHash " + corpus.corpusHash()
                             + ", allChecksPassed " + report.allPassed() + " (see " + REPORT_JSON + ")\n"
                             + snapshot.toTsv()));
-            return new Outcome(report, recall, seed, reopen, files, options.outputDir());
+            return new Outcome(report, recall, seed, reopen, replica, files, options.outputDir());
         } finally {
             HtmlKnowledgeIngestionRunner.deleteTree(work.path());
         }
+    }
+
+    /**
+     * Requires a second, independent import into its own fresh root (the replica JVM) to reproduce every seed result.
+     * Rows hold chunk ids mapped through each root's own manifest, so the roots' Store-owned atom ids are never
+     * compared, as the protocol's cross-root rule requires.
+     */
+    private Check freshRootEqual(PhaseRun seed, PhaseRun replica, Snapshot seedSnapshot, Optional<Snapshot> replicated) {
+        if (replicated.isEmpty() || replica.exitStatus() != 0 && replica.exitStatus() != 1) {
+            return new Check("determinism.freshRootEqual", false, "the replica JVM (pid " + replica.pid() + ", exit "
+                    + replica.exitStatus() + ") left no readable snapshot: " + replica.stderr());
+        }
+        var separate = replica.pid() != seed.pid() && replica.pid() != ProcessHandle.current().pid();
+        var equal = seedSnapshot.equals(replicated.get());
+        return new Check("determinism.freshRootEqual", separate && equal, (equal
+                ? "a second import into a fresh root (replica JVM pid " + replica.pid() + ") reproduced all "
+                        + seedSnapshot.rows().size() + " rows: mapped chunk ids, order and bit-exact scores"
+                : "the replica differs from the seed at row " + firstDifference(seedSnapshot.rows(),
+                        replicated.get().rows()))
+                + (separate ? "" : "; the replica did not run in its own process"));
     }
 
     /** Requires the reopen JVM to reproduce every seed result: mapped chunk ids, order and bit-exact scores. */
@@ -244,7 +273,8 @@ public final class HtmlKnowledgeRecallRunner {
                 outputDir.resolve(querySet.version() + "-recall-results.json"));
     }
 
-    private void describe(Path root, PhaseRun seed, Optional<PhaseRun> reopen, Map<String, String> metadata) {
+    private void describe(Path root, PhaseRun seed, Optional<PhaseRun> reopen, Optional<PhaseRun> replica,
+            Map<String, String> metadata) {
         metadata.put("protocolVersion", HtmlKnowledgeIngestionRunner.PROTOCOL_VERSION);
         metadata.put("extensions", "none (L1 and L2 only)");
         metadata.put("reopenMode", "restart (seed and reopen in separate JVM processes)");
@@ -273,12 +303,19 @@ public final class HtmlKnowledgeRecallRunner {
         metadata.put("ordering.neuron", "adapter: score descending, then query Signal index, then Store rank;"
                 + " deduplicated by atom");
         metadata.put("phase.forwardedJvmArguments", String.join(" ", phaseJvm.forwardedJvmArguments()));
-        metadata.put("phase.seed.pid", Long.toString(seed.pid()));
-        metadata.put("phase.seed.exit", Integer.toString(seed.exitStatus()));
-        reopen.ifPresent(run -> {
-            metadata.put("phase.reopen.pid", Long.toString(run.pid()));
-            metadata.put("phase.reopen.exit", Integer.toString(run.exitStatus()));
-        });
+        var phases = new ArrayList<PhaseRun>();
+        phases.add(seed);
+        reopen.ifPresent(phases::add);
+        replica.ifPresent(phases::add);
+        for (var run : phases) {
+            var prefix = "phase." + run.phase();
+            metadata.put(prefix + ".pid", Long.toString(run.pid()));
+            metadata.put(prefix + ".exit", Integer.toString(run.exitStatus()));
+            metadata.put(prefix + ".nanos", Long.toString(run.nanos()));
+            new LatencySampling(0, 1, 1, LatencySampling.WALL_CLOCK + "; the whole child JVM, from process start to"
+                    + " exit, including JVM startup", true, LatencySampling.NO_GC_TELEMETRY)
+                    .describe(prefix + ".nanos", metadata);
+        }
         HtmlKnowledgePersistenceRunner.describeStore(root, options.storeRoot(), metadata);
         metadata.put("runMode", (options.storeRoot().isPresent() ? "kept Store root" : "default (temporary Store root)")
                 + "; profile html-knowledge-protocol-v1 L1/L2 judged recall");

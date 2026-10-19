@@ -862,4 +862,8 @@ source set, and do not change `./gradlew test` when it is absent.
   required run-mode and environment fields (CPU model, total physical memory, hashed `hostId`, and storage type and
   file system of the Store root). Every latency row records its sampling fields. The comparison checks require their
   full expected count, so a skipped comparison is a failure. Exchanged phase files carry a terminating count line,
-  so a truncated file is rejected. No definition, formula, label rule or report field changes.
+  so a truncated file is rejected. A third `replica` JVM imports into its own fresh root, so determinism is checked
+  across roots and not only across a restart. Setup, ingestion, reopen and first-recall timings are separate rows.
+  Errata before merge: `q:false-premise-03` gained its required refutation keyClaim. `html-kq-v1` keeps its version
+  because nothing had been merged; its `queryHash` changed from `97b29b68…` to `e91b0404…`, and no L1/L2 result
+  changed. No definition, formula, label rule or report field changes.

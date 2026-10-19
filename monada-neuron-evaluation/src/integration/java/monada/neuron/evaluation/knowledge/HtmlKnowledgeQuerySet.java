@@ -306,6 +306,9 @@ public final class HtmlKnowledgeQuerySet {
         if (!relevant.isEmpty() && query.keyClaims().isEmpty()) {
             throw new CorpusValidationException(where, "a query with relevant chunks needs at least one keyClaim");
         }
+        if (query.answerability() == Answerability.FALSE_PREMISE && query.keyClaims().isEmpty()) {
+            throw new CorpusValidationException(where, "a false-premise query needs the keyClaim that refutes its premise");
+        }
         if ((query.category() == Category.PARAPHRASE) == query.avoidedTerms().isEmpty()) {
             throw new CorpusValidationException(where, "avoidedTerms are required exactly for paraphrase queries");
         }

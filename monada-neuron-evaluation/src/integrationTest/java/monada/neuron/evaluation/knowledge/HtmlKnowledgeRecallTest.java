@@ -224,6 +224,32 @@ class HtmlKnowledgeRecallTest {
     }
 
     @Test
+    void aSubstitutionIsATieOnlyWhenTheTieStraddlesTheCutoff() {
+        var a = new Row("q", Layer.B1, 5, 1, "a", 0.5);
+        var b = new Row("q", Layer.B1, 5, 2, "b", 0.5);
+        var c = new Row("q", Layer.B1, 5, 3, "c", 0.5);
+        var swappedA = new Row("q", Layer.B1, 3, 1, "b", 0.5);
+        var swappedB = new Row("q", Layer.B1, 3, 2, "a", 0.5);
+
+        var noRowBeyond = HtmlKnowledgeRecall.prefixDifferences(List.of(a, b), List.of(swappedA, swappedB), 3);
+        assertEquals(2, noRowBeyond.size());
+        assertTrue(noRowBeyond.stream().noneMatch(HtmlKnowledgeRecall.PrefixDifference::straddlingTie),
+                "two results returned for limit 3: no tie can straddle the cutoff");
+        assertTrue(noRowBeyond.getFirst().detail().contains("no tie straddles the cutoff"));
+
+        var straddling = HtmlKnowledgeRecall.prefixDifferences(List.of(a, b, c), List.of(swappedA, swappedB), 2);
+        assertTrue(straddling.stream().allMatch(HtmlKnowledgeRecall.PrefixDifference::straddlingTie),
+                "rank 3 shares the cutoff score, so the tie straddles cutoff 2");
+
+        var lower = new Row("q", Layer.B1, 5, 3, "c", 0.1);
+        var differentScore = HtmlKnowledgeRecall.prefixDifferences(List.of(a, b, lower),
+                List.of(new Row("q", Layer.B1, 2, 1, "c", 0.1), swappedB), 2);
+        assertTrue(differentScore.stream().noneMatch(HtmlKnowledgeRecall.PrefixDifference::straddlingTie));
+        assertEquals(List.of(), HtmlKnowledgeRecall.prefixDifferences(List.of(a, b, c), List.of(a, b), 2));
+        assertEquals(1, HtmlKnowledgeRecall.prefixDifferences(List.of(a, b, c), List.of(a), 2).size(), "length");
+    }
+
+    @Test
     void theRecallSideReferencesNoGoldLabelType() throws IOException {
         for (var type : List.of("HtmlKnowledgeRecallPhase", "HtmlKnowledgeRecall", "HtmlKnowledgeRecall$Run",
                 "HtmlKnowledgeRecall$QueryText", "HtmlKnowledgeRecall$QueryText$Workload", "LexicalOverlapBaseline",

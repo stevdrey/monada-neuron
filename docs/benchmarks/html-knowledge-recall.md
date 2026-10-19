@@ -40,8 +40,16 @@ Options, exit statuses and output preparation are the same as for
 ## Query set `html-kq-v1`
 
 `monada-neuron-evaluation/src/integration/resources/html-kq-v1/queries.tsv`: 32 queries, curated from the corpus text
-and frozen (`queryHash 97b29b684bc6d1e9943c4578613467ccae8d8a0dbc393cc291153bcf6a714dab`) before any system output was
-inspected. Lists are `|`-separated, `-` is empty, a span is `chunkId start end sha256` in code points of the normalized
+and frozen before any system output was inspected (`queryHash
+e91b04045664c48695f34e16bc74e63879ddbe8e11ca4613914538cff9e9060f`).
+
+**Errata, before merge.** The first frozen edition (`97b29b68…`) left `q:false-premise-03` without the keyClaim that
+refutes its premise. The protocol requires that claim for every `false-premise` query, and the loader now enforces it.
+The approved claim "No HTML attribute makes a page load twice as fast in every browser." was added under the same
+version, because nothing had been merged. The correction fixes a contract violation found in review; it was not
+prompted by any system output. keyClaims are scored at L4 only, so no L1/L2 result changed.
+
+Lists are `|`-separated, `-` is empty, a span is `chunkId start end sha256` in code points of the normalized
 chunk text, and `text` is never trimmed (escapes `\\`, `\t`, `\n`).
 
 | Category | Queries | Relevant set |
@@ -115,7 +123,7 @@ id or claim. Each phase reports:
 | `fidelity.source` | every B1 and B2c atom maps through the manifest, and its returned content hashes to the corpus `sha256`, as returned. |
 | `fidelity.reference` | every B2 reference maps through the manifest. |
 | `neuron.b2EqualsB2c` | all `4 × queries` comparisons were made (limits 1, 3, 5 and 6), and in each B2 equals the codec-direct control: same atoms, same order, bit-exact scores. A difference would be an adapter defect. A comparison skipped because a call failed is a failure, never a silent pass. |
-| `recall.prefixStability` | all `12 × queries` comparisons were made: for every system, the limit-1 and limit-3 lists are prefixes of the limit-5 list, and the limit-5 list is the prefix of the lookahead. The only allowed exception is an equal-score substitution at the cutoff. A skipped comparison is a failure. |
+| `recall.prefixStability` | all `12 × queries` comparisons were made: for every system, the limit-1 and limit-3 lists are prefixes of the limit-5 list, and the limit-5 list is the prefix of the lookahead. The only allowed exception is an equal-score substitution inside a tie that straddles the cutoff: the longer list must hold a result beyond the cutoff with the cutoff's score. A skipped comparison is a failure. |
 
 Any failure of a query in a layer, at any limit, leaves exactly one `<failed>` marker for that query and layer. This
 covers an exception, a non-`COMPLETE` status, an unmapped atom or reference, and a content mismatch. The scorer then
@@ -129,9 +137,16 @@ The files the orchestrator and the phase JVMs exchange are checked for completen
 An empty or truncated file is therefore rejected, and a phase that left one counts as not completed. It is never read
 as a result with fewer checks, rows or queries.
 
-The orchestrator adds two checks:
+The orchestrator adds three checks:
 - `process.restart`: seed and reopen ran in separate JVMs, as for [persistence](html-knowledge-persistence.md).
-- `determinism.restartEqual`: every row of B0, B1, B2 and B2c at every limit is identical in the reopen JVM.
+- `determinism.restartEqual`: every row of B0, B1, B2 and B2c at every limit is identical in the reopen JVM, which
+  reads the seed's root.
+- `determinism.freshRootEqual`: a third JVM, `replica`, imports the corpus into its own fresh root and runs the same
+  workload; every row must equal the seed's. Rows hold chunk ids mapped through each root's own manifest, so
+  Store-owned atom ids are never compared across roots. The replica's own checks are reported as `replica.*`.
+
+Restart equality alone could not catch nondeterminism that is fixed at import time and then persisted. Fresh-root
+equality does.
 
 The seed phase also carries the three `ingestion.*` checks of #105. Before it runs any query, the reopen phase repeats
 the protocol's full-corpus readback on the existing root:
@@ -148,7 +163,7 @@ manifest, these are:
 ## Results (2026-10-18, after review round 3)
 
 Environment:
-- Neuron `566966b+dirty` (this change, uncommitted);
+- Neuron `989266a+dirty` (this change, uncommitted);
 - Store checkout `7d971ea`;
 - Azul OpenJDK 27 on Linux, AMD Ryzen 7 7730U, Store root on `tmpfs` (memory-backed);
 - one seed JVM and one reopen JVM.
@@ -180,7 +195,7 @@ every layer, and `0.000` for `blank`.
 
 Observations, not tuned away:
 
-- **No-answer behavior.** With `t = 0.0` the Store returns five atoms for every non-blank query. Every `no-answer`,
+- **No-answer behavior.** With `t = 0.0` every layer returns five chunks for every non-blank query. Every `no-answer`,
   `out-of-domain` and unrefuted `false-premise` query is therefore `FALSE_EVIDENCE` in every layer, and only the two
   `blank` queries abstain. Detecting "no answer" needs a threshold or a separate decision. Any threshold chosen by
   looking at this set would be `in-sample (tuned)`.
@@ -195,7 +210,7 @@ Observations, not tuned away:
   - B2 misses every paraphrase;
   - B2 retrieves only one side of both conflicting-source queries.
 
-  This measures the codec, not the adapter: B2 = B2c held for every query.
+  This measures the codec, not the adapter: B2 = B2c held for every query at every limit.
 - **Ties.** The lookahead flags a tie straddling the k = 5 cutoff for 23 queries in B0, whose integer overlap scores
   tie widely, and for none in B1, B2 or B2c.
 - **Latency.** Each query is first sent once through B1 and B2, unmeasured (`perf.warmupQueries`). The measured pass
@@ -206,10 +221,27 @@ Observations, not tuned away:
   - B1: median about 0.2 ms;
   - B2: median about 1.6 ms, since it makes one Store query per token.
 
+  Every other phase is a separate row with the same sampling fields:
+
+  | Row | Phases | Timed operation |
+  | :--- | :--- | :--- |
+  | `perf.ingestNanos` | seed, replica | Store open plus one `remember` per chunk (33 operations) |
+  | `perf.ingestReadbackNanos` | seed, replica | the import readback, one `resonate` per chunk; validation in the window |
+  | `perf.reopenReadbackNanos` | reopen | Store open plus the full-corpus readback; validation in the window |
+  | `perf.openNanos` | all | `MonadaMemory.open` plus the adapter's own open, before the queries (setup or reopen) |
+  | `perf.b1.firstRecallNanos`, `perf.b2.firstRecallNanos` | all | the cold first call on those handles, for the first query with a token |
+  | `phase.<p>.nanos` | orchestrator | the whole child JVM, from process start to exit |
+
+  In this run:
+  - cold first recall: about 4 ms for B1 and 9 to 12 ms for B2, against the warm 0.2 ms and 1.6 ms;
+  - each child JVM: about 1 s from process start to exit.
+
 Follow-up candidates (listed in the report and never relabeled):
 - B1 misses `q:exact-term-02` and `q:paraphrase-01/03/04`, and returns `q:conflicting-source-01` only `PARTIAL`.
-- B2 also misses `q:exact-term-01`, `q:distractor-03` and `q:paraphrase-02`.
-- Every empty-gold query is `FALSE_EVIDENCE`.
+- B2 misses `q:exact-term-01/02`, `q:distractor-03` and all four paraphrases. It returns `q:multi-evidence-01/03` and
+  both conflicting-source queries only `PARTIAL`.
+- Every non-blank empty-gold query (8 of the 10) is `FALSE_EVIDENCE` in B1 and B2. The two blank queries are correct
+  abstentions.
 
 ## Limits
 
