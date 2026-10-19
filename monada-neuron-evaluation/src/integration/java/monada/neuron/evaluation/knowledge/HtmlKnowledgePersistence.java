@@ -178,8 +178,19 @@ public final class HtmlKnowledgePersistence {
      * @throws IngestionInputException when {@code root} holds no Store manifest
      */
     public Observation observe(Path root, IngestionManifest manifest) {
-        Objects.requireNonNull(manifest, "manifest must not be null");
         requireExistingStore(root);
+        return observe(root, manifest, () -> MonadaMemory.open(root, MonadaMemoryOptions.defaults()),
+                () -> ResonanceStoreMemoryAdapter.open(root, config()));
+    }
+
+    /**
+     * {@link #observe(Path, IngestionManifest)} with injectable openers. The timed opens and first recalls exist only
+     * for latency: each is caught, and a failure is an excluded sample, never a check. The handles that serve the
+     * observation are opened separately afterwards and are not caught, since the protocol requires them.
+     */
+    Observation observe(Path root, IngestionManifest manifest, Supplier<MonadaMemory> memoryOpener,
+            Supplier<ResonanceStoreMemoryAdapter> adapterOpener) {
+        Objects.requireNonNull(manifest, "manifest must not be null");
         var checks = new ArrayList<Check>();
         var metadata = new LinkedHashMap<String, String>();
         var count = corpus.chunks().size();
@@ -207,16 +218,21 @@ public final class HtmlKnowledgePersistence {
                         + ", defaults()) and the vector format is the current FIXED_RAW"
                 : "persisted [" + profile + "] differs from the expected default profile [" + expected + "]"));
 
-        // Fixed-size: a failed open throws and fails the phase, so no zero can be recorded.
-        var directOpens = new long[LatencyRow.REPETITIONS];
-        MonadaMemory memory = null;
-        for (var repetition = 0; repetition < LatencyRow.REPETITIONS; repetition++) {
-            var openStart = System.nanoTime();
-            memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
-            directOpens[repetition] = System.nanoTime() - openStart;
+        var directOpens = new ArrayList<Long>();
+        var directOpenFailures = new ArrayList<String>();
+        for (var repetition = 1; repetition <= LatencyRow.REPETITIONS; repetition++) {
+            try {
+                var openStart = System.nanoTime();
+                memoryOpener.get();
+                directOpens.add(System.nanoTime() - openStart);
+            } catch (RuntimeException e) {
+                directOpenFailures.add("repetition " + repetition + " threw " + e);
+            }
         }
-        LatencyRow.wallClock(directOpens, 1, "MonadaMemory.open on the same root, a fresh handle per sample; the"
-                + " last handle serves the observation", false).describe("perf.directOpen", metadata);
+        LatencyRow.wallClock(directOpens.stream().mapToLong(Long::longValue).toArray(), 1, "MonadaMemory.open on the"
+                + " same root, a fresh handle per sample; the observation uses a separately opened handle", false)
+                .excluding(directOpenFailures).describe("perf.directOpen", metadata);
+        var memory = memoryOpener.get();
         var readback = ingestion.readbackSweep(memory, manifest);
         var unread = readback.unread();
         checks.add(new Check("persistence.readback", unread.isEmpty(), unread.isEmpty()
@@ -235,19 +251,22 @@ public final class HtmlKnowledgePersistence {
         var referenceFailures = new ArrayList<String>();
         var signalFailures = new ArrayList<String>();
         var statusFailures = new ArrayList<String>();
-        // Fixed-size: a failed open throws and fails the phase, so no zero can be recorded.
-        var adapterOpens = new long[LatencyRow.REPETITIONS];
+        var adapterOpens = new ArrayList<Long>();
+        var adapterOpenFailures = new ArrayList<String>();
         var firstRecalls = new ArrayList<Long>();
         var firstRecallFailures = new ArrayList<String>();
         var firstProbe = new ResonanceMemoryRequest(List.of(codec.querySignal(probes.getFirst().probeId())), TOP_K);
-        ResonanceStoreMemoryAdapter opened = null;
         for (var repetition = 0; repetition < LatencyRow.REPETITIONS; repetition++) {
-            if (opened != null) {
-                opened.close();
+            ResonanceStoreMemoryAdapter opened;
+            try {
+                var adapterOpenStart = System.nanoTime();
+                opened = adapterOpener.get();
+                adapterOpens.add(System.nanoTime() - adapterOpenStart);
+            } catch (RuntimeException e) {
+                adapterOpenFailures.add("repetition " + (repetition + 1) + " threw " + e);
+                firstRecallFailures.add("adapter " + (repetition + 1) + " could not be opened");
+                continue;
             }
-            var adapterOpenStart = System.nanoTime();
-            opened = ResonanceStoreMemoryAdapter.open(root, config());
-            adapterOpens[repetition] = System.nanoTime() - adapterOpenStart;
             // The first recall on each fresh adapter, before any other call on it; its result is discarded. A failed or
             // non-COMPLETE call is excluded and recorded as a diagnostic, never a check: these calls exist only for
             // latency, and neuron.recallComplete judges the probes the protocol requires.
@@ -262,15 +281,18 @@ public final class HtmlKnowledgePersistence {
                 }
             } catch (RuntimeException e) {
                 firstRecallFailures.add("adapter " + (repetition + 1) + " threw " + e);
+            } finally {
+                opened.close();
             }
         }
-        LatencyRow.wallClock(adapterOpens, 1, "ResonanceStoreMemoryAdapter.open on the same root, a fresh adapter per"
-                + " sample; the last adapter serves the observation", false).describe("perf.adapterOpen", metadata);
+        LatencyRow.wallClock(adapterOpens.stream().mapToLong(Long::longValue).toArray(), 1, "ResonanceStoreMemoryAdapter"
+                + ".open on the same root, a fresh adapter per sample; the observation uses a separately opened"
+                + " adapter", false).excluding(adapterOpenFailures).describe("perf.adapterOpen", metadata);
         LatencyRow.wallClock(firstRecalls.stream().mapToLong(Long::longValue).toArray(), 1, "the first adapter recall"
                 + " (first probe) on a freshly opened adapter, before any other call on it; the readback already ran in"
                 + " this JVM on another handle; failed or non-COMPLETE calls are excluded", false)
                 .excluding(firstRecallFailures).describe("perf.firstRecall", metadata);
-        try (var adapter = opened) {
+        try (var adapter = adapterOpener.get()) {
             // Only COMPLETE recalls are samples; any other status is reported by neuron.recallComplete.
             var warm = new ArrayList<Long>();
             for (var index = 0; index < probes.size(); index++) {

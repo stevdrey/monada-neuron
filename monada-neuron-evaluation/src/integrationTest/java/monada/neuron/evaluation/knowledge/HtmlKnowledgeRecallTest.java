@@ -413,4 +413,47 @@ class HtmlKnowledgeRecallTest {
     private static List<String> chunkIds(Snapshot snapshot, String queryId, Layer layer) {
         return snapshot.rows(queryId, layer, HtmlKnowledgeRecall.MAX_LIMIT).stream().map(Row::chunkId).toList();
     }
+
+    @Test
+    void aFailedTimingOpenIsAnExcludedSampleAndTheObservationUsesItsOwnHandles() {
+        var recall = new HtmlKnowledgeRecall(CORPUS);
+        var opens = new int[1];
+        HtmlKnowledgeRecall.HandleOpener opener = () -> {
+            if (++opens[0] == 2) {
+                throw new IllegalStateException("injected open failure");
+            }
+            return new HtmlKnowledgeRecall.Handles(MonadaMemory.open(root, MonadaMemoryOptions.defaults()),
+                    ResonanceStoreMemoryAdapter.open(root, recall.adapterConfig()));
+        };
+
+        var observed = recall.observe(opener, manifest, QUERY_SET.queryHash(), texts(QUERY_SET));
+
+        assertEquals(LatencyRow.REPETITIONS + 1, opens[0], "five timed pairs plus the observation's own pair");
+        assertTrue(observed.checks().stream().allMatch(HtmlKnowledgeIngestion.Check::passed), observed.checks().toString());
+        assertEquals(observation.snapshot(), observed.snapshot(), "a timing failure never changes the results");
+        assertEquals("4", observed.metadata().get("perf.open.measurementIterations"));
+        assertTrue(observed.metadata().get("perf.open.excludedSamples").startsWith("1: repetition 2 threw"));
+        assertEquals("4", observed.metadata().get("perf.b2.firstRecall.measurementIterations"));
+    }
+
+    @Test
+    void onlyTheFirstReadbackIsRequiredAndLaterExceptionsAreExcludedSamples() {
+        var passed = List.of(new HtmlKnowledgeIngestion.Check("persistence.readback", true, "ok"));
+        var calls = new int[1];
+        var sampled = HtmlKnowledgeRecallPhase.sampleReadbacks(() -> {
+            if (++calls[0] == 3) {
+                throw new IllegalStateException("injected repetition failure");
+            }
+            return passed;
+        }, 33);
+        var metadata = new TreeMap<String, String>();
+        sampled.row().describe("r", metadata);
+
+        assertEquals(passed, sampled.checks());
+        assertEquals("4", metadata.get("r.measurementIterations"));
+        assertTrue(metadata.get("r.excludedSamples").startsWith("1: repetition 3 threw"), metadata.get("r.excludedSamples"));
+        assertThrows(IllegalStateException.class, () -> HtmlKnowledgeRecallPhase.sampleReadbacks(() -> {
+            throw new IllegalStateException("the required readback");
+        }, 33), "an exception from the required readback still fails the phase");
+    }
 }

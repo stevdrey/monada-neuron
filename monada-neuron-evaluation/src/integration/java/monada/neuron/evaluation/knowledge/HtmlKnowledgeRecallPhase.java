@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Entrypoint of one judged-recall phase, run by {@link HtmlKnowledgeRecallRunner} in its own JVM so that the
@@ -76,30 +77,9 @@ public final class HtmlKnowledgeRecallPhase {
         var recall = new HtmlKnowledgeRecall(corpus);
         if (phase.equals(REOPEN)) {
             // The seed's ingestion already read every chunk back; the restarted process repeats that for itself.
-            // The protocol requires one readback in the restarted process: repetition 1 is that semantic check.
-            // Repetitions 2 to 5 exist only to sample perf.reopenReadback, so their failures are diagnostics.
-            var samples = new ArrayList<Long>();
-            var excluded = new ArrayList<String>();
-            for (var repetition = 0; repetition < LatencyRow.REPETITIONS; repetition++) {
-                var start = System.nanoTime();
-                var readback = recall.readback(root, manifest);
-                var elapsed = System.nanoTime() - start;
-                var passed = readback.stream().allMatch(Check::passed);
-                if (repetition == 0) {
-                    checks.addAll(readback);
-                }
-                if (passed) {
-                    samples.add(elapsed);
-                } else {
-                    excluded.add("repetition " + (repetition + 1) + " failed " + readback.stream()
-                            .filter(check -> !check.passed()).map(Check::name).toList()
-                            + (repetition == 0 ? " (the required readback, reported by its checks)" : ""));
-                }
-            }
-            LatencyRow.wallClock(samples.stream().mapToLong(Long::longValue).toArray(), corpus.chunks().size(),
-                    "Store open plus one resonate per chunk, with the content hash check in the window; repetition 1"
-                            + " is the required readback, 2 to 5 sample latency only", true)
-                    .excluding(excluded).describe("perf.reopenReadback", timings);
+            var sampled = sampleReadbacks(() -> recall.readback(root, manifest), corpus.chunks().size());
+            checks.addAll(sampled.checks());
+            sampled.row().describe("perf.reopenReadback", timings);
         }
         var observation = recall.observe(root, manifest, workload.queryHash(), workload.queries());
         checks.addAll(observation.checks());
@@ -108,5 +88,51 @@ public final class HtmlKnowledgeRecallPhase {
         var result = new Result(checks, HtmlKnowledgePersistencePhase.environment(timings));
         work.write(work.result(phase), result.render());
         return checks.stream().allMatch(Check::passed) ? 0 : 1;
+    }
+
+    /** The required readback's checks and the latency row of all repetitions. */
+    record SampledReadbacks(List<Check> checks, LatencyRow row) {
+    }
+
+    /**
+     * Runs the readback {@link LatencyRow#REPETITIONS} times. The protocol requires one readback in the restarted
+     * process: repetition 1 is that semantic check, its checks are returned and an exception from it propagates.
+     * Repetitions 2 to 5 exist only to sample latency, so a failed check or a thrown exception there only excludes that
+     * sample and is recorded in {@code excludedSamples}.
+     */
+    static SampledReadbacks sampleReadbacks(Supplier<List<Check>> readback, int chunks) {
+        var samples = new ArrayList<Long>();
+        var excluded = new ArrayList<String>();
+        List<Check> required = List.of();
+        for (var repetition = 1; repetition <= LatencyRow.REPETITIONS; repetition++) {
+            List<Check> checks;
+            long elapsed;
+            if (repetition == 1) {
+                var start = System.nanoTime();
+                checks = readback.get();
+                elapsed = System.nanoTime() - start;
+                required = checks;
+            } else {
+                try {
+                    var start = System.nanoTime();
+                    checks = readback.get();
+                    elapsed = System.nanoTime() - start;
+                } catch (RuntimeException e) {
+                    excluded.add("repetition " + repetition + " threw " + e);
+                    continue;
+                }
+            }
+            if (checks.stream().allMatch(Check::passed)) {
+                samples.add(elapsed);
+            } else {
+                excluded.add("repetition " + repetition + " failed " + checks.stream().filter(check -> !check.passed())
+                        .map(Check::name).toList() + (repetition == 1
+                                ? " (the required readback, reported by its checks)" : ""));
+            }
+        }
+        var row = LatencyRow.wallClock(samples.stream().mapToLong(Long::longValue).toArray(), chunks, "Store open plus"
+                + " one resonate per chunk, with the content hash check in the window; repetition 1 is the required"
+                + " readback, 2 to 5 sample latency only", true).excluding(excluded);
+        return new SampledReadbacks(required, row);
     }
 }

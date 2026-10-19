@@ -314,37 +314,69 @@ final class HtmlKnowledgeRecall {
      */
     Observation observe(Path root, IngestionManifest manifest, String queryHash, List<QueryText> queries) {
         HtmlKnowledgePersistence.requireExistingStore(root);
-        // Fixed-size: a failed open throws and fails the phase, so no zero can be recorded.
-        var opens = new long[LatencyRow.REPETITIONS];
+        return observe(() -> new Handles(MonadaMemory.open(root, MonadaMemoryOptions.defaults()),
+                ResonanceStoreMemoryAdapter.open(root, adapterConfig())), manifest, queryHash, queries);
+    }
+
+    /** A {@code MonadaMemory} and an adapter opened on the same root. */
+    record Handles(MonadaMemory memory, ResonanceStoreMemoryAdapter adapter) {
+    }
+
+    /** Opens a fresh handle pair; the seam lets a test inject a failing open. */
+    @FunctionalInterface
+    interface HandleOpener {
+
+        Handles open();
+    }
+
+    /**
+     * {@link #observe(Path, IngestionManifest, String, List)} with an injectable opener. The
+     * {@value LatencyRow#REPETITIONS} timed pairs, each followed by its cold sample, exist only for latency: every
+     * repetition is caught, and a failed open or call is an excluded sample, never a check. The pair that serves the
+     * observation is opened separately afterwards and is not caught, since the protocol requires it.
+     */
+    Observation observe(HandleOpener opener, IngestionManifest manifest, String queryHash, List<QueryText> queries) {
+        var opens = new ArrayList<Long>();
+        var excludedOpens = new ArrayList<String>();
         var firstB1 = new ArrayList<Long>();
         var firstB2 = new ArrayList<Long>();
         var excludedB1 = new ArrayList<String>();
         var excludedB2 = new ArrayList<String>();
         var sample = firstWithToken(queries);
-        MonadaMemory memory = null;
-        ResonanceStoreMemoryAdapter adapter = null;
-        for (var repetition = 0; repetition < LatencyRow.REPETITIONS; repetition++) {
-            if (adapter != null) {
-                adapter.close();
-            }
-            var start = System.nanoTime();
-            memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
-            adapter = ResonanceStoreMemoryAdapter.open(root, adapterConfig());
-            opens[repetition] = System.nanoTime() - start;
-            if (sample.isPresent()) {
-                var cold = coldFirstRecall(memory, adapter, sample.get());
-                cold.b1().ifPresent(firstB1::add);
-                cold.b2().ifPresent(firstB2::add);
-                var where = "cold sample " + (repetition + 1) + ": ";
-                cold.b1Failure().ifPresent(failure -> excludedB1.add(where + failure));
-                cold.b2Failure().ifPresent(failure -> excludedB2.add(where + failure));
+        for (var repetition = 1; repetition <= LatencyRow.REPETITIONS; repetition++) {
+            ResonanceStoreMemoryAdapter timed = null;
+            try {
+                var start = System.nanoTime();
+                var handles = opener.open();
+                opens.add(System.nanoTime() - start);
+                timed = handles.adapter();
+                if (sample.isPresent()) {
+                    var cold = coldFirstRecall(handles.memory(), timed, sample.get());
+                    cold.b1().ifPresent(firstB1::add);
+                    cold.b2().ifPresent(firstB2::add);
+                    var where = "cold sample " + repetition + ": ";
+                    cold.b1Failure().ifPresent(failure -> excludedB1.add(where + failure));
+                    cold.b2Failure().ifPresent(failure -> excludedB2.add(where + failure));
+                }
+            } catch (RuntimeException e) {
+                excludedOpens.add("repetition " + repetition + " threw " + e);
+                if (sample.isPresent()) {
+                    excludedB1.add("cold sample " + repetition + ": no handle (" + e + ")");
+                    excludedB2.add("cold sample " + repetition + ": no handle (" + e + ")");
+                }
+            } finally {
+                if (timed != null) {
+                    timed.close();
+                }
             }
         }
-        try (var observing = adapter) {
-            var observed = observe(memory, observing, manifest, queryHash, queries);
+        var handles = opener.open();
+        try (var observing = handles.adapter()) {
+            var observed = observe(handles.memory(), observing, manifest, queryHash, queries);
             var metadata = new LinkedHashMap<>(observed.metadata());
-            LatencyRow.wallClock(opens, 2, "MonadaMemory.open plus the adapter's own open on the same root, a fresh"
-                    + " pair per sample", false).describe("perf.open", metadata);
+            LatencyRow.wallClock(samples(opens), 2, "MonadaMemory.open plus the adapter's own open on the same root, a"
+                    + " fresh pair per sample; the observation uses a separately opened pair", false)
+                    .excluding(excludedOpens).describe("perf.open", metadata);
             var cold = "the first call on a freshly opened handle pair, made before any other call on it, for the"
                     + " first query with at least one token at limit 5; earlier in this JVM the ingestion or reopen"
                     + " readback already ran on other handles, and sample 1 is the phase's first query call";
