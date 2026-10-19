@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.io.UncheckedIOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.TreeMap;
 
@@ -15,6 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class HtmlKnowledgeIngestionTest {
 
@@ -119,6 +122,33 @@ class HtmlKnowledgeIngestionTest {
             assertEquals(List.of(directory.resolve("store")), children.toList(), "scratch roots are deleted");
         } catch (IOException e) {
             throw new UncheckedIOException(e);
+        }
+    }
+
+    @Test
+    void timingSetupAndCleanupFailuresAreDiagnosticsNeverExceptions() throws IOException {
+        var ingestion = new HtmlKnowledgeIngestion(HtmlKnowledgeCorpus.bundled());
+        var parent = Files.createDirectories(directory.resolve("read-only-parent"));
+        var imported = ingestion.ingest(parent.resolve("store"));
+        assumeTrue(parent.toFile().setWritable(false), "the platform must honour a read-only directory");
+        try {
+            assumeFalse(Files.isWritable(parent), "a privileged user ignores directory permissions");
+
+            var timings = ingestion.timings(imported);
+            var metadata = new TreeMap<String, String>();
+            timings.describe("perf", "readback", "env.timingScratch", metadata);
+
+            assertEquals("1", metadata.get("perf.ingest.measurementIterations"), "only the import under test");
+            assertTrue(metadata.get("perf.ingest.excludedSamples").contains("scratch directory could not be created"),
+                    metadata.get("perf.ingest.excludedSamples"));
+            assertEquals("unknown (no scratch directory) (scratch imports skipped: only the import under test is"
+                    + " sampled)", metadata.get("env.timingScratch.sameFileStoreAsStoreRoot"));
+
+            var diagnostics = new ArrayList<String>();
+            HtmlKnowledgeIngestion.deleteQuietly(parent.resolve("store"), diagnostics);
+            assertTrue(diagnostics.getFirst().startsWith("scratch cleanup failed, left behind: "), diagnostics.toString());
+        } finally {
+            parent.toFile().setWritable(true);
         }
     }
 }

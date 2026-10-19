@@ -15,6 +15,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -212,26 +213,41 @@ public final class HtmlKnowledgeIngestion {
      * and its reason recorded in {@code excludedSamples}, so a broken import is never published as a latency sample.
      */
     ImportTimings timings(Result first) {
-        var parent = first.root().toAbsolutePath().normalize().getParent();
-        Path scratch;
+        // Timing only: no step below may throw, since latency never affects the verdict or the exit status. Every
+        // setup or cleanup failure becomes an excludedSamples diagnostic instead.
+        var diagnostics = new ArrayList<String>();
+        Path scratch = null;
         try {
+            var parent = first.root().toAbsolutePath().normalize().getParent();
             scratch = Files.createTempDirectory(parent, ".timing-scratch-");
-        } catch (IOException e) {
-            throw new UncheckedIOException("cannot create timing scratch roots beside " + first.root(), e);
+        } catch (IOException | RuntimeException e) {
+            diagnostics.add("scratch directory could not be created beside the root (" + e + "); only the import"
+                    + " under test is sampled");
         }
         try {
-            return timings(first, scratch);
+            return timings(first, scratch, diagnostics);
         } finally {
-            HtmlKnowledgeIngestionRunner.deleteTree(scratch);
+            if (scratch != null) {
+                deleteQuietly(scratch, diagnostics);
+            }
         }
     }
 
-    private ImportTimings timings(Result first, Path scratch) {
-        var sameStore = new RunEnvironment().sameFileStore(first.root(), scratch);
+    /** Deletes a timing-only path; a failure is recorded in {@code diagnostics} and never thrown. */
+    static void deleteQuietly(Path path, List<String> diagnostics) {
+        try {
+            HtmlKnowledgeIngestionRunner.deleteTree(path);
+        } catch (UncheckedIOException | SecurityException e) {
+            diagnostics.add("scratch cleanup failed, left behind: " + path + " (" + e + ")");
+        }
+    }
+
+    private ImportTimings timings(Result first, Path scratch, List<String> failures) {
+        var sameStore = scratch == null ? Optional.<Boolean>empty()
+                : new RunEnvironment().sameFileStore(first.root(), scratch);
         var comparable = sameStore.orElse(false);
         var ingest = new ArrayList<Long>();
         var readback = new ArrayList<Long>();
-        var failures = new ArrayList<String>();
         if (first.allPassed()) {
             ingest.add(first.ingestNanos());
             readback.add(first.readbackNanos());
@@ -252,7 +268,7 @@ public final class HtmlKnowledgeIngestion {
             } catch (RuntimeException e) {
                 failures.add("scratch import " + repetition + " threw " + e);
             } finally {
-                HtmlKnowledgeIngestionRunner.deleteTree(root);
+                deleteQuietly(root, failures);
             }
         }
         var chunks = corpus.chunks().size();
@@ -262,7 +278,8 @@ public final class HtmlKnowledgeIngestion {
                         + " go to deleted scratch roots; failed imports are excluded", false),
                 LatencyRow.wallClock(readback.stream().mapToLong(Long::longValue).toArray(), chunks, "one resonate"
                         + " per chunk on the just-imported root, with the content hash check in the window", true),
-                failures, sameStore.map(String::valueOf).orElse("unknown") + (comparable ? ""
+                failures, (scratch == null ? "unknown (no scratch directory)"
+                        : sameStore.map(String::valueOf).orElse("unknown")) + (comparable ? ""
                         : " (scratch imports skipped: only the import under test is sampled)"));
     }
 

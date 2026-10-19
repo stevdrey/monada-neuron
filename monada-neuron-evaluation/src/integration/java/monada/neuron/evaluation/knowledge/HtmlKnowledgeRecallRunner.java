@@ -152,9 +152,6 @@ public final class HtmlKnowledgeRecallRunner {
         var work = new WorkDirectory(temporaryDirectory());
         try {
             var root = options.storeRoot().orElse(work.path().resolve("store"));
-            // A fresh root of its own beside the seed root, in the same parent and so on the same storage; its file store
-            // is recorded next to the seed root's, and it is deleted with the run.
-            var replicaRoot = replicaRoot(root);
             work.write(work.workload(), HtmlKnowledgeRecall.QueryText.renderTsv(querySet.queryHash(),
                     querySet.queries().stream()
                             .map(query -> new HtmlKnowledgeRecall.QueryText(query.queryId(), query.text())).toList()));
@@ -167,6 +164,7 @@ public final class HtmlKnowledgeRecallRunner {
             var seedSnapshot = snapshot(work, HtmlKnowledgeRecallPhase.SEED);
             Optional<PhaseRun> reopen = Optional.empty();
             Optional<PhaseRun> replica = Optional.empty();
+            Optional<Path> replicaRoot = Optional.empty();
             Optional<Rendered> recall = Optional.empty();
             if (seedSnapshot.isPresent() && Files.exists(work.manifest())) {
                 var reopened = phaseJvm.launch(HtmlKnowledgeRecallPhase.class, HtmlKnowledgeRecallPhase.REOPEN,
@@ -176,12 +174,23 @@ public final class HtmlKnowledgeRecallRunner {
                 checks.add(HtmlKnowledgePersistenceRunner.restartCheck(seed, reopened, work));
                 checks.add(restartEqual(seedSnapshot.get(), snapshot(work, HtmlKnowledgeRecallPhase.REOPEN)));
 
-                var replicated = phaseJvm.launch(HtmlKnowledgeRecallPhase.class, HtmlKnowledgeRecallPhase.REPLICA,
-                        replicaRoot, work);
-                replica = Optional.of(replicated);
-                HtmlKnowledgePersistenceRunner.collect(replicated, work, checks, metadata);
-                checks.add(freshRootEqual(seed, replicated, seedSnapshot.get(),
-                        snapshot(work, HtmlKnowledgeRecallPhase.REPLICA)));
+                // A fresh root of its own beside the seed root, in the same parent and so on the same storage. Fresh-root
+                // determinism is a semantic run condition, so a root that cannot be created fails that check instead of
+                // aborting the run without a report.
+                try {
+                    replicaRoot = Optional.of(createReplicaRoot(root));
+                } catch (IOException | RuntimeException e) {
+                    checks.add(new Check("determinism.freshRootEqual", false, "the replica root could not be created"
+                            + " beside " + root + " (" + e + "); no fresh-root replica was run"));
+                }
+                if (replicaRoot.isPresent()) {
+                    var replicated = phaseJvm.launch(HtmlKnowledgeRecallPhase.class, HtmlKnowledgeRecallPhase.REPLICA,
+                            replicaRoot.get(), work);
+                    replica = Optional.of(replicated);
+                    HtmlKnowledgePersistenceRunner.collect(replicated, work, checks, metadata);
+                    checks.add(freshRootEqual(seed, replicated, seedSnapshot.get(),
+                            snapshot(work, HtmlKnowledgeRecallPhase.REPLICA)));
+                }
 
                 var scores = RecallMetrics.score(querySet, seedSnapshot.get());
                 var rendered = new HtmlKnowledgeRecallReport(querySet, scores);
@@ -193,6 +202,8 @@ public final class HtmlKnowledgeRecallRunner {
             }
 
             describe(root, replicaRoot, seed, reopen, replica, metadata);
+            // The replica root is deleted before the report is built, so a leftover is reported, never thrown.
+            replicaRoot.ifPresent(path -> deleteQuietly(path, metadata));
             var evaluation = new EvaluationReport(
                     Instant.now(),
                     EnvironmentMetadata.current(),
@@ -208,7 +219,6 @@ public final class HtmlKnowledgeRecallRunner {
                             + snapshot.toTsv()));
             return new Outcome(report, recall, seed, reopen, replica, files, options.outputDir());
         } finally {
-            replicaCleanup.forEach(HtmlKnowledgeIngestionRunner::deleteTree);
             HtmlKnowledgeIngestionRunner.deleteTree(work.path());
         }
     }
@@ -276,7 +286,7 @@ public final class HtmlKnowledgeRecallRunner {
                 outputDir.resolve(querySet.version() + "-recall-results.json"));
     }
 
-    private void describe(Path root, Path replicaRoot, PhaseRun seed, Optional<PhaseRun> reopen,
+    private void describe(Path root, Optional<Path> replicaRoot, PhaseRun seed, Optional<PhaseRun> reopen,
             Optional<PhaseRun> replica, Map<String, String> metadata) {
         metadata.put("protocolVersion", HtmlKnowledgeIngestionRunner.PROTOCOL_VERSION);
         metadata.put("extensions", "none (L1 and L2 only)");
@@ -325,26 +335,27 @@ public final class HtmlKnowledgeRecallRunner {
         var environment = new RunEnvironment();
         environment.describeHost(metadata);
         environment.describeStoreRoot("env.storeRoot", root, metadata);
-        replica.ifPresent(run -> {
-            environment.describeStoreRoot("env.replicaRoot", replicaRoot, metadata);
+        replicaRoot.ifPresent(path -> {
+            environment.describeStoreRoot("env.replicaRoot", path, metadata);
             metadata.put("env.replicaRoot.sameFileStoreAsStoreRoot",
-                    environment.sameFileStore(root, replicaRoot).map(String::valueOf).orElse("unknown"));
+                    environment.sameFileStore(root, path).map(String::valueOf).orElse("unknown"));
         });
     }
 
-    /** Paths beside a kept root that the run created and must delete. */
-    private final List<Path> replicaCleanup = new ArrayList<>();
-
     /** Creates an empty replica root beside {@code root}; the import accepts an empty directory as a fresh root. */
-    private Path replicaRoot(Path root) {
+    private Path createReplicaRoot(Path root) throws IOException {
         var parent = root.toAbsolutePath().normalize().getParent();
+        Files.createDirectories(parent);
+        return Files.createTempDirectory(parent, ".replica-store-");
+    }
+
+    /** Deletes the replica root; a failure is recorded as {@code cleanup.leftover} and never thrown. */
+    private void deleteQuietly(Path path, Map<String, String> metadata) {
         try {
-            Files.createDirectories(parent);
-            var replica = Files.createTempDirectory(parent, ".replica-store-");
-            replicaCleanup.add(replica);
-            return replica;
-        } catch (IOException e) {
-            throw new UncheckedIOException("cannot create the replica root beside " + root, e);
+            HtmlKnowledgeIngestionRunner.deleteTree(path);
+            metadata.put("cleanup.leftover", "none");
+        } catch (UncheckedIOException | SecurityException e) {
+            metadata.put("cleanup.leftover", path + " (" + e + ")");
         }
     }
 

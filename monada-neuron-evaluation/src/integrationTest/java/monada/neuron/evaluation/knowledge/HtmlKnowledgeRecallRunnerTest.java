@@ -149,6 +149,7 @@ class HtmlKnowledgeRecallRunnerTest {
                     + ".medianNanos")), row);
         }
         assertEquals("true", metadata.get("env.replicaRoot.sameFileStoreAsStoreRoot"));
+        assertEquals("none", metadata.get("cleanup.leftover"));
         assertEquals("true", metadata.get("seed.env.timingScratch.sameFileStoreAsStoreRoot"));
         assertEquals("0", metadata.get("seed.perf.ingest.excludedSamples"));
         assertEquals("0", metadata.get("replica.perf.ingestReadback.excludedSamples"));
