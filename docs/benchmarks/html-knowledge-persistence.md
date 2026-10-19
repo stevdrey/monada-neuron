@@ -166,7 +166,10 @@ Each row records its sampling as `<row>.{warmupIterations,measurementIterations,
 empty or truncated result counts as an incomplete phase. The reopen phase also requires a manifest entry for every
 chunk.
 
-## Observed behaviour (Store `main`, 2026-10-17)
+## Observed behaviour
+
+First recorded on 2026-10-17 against Store `main`. Re-checked on 2026-10-19 on the final harness: Neuron `c74c8a1`
+with a clean tree, Store `f24e3a2`, all 36 checks passing. Every statement below still holds as written.
 
 - **Persistence:** all 33 chunks are persisted and read back with identical content in the restarted JVM. The 195
   direct results and the 195 adapter results (39 probes × 5) are bit-identical between the two processes.

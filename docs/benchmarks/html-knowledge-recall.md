@@ -182,19 +182,24 @@ The metadata records the protocol's required fields. Besides versions, hashes, t
 manifest, these are:
 - run identity: `runMode`, and best-effort environment fields `env.cpuModel`, `env.totalPhysicalMemoryBytes`, `env.hostId` (salted, truncated SHA-256 of the host name; the name itself is never written) and the Store root's `env.storeRoot.{fileSystem,storageType}`. A value that cannot be read is `unknown (<reason>)` and never fails a run.
 
-## Results (2026-10-19, three-JVM harness after review round 5)
+## Results (2026-10-19, final harness)
+
+Every figure in this section comes from one harness revision, measured on a clean tree.
 
 Environment:
-- Neuron `6503541+dirty` (this change, uncommitted);
-- Store checkout `573aeab`;
+- Neuron `c74c8a1`, the final harness, with no uncommitted changes (`neuron.commit` has no `+dirty`);
+- Store checkout `f24e3a2`;
 - Azul OpenJDK 27 on Linux, AMD Ryzen 7 7730U;
-- seed root and replica root both on `tmpfs` (memory-backed), on the same file store
-  (`env.replicaRoot.sameFileStoreAsStoreRoot = true`);
-- one seed, one reopen and one replica JVM, about 1 s each from process start to exit (`process.<p>.wallNanos`).
+- seed root, replica root and timing scratch roots all on `tmpfs` (memory-backed), on the same file store
+  (`env.replicaRoot.sameFileStoreAsStoreRoot = true`, `<phase>.env.timingScratch.sameFileStoreAsStoreRoot = true`);
+- one seed, one reopen and one replica JVM, each 1.0 to 1.1 s from process start to exit (`process.<p>.wallNanos`).
 
-Two full runs gave byte-identical `recall` payloads and raw rows. All 29 checks passed, including
-`determinism.freshRootEqual`: the replica reproduced all 1800 seed rows. Scores are unchanged from the first edition,
-and also with the newer Store checkout; scoring still reads the limit-5 lists.
+Two full runs gave byte-identical `recall` payloads.
+- All 29 checks passed. They include `determinism.freshRootEqual`: the replica reproduced all 1800 seed rows.
+- No latency sample was excluded (`excludedSamples = 0`), and nothing was left behind (`cleanup.leftover = none`).
+- The persistence and ingestion runners also pass on the same commit.
+- Scores are unchanged from the first edition, across every harness revision and Store checkout since; scoring still
+  reads the limit-5 lists.
 
 | Layer | Recall@1 | Recall@5 | MRR@5 | Coverage@5 | FullEvidence@5 | NoAnswerFPR@5 | AbstentionRecall |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -256,16 +261,17 @@ Observations, not tuned away:
 
   | Row (seed; reopen for the readback) | Samples | Timed operation | Median | p95 |
   | :--- | ---: | :--- | ---: | ---: |
-  | `perf.b1.recallLimit5` | 32 | warm Store call, limit 5 | 0.18 ms | 0.37 ms |
-  | `perf.b2.recallLimit5` | 32 | warm adapter recall, limit 5 | 1.44 ms | 2.33 ms |
-  | `perf.b1.firstRecall` | 5 | first Store call on fresh handles | 1.67 ms | 2.32 ms |
-  | `perf.b2.firstRecall` | 5 | first adapter recall on fresh handles | 3.16 ms | 10.39 ms |
-  | `perf.open` | 5 | `MonadaMemory.open` plus the adapter's own open | 2.60 ms | 15.22 ms |
-  | `perf.ingest` | 5 | Store open plus 33 `remember` calls | 17.74 ms | 66.97 ms |
-  | `perf.ingestReadback` | 5 | 33 `resonate` calls with hash checks | 14.02 ms | 35.26 ms |
-  | `perf.reopenReadback` (reopen) | 5 | Store open plus 33 `resonate` calls with hash checks | 22.28 ms | 87.05 ms |
+  | `perf.b1.recallLimit5` | 32 | warm Store call, limit 5 | 0.21 ms | 0.35 ms |
+  | `perf.b2.recallLimit5` | 32 | warm adapter recall, limit 5 | 1.48 ms | 3.09 ms |
+  | `perf.b1.firstRecall` | 5 | first Store call on fresh handles | 2.58 ms | 3.36 ms |
+  | `perf.b2.firstRecall` | 5 | first adapter recall on fresh handles | 3.99 ms | 12.33 ms |
+  | `perf.open` | 5 | `MonadaMemory.open` plus the adapter's own open | 3.77 ms | 20.25 ms |
+  | `perf.ingest` | 5 | Store open plus 33 `remember` calls | 20.38 ms | 75.07 ms |
+  | `perf.ingestReadback` | 5 | 33 `resonate` calls with hash checks | 16.64 ms | 37.16 ms |
+  | `perf.reopenReadback` (reopen) | 5 | Store open plus 33 `resonate` calls with hash checks | 21.89 ms | 98.88 ms |
 
-  The reopen and replica rows are in the same range. With 5 samples, a p95 is the slowest sample, so it mostly
+  The reopen and replica rows are in the same range. For example, warm B1 has a median of 0.19 and 0.18 ms, and
+  warm B2 1.53 and 1.41 ms. With 5 samples, a p95 is the slowest sample, so it mostly
   shows the first, colder repetition. B2 is slower than B1 because it makes one Store query per token. The
   whole-JVM time is process bookkeeping (`process.<p>.wallNanos`), not a latency row.
 
