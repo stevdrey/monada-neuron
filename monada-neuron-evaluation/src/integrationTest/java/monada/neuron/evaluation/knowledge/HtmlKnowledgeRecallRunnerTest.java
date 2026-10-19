@@ -26,7 +26,6 @@ class HtmlKnowledgeRecallRunnerTest {
             "seed.ingestion.manifestComplete",
             "seed.ingestion.contentFidelity",
             "seed.ingestion.readback",
-            "seed.ingestion.timingImportsCompleted",
             "seed.recall.auxiliaryCallsCompleted",
             "seed.recall.completed",
             "seed.fidelity.source",
@@ -44,7 +43,6 @@ class HtmlKnowledgeRecallRunnerTest {
             "replica.ingestion.manifestComplete",
             "replica.ingestion.contentFidelity",
             "replica.ingestion.readback",
-            "replica.ingestion.timingImportsCompleted",
             "replica.recall.auxiliaryCallsCompleted",
             "replica.recall.completed",
             "replica.fidelity.source",
@@ -152,6 +150,8 @@ class HtmlKnowledgeRecallRunnerTest {
         }
         assertEquals("true", metadata.get("env.replicaRoot.sameFileStoreAsStoreRoot"));
         assertEquals("true", metadata.get("seed.env.timingScratch.sameFileStoreAsStoreRoot"));
+        assertEquals("0", metadata.get("seed.perf.ingest.excludedSamples"));
+        assertEquals("0", metadata.get("replica.perf.ingestReadback.excludedSamples"));
         assertEquals("true", metadata.get("replica.env.timingScratch.sameFileStoreAsStoreRoot"));
         assertTrue(outcome.report().evaluation().runConfiguration().toString().contains("median and p95"),
                 "the run configuration describes the sampled rows");

@@ -872,4 +872,6 @@ source set, and do not change `./gradlew test` when it is absent.
   repetition) is reported at once by its own check and is never a latency sample. A codec-effect row is
   comparable only when both layers completed. Measured warm samples exclude failed calls, timing scratch roots and
   the replica root sit beside the root under test, and a non-finite Store score fails its B1/B2c layer. No
-  definition, formula, label rule or report field changes.
+  definition, formula, label rule or report field changes. A failed scratch timing import is recorded as
+  `excludedSamples` metadata, never as a semantic check, and every direct B1/B2c path, cold and warm-up calls included,
+  shares one acceptance rule for Store results.

@@ -7,7 +7,9 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.UncheckedIOException;
 import java.util.List;
+import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -93,5 +95,30 @@ class HtmlKnowledgeIngestionTest {
 
     private static List<String> chunkSequence(IngestionManifest manifest) {
         return manifest.entries().stream().map(IngestionManifest.Entry::chunkId).toList();
+    }
+
+    @Test
+    void timingSamplesOfAFailedImportAreExcludedAsADiagnosticNeverACheck() {
+        var corpus = HtmlKnowledgeCorpus.bundled();
+        var ingestion = new HtmlKnowledgeIngestion(corpus);
+        var imported = ingestion.ingest(directory.resolve("store"));
+        var failed = new HtmlKnowledgeIngestion.Result(imported.root(), imported.manifest(),
+                List.of(new HtmlKnowledgeIngestion.Check("ingestion.readback", false, "injected")),
+                imported.ingestNanos(), imported.readbackNanos());
+
+        var timings = ingestion.timings(failed);
+        var metadata = new TreeMap<String, String>();
+        timings.describe("perf", "readback", "env.timingScratch", metadata);
+
+        assertEquals(Integer.toString(LatencyRow.REPETITIONS - 1), metadata.get("perf.ingest.measurementIterations"),
+                "only the scratch imports are sampled");
+        assertTrue(metadata.get("perf.ingest.excludedSamples").startsWith("1: the import under test failed"),
+                metadata.get("perf.ingest.excludedSamples"));
+        assertEquals("true", metadata.get("env.timingScratch.sameFileStoreAsStoreRoot"));
+        try (var children = Files.list(directory)) {
+            assertEquals(List.of(directory.resolve("store")), children.toList(), "scratch roots are deleted");
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 }

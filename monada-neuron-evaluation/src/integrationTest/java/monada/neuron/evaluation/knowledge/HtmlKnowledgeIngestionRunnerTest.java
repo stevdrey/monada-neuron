@@ -29,8 +29,9 @@ class HtmlKnowledgeIngestionRunnerTest {
         var written = HtmlKnowledgeIngestionRunner.write(outcome);
 
         assertTrue(outcome.report().allPassed(), outcome.report().toMarkdown());
-        assertTrue(outcome.report().checks().stream()
-                .anyMatch(check -> check.name().equals("ingestion.timingImportsCompleted") && check.passed()));
+        assertTrue(outcome.report().checks().stream().noneMatch(check -> check.name().contains("timing")),
+                "scratch timing imports never produce a semantic check");
+        assertEquals("0", outcome.report().metadata().get("store.perf.ingest.excludedSamples"));
         assertTrue(outcome.report().toJson().contains("timed scratch imports; latency rows report median and p95"));
         assertEquals("true", outcome.report().metadata().get("env.timingScratch.sameFileStoreAsStoreRoot"));
         assertTrue(outcome.external().isEmpty());

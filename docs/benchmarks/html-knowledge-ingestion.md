@@ -63,12 +63,13 @@ Semantic checks:
 | `ingestion.manifestComplete` | every chunk maps to its own returned atom, in `chunkId` order |
 | `ingestion.contentFidelity` | each returned atom's content hashes to the chunk `sha256` |
 | `ingestion.readback` | `resonate(<chunk text>).topK(<corpus size>).threshold(0.0)` returns the mapped atom with matching content |
-| `ingestion.timingImportsCompleted` | each of the 5 timed imports (the import under test plus 4 scratch imports) passed its checks; a failed one is excluded from the `perf.ingest` and `perf.readback` rows |
 
 The `perf.ingest` and `perf.readback` rows are exploratory wall-clock measurements and never affect a verdict. Each
 reports `medianNanos` and `p95Nanos` over 5 imports: the import under test plus 4 imports into scratch roots. The
 scratch roots are created beside the root under test, in its parent directory, so they share its storage, and are
-deleted afterwards. `env.timingScratch.sameFileStoreAsStoreRoot` records this.
+deleted afterwards. `env.timingScratch.sameFileStoreAsStoreRoot` records this. A scratch import that fails is
+excluded from both rows and recorded in `<row>.excludedSamples`. That is metadata, never a semantic check: scratch
+roots exist only for latency, and latency never affects the verdict.
 Each row records its sampling (`warmupIterations`, `measurementIterations`, `operationsPerIteration`,
 `measurementMethod`, `validationInWindow`, `gcTelemetryScope`).
 

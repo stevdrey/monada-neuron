@@ -119,7 +119,7 @@ id or claim. Each phase reports:
 
 | Check | Pass condition |
 | :--- | :--- |
-| `recall.auxiliaryCallsCompleted` | every unmeasured warm-up call and every cold first-recall sample returned, and every B2 call among them answered `COMPLETE`. A failed call is reported here at once, never left to the measured pass, and is excluded from its latency row. |
+| `recall.auxiliaryCallsCompleted` | every unmeasured warm-up call and every cold first-recall sample on the root under test returned acceptable output: B1 with finite scores (the same rule as the measured path), and B2 `COMPLETE`. A failed call is reported here at once, never left to the measured pass, and is excluded from its latency row. |
 | `recall.completed` | every B1/B2c Store call returned with finite scores and every B2 recall answered `COMPLETE`, at every limit. A non-finite Store score fails the layer, as the production adapter does. |
 | `fidelity.source` | every B1 and B2c atom maps through the manifest, and its returned content hashes to the corpus `sha256`, as returned. |
 | `fidelity.reference` | every B2 reference maps through the manifest. |
@@ -149,8 +149,14 @@ The orchestrator adds three checks:
 Restart equality alone could not catch nondeterminism that is fixed at import time and then persisted. Fresh-root
 equality does.
 
-The seed and replica phases also carry the three `ingestion.*` checks of #105, plus `ingestion.timingImportsCompleted`:
-every one of the 5 timed imports passed its checks, and a failed one is excluded from the ingest rows. Each of the
+The seed and replica phases also carry the three `ingestion.*` checks of #105, which judge the import under test.
+
+The 4 scratch imports exist only to sample `perf.ingest*`. A failed one is excluded from those rows and recorded in
+`perf.ingest.excludedSamples` (also `perf.ingestReadback.excludedSamples`) as metadata. It is never a semantic check,
+because latency must not affect the verdict or the exit status.
+
+Calls on the root under test stay semantic: cold samples, warm-up calls and reopen readbacks. A failure there is a
+real Store failure. Each of the
 5 reopen readback repetitions is checked; if any fails, that repetition's checks are reported and its sample is
 excluded. No failed or incomplete call is ever published as a latency sample: a latency row's
 `measurementIterations` counts the successful samples only. This covers the measured warm rows too: a measured call that throws or
@@ -186,7 +192,7 @@ Environment:
   (`env.replicaRoot.sameFileStoreAsStoreRoot = true`);
 - one seed, one reopen and one replica JVM, about 1 s each from process start to exit (`process.<p>.wallNanos`).
 
-Two full runs gave byte-identical `recall` payloads and raw rows. All 31 checks passed, including
+Two full runs gave byte-identical `recall` payloads and raw rows. All 29 checks passed, including
 `determinism.freshRootEqual`: the replica reproduced all 1800 seed rows. Scores are unchanged from the first edition,
 and also with the newer Store checkout; scoring still reads the limit-5 lists.
 

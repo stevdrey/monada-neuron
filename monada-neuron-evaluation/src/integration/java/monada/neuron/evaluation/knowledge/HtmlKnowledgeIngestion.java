@@ -178,17 +178,26 @@ public final class HtmlKnowledgeIngestion {
     /**
      * Latency rows of an import: {@code ingest} (Store open plus one {@code remember} per chunk) and {@code readback}
      * (one {@code resonate} per chunk, hashing in the window), each with up to {@link LatencyRow#REPETITIONS}
-     * samples, and {@code ingestion.timingImportsCompleted}, which fails when a scratch import failed.
+     * samples, and the reasons for any excluded sample. The scratch roots exist only to sample latency, so a failed
+     * scratch import is a diagnostic, never a semantic check; the import under test is judged by its own checks.
      */
-    record ImportTimings(LatencyRow ingest, LatencyRow readback, Check check, String scratchSameFileStore) {
+    record ImportTimings(LatencyRow ingest, LatencyRow readback, List<String> excluded, String scratchSameFileStore) {
+
+        ImportTimings {
+            excluded = List.copyOf(excluded);
+        }
 
         /**
-         * Records both rows as {@code <prefix>.ingest} and {@code <prefix>.<readbackRow>}, and whether the scratch
-         * roots shared the file store of the root under test as {@code <scratchKey>.sameFileStoreAsStoreRoot}.
+         * Records both rows as {@code <prefix>.ingest} and {@code <prefix>.<readbackRow>}, each with its
+         * {@code excludedSamples} diagnostic, and whether the scratch roots shared the file store of the root under
+         * test as {@code <scratchKey>.sameFileStoreAsStoreRoot}. All of it is metadata, never a semantic check.
          */
         void describe(String prefix, String readbackRow, String scratchKey, Map<String, String> metadata) {
+            var diagnostic = excluded.isEmpty() ? "0" : excluded.size() + ": " + String.join("; ", excluded);
             ingest.describe(prefix + ".ingest", metadata);
+            metadata.put(prefix + ".ingest.excludedSamples", diagnostic);
             readback.describe(prefix + "." + readbackRow, metadata);
+            metadata.put(prefix + "." + readbackRow + ".excludedSamples", diagnostic);
             metadata.put(scratchKey + ".sameFileStoreAsStoreRoot", scratchSameFileStore);
         }
     }
@@ -199,8 +208,8 @@ public final class HtmlKnowledgeIngestion {
      * {@code first}'s root, in the same parent, so every sample of a row uses the same storage; if that directory is
      * nevertheless on another file store, the scratch imports are skipped and only {@code first} is sampled. The
      * directory is deleted afterwards, and each extra root right after its import. A
-     * sample counts only when its import passed every check; a failed or throwing scratch import is excluded from both
-     * rows and reported by the returned check, so a broken import is never published as a latency sample.
+     * sample counts only when its import passed every check; a failed or throwing import is excluded from both rows
+     * and its reason recorded in {@code excludedSamples}, so a broken import is never published as a latency sample.
      */
     ImportTimings timings(Result first) {
         var parent = first.root().toAbsolutePath().normalize().getParent();
@@ -227,7 +236,7 @@ public final class HtmlKnowledgeIngestion {
             ingest.add(first.ingestNanos());
             readback.add(first.readbackNanos());
         } else {
-            failures.add("the import under test failed a check");
+            failures.add("the import under test failed a check (judged by its ingestion.* checks)");
         }
         for (var repetition = 1; comparable && repetition < LatencyRow.REPETITIONS; repetition++) {
             var root = scratch.resolve("timing-import-" + repetition);
@@ -246,10 +255,6 @@ public final class HtmlKnowledgeIngestion {
                 HtmlKnowledgeIngestionRunner.deleteTree(root);
             }
         }
-        var check = new Check("ingestion.timingImportsCompleted", failures.isEmpty(), failures.isEmpty()
-                ? LatencyRow.REPETITIONS + " timed imports (the import under test and " + (LatencyRow.REPETITIONS - 1)
-                        + " scratch imports) passed every check"
-                : "excluded from the latency rows: " + String.join("; ", failures));
         var chunks = corpus.chunks().size();
         return new ImportTimings(
                 LatencyRow.wallClock(ingest.stream().mapToLong(Long::longValue).toArray(), chunks, "one Store open"
@@ -257,7 +262,7 @@ public final class HtmlKnowledgeIngestion {
                         + " go to deleted scratch roots; failed imports are excluded", false),
                 LatencyRow.wallClock(readback.stream().mapToLong(Long::longValue).toArray(), chunks, "one resonate"
                         + " per chunk on the just-imported root, with the content hash check in the window", true),
-                check, sameStore.map(String::valueOf).orElse("unknown") + (comparable ? ""
+                failures, sameStore.map(String::valueOf).orElse("unknown") + (comparable ? ""
                         : " (scratch imports skipped: only the import under test is sampled)"));
     }
 

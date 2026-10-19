@@ -380,8 +380,14 @@ final class HtmlKnowledgeRecall {
         var b2 = OptionalLong.empty();
         try {
             var start = System.nanoTime();
-            memory.resonate(query.text()).topK(MAX_LIMIT).threshold(THRESHOLD).execute();
-            b1 = OptionalLong.of(System.nanoTime() - start);
+            var results = memory.resonate(query.text()).topK(MAX_LIMIT).threshold(THRESHOLD).execute().results();
+            var duration = System.nanoTime() - start;
+            var rejected = rejectStoreResults(results);
+            if (rejected.isPresent()) {
+                failures.add(query.queryId() + " B1 " + rejected.get());
+            } else {
+                b1 = OptionalLong.of(duration);
+            }
         } catch (RuntimeException e) {
             failures.add(query.queryId() + " B1 threw " + e);
         }
@@ -509,7 +515,9 @@ final class HtmlKnowledgeRecall {
     private void warmUp(Run run, MonadaMemory memory, ResonanceStoreMemoryAdapter adapter, List<QueryText> queries) {
         for (var query : queries) {
             try {
-                memory.resonate(query.text()).topK(MAX_LIMIT).threshold(THRESHOLD).execute();
+                var results = memory.resonate(query.text()).topK(MAX_LIMIT).threshold(THRESHOLD).execute().results();
+                rejectStoreResults(results).ifPresent(reason ->
+                        run.auxiliaryFailures.add("warm-up " + query.queryId() + " B1 " + reason));
             } catch (RuntimeException e) {
                 run.auxiliaryFailures.add("warm-up " + query.queryId() + " B1 threw " + e);
             }
@@ -548,8 +556,9 @@ final class HtmlKnowledgeRecall {
             var start = System.nanoTime();
             results = memory.resonate(query.text()).topK(limit).threshold(THRESHOLD).execute().results();
             var duration = System.nanoTime() - start;
-            if (!allFinite(results)) {
-                run.failure(query, Layer.B1, limit, "the Store returned a non-finite score");
+            var rejected = rejectStoreResults(results);
+            if (rejected.isPresent()) {
+                run.failure(query, Layer.B1, limit, rejected.get());
                 return null;
             }
             elapsed.accept(duration);
@@ -611,8 +620,9 @@ final class HtmlKnowledgeRecall {
             for (var signalIndex = 0; signalIndex < signals.size(); signalIndex++) {
                 var text = codec.encode(signals.get(signalIndex));
                 var results = memory.resonate(text).topK(limit).threshold(THRESHOLD).execute().results();
-                if (!allFinite(results)) {
-                    run.failure(query, Layer.B2C, limit, "the Store returned a non-finite score");
+                var rejected = rejectStoreResults(results);
+                if (rejected.isPresent()) {
+                    run.failure(query, Layer.B2C, limit, rejected.get());
                     return null;
                 }
                 for (var rank = 0; rank < results.size(); rank++) {
@@ -694,6 +704,14 @@ final class HtmlKnowledgeRecall {
      */
     static boolean allFinite(List<ResonanceResult> results) {
         return results.stream().allMatch(result -> Double.isFinite(result.score()));
+    }
+
+    /**
+     * The single acceptance rule for results read directly from the Store (B1, B2c, and their cold and warm-up calls):
+     * returns why they must be rejected, or empty. Every direct path uses it, so none can accept output another rejects.
+     */
+    static Optional<String> rejectStoreResults(List<ResonanceResult> results) {
+        return allFinite(results) ? Optional.empty() : Optional.of("returned a non-finite score");
     }
 
     /** A query and layer left without an outcome. */

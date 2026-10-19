@@ -23,6 +23,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.stream.IntStream;
 
@@ -354,6 +355,10 @@ class HtmlKnowledgeRecallTest {
         assertFalse(HtmlKnowledgeRecall.allFinite(List.of(new ResonanceResult(atom, 0.5),
                 new ResonanceResult(atom, Double.NaN))));
         assertFalse(HtmlKnowledgeRecall.allFinite(List.of(new ResonanceResult(atom, Double.POSITIVE_INFINITY))));
+        assertEquals(Optional.of("returned a non-finite score"),
+                HtmlKnowledgeRecall.rejectStoreResults(List.of(new ResonanceResult(atom, Double.NaN))),
+                "the one rule shared by the measured, cold and warm-up B1 paths and by B2c");
+        assertEquals(Optional.empty(), HtmlKnowledgeRecall.rejectStoreResults(List.of(new ResonanceResult(atom, 1.0))));
         assertEquals("null", HtmlKnowledgeRecallReport.number(Double.NaN));
         assertEquals("null", HtmlKnowledgeRecallReport.number(Double.NEGATIVE_INFINITY));
         assertEquals("0.25", HtmlKnowledgeRecallReport.number(0.25));

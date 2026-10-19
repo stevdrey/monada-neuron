@@ -376,7 +376,6 @@ public final class HtmlKnowledgeIngestionRunner {
             var scratchKey = "env." + (prefix.equals("store") ? "" : prefix.substring(0, prefix.lastIndexOf('.') + 1))
                     + "timingScratch";
             timings.describe(prefix + ".perf", "readback", scratchKey, metadata);
-            checks.add(timings.check());
             new RunEnvironment().describeStoreRoot("env." + prefix + "Root", root, metadata);
             var manifest = root.resolve("manifest.json");
             if (Files.exists(manifest)) {
