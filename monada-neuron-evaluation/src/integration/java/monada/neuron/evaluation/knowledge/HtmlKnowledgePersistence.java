@@ -293,6 +293,13 @@ public final class HtmlKnowledgePersistence {
                 + " this JVM on another handle; failed or non-COMPLETE calls are excluded", false)
                 .excluding(firstRecallFailures).describe("perf.firstRecall", metadata);
         try (var adapter = adapterOpener.get()) {
+            // The observation adapter has served no call yet: one unmeasured recall warms it, so every perf.warmRecall
+            // sample is a warm call. Its outcome is latency-only; the probes below are judged by neuron.recallComplete.
+            try {
+                adapter.recall(firstProbe);
+            } catch (RuntimeException ignored) {
+                // Latency-only warm-up; a real failure shows up in the measured probes.
+            }
             // Only COMPLETE recalls are samples; any other status is reported by neuron.recallComplete.
             var warm = new ArrayList<Long>();
             for (var index = 0; index < probes.size(); index++) {
@@ -326,8 +333,9 @@ public final class HtmlKnowledgePersistence {
                 }
             }
             new LatencyRow(warm.stream().mapToLong(Long::longValue).toArray(), 1, 1, LatencyRow.WALL_CLOCK + "; one"
-                    + " adapter recall per probe after the first-recall call on the same adapter; only the adapter recall"
-                    + " is timed; non-COMPLETE recalls are excluded", false, LatencyRow.NO_GC_TELEMETRY)
+                    + " adapter recall per probe on the observation adapter, after one unmeasured recall on that same"
+                    + " adapter; only the adapter recall is timed; non-COMPLETE recalls are excluded", false,
+                    LatencyRow.NO_GC_TELEMETRY)
                     .excluding(statusFailures).describe("perf.warmRecall", metadata);
         }
 

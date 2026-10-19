@@ -286,8 +286,9 @@ public final class HtmlKnowledgeIngestionRunner {
         var evaluation = new EvaluationReport(
                 Instant.now(),
                 EnvironmentMetadata.current(),
-                new RunConfiguration(0L, false, 0, 0, "one import under test per corpus plus "
-                        + (LatencyRow.REPETITIONS - 1) + " timed scratch imports; " + LatencyRow.RUN_CONFIGURATION_NOTE),
+                new RunConfiguration(0L, false, 0, 0, "one import under test per corpus plus up to "
+                        + (LatencyRow.REPETITIONS - 1) + " timed scratch imports (a skipped or failed one is listed in"
+                        + " its row's excludedSamples); " + LatencyRow.RUN_CONFIGURATION_NOTE),
                 List.of(),
                 TITLE);
         var report = new CheckedEvaluationReport(TITLE, "Ingestion Metadata", evaluation, checks, metadata);

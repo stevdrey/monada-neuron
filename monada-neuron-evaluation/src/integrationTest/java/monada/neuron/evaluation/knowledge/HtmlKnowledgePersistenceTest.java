@@ -192,5 +192,7 @@ class HtmlKnowledgePersistenceTest {
         assertTrue(observation.metadata().get("perf.directOpen.excludedSamples").startsWith("1: repetition 2 threw"),
                 observation.metadata().get("perf.directOpen.excludedSamples"));
         assertEquals("0", observation.metadata().get("perf.adapterOpen.excludedSamples"));
+        assertTrue(observation.metadata().get("perf.warmRecall.measurementMethod")
+                .contains("after one unmeasured recall on that same adapter"), "the observation adapter is warmed first");
     }
 }

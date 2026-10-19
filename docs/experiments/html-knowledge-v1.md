@@ -851,30 +851,32 @@ source set, and do not change `./gradlew test` when it is absent.
 - No version change (issue #106): the ingestion readback and post-reopen (restart) conditions are implemented by
   `runHtmlKnowledgePersistence`, with a seed JVM and a separate reopen JVM, over a fixed probe set rather than the
   #107 query set. No definition, formula, label rule or report field changes.
-- No version change (issue #107): the query set is delivered as `html-kq-v1` (32 queries,
-  `monada-neuron-evaluation/src/integration/resources/html-kq-v1/queries.tsv`) and scored by `runHtmlKnowledgeRecall`
-  ([recall](../benchmarks/html-knowledge-recall.md)). The L2 codec is the documented, text-only `token-packing v1`.
-  Any operational or fidelity failure of a query in a layer, at any limit, is recorded as a failure marker, so the
-  scorer gives that query no outcome rather than an abstention. Each system is also queried with a limit-6 lookahead,
-  used only for `tieAtCutoff` at k = 5 and never for `Ret_k`. The phase JVMs read a labels-free workload, so only the
-  scorer reads gold labels. Every system, B0 and B2c included, is also queried at limits 1 and 3, and B2 = B2c is
-  checked at every limit. The reopen JVM repeats the full-corpus readback. The knowledge runners now record the
-  required run-mode and environment fields (CPU model, total physical memory, hashed `hostId`, and storage type and
-  file system of the Store root). Every latency row records its sampling fields. The comparison checks require their
-  full expected count, so a skipped comparison is a failure. Exchanged phase files carry a terminating count line,
-  so a truncated file is rejected. A third `replica` JVM imports into its own fresh root, so determinism is checked
-  across roots and not only across a restart. Setup, ingestion, reopen and first-recall timings are separate rows.
-  Errata before merge: `q:false-premise-03` gained its required refutation keyClaim. `html-kq-v1` keeps its version
-  because nothing had been merged; its `queryHash` changed from `97b29b68…` to `e91b0404…`, and no L1/L2 result
-  changed. Every knowledge latency row reports median and p95 over its samples (5 repetitions where an operation is
-  not already sampled once per query). The cold first recall is taken on fresh handles before any other call, and
-  the replica root's storage is recorded. A failed or incomplete auxiliary call (cold sample, warm-up, timed
-  repetition) is reported at once by its own check and is never a latency sample. A codec-effect row is
-  comparable only when both layers completed. Measured warm samples exclude failed calls, timing scratch roots and
-  the replica root sit beside the root under test, and a non-finite Store score fails its B1/B2c layer. No
-  definition, formula, label rule or report field changes. A failed scratch timing import is recorded as
-  `excludedSamples` metadata, never as a semantic check, and every direct B1/B2c path, cold and warm-up calls included,
-  shares one acceptance rule for Store results. Final semantic boundary: only protocol-required operations are
-  checks. Cold samples, warm-up, timing repetitions (including reopen readbacks 2 to 5) and scratch imports are
-  latency-only diagnostics (`excludedSamples`, `perf.warmup.failures`); each catches its own exceptions, and the
-  observation opens its own handles separately. Scores are compared bit-exactly.
+- No version change (issue #107). No definition, formula, label rule or report field changes.
+  - **Query set.** Delivered as `html-kq-v1`: 32 queries in
+    `monada-neuron-evaluation/src/integration/resources/html-kq-v1/queries.tsv`, scored by `runHtmlKnowledgeRecall`
+    ([recall](../benchmarks/html-knowledge-recall.md)).
+    - Errata before merge: `q:false-premise-03` gained its required refutation keyClaim. The `queryHash` changed from
+      `97b29b68…` to `e91b0404…`. No L1/L2 result changed.
+  - **Codec and inputs.** The L2 codec is the documented, text-only `token-packing v1`. The phase JVMs read a
+    labels-free workload, so only the scorer reads gold labels.
+  - **Queried limits.** Every system (B0, B1, B2, B2c) is queried at limits 1, 3 and 5, plus a limit-6 lookahead used
+    only for `tieAtCutoff` at k = 5 and never for `Ret_k`. Prefix stability and B2 = B2c are checked at every limit,
+    with their full expected comparison count. Scores are compared bit-exactly.
+  - **Failures.** An operational or fidelity failure of a measured query leaves a failure marker, so the query gets no
+    outcome instead of being scored as an abstention. A non-finite Store score fails its B1 or B2c layer.
+  - **Determinism and readback.** A reopen JVM checks restart determinism and repeats the full-corpus readback once, as
+    required. A `replica` JVM imports into its own fresh root to check fresh-root determinism.
+  - **Report integrity.** Exchanged phase files end with a count line, so a truncated file is rejected. The single
+    JSON report carries the verdict and the scored payload. The knowledge runners record the required run-mode and
+    environment fields.
+  - **Semantic boundary.** Only protocol-required operations are checks:
+    - the measured recalls with their fidelity, B2 = B2c and prefix stability;
+    - the ingestion of the root under test;
+    - the one required restarted-process readback;
+    - restart and fresh-root determinism.
+  - **Latency diagnostics.** Every other call exists only for latency, never decides `allChecksPassed`, catches its
+    own exceptions, and on failure is excluded from its row and recorded in `excludedSamples` (`perf.warmup.failures`
+    for the warm-up). These calls are the cold first-recall samples, the warm-up pass, the timed opens, readback
+    repetitions 2 to 5 and the scratch timing imports. The observation opens its own handles separately.
+  - **Latency rows.** Every latency row reports median and p95 with its sampling fields. Timing scratch roots and the
+    replica root sit beside the root under test, on the same storage.

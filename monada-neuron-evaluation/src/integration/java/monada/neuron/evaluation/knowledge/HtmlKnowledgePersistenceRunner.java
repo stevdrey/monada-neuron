@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
+import java.util.stream.Stream;
 
 /**
  * CLI of the HTML knowledge persistence experiment (Issue #106): imports {@code html-kc-v1} into a fresh Store root
@@ -228,8 +229,10 @@ public final class HtmlKnowledgePersistenceRunner {
             var evaluation = new EvaluationReport(
                     Instant.now(),
                     EnvironmentMetadata.current(),
-                    new RunConfiguration(0L, false, 0, 0, "one seed and one reopen JVM; the environment above is the"
-                            + " orchestrator's, each phase JVM's own is in <phase>.jvm.*; "
+                    new RunConfiguration(0L, false, 0, 0, launchedPhases(List.of(HtmlKnowledgePersistencePhase.SEED,
+                            HtmlKnowledgePersistencePhase.REOPEN), Stream.concat(Stream.of(seed), reopen.stream())
+                            .toList()) + "; the environment above is the orchestrator's, each phase JVM's own is in"
+                            + " <phase>.jvm.*; "
                             + LatencyRow.RUN_CONFIGURATION_NOTE),
                     List.of(),
                     TITLE);
@@ -284,6 +287,18 @@ public final class HtmlKnowledgePersistenceRunner {
 
     private PhaseRun launch(String phase, Path root, WorkDirectory work) {
         return phaseJvm.launch(HtmlKnowledgePersistencePhase.class, phase, root, work);
+    }
+
+    /**
+     * Describes which of the {@code planned} phase JVMs were actually launched, so a failed run's configuration never
+     * claims a phase, and the conditions it checks, that never ran.
+     */
+    static String launchedPhases(List<String> planned, List<PhaseRun> launched) {
+        var names = launched.stream().map(PhaseRun::phase).toList();
+        var missing = planned.stream().filter(phase -> !names.contains(phase)).toList();
+        return "phase JVMs launched: " + String.join(", ", names) + (missing.isEmpty() ? ""
+                : "; not launched: " + String.join(", ", missing) + " (an earlier phase did not complete or its root"
+                        + " could not be created)");
     }
 
     /** Adds a phase's checks and metadata, prefixed by its phase name, or a failed completion check. */

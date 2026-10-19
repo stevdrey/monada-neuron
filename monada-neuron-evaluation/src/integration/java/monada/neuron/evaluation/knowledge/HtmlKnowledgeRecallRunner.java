@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
+import java.util.stream.Stream;
 
 /**
  * CLI of the judged HTML recall experiment (Issue #107, protocol layers L1 and L2): imports {@code html-kc-v1} into a
@@ -207,8 +208,11 @@ public final class HtmlKnowledgeRecallRunner {
             var evaluation = new EvaluationReport(
                     Instant.now(),
                     EnvironmentMetadata.current(),
-                    new RunConfiguration(0L, false, 0, 0, "one seed, one reopen and one replica JVM; the environment"
-                            + " above is the orchestrator's, each phase JVM's own is in <phase>.jvm.*; "
+                    new RunConfiguration(0L, false, 0, 0, HtmlKnowledgePersistenceRunner.launchedPhases(
+                            List.of(HtmlKnowledgeRecallPhase.SEED, HtmlKnowledgeRecallPhase.REOPEN,
+                                    HtmlKnowledgeRecallPhase.REPLICA),
+                            Stream.of(Optional.of(seed), reopen, replica).flatMap(Optional::stream).toList())
+                            + "; the environment above is the orchestrator's, each phase JVM's own is in <phase>.jvm.*; "
                             + LatencyRow.RUN_CONFIGURATION_NOTE),
                     List.of(),
                     TITLE);

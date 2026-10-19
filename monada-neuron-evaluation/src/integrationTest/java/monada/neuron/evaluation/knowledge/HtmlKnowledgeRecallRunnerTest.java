@@ -162,6 +162,12 @@ class HtmlKnowledgeRecallRunnerTest {
         assertEquals("true", metadata.get("replica.env.timingScratch.sameFileStoreAsStoreRoot"));
         assertTrue(outcome.report().evaluation().runConfiguration().toString().contains("median and p95"),
                 "the run configuration describes the sampled rows");
+        var configuration = outcome.report().evaluation().runConfiguration().operationsPerIterationPolicy();
+        assertTrue(configuration.startsWith("phase JVMs launched: seed, reopen, replica;"), configuration);
+        assertFalse(configuration.contains("not launched"), configuration);
+        assertEquals("phase JVMs launched: seed; not launched: reopen, replica (an earlier phase did not complete or its"
+                + " root could not be created)", HtmlKnowledgePersistenceRunner.launchedPhases(
+                        List.of("seed", "reopen", "replica"), List.of(outcome.seed())));
         assertTrue(metadata.containsKey("env.replicaRoot.fileSystem"));
         assertTrue(metadata.containsKey("env.replicaRoot.storageType"));
         for (var phase : List.of("seed", "reopen", "replica")) {
