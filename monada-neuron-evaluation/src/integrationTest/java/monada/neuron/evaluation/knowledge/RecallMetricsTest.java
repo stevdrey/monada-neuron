@@ -157,6 +157,28 @@ class RecallMetricsTest {
     }
 
     @Test
+    void theCodecEffectComparesOnlyQueriesWhoseLayersBothCompleted() {
+        var querySet = HtmlKnowledgeQuerySet.bundled(HtmlKnowledgeCorpus.bundled());
+        var rows = List.of(
+                new Row("q:exact-term-01", Layer.B1, 5, 0, HtmlKnowledgeRecall.FAILED, 0.0),
+                new Row("q:exact-term-02", Layer.B2C, 5, 0, HtmlKnowledgeRecall.FAILED, 0.0),
+                new Row("q:exact-term-03", Layer.B1, 5, 1, "chk:links#00", 0.9),
+                new Row("q:exact-term-03", Layer.B2C, 5, 1, "chk:links#00", 0.9));
+        var report = new HtmlKnowledgeRecallReport(querySet, RecallMetrics.score(querySet,
+                new Snapshot(querySet.queryHash(), rows)));
+
+        var json = report.toJson();
+        assertTrue(json.contains("{ \"queryId\": \"q:exact-term-01\", \"comparable\": false, \"failedLayers\": [\"B1\"],"
+                + " \"equalChunkOrder\": null }"), json);
+        assertTrue(json.contains("{ \"queryId\": \"q:exact-term-02\", \"comparable\": false, \"failedLayers\":"
+                + " [\"B2c\"], \"equalChunkOrder\": null }"), json);
+        assertTrue(json.contains("{ \"queryId\": \"q:exact-term-03\", \"comparable\": true, \"B1\": [\"chk:links#00\"],"
+                + " \"B2c\": [\"chk:links#00\"], \"equalChunkOrder\": true }"), json);
+        assertTrue(report.toMarkdown().contains("for 0 of 30 comparable queries (2 not comparable because B1 or B2c"
+                + " failed)"), report.toMarkdown());
+    }
+
+    @Test
     void aSnapshotOfAnotherQuerySetIsRefused() {
         var querySet = HtmlKnowledgeQuerySet.bundled(HtmlKnowledgeCorpus.bundled());
         assertThrows(IllegalArgumentException.class,

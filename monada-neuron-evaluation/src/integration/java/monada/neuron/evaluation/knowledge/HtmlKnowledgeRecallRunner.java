@@ -195,10 +195,9 @@ public final class HtmlKnowledgeRecallRunner {
             var evaluation = new EvaluationReport(
                     Instant.now(),
                     EnvironmentMetadata.current(),
-                    new RunConfiguration(0L, false, 0, 0, "one seed, one reopen and one replica JVM; the environment above"
-                            + " is the"
-                            + " orchestrator's, each phase JVM's own is in <phase>.jvm.*; timings in metadata are"
-                            + " exploratory wall-clock samples and never part of a verdict"),
+                    new RunConfiguration(0L, false, 0, 0, "one seed, one reopen and one replica JVM; the environment"
+                            + " above is the orchestrator's, each phase JVM's own is in <phase>.jvm.*; "
+                            + LatencyRow.RUN_CONFIGURATION_NOTE),
                     List.of(),
                     TITLE);
             var report = new CheckedEvaluationReport(TITLE, "Recall Metadata", evaluation, checks, metadata);

@@ -177,9 +177,10 @@ public final class HtmlKnowledgeIngestion {
 
     /**
      * Latency rows of an import: {@code ingest} (Store open plus one {@code remember} per chunk) and {@code readback}
-     * (one {@code resonate} per chunk, hashing in the window), each with {@link LatencyRow#REPETITIONS} samples.
+     * (one {@code resonate} per chunk, hashing in the window), each with up to {@link LatencyRow#REPETITIONS}
+     * samples, and {@code ingestion.timingImportsCompleted}, which fails when a scratch import failed.
      */
-    record ImportTimings(LatencyRow ingest, LatencyRow readback) {
+    record ImportTimings(LatencyRow ingest, LatencyRow readback, Check check) {
 
         /** Records both rows as {@code <prefix>.ingest} and {@code <prefix>.<readbackRow>}. */
         void describe(String prefix, String readbackRow, Map<String, String> metadata) {
@@ -190,30 +191,49 @@ public final class HtmlKnowledgeIngestion {
 
     /**
      * Times {@code first}, an import already made, together with {@link LatencyRow#REPETITIONS} − 1 further imports
-     * of the same corpus into fresh roots under {@code scratch}. Each extra root is deleted right after its import; its
-     * checks are not reported, since only {@code first} is the import under test.
+     * of the same corpus into fresh roots under {@code scratch}. Each extra root is deleted right after its import. A
+     * sample counts only when its import passed every check; a failed or throwing scratch import is excluded from both
+     * rows and reported by the returned check, so a broken import is never published as a latency sample.
      */
     ImportTimings timings(Result first, Path scratch) {
-        var ingest = new long[LatencyRow.REPETITIONS];
-        var readback = new long[LatencyRow.REPETITIONS];
-        ingest[0] = first.ingestNanos();
-        readback[0] = first.readbackNanos();
+        var ingest = new ArrayList<Long>();
+        var readback = new ArrayList<Long>();
+        var failures = new ArrayList<String>();
+        if (first.allPassed()) {
+            ingest.add(first.ingestNanos());
+            readback.add(first.readbackNanos());
+        } else {
+            failures.add("the import under test failed a check");
+        }
         for (var repetition = 1; repetition < LatencyRow.REPETITIONS; repetition++) {
             var root = scratch.resolve("timing-import-" + repetition);
             try {
                 var extra = ingest(root);
-                ingest[repetition] = extra.ingestNanos();
-                readback[repetition] = extra.readbackNanos();
+                if (extra.allPassed()) {
+                    ingest.add(extra.ingestNanos());
+                    readback.add(extra.readbackNanos());
+                } else {
+                    failures.add("scratch import " + repetition + " failed " + extra.checks().stream()
+                            .filter(check -> !check.passed()).map(Check::name).toList());
+                }
+            } catch (RuntimeException e) {
+                failures.add("scratch import " + repetition + " threw " + e);
             } finally {
                 HtmlKnowledgeIngestionRunner.deleteTree(root);
             }
         }
+        var check = new Check("ingestion.timingImportsCompleted", failures.isEmpty(), failures.isEmpty()
+                ? LatencyRow.REPETITIONS + " timed imports (the import under test and " + (LatencyRow.REPETITIONS - 1)
+                        + " scratch imports) passed every check"
+                : "excluded from the latency rows: " + String.join("; ", failures));
         var chunks = corpus.chunks().size();
         return new ImportTimings(
-                LatencyRow.wallClock(ingest, chunks, "one Store open plus one remember per chunk into a fresh root;"
-                        + " sample 1 is the import under test, the others go to deleted scratch roots", false),
-                LatencyRow.wallClock(readback, chunks, "one resonate per chunk on the just-imported root, with the"
-                        + " content hash check in the window", true));
+                LatencyRow.wallClock(ingest.stream().mapToLong(Long::longValue).toArray(), chunks, "one Store open"
+                        + " plus one remember per chunk into a fresh root; sample 1 is the import under test, the others"
+                        + " go to deleted scratch roots; failed imports are excluded", false),
+                LatencyRow.wallClock(readback.stream().mapToLong(Long::longValue).toArray(), chunks, "one resonate"
+                        + " per chunk on the just-imported root, with the content hash check in the window", true),
+                check);
     }
 
     /**

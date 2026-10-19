@@ -26,6 +26,8 @@ class HtmlKnowledgeRecallRunnerTest {
             "seed.ingestion.manifestComplete",
             "seed.ingestion.contentFidelity",
             "seed.ingestion.readback",
+            "seed.ingestion.timingImportsCompleted",
+            "seed.recall.auxiliaryCallsCompleted",
             "seed.recall.completed",
             "seed.fidelity.source",
             "seed.fidelity.reference",
@@ -33,6 +35,7 @@ class HtmlKnowledgeRecallRunnerTest {
             "seed.recall.prefixStability",
             "reopen.persistence.readback",
             "reopen.persistence.noUnmappedAtoms",
+            "reopen.recall.auxiliaryCallsCompleted",
             "reopen.recall.completed",
             "reopen.fidelity.source",
             "reopen.fidelity.reference",
@@ -41,6 +44,8 @@ class HtmlKnowledgeRecallRunnerTest {
             "replica.ingestion.manifestComplete",
             "replica.ingestion.contentFidelity",
             "replica.ingestion.readback",
+            "replica.ingestion.timingImportsCompleted",
+            "replica.recall.auxiliaryCallsCompleted",
             "replica.recall.completed",
             "replica.fidelity.source",
             "replica.fidelity.reference",
@@ -146,6 +151,8 @@ class HtmlKnowledgeRecallRunnerTest {
                     + ".medianNanos")), row);
         }
         assertEquals("true", metadata.get("env.replicaRoot.sameFileStoreAsStoreRoot"));
+        assertTrue(outcome.report().evaluation().runConfiguration().toString().contains("median and p95"),
+                "the run configuration describes the sampled rows");
         assertTrue(metadata.containsKey("env.replicaRoot.fileSystem"));
         assertTrue(metadata.containsKey("env.replicaRoot.storageType"));
         for (var phase : List.of("seed", "reopen", "replica")) {

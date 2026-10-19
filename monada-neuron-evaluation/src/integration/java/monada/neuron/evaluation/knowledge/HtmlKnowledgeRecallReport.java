@@ -19,6 +19,7 @@ import java.util.Objects;
 import java.util.OptionalDouble;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Renders the scored judged recall as machine-readable JSON and a concise Markdown summary (protocol section "Report
@@ -105,12 +106,17 @@ final class HtmlKnowledgeRecallReport {
         json.append("  ],\n  \"codecEffect\": [\n");
         for (var q = 0; q < queries.size(); q++) {
             var query = queries.get(q);
-            var b1 = ids(score(query, Layer.B1));
-            var b2c = ids(score(query, Layer.B2C));
-            json.append("    { \"queryId\": ").append(string(query.queryId()))
-                    .append(", \"B1\": ").append(strings(b1)).append(", \"B2c\": ").append(strings(b2c))
-                    .append(", \"equalChunkOrder\": ").append(b1.equals(b2c)).append(" }")
-                    .append(q < queries.size() - 1 ? ",\n" : "\n");
+            var b1 = score(query, Layer.B1);
+            var b2c = score(query, Layer.B2C);
+            json.append("    { \"queryId\": ").append(string(query.queryId()));
+            if (comparable(b1, b2c)) {
+                json.append(", \"comparable\": true, \"B1\": ").append(strings(ids(b1))).append(", \"B2c\": ")
+                        .append(strings(ids(b2c))).append(", \"equalChunkOrder\": ").append(ids(b1).equals(ids(b2c)));
+            } else {
+                json.append(", \"comparable\": false, \"failedLayers\": ")
+                        .append(strings(failedLayers(b1, b2c))).append(", \"equalChunkOrder\": null");
+            }
+            json.append(" }").append(q < queries.size() - 1 ? ",\n" : "\n");
         }
         json.append("  ],\n  \"followUpCandidates\": ").append(strings(followUps())).append("\n}\n");
         return json.toString();
@@ -181,12 +187,19 @@ final class HtmlKnowledgeRecallReport {
             }
             md.append('\n');
         }
-        var differing = querySet.queries().stream()
+        var comparableQueries = querySet.queries().stream()
+                .filter(query -> comparable(score(query, Layer.B1), score(query, Layer.B2C))).toList();
+        var differing = comparableQueries.stream()
                 .filter(query -> !ids(score(query, Layer.B1)).equals(ids(score(query, Layer.B2C)))).count();
+        var notComparable = querySet.queries().size() - comparableQueries.size();
         md.append("\n### Codec effect\n\nB1 (full query text) and B2c (one Store query per token, merged) differ in"
-                + " their top-5 chunk order for ").append(differing).append(" of ").append(querySet.queries().size())
-                .append(" queries. This is a codec effect, reported without claiming parity; B2 equals B2c by the"
-                        + " `neuron.b2EqualsB2c` check.\n\n");
+                + " their top-5 chunk order for ").append(differing).append(" of ").append(comparableQueries.size())
+                .append(" comparable queries");
+        if (notComparable > 0) {
+            md.append(" (").append(notComparable).append(" not comparable because B1 or B2c failed)");
+        }
+        md.append(". This is a codec effect, reported without claiming parity; B2 equals B2c by the"
+                + " `neuron.b2EqualsB2c` check.\n\n");
         md.append("### Queries at k = 5\n\n| Query | Category | Relevant | B0 | B1 | B2 |\n"
                 + "| :--- | :--- | :--- | :--- | :--- | :--- |\n");
         for (var query : querySet.queries()) {
@@ -278,8 +291,23 @@ final class HtmlKnowledgeRecallReport {
         return scores.aggregates().stream().filter(aggregate -> aggregate.layer() == layer).toList();
     }
 
+    /**
+     * Returns the chunk ids a completed layer returned. A failed layer has no result list, and treating it as empty
+     * would turn a failure into an abstention, so this refuses it.
+     */
     private static List<String> ids(QueryScore score) {
-        return score.returned().map(returned -> returned.stream().map(Ranked::chunkId).toList()).orElse(List.of());
+        return score.returned().orElseThrow(() -> new IllegalStateException(score.layer().label() + " failed for "
+                + score.query().queryId() + "; it has no result list")).stream().map(Ranked::chunkId).toList();
+    }
+
+    /** Returns whether both layers completed, so their result lists can be compared. */
+    private static boolean comparable(QueryScore first, QueryScore second) {
+        return first.completed() && second.completed();
+    }
+
+    private static List<String> failedLayers(QueryScore first, QueryScore second) {
+        return Stream.of(first, second).filter(score -> !score.completed())
+                .map(score -> score.layer().label()).toList();
     }
 
     private static String populationJson(int k, PopulationAggregate population) {

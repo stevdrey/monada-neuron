@@ -67,8 +67,10 @@ public final class HtmlKnowledgeRecallPhase {
             checks.addAll(imported.checks());
             manifest = imported.manifest();
             work.write(work.manifest(phase), manifest.toTsv());
-            new HtmlKnowledgeIngestion(corpus).timings(imported, work.path().resolve(phase + "-timing"))
-                    .describe("perf", "ingestReadback", timings);
+            var importTimings = new HtmlKnowledgeIngestion(corpus)
+                    .timings(imported, work.path().resolve(phase + "-timing"));
+            importTimings.describe("perf", "ingestReadback", timings);
+            checks.add(importTimings.check());
         } else {
             manifest = IngestionManifest.parseTsv(work.read(work.manifest()), corpus.version(), corpus.corpusHash())
                     .requireComplete(corpus);
@@ -76,17 +78,25 @@ public final class HtmlKnowledgeRecallPhase {
         var recall = new HtmlKnowledgeRecall(corpus);
         if (phase.equals(REOPEN)) {
             // The seed's ingestion already read every chunk back; the restarted process repeats that for itself.
-            var samples = new long[LatencyRow.REPETITIONS];
+            var samples = new ArrayList<Long>();
+            List<Check> reported = null;
             for (var repetition = 0; repetition < LatencyRow.REPETITIONS; repetition++) {
                 var start = System.nanoTime();
                 var readback = recall.readback(root, manifest);
-                samples[repetition] = System.nanoTime() - start;
-                if (repetition == 0) {
-                    checks.addAll(readback);
+                var elapsed = System.nanoTime() - start;
+                var passed = readback.stream().allMatch(Check::passed);
+                if (passed) {
+                    samples.add(elapsed);
+                }
+                // Every repetition is a readback of its own: the first failing one is reported, else the first.
+                if (reported == null || (!passed && reported.stream().allMatch(Check::passed))) {
+                    reported = readback;
                 }
             }
-            LatencyRow.wallClock(samples, corpus.chunks().size(), "Store open plus one resonate per chunk, with the"
-                    + " content hash check in the window; the checks come from sample 1", true)
+            checks.addAll(reported);
+            LatencyRow.wallClock(samples.stream().mapToLong(Long::longValue).toArray(), corpus.chunks().size(),
+                    "Store open plus one resonate per chunk, with the content hash check in the window; every"
+                            + " repetition is checked and a failed one is excluded", true)
                     .describe("perf.reopenReadback", timings);
         }
         var observation = recall.observe(root, manifest, workload.queryHash(), workload.queries());

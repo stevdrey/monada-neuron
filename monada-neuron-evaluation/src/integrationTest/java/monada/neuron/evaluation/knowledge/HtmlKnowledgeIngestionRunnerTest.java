@@ -29,6 +29,9 @@ class HtmlKnowledgeIngestionRunnerTest {
         var written = HtmlKnowledgeIngestionRunner.write(outcome);
 
         assertTrue(outcome.report().allPassed(), outcome.report().toMarkdown());
+        assertTrue(outcome.report().checks().stream()
+                .anyMatch(check -> check.name().equals("ingestion.timingImportsCompleted") && check.passed()));
+        assertTrue(outcome.report().toJson().contains("timed scratch imports; latency rows report median and p95"));
         assertTrue(outcome.external().isEmpty());
         assertEquals(4, written.size());
         var json = Files.readString(directory.resolve("html-knowledge-ingestion.json"));

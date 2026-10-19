@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.function.LongConsumer;
 import java.util.stream.Collectors;
@@ -313,8 +314,9 @@ final class HtmlKnowledgeRecall {
     Observation observe(Path root, IngestionManifest manifest, String queryHash, List<QueryText> queries) {
         HtmlKnowledgePersistence.requireExistingStore(root);
         var opens = new long[LatencyRow.REPETITIONS];
-        var firstB1 = new long[LatencyRow.REPETITIONS];
-        var firstB2 = new long[LatencyRow.REPETITIONS];
+        var firstB1 = new ArrayList<Long>();
+        var firstB2 = new ArrayList<Long>();
+        var auxiliaryFailures = new ArrayList<String>();
         var sample = firstWithToken(queries);
         MonadaMemory memory = null;
         ResonanceStoreMemoryAdapter adapter = null;
@@ -328,22 +330,24 @@ final class HtmlKnowledgeRecall {
             opens[repetition] = System.nanoTime() - start;
             if (sample.isPresent()) {
                 var cold = coldFirstRecall(memory, adapter, sample.get());
-                firstB1[repetition] = cold[0];
-                firstB2[repetition] = cold[1];
+                cold.b1().ifPresent(firstB1::add);
+                cold.b2().ifPresent(firstB2::add);
+                var where = "cold sample " + (repetition + 1);
+                cold.failures().forEach(failure -> auxiliaryFailures.add(where + ": " + failure));
             }
         }
         try (var observing = adapter) {
-            var observed = observe(memory, observing, manifest, queryHash, queries);
+            var observed = observe(memory, observing, manifest, queryHash, queries, auxiliaryFailures);
             var metadata = new LinkedHashMap<>(observed.metadata());
             LatencyRow.wallClock(opens, 2, "MonadaMemory.open plus the adapter's own open on the same root, a fresh"
                     + " pair per sample", false).describe("perf.open", metadata);
             var cold = "the first call on a freshly opened handle pair, made before any other call on it, for the"
                     + " first query with at least one token at limit 5; earlier in this JVM the ingestion or reopen"
                     + " readback already ran on other handles, and sample 1 is the phase's first query call";
-            LatencyRow.wallClock(sample.isPresent() ? firstB1 : new long[0], 1, "B1 Store call; " + cold, false)
+            LatencyRow.wallClock(samples(firstB1), 1, "B1 Store call; " + cold + "; failed calls are excluded", false)
                     .describe("perf.b1.firstRecall", metadata);
-            LatencyRow.wallClock(sample.isPresent() ? firstB2 : new long[0], 1, "B2 adapter recall; " + cold, false)
-                    .describe("perf.b2.firstRecall", metadata);
+            LatencyRow.wallClock(samples(firstB2), 1, "B2 adapter recall; " + cold + "; failed or non-COMPLETE calls"
+                    + " are excluded", false).describe("perf.b2.firstRecall", metadata);
             return new Observation(observed.snapshot(), observed.checks(), metadata);
         }
     }
@@ -354,23 +358,50 @@ final class HtmlKnowledgeRecall {
     }
 
     /**
-     * Times one B1 call and one B2 call for {@code query} at limit 5 on handles that have served no call yet, and
-     * returns both durations; results are discarded and failures are left to the measured pass.
+     * One cold sample: the duration of each call that succeeded, and a description of each that failed. A failed call
+     * yields no duration, so it can never be published as a latency sample.
      */
-    long[] coldFirstRecall(MonadaMemory memory, ResonanceStoreMemoryAdapter adapter, QueryText query) {
-        var durations = new long[2];
+    record ColdSample(OptionalLong b1, OptionalLong b2, List<String> failures) {
+
+        ColdSample {
+            failures = List.copyOf(failures);
+        }
+    }
+
+    /**
+     * Times one B1 call and one B2 call for {@code query} at limit 5 on handles that have served no call yet. Results
+     * are discarded. A call that throws, or a B2 recall that does not answer {@code COMPLETE}, is reported as a failure
+     * and yields no duration.
+     */
+    ColdSample coldFirstRecall(MonadaMemory memory, ResonanceStoreMemoryAdapter adapter, QueryText query) {
+        var failures = new ArrayList<String>();
+        var b1 = OptionalLong.empty();
+        var b2 = OptionalLong.empty();
         try {
             var start = System.nanoTime();
             memory.resonate(query.text()).topK(MAX_LIMIT).threshold(THRESHOLD).execute();
-            durations[0] = System.nanoTime() - start;
-            var request = new ResonanceMemoryRequest(codec.querySignals(query.text()), MAX_LIMIT);
-            start = System.nanoTime();
-            adapter.recall(request);
-            durations[1] = System.nanoTime() - start;
-        } catch (RuntimeException ignored) {
-            // Recorded by the measured pass.
+            b1 = OptionalLong.of(System.nanoTime() - start);
+        } catch (RuntimeException e) {
+            failures.add(query.queryId() + " B1 threw " + e);
         }
-        return durations;
+        try {
+            var request = new ResonanceMemoryRequest(codec.querySignals(query.text()), MAX_LIMIT);
+            var start = System.nanoTime();
+            var response = adapter.recall(request);
+            var elapsed = System.nanoTime() - start;
+            if (response.status() == ResonanceMemoryStatus.COMPLETE) {
+                b2 = OptionalLong.of(elapsed);
+            } else {
+                failures.add(query.queryId() + " B2 answered " + response.status());
+            }
+        } catch (RuntimeException e) {
+            failures.add(query.queryId() + " B2 threw " + e);
+        }
+        return new ColdSample(b1, b2, failures);
+    }
+
+    private static long[] samples(List<Long> values) {
+        return values.stream().mapToLong(Long::longValue).toArray();
     }
 
     /**
@@ -379,10 +410,20 @@ final class HtmlKnowledgeRecall {
      */
     Observation observe(MonadaMemory memory, ResonanceStoreMemoryAdapter adapter, IngestionManifest manifest,
             String queryHash, List<QueryText> queries) {
+        return observe(memory, adapter, manifest, queryHash, queries, List.of());
+    }
+
+    /**
+     * {@link #observe(MonadaMemory, ResonanceStoreMemoryAdapter, IngestionManifest, String, List)} that also reports
+     * the {@code auxiliaryFailures} of calls made before it, such as cold samples.
+     */
+    private Observation observe(MonadaMemory memory, ResonanceStoreMemoryAdapter adapter, IngestionManifest manifest,
+            String queryHash, List<QueryText> queries, List<String> auxiliaryFailures) {
         Objects.requireNonNull(manifest, "manifest must not be null");
         Objects.requireNonNull(queryHash, "queryHash must not be null");
         var run = new Run(manifest, queries.size());
-        warmUp(memory, adapter, queries);
+        run.auxiliaryFailures.addAll(auxiliaryFailures);
+        warmUp(run, memory, adapter, queries);
         var b1Nanos = new long[queries.size()];
         var b2Nanos = new long[queries.size()];
         for (var index = 0; index < queries.size(); index++) {
@@ -460,16 +501,24 @@ final class HtmlKnowledgeRecall {
     /**
      * Sends every query once through B1 and B2 at limit 5 and discards the results, so the measured pass does not
      * time class loading, JIT compilation or first Store reads. The cold first-recall samples are taken before this
-     * pass, by {@link #coldFirstRecall}. Failures are ignored here; the measured pass records them. Recall writes
+     * pass, by {@link #coldFirstRecall}. Every failure is reported at once in {@code recall.auxiliaryCallsCompleted},
+     * never left to the measured pass. Recall writes
      * nothing ({@code feedback} is never called), so warming cannot change a later result.
      */
-    private void warmUp(MonadaMemory memory, ResonanceStoreMemoryAdapter adapter, List<QueryText> queries) {
+    private void warmUp(Run run, MonadaMemory memory, ResonanceStoreMemoryAdapter adapter, List<QueryText> queries) {
         for (var query : queries) {
             try {
                 memory.resonate(query.text()).topK(MAX_LIMIT).threshold(THRESHOLD).execute();
-                adapter.recall(new ResonanceMemoryRequest(codec.querySignals(query.text()), MAX_LIMIT));
-            } catch (RuntimeException ignored) {
-                // Recorded by the measured pass.
+            } catch (RuntimeException e) {
+                run.auxiliaryFailures.add("warm-up " + query.queryId() + " B1 threw " + e);
+            }
+            try {
+                var response = adapter.recall(new ResonanceMemoryRequest(codec.querySignals(query.text()), MAX_LIMIT));
+                if (response.status() != ResonanceMemoryStatus.COMPLETE) {
+                    run.auxiliaryFailures.add("warm-up " + query.queryId() + " B2 answered " + response.status());
+                }
+            } catch (RuntimeException e) {
+                run.auxiliaryFailures.add("warm-up " + query.queryId() + " B2 threw " + e);
             }
         }
     }
@@ -649,6 +698,7 @@ final class HtmlKnowledgeRecall {
         private final List<String> controlFailures = new ArrayList<>();
         private final List<String> prefixFailures = new ArrayList<>();
         private final List<String> ties = new ArrayList<>();
+        private final List<String> auxiliaryFailures = new ArrayList<>();
         private final Set<FailedLayer> failed = new LinkedHashSet<>();
         private int controlComparisons;
         private int prefixComparisons;
@@ -740,6 +790,11 @@ final class HtmlKnowledgeRecall {
             var expectedControl = queryCount * CONTROL_COMPARISONS_PER_QUERY;
             var expectedPrefix = queryCount * PREFIX_COMPARISONS_PER_QUERY;
             return List.of(
+                    new Check("recall.auxiliaryCallsCompleted", auxiliaryFailures.isEmpty(), auxiliaryFailures.isEmpty()
+                            ? "every unmeasured warm-up call and every cold first-recall sample returned, and every B2"
+                                    + " call answered COMPLETE; failed calls would be excluded from the latency rows"
+                            : auxiliaryFailures.size() + " auxiliary calls failed (excluded from latency): "
+                                    + first(auxiliaryFailures)),
                     new Check("recall.completed", failures.isEmpty(), failures.isEmpty()
                             ? "every B1/B2c Store call returned and every B2 recall answered COMPLETE"
                             : failures.size() + " operational failures, never scored as abstentions: "

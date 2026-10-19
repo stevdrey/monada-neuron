@@ -76,6 +76,7 @@ an empty store. A phase that finds no manifest exits `2` without a result, which
 | `persistence.readback` | every chunk recalls its manifest atom through `resonate(text).topK(33).threshold(0.0)`, and the content hash matches the corpus `sha256`; a failure names the chunk |
 | `persistence.noUnmappedAtoms` | no recalled atom is missing from the manifest |
 | `neuron.recallComplete` | every probe answers `COMPLETE` through the adapter |
+| `neuron.firstRecallsComplete` | the first recall on each of the 5 freshly opened adapters answers `COMPLETE`; a failed one is reported and excluded from `perf.firstRecall` |
 | `neuron.referenceAttribution` | every adapter result's opaque reference maps through the manifest to a chunk |
 | `neuron.signalAttribution` | the chunk named by the decoded Signal equals the chunk named by the reference |
 | `neuron.directVsAdapterEqual` | for each single-Signal probe, the adapter returns the same chunks, order and scores as `MonadaMemory.resonate(query).topK(5).threshold(0.0)` |

@@ -229,8 +229,8 @@ public final class HtmlKnowledgePersistenceRunner {
                     Instant.now(),
                     EnvironmentMetadata.current(),
                     new RunConfiguration(0L, false, 0, 0, "one seed and one reopen JVM; the environment above is the"
-                            + " orchestrator's, each phase JVM's own is in <phase>.jvm.*; timings in metadata are"
-                            + " single exploratory wall-clock samples and never part of a verdict"),
+                            + " orchestrator's, each phase JVM's own is in <phase>.jvm.*; "
+                            + LatencyRow.RUN_CONFIGURATION_NOTE),
                     List.of(),
                     TITLE);
             var report = new CheckedEvaluationReport(TITLE, "Persistence Metadata", evaluation, checks, metadata);

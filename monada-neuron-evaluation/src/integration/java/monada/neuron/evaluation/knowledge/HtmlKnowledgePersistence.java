@@ -235,7 +235,8 @@ public final class HtmlKnowledgePersistence {
         var signalFailures = new ArrayList<String>();
         var statusFailures = new ArrayList<String>();
         var adapterOpens = new long[LatencyRow.REPETITIONS];
-        var firstRecalls = new long[LatencyRow.REPETITIONS];
+        var firstRecalls = new ArrayList<Long>();
+        var firstRecallFailures = new ArrayList<String>();
         var firstProbe = new ResonanceMemoryRequest(List.of(codec.querySignal(probes.getFirst().probeId())), TOP_K);
         ResonanceStoreMemoryAdapter opened = null;
         for (var repetition = 0; repetition < LatencyRow.REPETITIONS; repetition++) {
@@ -245,16 +246,32 @@ public final class HtmlKnowledgePersistence {
             var adapterOpenStart = System.nanoTime();
             opened = ResonanceStoreMemoryAdapter.open(root, config());
             adapterOpens[repetition] = System.nanoTime() - adapterOpenStart;
-            // The first recall on each fresh adapter, before any other call on it; its result is discarded.
-            var recallStart = System.nanoTime();
-            opened.recall(firstProbe);
-            firstRecalls[repetition] = System.nanoTime() - recallStart;
+            // The first recall on each fresh adapter, before any other call on it; its result is discarded, but a
+            // failed or non-COMPLETE call is reported and never counted as a sample.
+            try {
+                var recallStart = System.nanoTime();
+                var response = opened.recall(firstProbe);
+                var elapsed = System.nanoTime() - recallStart;
+                if (response.status() == ResonanceMemoryStatus.COMPLETE) {
+                    firstRecalls.add(elapsed);
+                } else {
+                    firstRecallFailures.add("adapter " + (repetition + 1) + " answered " + response.status());
+                }
+            } catch (RuntimeException e) {
+                firstRecallFailures.add("adapter " + (repetition + 1) + " threw " + e);
+            }
         }
         LatencyRow.wallClock(adapterOpens, 1, "ResonanceStoreMemoryAdapter.open on the same root, a fresh adapter per"
                 + " sample; the last adapter serves the observation", false).describe("perf.adapterOpen", metadata);
-        LatencyRow.wallClock(firstRecalls, 1, "the first adapter recall (first probe) on a freshly opened adapter,"
-                + " before any other call on it; the readback already ran in this JVM on another handle", false)
+        LatencyRow.wallClock(firstRecalls.stream().mapToLong(Long::longValue).toArray(), 1, "the first adapter recall"
+                + " (first probe) on a freshly opened adapter, before any other call on it; the readback already ran in"
+                + " this JVM on another handle; failed or non-COMPLETE calls are excluded", false)
                 .describe("perf.firstRecall", metadata);
+        checks.add(new Check("neuron.firstRecallsComplete", firstRecallFailures.isEmpty(),
+                firstRecallFailures.isEmpty()
+                        ? "the first recall on each of the " + LatencyRow.REPETITIONS + " freshly opened adapters"
+                                + " answered COMPLETE"
+                        : "excluded from the latency row: " + String.join("; ", firstRecallFailures)));
         try (var adapter = opened) {
             var warm = new long[probes.size()];
             for (var index = 0; index < probes.size(); index++) {

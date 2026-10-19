@@ -286,8 +286,8 @@ public final class HtmlKnowledgeIngestionRunner {
         var evaluation = new EvaluationReport(
                 Instant.now(),
                 EnvironmentMetadata.current(),
-                new RunConfiguration(0L, false, 0, 0,
-                        "single import per corpus; timings in metadata are one exploratory wall-clock sample"),
+                new RunConfiguration(0L, false, 0, 0, "one import under test per corpus plus "
+                        + (LatencyRow.REPETITIONS - 1) + " timed scratch imports; " + LatencyRow.RUN_CONFIGURATION_NOTE),
                 List.of(),
                 TITLE);
         var report = new CheckedEvaluationReport(TITLE, "Ingestion Metadata", evaluation, checks, metadata);
@@ -374,8 +374,9 @@ public final class HtmlKnowledgeIngestionRunner {
                     keptRoot.isPresent() ? root.toAbsolutePath().toString() : "temporary (deleted)");
             var scratch = Files.createTempDirectory("monada-neuron-html-kc-timing-");
             try {
-                new HtmlKnowledgeIngestion(corpus).timings(result, scratch)
-                        .describe(prefix + ".perf", "readback", metadata);
+                var timings = new HtmlKnowledgeIngestion(corpus).timings(result, scratch);
+                timings.describe(prefix + ".perf", "readback", metadata);
+                checks.add(timings.check());
             } finally {
                 deleteTree(scratch);
             }

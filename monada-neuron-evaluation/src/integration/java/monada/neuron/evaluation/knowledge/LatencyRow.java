@@ -27,6 +27,11 @@ record LatencyRow(long[] samples, int warmupIterations, int operationsPerIterati
     static final String WALL_CLOCK = "System.nanoTime wall clock around the timed operation; not JMH and not"
             + " EvaluationMetricsCollector";
 
+    /** How every knowledge report's run configuration describes its latency rows. */
+    static final String RUN_CONFIGURATION_NOTE = "latency rows report median and p95, and each row records its own"
+            + " sampling (measurementIterations, warmupIterations, ...) in its perf.* fields; exploratory wall-clock"
+            + " values, never part of a verdict";
+
     /** GC telemetry scope of every knowledge latency row. */
     static final String NO_GC_TELEMETRY = "none collected";
 
@@ -45,8 +50,9 @@ record LatencyRow(long[] samples, int warmupIterations, int operationsPerIterati
     /** Records {@code <row>.medianNanos}, {@code <row>.p95Nanos} and every sampling field. */
     void describe(String row, Map<String, String> metadata) {
         var available = samples.length > 0;
-        metadata.put(row + ".medianNanos", available ? Long.toString(percentile(samples, 50)) : "unavailable (no sample)");
-        metadata.put(row + ".p95Nanos", available ? Long.toString(percentile(samples, 95)) : "unavailable (no sample)");
+        var none = "unavailable (no successful sample)";
+        metadata.put(row + ".medianNanos", available ? Long.toString(percentile(samples, 50)) : none);
+        metadata.put(row + ".p95Nanos", available ? Long.toString(percentile(samples, 95)) : none);
         metadata.put(row + ".warmupIterations", Integer.toString(warmupIterations));
         metadata.put(row + ".measurementIterations", Integer.toString(samples.length));
         metadata.put(row + ".operationsPerIteration", Integer.toString(operationsPerIteration));

@@ -868,4 +868,6 @@ source set, and do not change `./gradlew test` when it is absent.
   because nothing had been merged; its `queryHash` changed from `97b29b68…` to `e91b0404…`, and no L1/L2 result
   changed. Every knowledge latency row reports median and p95 over its samples (5 repetitions where an operation is
   not already sampled once per query). The cold first recall is taken on fresh handles before any other call, and
-  the replica root's storage is recorded. No definition, formula, label rule or report field changes.
+  the replica root's storage is recorded. A failed or incomplete auxiliary call (cold sample, warm-up, timed
+  repetition) is reported at once by its own check and is never a latency sample. A codec-effect row is
+  comparable only when both layers completed. No definition, formula, label rule or report field changes.

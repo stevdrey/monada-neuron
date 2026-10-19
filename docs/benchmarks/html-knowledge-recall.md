@@ -33,7 +33,7 @@ Options, exit statuses and output preparation are the same as for
 
 | File | Content |
 | :--- | :--- |
-| `html-knowledge-recall.json` | the single machine-readable report. It holds `allChecksPassed`, the semantic checks, the required metadata (run identity, versions, hashes, codec, phase JVMs) and the orchestrator environment. The scored payload sits in the same object under `recall`, or is `null` when nothing was scored. That payload has: aggregates per layer and `k` with `nDefined`/`nUndefined`; a `byCategory` object with every metric aggregate, `NoAnswerFalsePositiveRate` and the outcome counts per category; the abstention metrics; one row per query (expected chunk ids, returned ids with rank and score, `tieAtCutoff`, outcome, per-query metrics, miss diagnostics); the B1/B2c codec effect; and the follow-up candidates |
+| `html-knowledge-recall.json` | the single machine-readable report. It holds `allChecksPassed`, the semantic checks, the required metadata (run identity, versions, hashes, codec, phase JVMs) and the orchestrator environment. The scored payload sits in the same object under `recall`, or is `null` when nothing was scored. That payload has: aggregates per layer and `k` with `nDefined`/`nUndefined`; a `byCategory` object with every metric aggregate, `NoAnswerFalsePositiveRate` and the outcome counts per category; the abstention metrics; one row per query (expected chunk ids, returned ids with rank and score, `tieAtCutoff`, outcome, per-query metrics, miss diagnostics); the B1/B2c codec effect, where a query is `comparable` only when B1 and B2c both completed, and otherwise has `equalChunkOrder: null` and its `failedLayers`; and the follow-up candidates |
 | `html-knowledge-recall.md` | the same, readable: checks and metadata, then the scored summary (aggregates, quality and outcomes by category, codec effect, per-query table, follow-ups) |
 | `html-kq-v1-recall.tsv` | raw rows of the seed phase (query, layer, limit, rank, chunk id, hexadecimal score), including the limit-6 lookahead and any `<failed>` markers. Its first line states `corpusHash` and `allChecksPassed`: it is not a verified result on its own |
 
@@ -119,6 +119,7 @@ id or claim. Each phase reports:
 
 | Check | Pass condition |
 | :--- | :--- |
+| `recall.auxiliaryCallsCompleted` | every unmeasured warm-up call and every cold first-recall sample returned, and every B2 call among them answered `COMPLETE`. A failed call is reported here at once, never left to the measured pass, and is excluded from its latency row. |
 | `recall.completed` | every B1/B2c Store call returned and every B2 recall answered `COMPLETE`, at every limit. |
 | `fidelity.source` | every B1 and B2c atom maps through the manifest, and its returned content hashes to the corpus `sha256`, as returned. |
 | `fidelity.reference` | every B2 reference maps through the manifest. |
@@ -148,7 +149,11 @@ The orchestrator adds three checks:
 Restart equality alone could not catch nondeterminism that is fixed at import time and then persisted. Fresh-root
 equality does.
 
-The seed phase also carries the three `ingestion.*` checks of #105. Before it runs any query, the reopen phase repeats
+The seed and replica phases also carry the three `ingestion.*` checks of #105, plus `ingestion.timingImportsCompleted`:
+every one of the 5 timed imports passed its checks, and a failed one is excluded from the ingest rows. Each of the
+5 reopen readback repetitions is checked; if any fails, that repetition's checks are reported and its sample is
+excluded. No failed or incomplete call is ever published as a latency sample: a latency row's
+`measurementIterations` counts the successful samples only. Before it runs any query, the reopen phase repeats
 the protocol's full-corpus readback on the existing root:
 - `reopen.persistence.readback`: every manifest chunk, queried with its own text, returns its atom with content
   hashing to the corpus `sha256`;
@@ -175,7 +180,7 @@ Environment:
   (`env.replicaRoot.sameFileStoreAsStoreRoot = true`);
 - one seed, one reopen and one replica JVM, about 1 s each from process start to exit (`process.<p>.wallNanos`).
 
-Two full runs gave byte-identical `recall` payloads and raw rows. All 26 checks passed, including
+Two full runs gave byte-identical `recall` payloads and raw rows. All 31 checks passed, including
 `determinism.freshRootEqual`: the replica reproduced all 1800 seed rows. Scores are unchanged from the first edition,
 and also with the newer Store checkout; scoring still reads the limit-5 lists.
 
@@ -214,7 +219,7 @@ Observations, not tuned away:
 - **Paraphrases.** Three of the four paraphrases are missed by both B0 and B1. As expected, a lexical encoder does
   not bridge the avoided terms.
 - **Codec effect.** Token-by-token recall (B2) is much weaker than whole-text recall:
-  - B1 and B2c differ in top-5 order for 30 of 32 queries;
+  - B1 and B2c differ in top-5 order for 30 of 32 comparable queries (both layers completed for every query);
   - B2 misses every paraphrase;
   - B2 retrieves only one side of both conflicting-source queries.
 

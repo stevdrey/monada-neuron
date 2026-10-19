@@ -18,6 +18,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -48,7 +50,7 @@ class HtmlKnowledgeRecallTest {
 
     @Test
     void everySemanticCheckPasses() {
-        assertEquals(List.of("recall.completed", "fidelity.source", "fidelity.reference", "neuron.b2EqualsB2c",
+        assertEquals(List.of("recall.auxiliaryCallsCompleted", "recall.completed", "fidelity.source", "fidelity.reference", "neuron.b2EqualsB2c",
                 "recall.prefixStability"), observation.checks().stream().map(HtmlKnowledgeIngestion.Check::name).toList());
         observation.checks().forEach(check -> assertTrue(check.passed(), check.name() + ": " + check.detail()));
     }
@@ -264,12 +266,56 @@ class HtmlKnowledgeRecallTest {
 
         assertTrue(queries.getFirst().text().isBlank(), "blank queries sort first");
         assertFalse(sample.text().isBlank());
-        var durations = recall.coldFirstRecall(memory, adapter, sample);
+        var cold = recall.coldFirstRecall(memory, adapter, sample);
 
-        assertTrue(durations[0] > 0 && durations[1] > 0);
+        assertTrue(cold.b1().isPresent() && cold.b2().isPresent());
+        assertEquals(List.of(), cold.failures());
         assertEquals(List.copyOf(HtmlTokens.distinct(sample.text())), calls,
                 "the adapter's first calls are exactly the cold sample's token queries");
         assertTrue(HtmlKnowledgeRecall.firstWithToken(List.of(new QueryText("b", "  "))).isEmpty());
+    }
+
+    @Test
+    void aFailedOrIncompleteColdCallIsReportedAndNeverASample() {
+        var recall = new HtmlKnowledgeRecall(CORPUS);
+        var memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
+        var sample = HtmlKnowledgeRecall.firstWithToken(texts(QUERY_SET)).orElseThrow();
+        var calls = new int[1];
+        ResonanceStoreRecall failingFirst = (query, limit, threshold) -> {
+            if (calls[0]++ == 0) {
+                throw new UncheckedIOException(new IOException("injected first-call failure"));
+            }
+            return memory.resonate(query).topK(limit).threshold(threshold).execute().results();
+        };
+        var adapter = ResonanceStoreMemoryAdapter.using(failingFirst, recall.adapterConfig());
+
+        var cold = recall.coldFirstRecall(memory, adapter, sample);
+        assertTrue(cold.b1().isPresent(), "B1 succeeded");
+        assertTrue(cold.b2().isEmpty(), "a FAILED B2 response is not a sample");
+        assertTrue(cold.failures().getFirst().contains("B2 answered FAILED"), cold.failures().toString());
+
+        var observed = recall.observe(memory, adapter, manifest, "probe", List.of(sample));
+        var auxiliary = observed.checks().getFirst();
+        assertEquals("recall.auxiliaryCallsCompleted", auxiliary.name());
+        assertTrue(auxiliary.passed(), "the adapter recovered after its first call: " + auxiliary.detail());
+
+        ResonanceStoreRecall alwaysFailing = (query, limit, threshold) -> {
+            throw new UncheckedIOException(new IOException("injected failure"));
+        };
+        var broken = ResonanceStoreMemoryAdapter.using(alwaysFailing, recall.adapterConfig());
+        var failed = recall.observe(memory, broken, manifest, "probe", List.of(sample)).checks().getFirst();
+        assertFalse(failed.passed());
+        assertTrue(failed.detail().contains("warm-up " + sample.queryId() + " B2 answered FAILED"), failed.detail());
+        assertEquals("unavailable (no successful sample)", metadataOf(new LatencyRow(new long[0], 0, 1, "x", false,
+                "none")).get("r.medianNanos"));
+        assertEquals("2", metadataOf(new LatencyRow(new long[] {5, 7}, 0, 1, "x", false, "none"))
+                .get("r.measurementIterations"));
+    }
+
+    private static Map<String, String> metadataOf(LatencyRow row) {
+        var metadata = new TreeMap<String, String>();
+        row.describe("r", metadata);
+        return metadata;
     }
 
     @Test
