@@ -49,7 +49,7 @@ such a run is rejected with exit status 2 before anything is deleted, and the sn
 
 | File | Content |
 | :--- | :--- |
-| `html-knowledge-ingestion.json`, `.md` | semantic checks, metadata (versions, `corpusHash`, bounds, chunking policy, licenses, Store manifest fields, commits), environment |
+| `html-knowledge-ingestion.json`, `.md` | semantic checks, metadata (versions, `corpusHash`, bounds, chunking policy, licenses, Store manifest fields, commits, `runMode`, and the best-effort `env.*` fields: CPU model, total physical memory, salted `hostId`, and file system and storage type of each Store root), environment |
 | `html-kc-v1-chunks.tsv` | every chunk's labels and provenance: `chunkId`, `documentId`, `topic`, `section`, `source`, `license`, `attribution`, `[start, end)` code point span, `sha256`, `documentSha256`, conflict pair and role (no text) |
 | `html-kc-v1-manifest.tsv` | `chunkId → atomId → opaqueReference` for this import (no content hashes) |
 | `html-kc-ext-mdn-v1-*.tsv` | the same two files for a supplied snapshot, with `section` redacted to `sha256:<hex>` |

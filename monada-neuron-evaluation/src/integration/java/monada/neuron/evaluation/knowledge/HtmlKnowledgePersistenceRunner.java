@@ -354,6 +354,11 @@ public final class HtmlKnowledgePersistenceRunner {
             metadata.put("phase.reopen.nanos", Long.toString(run.nanos()));
         });
         describeStore(root, options.storeRoot(), metadata);
+        metadata.put("runMode", (options.storeRoot().isPresent() ? "kept Store root" : "default (temporary Store root)")
+                + "; profile html-knowledge-protocol-v1 persistence and restart");
+        var environment = new RunEnvironment();
+        environment.describeHost(metadata);
+        environment.describeStoreRoot("env.storeRoot", root, metadata);
     }
 
     /** Records the Store root, the persisted Store manifest and the Neuron and Store versions and commits. */

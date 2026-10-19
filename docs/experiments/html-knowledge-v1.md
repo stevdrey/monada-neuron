@@ -857,4 +857,7 @@ source set, and do not change `./gradlew test` when it is absent.
   Any operational or fidelity failure of a query in a layer, at any limit, is recorded as a failure marker, so the
   scorer gives that query no outcome rather than an abstention. Each system is also queried with a limit-6 lookahead,
   used only for `tieAtCutoff` at k = 5 and never for `Ret_k`. The phase JVMs read a labels-free workload, so only the
-  scorer reads gold labels. No definition, formula, label rule or report field changes.
+  scorer reads gold labels. Every system, B0 and B2c included, is also queried at limits 1 and 3, and B2 = B2c is
+  checked at every limit. The reopen JVM repeats the full-corpus readback. The knowledge runners now record the
+  required run-mode and environment fields (CPU model, total physical memory, hashed `hostId`, and storage type and
+  file system of the Store root). No definition, formula, label rule or report field changes.

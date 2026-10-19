@@ -65,10 +65,10 @@ encodability. Any violation fails the run with exit `2`. `keyClaims` are curated
 
 | Id | System | Limits |
 | :--- | :--- | :--- |
-| B0 | `LexicalOverlapBaseline`: distinct query tokens contained in each chunk; score 0 dropped; score descending, then `chunkId` | 5, 6 |
+| B0 | `LexicalOverlapBaseline`: distinct query tokens contained in each chunk; score 0 dropped; score descending, then `chunkId` | 1, 3, 5, 6 |
 | B1 | `MonadaMemory.resonate(text).topK(limit).threshold(0.0)` with default options | 1, 3, 5, 6 |
 | B2 | `ResonanceStoreMemoryAdapter.recall` with `TokenPackingSignalCodec` as query encoder, the production `HashedSignalDecoder`, default options and `t = 0.0` | 1, 3, 5, 6 |
-| B2c | the codec's query texts sent directly to the Store with the same limit and `t`, merged by the adapter's rule | 5, 6 |
+| B2c | the codec's query texts sent directly to the Store with the same limit and `t`, merged by the adapter's rule | 1, 3, 5, 6 |
 
 Tokens are maximal `Character.isLetterOrDigit` runs lowercased with `Locale.ROOT` (`HtmlTokens`), shared by B0, the
 paraphrase check and the codec. `t = 0.0` is the Store's `MonadaQuery` default; nothing was tuned on this set, and no
@@ -76,7 +76,8 @@ threshold sweep was run.
 
 Every system is **scored only on its limit-5 list**: `Ret_k` is a prefix of that list, as the protocol requires. The
 limit-6 **lookahead** exists only to set `tieAtCutoff` at k = 5, that is, whether ranks 5 and 6 share a score. Without
-it, a tie that straddles the k = 5 cutoff could never be seen. Limits 1 and 3 serve the prefix-stability check.
+it, a tie that straddles the k = 5 cutoff could never be seen. Limits 1 and 3 serve the prefix-stability check,
+which the protocol applies to every system.
 
 ### L2 codec `token-packing v1`
 
@@ -113,8 +114,8 @@ id or claim. Each phase reports:
 | `recall.completed` | every B1/B2c Store call returned and every B2 recall answered `COMPLETE`, at every limit. |
 | `fidelity.source` | every B1 and B2c atom maps through the manifest, and its returned content hashes to the corpus `sha256`, as returned. |
 | `fidelity.reference` | every B2 reference maps through the manifest. |
-| `neuron.b2EqualsB2c` | at limits 5 and 6, B2 equals the codec-direct control: same atoms, same order, bit-exact scores. A difference would be an adapter defect. |
-| `recall.prefixStability` | each shorter list is the prefix of the next longer one: B1/B2 limits 1 and 3 against 5, and B1/B2/B2c limit 5 against the lookahead. The only allowed exception is an equal-score substitution at the cutoff. |
+| `neuron.b2EqualsB2c` | at every limit (1, 3, 5 and 6), B2 equals the codec-direct control: same atoms, same order, bit-exact scores. A difference would be an adapter defect. |
+| `recall.prefixStability` | for every system, the limit-1 and limit-3 lists are prefixes of the limit-5 list, and the limit-5 list is the prefix of the lookahead. The only allowed exception is an equal-score substitution at the cutoff. |
 
 Any failure of a query in a layer, at any limit, leaves exactly one `<failed>` marker for that query and layer. This
 covers an exception, a non-`COMPLETE` status, an unmapped atom or reference, and a content mismatch. The scorer then
@@ -125,14 +126,24 @@ The orchestrator adds two checks:
 - `process.restart`: seed and reopen ran in separate JVMs, as for [persistence](html-knowledge-persistence.md).
 - `determinism.restartEqual`: every row of B0, B1, B2 and B2c at every limit is identical in the reopen JVM.
 
-The seed phase also carries the three `ingestion.*` checks of #105.
+The seed phase also carries the three `ingestion.*` checks of #105. Before it runs any query, the reopen phase repeats
+the protocol's full-corpus readback on the existing root:
+- `reopen.persistence.readback`: every manifest chunk, queried with its own text, returns its atom with content
+  hashing to the corpus `sha256`;
+- `reopen.persistence.noUnmappedAtoms`.
 
-## Results (2026-10-18, after review round 1)
+A chunk lost or corrupted on disk therefore fails the run even when no judged query would return it.
+
+The metadata records the protocol's required fields. Besides versions, hashes, the codec, the commits and the Store
+manifest, these are:
+- run identity: `runMode`, and best-effort environment fields `env.cpuModel`, `env.totalPhysicalMemoryBytes`, `env.hostId` (salted, truncated SHA-256 of the host name; the name itself is never written) and the Store root's `env.storeRoot.{fileSystem,storageType}`. A value that cannot be read is `unknown (<reason>)` and never fails a run.
+
+## Results (2026-10-18, after review round 2)
 
 Environment:
-- Neuron `97002b3+dirty` (this change, uncommitted);
+- Neuron `7d65e35+dirty` (this change, uncommitted);
 - Store checkout `7d971ea`;
-- Azul OpenJDK 27 on Linux;
+- Azul OpenJDK 27 on Linux, AMD Ryzen 7 7730U, Store root on `tmpfs` (memory-backed);
 - one seed JVM and one reopen JVM.
 
 Two full runs gave byte-identical `recall` payloads and raw rows, and every check passed. Scores are unchanged from

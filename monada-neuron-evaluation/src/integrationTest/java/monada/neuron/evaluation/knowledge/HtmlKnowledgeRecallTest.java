@@ -69,6 +69,41 @@ class HtmlKnowledgeRecallTest {
     }
 
     @Test
+    void everySystemIsRecordedAtEveryLimitAndB2EqualsB2cAtEach() {
+        var snapshot = observation.snapshot();
+        for (var query : QUERY_SET.queries()) {
+            if (query.text().isBlank()) {
+                continue;
+            }
+            for (var layer : Layer.values()) {
+                var lookahead = snapshot.rows(query.queryId(), layer, 6).size();
+                assertTrue(lookahead > 0, query.queryId() + " " + layer + " returned nothing at limit 6");
+                for (var limit : List.of(1, 3, 5)) {
+                    assertEquals(Math.min(limit, lookahead), snapshot.rows(query.queryId(), layer, limit).size(),
+                            query.queryId() + " " + layer + " limit " + limit);
+                }
+            }
+            for (var limit : List.of(1, 3, 5, 6)) {
+                assertEquals(snapshot.rows(query.queryId(), Layer.B2, limit).stream().map(Row::chunkId).toList(),
+                        snapshot.rows(query.queryId(), Layer.B2C, limit).stream().map(Row::chunkId).toList(),
+                        query.queryId() + " limit " + limit);
+            }
+        }
+    }
+
+    @Test
+    void theReopenReadbackReadsEveryChunkBackAndDetectsMisattribution() {
+        var recall = new HtmlKnowledgeRecall(CORPUS);
+        recall.readback(root, manifest).forEach(check -> assertTrue(check.passed(), check.name() + ": " + check.detail()));
+
+        var readback = recall.readback(root, swapped()).stream()
+                .filter(check -> check.name().equals("persistence.readback")).findFirst().orElseThrow();
+        assertFalse(readback.passed());
+        assertTrue(readback.detail().contains(CORPUS.chunks().get(0).chunkId()), readback.detail());
+        assertTrue(readback.detail().contains(CORPUS.chunks().get(1).chunkId()), readback.detail());
+    }
+
+    @Test
     void blankQueriesTravelThroughThePortAndReturnNothing() {
         for (var query : QUERY_SET.byCategory().get(JudgedQuery.Category.BLANK)) {
             for (var layer : Layer.values()) {
@@ -98,14 +133,7 @@ class HtmlKnowledgeRecallTest {
 
     @Test
     void aManifestThatMisattributesAtomsFailsSourceFidelity() {
-        var entries = new ArrayList<>(manifest.entries());
-        var first = entries.get(0);
-        var second = entries.get(1);
-        entries.set(0, new IngestionManifest.Entry(first.chunkId(), second.atomId(), second.opaqueReference()));
-        entries.set(1, new IngestionManifest.Entry(second.chunkId(), first.atomId(), first.opaqueReference()));
-        var swapped = new IngestionManifest(CORPUS.version(), CORPUS.corpusHash(), entries);
-
-        var observed = new HtmlKnowledgeRecall(CORPUS).observe(root, swapped, "swapped",
+        var observed = new HtmlKnowledgeRecall(CORPUS).observe(root, swapped(), "swapped",
                 List.of(new QueryText("swapped", CORPUS.chunks().get(0).text())));
 
         var fidelity = observed.checks().stream().filter(check -> check.name().equals("fidelity.source"))
@@ -195,6 +223,16 @@ class HtmlKnowledgeRecallTest {
                 assertFalse(bytes.contains("RecallMetrics"), type);
             }
         }
+    }
+
+    /** Returns the import manifest with the atoms of the first two chunks swapped. */
+    private static IngestionManifest swapped() {
+        var entries = new ArrayList<>(manifest.entries());
+        var first = entries.get(0);
+        var second = entries.get(1);
+        entries.set(0, new IngestionManifest.Entry(first.chunkId(), second.atomId(), second.opaqueReference()));
+        entries.set(1, new IngestionManifest.Entry(second.chunkId(), first.atomId(), first.opaqueReference()));
+        return new IngestionManifest(CORPUS.version(), CORPUS.corpusHash(), entries);
     }
 
     private static List<QueryText> texts(HtmlKnowledgeQuerySet querySet) {

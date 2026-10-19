@@ -36,6 +36,10 @@ class HtmlKnowledgeIngestionRunnerTest {
         assertTrue(json.contains("\"corpus.hash\": \"" + HtmlKnowledgeCorpus.bundled().corpusHash() + "\""));
         assertTrue(json.contains("\"protocolVersion\": \"html-knowledge-protocol-v1\""));
         assertTrue(json.contains("\"store.root\": \"temporary (deleted)\""));
+        for (var key : List.of("runMode", "env.cpuModel", "env.totalPhysicalMemoryBytes", "env.hostId",
+                "env.storeRoot.fileSystem", "env.storeRoot.storageType")) {
+            assertTrue(outcome.report().metadata().containsKey(key), key);
+        }
         assertTrue(Files.readString(directory.resolve("html-kc-v1-manifest.tsv")).contains(IngestionManifest.HEADER));
         assertTrue(Files.readString(directory.resolve("html-kc-v1-chunks.tsv")).contains("conflict:img-alt"));
         assertFalse(Files.exists(outcome.authored().result().root()));

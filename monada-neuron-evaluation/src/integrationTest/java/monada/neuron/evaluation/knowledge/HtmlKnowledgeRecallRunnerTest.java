@@ -29,6 +29,8 @@ class HtmlKnowledgeRecallRunnerTest {
             "seed.fidelity.reference",
             "seed.neuron.b2EqualsB2c",
             "seed.recall.prefixStability",
+            "reopen.persistence.readback",
+            "reopen.persistence.noUnmappedAtoms",
             "reopen.recall.completed",
             "reopen.fidelity.source",
             "reopen.fidelity.reference",
@@ -71,7 +73,8 @@ class HtmlKnowledgeRecallRunnerTest {
         var metadata = outcome.report().metadata();
         for (var key : List.of("protocolVersion", "corpus.version", "corpus.hash", "query.version", "query.hash",
                 "query.tuning", "seed", "k", "threshold", "codec", "reopenMode", "store.checkoutCommit",
-                "neuron.commit", "seed.jvm.version")) {
+                "neuron.commit", "seed.jvm.version", "runMode", "env.cpuModel", "env.totalPhysicalMemoryBytes",
+                "env.hostId", "env.storeRoot.fileSystem", "env.storeRoot.storageType")) {
             assertTrue(metadata.containsKey(key), key);
         }
         var querySet = HtmlKnowledgeQuerySet.bundled(HtmlKnowledgeCorpus.bundled());

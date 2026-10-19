@@ -270,6 +270,10 @@ public final class HtmlKnowledgeIngestionRunner {
         }
 
         metadata.put("protocolVersion", PROTOCOL_VERSION);
+        metadata.put("runMode", (options.storeRoot().isPresent() ? "kept Store root" : "default (temporary Store root)")
+                + (options.mdn().isPresent() ? " with the external MDN snapshot" : "")
+                + "; profile html-knowledge-protocol-v1 corpus ingestion");
+        new RunEnvironment().describeHost(metadata);
         metadata.put("corpus.normalization", "strict UTF-8, CRLF/CR to LF, Unicode NFC, trimmed; fenced code kept");
         metadata.put("corpus.chunkingPolicy", CorpusChunker.POLICY);
         metadata.put("store.atomIds", "Store-generated (content-derived); mapped to chunks only through the manifest");
@@ -370,6 +374,7 @@ public final class HtmlKnowledgeIngestionRunner {
                     keptRoot.isPresent() ? root.toAbsolutePath().toString() : "temporary (deleted)");
             metadata.put(prefix + ".perf.ingestNanos", Long.toString(result.ingestNanos()));
             metadata.put(prefix + ".perf.readbackNanos", Long.toString(result.readbackNanos()));
+            new RunEnvironment().describeStoreRoot("env." + prefix + "Root", root, metadata);
             var manifest = root.resolve("manifest.json");
             if (Files.exists(manifest)) {
                 StoreMetadata.manifestFields(Files.readString(manifest, StandardCharsets.UTF_8))

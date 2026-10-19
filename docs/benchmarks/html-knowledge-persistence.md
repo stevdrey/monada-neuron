@@ -151,7 +151,8 @@ The metadata includes:
 - the codec description and scope, `probes.{version,hash,count,topK,threshold}` and the ordering rules;
 - `store.manifest.*` (version, encoder, normalizer, dimensions, vector format);
 - `store.implementationVersion` (`unknown` when the Store classes come from directories, not jars);
-- `store.checkoutCommit` and `neuron.commit` (`+dirty` when there are uncommitted changes), and `neuron.version`.
+- `store.checkoutCommit` and `neuron.commit` (`+dirty` when there are uncommitted changes), and `neuron.version`;
+- run identity: `runMode`, and best-effort environment fields `env.cpuModel`, `env.totalPhysicalMemoryBytes`, `env.hostId` (salted, truncated SHA-256 of the host name; the name itself is never written) and the Store root's `env.storeRoot.{fileSystem,storageType}`. A value that cannot be read is `unknown (<reason>)` and never fails a run.
 
 The `*.perf.*` values (open, first recall, warm-recall median) are single exploratory wall-clock samples. They never
 affect a verdict.

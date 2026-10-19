@@ -280,6 +280,11 @@ public final class HtmlKnowledgeRecallRunner {
             metadata.put("phase.reopen.exit", Integer.toString(run.exitStatus()));
         });
         HtmlKnowledgePersistenceRunner.describeStore(root, options.storeRoot(), metadata);
+        metadata.put("runMode", (options.storeRoot().isPresent() ? "kept Store root" : "default (temporary Store root)")
+                + "; profile html-knowledge-protocol-v1 L1/L2 judged recall");
+        var environment = new RunEnvironment();
+        environment.describeHost(metadata);
+        environment.describeStoreRoot("env.storeRoot", root, metadata);
     }
 
     private Path temporaryDirectory() {

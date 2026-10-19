@@ -103,7 +103,8 @@ class HtmlKnowledgePersistenceRunnerTest {
                 "store.manifest.dimensions", "store.manifest.vectorScalarType", "store.implementationVersion",
                 "store.checkoutCommit", "neuron.commit", "neuron.version", "phase.seed.pid", "phase.reopen.pid",
                 "phase.forwardedJvmArguments", "seed.jvm.version", "seed.jvm.arguments", "seed.jvm.maxMemoryBytes",
-                "reopen.jvm.version", "reopen.jvm.arguments", "reopen.jvm.maxMemoryBytes")) {
+                "reopen.jvm.version", "reopen.jvm.arguments", "reopen.jvm.maxMemoryBytes", "runMode", "env.cpuModel",
+                "env.totalPhysicalMemoryBytes", "env.hostId", "env.storeRoot.fileSystem", "env.storeRoot.storageType")) {
             assertTrue(metadata.containsKey(key), key);
         }
         assertEquals("temporary (deleted)", metadata.get("store.root"));

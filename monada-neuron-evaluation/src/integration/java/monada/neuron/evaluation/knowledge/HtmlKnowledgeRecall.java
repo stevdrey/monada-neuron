@@ -43,10 +43,10 @@ import java.util.stream.Collectors;
  *       with the same limit and {@code t}, and the adapter's merge rule is applied here; B2 must equal B2c exactly.</li>
  * </ul>
  *
- * <p>Every system is scored on its limit-{@value #MAX_LIMIT} list. B1 and B2 are also queried with limits 1 and 3,
- * which must return the prefix of that list except inside a score tie at the cutoff, and every system is queried once
- * more with the lookahead limit {@value #LOOKAHEAD_LIMIT}, used only to detect a tie that straddles the k = 5 cutoff
- * and checked the same way. Before the measured pass, one unmeasured warm-up pass sends every query once through B1
+ * <p>Every system is scored on its limit-{@value #MAX_LIMIT} list. Every system is also queried with limits 1 and 3,
+ * which must return the prefix of that list except inside a score tie at the cutoff, and once more with the lookahead
+ * limit {@value #LOOKAHEAD_LIMIT}, used only to detect a tie that straddles the k = 5 cutoff and checked the same way.
+ * B2 must equal B2c at every limit. Before the measured pass, one unmeasured warm-up pass sends every query once through B1
  * and B2. Any operational or fidelity failure of a query in a layer, at any limit, is a failed check and leaves a
  * {@link #FAILED} marker, so that query is never scored for that layer and never counted as an abstention.
  */
@@ -318,7 +318,11 @@ final class HtmlKnowledgeRecall {
         var b2Nanos = new long[queries.size()];
         for (var index = 0; index < queries.size(); index++) {
             var query = queries.get(index);
-            lexical(run, query);
+            var b0 = lexical(run, query, MAX_LIMIT);
+            for (var limit : PREFIX_LIMITS) {
+                run.prefix(query, Layer.B0, limit, b0, lexical(run, query, limit));
+            }
+            run.prefix(query, Layer.B0, MAX_LIMIT, lexical(run, query, LOOKAHEAD_LIMIT), b0);
             var start = System.nanoTime();
             var b1 = direct(run, memory, query, MAX_LIMIT);
             b1Nanos[index] = System.nanoTime() - start;
@@ -329,15 +333,19 @@ final class HtmlKnowledgeRecall {
             start = System.nanoTime();
             var b2 = neuron(run, adapter, query, MAX_LIMIT);
             b2Nanos[index] = System.nanoTime() - start;
+            var b2c = codecDirect(run, memory, query, MAX_LIMIT);
+            run.compareControl(query, MAX_LIMIT, b2, b2c);
             for (var limit : PREFIX_LIMITS) {
-                run.prefix(query, Layer.B2, limit, rowsOf(b2), rowsOf(neuron(run, adapter, query, limit)));
+                var neuronAtLimit = neuron(run, adapter, query, limit);
+                var controlAtLimit = codecDirect(run, memory, query, limit);
+                run.prefix(query, Layer.B2, limit, rowsOf(b2), rowsOf(neuronAtLimit));
+                run.prefix(query, Layer.B2C, limit, rowsOf(b2c), rowsOf(controlAtLimit));
+                run.compareControl(query, limit, neuronAtLimit, controlAtLimit);
             }
             var b2Lookahead = neuron(run, adapter, query, LOOKAHEAD_LIMIT);
-            run.prefix(query, Layer.B2, MAX_LIMIT, rowsOf(b2Lookahead), rowsOf(b2));
-            var b2c = codecDirect(run, memory, query, MAX_LIMIT);
             var b2cLookahead = codecDirect(run, memory, query, LOOKAHEAD_LIMIT);
+            run.prefix(query, Layer.B2, MAX_LIMIT, rowsOf(b2Lookahead), rowsOf(b2));
             run.prefix(query, Layer.B2C, MAX_LIMIT, rowsOf(b2cLookahead), rowsOf(b2c));
-            run.compareControl(query, MAX_LIMIT, b2, b2c);
             run.compareControl(query, LOOKAHEAD_LIMIT, b2Lookahead, b2cLookahead);
         }
         var metadata = new LinkedHashMap<String, String>();
@@ -350,6 +358,35 @@ final class HtmlKnowledgeRecall {
                 + " limit-5 call per query and layer on the same open handles; single samples, exploratory, never"
                 + " part of a verdict");
         return new Observation(new Snapshot(queryHash, run.rowsWithFailureMarkers()), run.checks(), metadata);
+    }
+
+    /**
+     * The protocol's ingestion readback ("Run conditions"), for a process that did not import the root: every manifest
+     * chunk is recalled with its own normalized text through {@code resonate(text).topK(N).threshold(0.0)}, and must
+     * return its mapped atom with content hashing to the corpus {@code sha256}. A chunk lost or corrupted on disk is
+     * therefore detected even when no judged query would return it.
+     *
+     * @return {@code persistence.readback} and {@code persistence.noUnmappedAtoms}
+     * @throws IngestionInputException when {@code root} holds no Store manifest
+     */
+    List<Check> readback(Path root, IngestionManifest manifest) {
+        HtmlKnowledgePersistence.requireExistingStore(root);
+        var memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
+        var sweep = new HtmlKnowledgeIngestion(corpus).readbackSweep(memory, manifest);
+        var count = corpus.chunks().size();
+        var unread = sweep.unread();
+        var unmapped = sweep.recalledAtomIds().stream().filter(id -> manifest.chunkIdForAtom(id).isEmpty()).sorted()
+                .toList();
+        return List.of(
+                new Check("persistence.readback", unread.isEmpty(), unread.isEmpty()
+                        ? "all " + count + " chunks recalled their manifest atom with content sha256 equal to the"
+                                + " corpus, via resonate(text).topK(" + count + ").threshold("
+                                + HtmlKnowledgeIngestion.READBACK_THRESHOLD + ")"
+                        : "readback failed (atom missing, misattributed or content changed) for " + unread),
+                new Check("persistence.noUnmappedAtoms", unmapped.isEmpty(), unmapped.isEmpty()
+                        ? sweep.recalledAtomIds().size() + " distinct atoms recalled across the readback sweep, all in"
+                                + " the manifest"
+                        : unmapped.size() + " recalled atoms are not in the manifest: " + unmapped));
     }
 
     /**
@@ -368,14 +405,16 @@ final class HtmlKnowledgeRecall {
         }
     }
 
-    private void lexical(Run run, QueryText query) {
-        var hits = lexical.search(query.text(), LOOKAHEAD_LIMIT);
-        for (var limit : List.of(MAX_LIMIT, LOOKAHEAD_LIMIT)) {
-            for (var rank = 0; rank < Math.min(limit, hits.size()); rank++) {
-                var hit = hits.get(rank);
-                run.rows.add(new Row(query.queryId(), Layer.B0, limit, rank + 1, hit.chunkId(), hit.score()));
-            }
+    /** B0 at {@code limit}; returns its rows. */
+    private List<Row> lexical(Run run, QueryText query, int limit) {
+        var hits = lexical.search(query.text(), limit);
+        var rows = new ArrayList<Row>(hits.size());
+        for (var rank = 0; rank < hits.size(); rank++) {
+            var hit = hits.get(rank);
+            rows.add(new Row(query.queryId(), Layer.B0, limit, rank + 1, hit.chunkId(), hit.score()));
         }
+        run.rows.addAll(rows);
+        return rows;
     }
 
     /** B1 at {@code limit}; returns its mapped rows, or {@code null} after a recorded failure. */
@@ -611,13 +650,13 @@ final class HtmlKnowledgeRecall {
                             : first(referenceFailures)),
                     new Check("neuron.b2EqualsB2c", controlFailures.isEmpty() && controlComparisons > 0,
                             controlFailures.isEmpty()
-                                    ? controlComparisons + " comparisons (limits 5 and 6): B2 equals the codec-direct"
-                                            + " control (atoms, order, bit-exact scores)"
+                                    ? controlComparisons + " comparisons (limits 1, 3, 5 and 6): B2 equals the"
+                                            + " codec-direct control (atoms, order, bit-exact scores)"
                                     : "adapter defect: " + first(controlFailures)),
                     new Check("recall.prefixStability", prefixFailures.isEmpty() && prefixComparisons > 0,
                             (prefixFailures.isEmpty()
-                                    ? prefixComparisons + " shorter lists (B1/B2 limits 1, 3, 5; B2c limit 5) equal the"
-                                            + " prefix of the next longer list"
+                                    ? prefixComparisons + " shorter lists (every system at limits 1 and 3 against 5, and"
+                                            + " 5 against the lookahead 6) equal the prefix of the longer list"
                                     : first(prefixFailures))
                                     + "; tie substitutions at the cutoff: " + (ties.isEmpty() ? "none" : first(ties))
                                     + " (" + queryCount + " queries)"));
