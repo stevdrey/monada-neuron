@@ -168,8 +168,9 @@ A latency-only call that fails, or returns unacceptable output, is excluded from
 `<row>.excludedSamples` (`perf.warmup.failures` for the warm-up pass); the value is `0` when nothing was excluded.
 No failed or incomplete call is ever published as a latency sample, and a row's `measurementIterations` counts only
 the successful samples. Scores are compared bit-exactly everywhere (`sameScore`, so `+0.0` and `-0.0` differ), in
-B2 = B2c, in prefix stability and in tie detection. This covers the measured warm rows too: a measured call that throws or
-is not `COMPLETE` is excluded. The report writes every number through one helper that turns a non-finite value into
+B2 = B2c, in prefix stability and in tie detection. This covers the measured warm rows too: a measured call that throws, is
+not `COMPLETE`, or returns a result that fails source or reference fidelity is excluded, so the latency rows and the
+scored queries cover the same calls. The report writes every number through one helper that turns a non-finite value into
 `null`, so the JSON stays valid even for a failed run. Before it runs any query, the reopen phase repeats
 the protocol's full-corpus readback on the existing root:
 - `reopen.persistence.readback`: every manifest chunk, queried with its own text, returns its atom with content
@@ -196,12 +197,12 @@ manifest, these are:
 Every figure in this section comes from one harness revision, measured on a clean tree.
 
 Environment:
-- Neuron `a7d612b`, the final harness, with no uncommitted changes (`neuron.commit` has no `+dirty`);
-- Store checkout `c3e98d1`;
+- Neuron `7cb32ee`, the final harness, with no uncommitted changes (`neuron.commit` has no `+dirty`);
+- Store `b2583c2`, measured from a clean clone of that commit;
 - Azul OpenJDK 27 on Linux, AMD Ryzen 7 7730U;
 - seed root, replica root and timing scratch roots all on `tmpfs` (memory-backed), on the same file store
   (`env.replicaRoot.sameFileStoreAsStoreRoot = true`, `<phase>.env.timingScratch.sameFileStoreAsStoreRoot = true`);
-- one seed, one reopen and one replica JVM, each 1.1 to 1.2 s from process start to exit (`process.<p>.wallNanos`).
+- one seed, one reopen and one replica JVM, each 1.2 s from process start to exit (`process.<p>.wallNanos`).
   The run configuration lists the phase JVMs actually launched ("phase JVMs launched: seed, reopen, replica"). A run
   that skips a phase names it as not launched.
 
@@ -277,17 +278,17 @@ Observations, not tuned away:
 
   | Row (seed; reopen for the readback) | Samples | Timed operation | Median | p95 |
   | :--- | ---: | :--- | ---: | ---: |
-  | `perf.b1.recallLimit5` | 32 | warm Store call, limit 5 | 0.22 ms | 0.33 ms |
-  | `perf.b2.recallLimit5` | 32 | warm adapter recall, limit 5 | 1.55 ms | 3.04 ms |
-  | `perf.b1.firstRecall` | 5 | first Store call on fresh handles | 2.26 ms | 3.51 ms |
-  | `perf.b2.firstRecall` | 5 | first adapter recall on fresh handles | 4.02 ms | 13.06 ms |
-  | `perf.open` | 5 | `MonadaMemory.open` plus the adapter's own open | 3.51 ms | 21.84 ms |
-  | `perf.ingest` | 5 | Store open plus 33 `remember` calls | 21.53 ms | 77.15 ms |
-  | `perf.ingestReadback` | 5 | 33 `resonate` calls with hash checks | 15.74 ms | 41.77 ms |
-  | `perf.reopenReadback` (reopen) | 5 | Store open plus 33 `resonate` calls with hash checks | 23.48 ms | 97.44 ms |
+  | `perf.b1.recallLimit5` | 32 | warm Store call, limit 5 | 0.22 ms | 0.34 ms |
+  | `perf.b2.recallLimit5` | 32 | warm adapter recall, limit 5 | 1.64 ms | 3.02 ms |
+  | `perf.b1.firstRecall` | 5 | first Store call on fresh handles | 2.02 ms | 3.23 ms |
+  | `perf.b2.firstRecall` | 5 | first adapter recall on fresh handles | 3.58 ms | 10.99 ms |
+  | `perf.open` | 5 | `MonadaMemory.open` plus the adapter's own open | 2.82 ms | 19.30 ms |
+  | `perf.ingest` | 5 | Store open plus 33 `remember` calls | 18.55 ms | 72.58 ms |
+  | `perf.ingestReadback` | 5 | 33 `resonate` calls with hash checks | 15.36 ms | 45.11 ms |
+  | `perf.reopenReadback` (reopen) | 5 | Store open plus 33 `resonate` calls with hash checks | 25.14 ms | 99.36 ms |
 
-  The warm rows of the reopen and replica JVMs are in the same range: warm B1 has medians of 0.23 and 0.22 ms, and
-  warm B2 1.70 and 1.64 ms. These rows are single-machine and exploratory. They vary with machine load between
+  The warm rows of the reopen and replica JVMs are in the same range: warm B1 has medians of 0.24 and 0.22 ms, and
+  warm B2 1.68 and 1.53 ms. These rows are single-machine and exploratory. They vary with machine load between
   runs; one earlier run on a busy machine measured `perf.ingest` at about 45 ms. They are comparable across runs only
   when their environment and sampling fields match. With 5 samples, a p95 is the slowest sample, so it mostly
   shows the first, colder repetition. B2 is slower than B1 because it makes one Store query per token. The

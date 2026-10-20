@@ -167,8 +167,8 @@ chunk.
 
 ## Observed behaviour
 
-First recorded on 2026-10-17 against Store `main`. Re-checked on 2026-10-19 on the final harness: Neuron `a7d612b`
-with a clean tree, Store `c3e98d1`, all 34 checks passing. Every statement below still holds as written.
+First recorded on 2026-10-17 against Store `main`. Re-checked on 2026-10-19 on the final harness: Neuron `7cb32ee`
+with a clean tree, Store `b2583c2` (a clean clone), all 34 checks passing. Every statement below still holds as written.
 
 The timed opens (`perf.directOpen`, `perf.adapterOpen`) and the first recall on each freshly opened adapter are latency
 samples only. Each catches its own exceptions: a failed one is excluded from its row and recorded in
