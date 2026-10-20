@@ -1,0 +1,141 @@
+package monada.neuron.evaluation.knowledge;
+
+import monada.neuron.evaluation.knowledge.EvidenceTrace.Arm;
+import monada.neuron.evaluation.knowledge.EvidenceTrace.Contrast;
+import monada.neuron.evaluation.knowledge.EvidenceTrace.Hit;
+import monada.neuron.evaluation.knowledge.EvidenceTrace.Row;
+import monada.neuron.evaluation.knowledge.EvidenceTrace.Snapshot;
+import monada.neuron.evaluation.knowledge.HtmlKnowledgeIngestion.Check;
+import org.junit.jupiter.api.Test;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalDouble;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/** The scorer is the only reader of gold labels; it scores synthetic trace rows here. */
+class EvidenceTraceMetricsTest {
+
+    private static final HtmlKnowledgeCorpus CORPUS = HtmlKnowledgeCorpus.bundled();
+    private static final HtmlKnowledgeQuerySet QUERY_SET = HtmlKnowledgeQuerySet.bundled(CORPUS);
+    private static final String ANSWERABLE = "q:multi-evidence-02";
+    private static final String UNANSWERABLE = "q:no-answer-01";
+
+    @Test
+    void perQueryValuesFollowTheExtension() {
+        var relevant = List.copyOf(query(ANSWERABLE).relevant());
+        var scores = EvidenceTraceMetrics.score(QUERY_SET, CORPUS, snapshot(Map.of(
+                key(Arm.MEMORY, ANSWERABLE), row(Arm.MEMORY, ANSWERABLE, List.of(relevant.get(0), "chk:forms#00"),
+                        2, EvidenceDecision.SUPPORTED, false),
+                key(Arm.MEMORY, UNANSWERABLE), row(Arm.MEMORY, UNANSWERABLE, List.of("chk:forms#00"), 1,
+                        EvidenceDecision.SUPPORTED, false))));
+        var answerable = score(scores, Arm.MEMORY, ANSWERABLE);
+        assertEquals(OptionalDouble.of(2.0 / 3), answerable.admittedFraction(), "2 of 3 recorded results admitted");
+        assertEquals(OptionalDouble.of(1.0), answerable.usedFraction());
+        assertEquals(OptionalDouble.of(1.0), answerable.relevantEvidenceUsed());
+        assertTrue(answerable.memorySupportedRelevant());
+        var unanswerable = score(scores, Arm.MEMORY, UNANSWERABLE);
+        assertEquals(OptionalDouble.empty(), unanswerable.relevantEvidenceUsed(), "scored over A only");
+        assertFalse(unanswerable.memorySupportedRelevant());
+        assertEquals(1, scores.aggregates().get(Arm.MEMORY).unsupportedClaims().count(),
+                "SUPPORTED on a query with no relevant chunk is counted, never hidden");
+        var empty = score(scores, Arm.MEMORY, "q:exact-term-02");
+        assertEquals(OptionalDouble.empty(), empty.admittedFraction(), "nothing recorded: undefined, not 0 or 1");
+        assertEquals(OptionalDouble.empty(), empty.usedFraction(), "nothing admitted: undefined");
+        assertEquals(OptionalDouble.of(0.0), empty.relevantEvidenceUsed());
+    }
+
+    @Test
+    void anAmbiguousTraceIsUndefinedAndNeverSupport() {
+        var relevant = List.copyOf(query(ANSWERABLE).relevant());
+        var scores = EvidenceTraceMetrics.score(QUERY_SET, CORPUS, snapshot(Map.of(key(Arm.MEMORY, ANSWERABLE),
+                row(Arm.MEMORY, ANSWERABLE, relevant, relevant.size(), EvidenceDecision.SUPPORTED, true))));
+        var score = score(scores, Arm.MEMORY, ANSWERABLE);
+        assertEquals(OptionalDouble.empty(), score.usedFraction());
+        assertEquals(OptionalDouble.empty(), score.relevantEvidenceUsed());
+        assertFalse(score.memorySupportedRelevant());
+    }
+
+    @Test
+    void memoryOffAndRemovedControlsCannotPassAsMemorySupport() {
+        var relevant = List.copyOf(query(ANSWERABLE).relevant());
+        var clean = EvidenceTraceMetrics.score(QUERY_SET, CORPUS, snapshot(Map.of()));
+        assertEquals(List.of(true, true), clean.checks().stream().map(Check::passed).toList());
+        assertEquals(List.of("q:exact-term-01", "q:multi-evidence-02", "q:paraphrase-01", "q:paraphrase-04"),
+                clean.removedTargets());
+
+        var leaked = EvidenceTraceMetrics.score(QUERY_SET, CORPUS, snapshot(Map.of(
+                key(Arm.MEMORY_EMPTY, ANSWERABLE), row(Arm.MEMORY_EMPTY, ANSWERABLE, relevant, relevant.size(),
+                        EvidenceDecision.SUPPORTED, false),
+                key(Arm.REMOVED, ANSWERABLE), row(Arm.REMOVED, ANSWERABLE, relevant, relevant.size(),
+                        EvidenceDecision.SUPPORTED, false))));
+        assertEquals(List.of("control.memoryOffNotSupported", "control.removedRelevantNotSupported"),
+                leaked.checks().stream().map(Check::name).toList());
+        assertEquals(List.of(false, false), leaked.checks().stream().map(Check::passed).toList());
+    }
+
+    @Test
+    void contrastIsCountedPerPopulation() {
+        var scores = EvidenceTraceMetrics.score(QUERY_SET, CORPUS, snapshot(Map.of()));
+        assertEquals(22, scores.contrastAnswerable().of());
+        assertEquals(10, scores.contrastUnanswerable().of());
+        assertEquals(0, scores.contrastAnswerable().count());
+    }
+
+    @Test
+    void aSnapshotOfAnotherQuerySetOrWithAMissingRowIsRejected() {
+        var rows = new ArrayList<>(snapshot(Map.of()).rows());
+        assertThrows(IllegalArgumentException.class, () -> EvidenceTraceMetrics.score(QUERY_SET, CORPUS,
+                new Snapshot("other", rows)));
+        rows.removeLast();
+        assertThrows(IllegalArgumentException.class, () -> EvidenceTraceMetrics.score(QUERY_SET, CORPUS,
+                new Snapshot(QUERY_SET.queryHash(), rows)));
+    }
+
+    /** Every arm and query with nothing recalled, except the given rows. */
+    private static Snapshot snapshot(Map<String, Row> overrides) {
+        var rows = new ArrayList<Row>();
+        for (var arm : Arm.values()) {
+            for (var query : QUERY_SET.queries()) {
+                rows.add(overrides.getOrDefault(key(arm, query.queryId()),
+                        row(arm, query.queryId(), List.of(), 0, EvidenceDecision.UNSUPPORTED, false)));
+            }
+        }
+        return new Snapshot(QUERY_SET.queryHash(), rows);
+    }
+
+    /** A row whose {@code admitted} chunks are all carried, attached and selected, with one extra recorded result. */
+    private static Row row(Arm arm, String queryId, List<String> admitted, int recordedAdmitted,
+            EvidenceDecision decision, boolean ambiguous) {
+        var recorded = new ArrayList<Hit>();
+        admitted.subList(0, recordedAdmitted).forEach(chunk -> recorded.add(new Hit(chunk, 0.5)));
+        if (!admitted.isEmpty()) {
+            recorded.add(new Hit("chk:links#04", 0.1));
+        }
+        return new Row(arm, queryId, queryId, 1, true, "COMPLETE", recorded, "COMPLETE", admitted, admitted, admitted,
+                admitted, ambiguous, List.of("MEMORY_RECALL", "REASONING", "EVALUATION"), "COMPLETED", false, 1,
+                decision, arm == Arm.MEMORY ? Optional.of(new Contrast(false, false, false, "none", 1, 1, false))
+                        : Optional.empty());
+    }
+
+    private static String key(Arm arm, String queryId) {
+        return arm + " " + queryId;
+    }
+
+    private static JudgedQuery query(String queryId) {
+        return QUERY_SET.queries().stream().filter(query -> query.queryId().equals(queryId)).findFirst()
+                .orElseThrow();
+    }
+
+    private static EvidenceTraceMetrics.QueryScore score(EvidenceTraceMetrics.Scores scores, Arm arm,
+            String queryId) {
+        return scores.byArm().get(arm).stream().filter(score -> score.query().queryId().equals(queryId)).findFirst()
+                .orElseThrow();
+    }
+}

@@ -178,6 +178,19 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
         args(quotedBenchmarkArgs())
     }
 
+    // HTML evidence trace (Issue #108, docs/benchmarks/html-knowledge-evidence-trace.md). Seeds two roots in one JVM,
+    // reopens them in a second JVM that runs the html-kq-v1 texts through a bounded Neuron cycle and its controls, then
+    // scores the trace against the gold labels.
+    tasks.register<JavaExec>("runHtmlKnowledgeEvidenceTrace") {
+        group = "benchmark"
+        description = "Traces recalled html-kc-v1 evidence through a bounded Neuron cognitive cycle across separate JVMs (Issue #108)"
+        classpath = integration.runtimeClasspath
+        mainClass.set("monada.neuron.evaluation.knowledge.HtmlKnowledgeEvidenceTraceRunner")
+        systemProperty("monada.neuron.version", project.version.toString())
+        systemProperty("monada.resonance.store.dir", rootProject.file("../monada-resonance-store").absolutePath)
+        args(quotedBenchmarkArgs())
+    }
+
     // Adapter-boundary JMH (Issue #49). Lives with the integration source set because it needs the
     // optional adapter; the generic `jmh` task only sees `main`.
     tasks.register<JavaExec>("jmhResonanceStoreAdapter") {

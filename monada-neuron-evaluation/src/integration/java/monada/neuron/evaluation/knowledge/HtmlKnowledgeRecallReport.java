@@ -340,7 +340,7 @@ final class HtmlKnowledgeRecallReport {
         return format(aggregate.value());
     }
 
-    private static String format(OptionalDouble value) {
+    static String format(OptionalDouble value) {
         return value.isPresent() ? String.format(Locale.ROOT, "%.3f", value.getAsDouble()) : "n/a";
     }
 
@@ -349,15 +349,15 @@ final class HtmlKnowledgeRecallReport {
         return Double.isFinite(value) ? Double.toString(value) : "null";
     }
 
-    private static String number(OptionalDouble value) {
+    static String number(OptionalDouble value) {
         return value.isPresent() ? number(value.getAsDouble()) : "null";
     }
 
-    private static String strings(Collection<String> values) {
+    static String strings(Collection<String> values) {
         return values.stream().map(HtmlKnowledgeRecallReport::string).collect(Collectors.joining(", ", "[", "]"));
     }
 
-    private static String string(String value) {
+    static String string(String value) {
         var json = new StringBuilder(value.length() + 2).append('"');
         for (var i = 0; i < value.length(); i++) {
             var c = value.charAt(i);
