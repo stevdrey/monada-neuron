@@ -102,15 +102,17 @@ final class HtmlKnowledgeEvidenceTraceReport {
                 .append(category.label()).append(" | ").append(cell(aggregate.relevantEvidenceUsed())).append(" | ")
                 .append(aggregate.decisions().get(EvidenceDecision.SUPPORTED)).append(" | ")
                 .append(aggregate.decisions().get(EvidenceDecision.UNSUPPORTED)).append(" |\n"));
-        md.append("\n### Per query\n\n| Query | Relevant | MEMORY admitted | MEMORY relevant used | MEMORY decision |"
-                + " SWAPPED relevant used | REMOVED relevant used | contrast differs |\n"
-                + "| :--- | :--- | :--- | :---: | :--- | :---: | :---: | :---: |\n");
+        md.append("\n### Per query\n\n| Query | Relevant | MEMORY admitted | MEMORY request = codec, recall = B2 |"
+                + " MEMORY relevant used | MEMORY decision | SWAPPED relevant used | REMOVED relevant used |"
+                + " contrast differs |\n| :--- | :--- | :--- | :---: | :---: | :--- | :---: | :---: | :---: |\n");
         var memory = scores.byArm().get(Arm.MEMORY);
         for (var index = 0; index < memory.size(); index++) {
             var score = memory.get(index);
             md.append("| ").append(score.query().queryId()).append(" | ")
                     .append(String.join(", ", EvidenceTraceMetrics.relevant(score.query()))).append(" | ")
                     .append(String.join(", ", score.row().admitted())).append(" | ")
+                    .append(score.row().requestMatchesCodec()).append(", ")
+                    .append(score.row().recalledEqualsB2().map(String::valueOf).orElse("n/a")).append(" | ")
                     .append(flag(score)).append(" | ").append(score.row().decision()).append(" | ")
                     .append(flag(scores.byArm().get(Arm.SWAPPED).get(index))).append(" | ")
                     .append(flag(scores.byArm().get(Arm.REMOVED).get(index))).append(" | ")
@@ -135,7 +137,8 @@ final class HtmlKnowledgeEvidenceTraceReport {
     private static String queryJson(QueryScore score) {
         Row row = score.row();
         return "{ \"inputQueryId\": " + string(row.inputQueryId()) + ", \"inputSignals\": " + row.inputSignals()
-                + ", \"requestMatchesCodec\": " + row.requestMatchesCodec() + ", \"recordedStatus\": "
+                + ", \"requestMatchesCodec\": " + row.requestMatchesCodec() + ", \"recalledEqualsB2\": "
+                + row.recalledEqualsB2().map(String::valueOf).orElse("null") + ", \"recordedStatus\": "
                 + string(row.recordedStatus()) + ", \"recorded\": [" + row.recorded().stream()
                         .map(hit -> "{ \"chunkId\": " + string(hit.chunkId()) + ", \"score\": " + number(hit.score())
                                 + " }").collect(Collectors.joining(", ")) + "], \"memoryStatus\": "

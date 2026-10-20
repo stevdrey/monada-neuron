@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -62,7 +63,8 @@ class HtmlKnowledgeCycleExperimentTest {
                 "evidence.recalledEqualsB2", "evidence.traceIntegrity", "evidence.referencesResolved",
                 "evidence.stageList", "evidence.termination", "evidence.deterministicReplay",
                 "contrast.valueEquality", "control.memoryEmptyUnsupported", "control.removedExcludesDocument",
-                "control.tightBudgetExhausts", "control.unavailableRecall", "control.failurePropagates"),
+                "control.swappedMatchesSource", "control.tightBudgetExhausts", "control.unavailableRecall",
+                "control.failurePropagates"),
                 observation.checks().stream().map(Check::name).toList());
         observation.checks().forEach(check -> assertTrue(check.passed(), check.name() + ": " + check.detail()));
     }
@@ -81,6 +83,14 @@ class HtmlKnowledgeCycleExperimentTest {
             assertTrue(row.contrast().isPresent(), row.queryId());
             assertEquals(!row.admitted().isEmpty(), row.contrast().get().differs(),
                     row.queryId() + ": the memory-empty run differs exactly when memory recalled something");
+        }
+    }
+
+    @Test
+    void everyAdapterRowRecordsItsB2Equality() {
+        for (var row : observation.snapshot().rows()) {
+            assertEquals(row.arm().recallsThroughAdapter() ? Optional.of(true) : Optional.empty(),
+                    row.recalledEqualsB2(), row.arm() + " " + row.queryId());
         }
     }
 

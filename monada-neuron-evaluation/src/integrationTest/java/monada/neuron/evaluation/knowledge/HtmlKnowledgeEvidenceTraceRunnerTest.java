@@ -8,8 +8,10 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -101,6 +103,34 @@ class HtmlKnowledgeEvidenceTraceRunnerTest {
                         directory.resolve("refused").toString(), "--store-root", kept.toString()})));
     }
 
+    @Test
+    void aSnapshotTheScorerRejectsBecomesAFailedCheckNotAnAbortedRun() {
+        var runner = new HtmlKnowledgeEvidenceTraceRunner(HtmlKnowledgePersistenceRunner.Options.parse(
+                new String[] {"--output-dir", directory.resolve("unused").toString()}));
+        var querySet = HtmlKnowledgeQuerySet.bundled(HtmlKnowledgeCorpus.bundled());
+        var rows = new ArrayList<EvidenceTrace.Row>();
+        for (var arm : EvidenceTrace.Arm.values()) {
+            for (var query : querySet.queries()) {
+                rows.add(new EvidenceTrace.Row(arm, query.queryId(), query.queryId(), 1, true, "COMPLETE", List.of(),
+                        "COMPLETE", List.of(), List.of(), List.of(), List.of(), false, List.of(), "COMPLETED", false, 1,
+                        EvidenceDecision.UNSUPPORTED, arm == EvidenceTrace.Arm.MEMORY
+                                ? Optional.of(new EvidenceTrace.Contrast(false, false, false, "none", 1, 1, false))
+                                : Optional.empty(),
+                        arm.recallsThroughAdapter() ? Optional.of(true) : Optional.empty()));
+            }
+        }
+        var complete = new ArrayList<HtmlKnowledgeIngestion.Check>();
+        assertTrue(runner.scoreTrace(new EvidenceTrace.Snapshot(querySet.queryHash(), rows), complete).isPresent());
+        assertTrue(complete.stream().noneMatch(check -> check.name().equals("trace.scored")));
+
+        rows.remove(3);
+        var checks = new ArrayList<HtmlKnowledgeIngestion.Check>();
+        assertEquals(Optional.empty(), runner.scoreTrace(new EvidenceTrace.Snapshot(querySet.queryHash(), rows),
+                checks));
+        assertEquals(List.of("trace.scored"), checks.stream().map(HtmlKnowledgeIngestion.Check::name).toList());
+        assertFalse(checks.getFirst().passed());
+    }
+
     private static Set<String> required() {
         var names = new LinkedHashSet<String>();
         for (var root : List.of("full", "removed")) {
@@ -114,7 +144,7 @@ class HtmlKnowledgeEvidenceTraceRunnerTest {
                 "evidence.recalledEqualsB2", "evidence.traceIntegrity", "evidence.referencesResolved",
                 "evidence.stageList", "evidence.termination", "evidence.deterministicReplay",
                 "contrast.valueEquality", "control.memoryEmptyUnsupported", "control.removedExcludesDocument",
-                "control.tightBudgetExhausts", "control.unavailableRecall", "control.failurePropagates")) {
+                "control.swappedMatchesSource", "control.tightBudgetExhausts", "control.unavailableRecall", "control.failurePropagates")) {
             names.add("trace." + check);
         }
         names.add("process.restart");

@@ -98,6 +98,40 @@ class EvidenceTraceMetricsTest {
                 new Snapshot(QUERY_SET.queryHash(), rows)));
     }
 
+    @Test
+    void aSyntacticallyCompleteButInconsistentSnapshotIsRejected() {
+        var rows = snapshot(Map.of()).rows();
+        var duplicate = new ArrayList<>(rows);
+        duplicate.set(1, rows.get(0));
+        var foreign = new ArrayList<>(rows);
+        var first = rows.get(0);
+        foreign.set(0, new Row(first.arm(), first.queryId(), "q:unknown-01", first.inputSignals(),
+                first.requestMatchesCodec(), first.recordedStatus(), first.recorded(), first.memoryStatus(),
+                first.admitted(), first.usedBySignal(), first.attached(), first.selected(), first.traceAmbiguous(),
+                first.stages(), first.termination(), first.signalBudgetExhausted(), first.outputSignals(),
+                first.decision(), first.contrast(), first.recalledEqualsB2()));
+        var noContrast = new ArrayList<>(rows);
+        noContrast.set(0, withContrastAndB2(first, Optional.empty(), first.recalledEqualsB2()));
+        var b2OnEmptyArm = new ArrayList<>(rows);
+        var emptyIndex = QUERY_SET.queries().size();
+        var empty = rows.get(emptyIndex);
+        assertEquals(Arm.MEMORY_EMPTY, empty.arm());
+        b2OnEmptyArm.set(emptyIndex, withContrastAndB2(empty, Optional.empty(), Optional.of(true)));
+        var extra = new ArrayList<>(rows);
+        extra.add(rows.getLast());
+        for (var invalid : List.of(duplicate, foreign, noContrast, b2OnEmptyArm, extra)) {
+            assertThrows(IllegalArgumentException.class, () -> EvidenceTraceMetrics.score(QUERY_SET, CORPUS,
+                    new Snapshot(QUERY_SET.queryHash(), invalid)));
+        }
+    }
+
+    private static Row withContrastAndB2(Row row, Optional<Contrast> contrast, Optional<Boolean> recalledEqualsB2) {
+        return new Row(row.arm(), row.queryId(), row.inputQueryId(), row.inputSignals(), row.requestMatchesCodec(),
+                row.recordedStatus(), row.recorded(), row.memoryStatus(), row.admitted(), row.usedBySignal(),
+                row.attached(), row.selected(), row.traceAmbiguous(), row.stages(), row.termination(),
+                row.signalBudgetExhausted(), row.outputSignals(), row.decision(), contrast, recalledEqualsB2);
+    }
+
     /** Every arm and query with nothing recalled, except the given rows. */
     private static Snapshot snapshot(Map<String, Row> overrides) {
         var rows = new ArrayList<Row>();
@@ -121,7 +155,7 @@ class EvidenceTraceMetricsTest {
         return new Row(arm, queryId, queryId, 1, true, "COMPLETE", recorded, "COMPLETE", admitted, admitted, admitted,
                 admitted, ambiguous, List.of("MEMORY_RECALL", "REASONING", "EVALUATION"), "COMPLETED", false, 1,
                 decision, arm == Arm.MEMORY ? Optional.of(new Contrast(false, false, false, "none", 1, 1, false))
-                        : Optional.empty());
+                        : Optional.empty(), arm.recallsThroughAdapter() ? Optional.of(true) : Optional.empty());
     }
 
     private static String key(Arm arm, String queryId) {

@@ -167,45 +167,41 @@ final class HtmlKnowledgeCycleExperiment {
             var memoryEmpty = execute(empty, query.text(), BUDGET);
             realByText.put(query.queryId(), real);
             emptyByText.put(query.queryId(), memoryEmpty);
-            rows.add(row(Arm.MEMORY, query.queryId(), query.queryId(), real, full.resolver(), memoryEmpty,
+            rows.add(row(Arm.MEMORY, query.queryId(), query.queryId(), real, full, memoryEmpty,
                     Optional.of(contrast(real, memoryEmpty))));
 
             var replay = execute(full.adapter(), query.text(), BUDGET);
             if (!replay.equals(real)) {
                 fail(failures, "evidence.deterministicReplay", query.queryId() + " differs on a fresh cycle");
             }
-            var direct = full.adapter().recall(new ResonanceMemoryRequest(codec.querySignals(query.text()),
-                    MEMORY_LIMIT));
-            if (real.calls().size() != 1 || !real.calls().getFirst().response().equals(direct)) {
-                fail(failures, "evidence.recalledEqualsB2", query.queryId());
-            }
         }
         for (var query : queries) {
             var memoryEmpty = emptyByText.get(query.queryId());
-            rows.add(row(Arm.MEMORY_EMPTY, query.queryId(), query.queryId(), memoryEmpty, full.resolver(),
-                    memoryEmpty, Optional.empty()));
+            rows.add(row(Arm.MEMORY_EMPTY, query.queryId(), query.queryId(), memoryEmpty, full, memoryEmpty,
+                    Optional.empty()));
         }
         for (var index = 0; index < queries.size(); index++) {
             var slot = queries.get(index);
             var input = queries.get(swapIndex(index, queries.size()));
             var run = execute(full.adapter(), input.text(), BUDGET);
-            rows.add(row(Arm.SWAPPED, slot.queryId(), input.queryId(), run, full.resolver(),
-                    emptyByText.get(input.queryId()), Optional.empty()));
+            rows.add(row(Arm.SWAPPED, slot.queryId(), input.queryId(), run, full, emptyByText.get(input.queryId()),
+                    Optional.empty()));
+            checkSwapped(run, realByText.get(input.queryId()), slot.queryId(), input.queryId(), failures);
         }
         for (var query : queries) {
             var run = execute(removed.adapter(), query.text(), BUDGET);
-            rows.add(row(Arm.REMOVED, query.queryId(), query.queryId(), run, removed.resolver(),
+            rows.add(row(Arm.REMOVED, query.queryId(), query.queryId(), run, removed,
                     emptyByText.get(query.queryId()), Optional.empty()));
         }
         for (var query : queries) {
             var run = execute(full.adapter(), query.text(), tightBudget(query.text()));
-            rows.add(row(Arm.TIGHT_BUDGET, query.queryId(), query.queryId(), run, full.resolver(),
+            rows.add(row(Arm.TIGHT_BUDGET, query.queryId(), query.queryId(), run, full,
                     emptyByText.get(query.queryId()), Optional.empty()));
             checkTight(run, realByText.get(query.queryId()), query.queryId(), failures);
         }
         for (var query : queries) {
             var run = execute(closed, query.text(), BUDGET);
-            rows.add(row(Arm.UNAVAILABLE, query.queryId(), query.queryId(), run, full.resolver(),
+            rows.add(row(Arm.UNAVAILABLE, query.queryId(), query.queryId(), run, full,
                     emptyByText.get(query.queryId()), Optional.empty()));
         }
         var injected = new IllegalStateException("injected recall failure");
@@ -213,7 +209,7 @@ final class HtmlKnowledgeCycleExperiment {
             var run = execute(request -> {
                 throw injected;
             }, query.text(), BUDGET);
-            rows.add(row(Arm.THROWING, query.queryId(), query.queryId(), run, full.resolver(),
+            rows.add(row(Arm.THROWING, query.queryId(), query.queryId(), run, full,
                     emptyByText.get(query.queryId()), Optional.empty()));
             checkThrowing(run, injected, query.queryId(), failures);
         }
@@ -287,8 +283,9 @@ final class HtmlKnowledgeCycleExperiment {
         return supported ? EvidenceDecision.SUPPORTED : EvidenceDecision.UNSUPPORTED;
     }
 
-    private Row row(Arm arm, String queryId, String inputQueryId, Run run, RecalledReferenceResolver resolver,
-            Run memoryEmpty, Optional<Contrast> contrast) {
+    private Row row(Arm arm, String queryId, String inputQueryId, Run run, Root root, Run memoryEmpty,
+            Optional<Contrast> contrast) {
+        var resolver = root.resolver();
         var request = run.calls().isEmpty() ? Optional.<ResonanceMemoryRequest>empty()
                 : Optional.of(run.calls().getFirst().request());
         var requestMatches = run.calls().size() <= 1 && request
@@ -325,7 +322,29 @@ final class HtmlKnowledgeCycleExperiment {
                 run.stageResults().stream().map(result -> result.kind().name()).toList(), termination(run),
                 run.result().map(result -> result.snapshot().signalBudgetExhausted())
                         .orElseGet(() -> run.failure().orElseThrow().snapshot().signalBudgetExhausted()),
-                run.result().map(result -> result.outputSignals().size()).orElse(0), decide(run, resolver), contrast);
+                run.result().map(result -> result.outputSignals().size()).orElse(0), decide(run, resolver), contrast,
+                arm.recallsThroughAdapter() ? Optional.of(equalsB2(run, root)) : Optional.empty());
+    }
+
+    /**
+     * Whether the run recorded exactly one response and it equals a direct B2 recall of the same request (the codec
+     * Signals with the memory-stage limit) through the adapter of the same root.
+     */
+    private boolean equalsB2(Run run, Root root) {
+        var direct = root.adapter().recall(new ResonanceMemoryRequest(run.inputs(), MEMORY_LIMIT));
+        return run.calls().size() == 1 && run.calls().getFirst().response().equals(direct);
+    }
+
+    /**
+     * The swapped control attributes a difference to the slot, so the swapped run must recall exactly what the
+     * {@code MEMORY} run of its input text recalled: the same full response and the same admitted result.
+     */
+    private void checkSwapped(Run swapped, Run source, String slot, String input, Map<String, List<String>> failures) {
+        var admitted = swapped.memory().map(ResonanceMemoryStageResult::response);
+        if (!swapped.calls().equals(source.calls()) || admitted.isEmpty()
+                || !admitted.equals(source.memory().map(ResonanceMemoryStageResult::response))) {
+            fail(failures, "control.swappedMatchesSource", slot + " (text of " + input + ")");
+        }
     }
 
     /** The recalled slice of the memory stage's output: its last {@code r} Signals, one per admitted result. */
@@ -522,6 +541,9 @@ final class HtmlKnowledgeCycleExperiment {
         snapshot.rows(Arm.MEMORY_EMPTY).stream().filter(row -> row.decision() != EvidenceDecision.UNSUPPORTED
                 || !row.attached().isEmpty()).forEach(row -> fail(failures, "control.memoryEmptyUnsupported",
                         row.queryId() + " " + row.decision()));
+        snapshot.rows().stream().filter(row -> row.arm().recallsThroughAdapter()
+                && !row.recalledEqualsB2().equals(Optional.of(true)))
+                .forEach(row -> fail(failures, "evidence.recalledEqualsB2", row.arm() + " " + row.queryId()));
         var removedSlug = REMOVED_DOCUMENT.substring("doc:".length());
         snapshot.rows(Arm.REMOVED).stream().filter(row -> row.recorded().stream()
                 .anyMatch(hit -> hit.chunkId().startsWith("chk:" + removedSlug + "#")
@@ -534,8 +556,8 @@ final class HtmlKnowledgeCycleExperiment {
         var names = List.of("evidence.recallCompleted", "evidence.requestMatchesCodec", "evidence.recalledEqualsB2",
                 "evidence.traceIntegrity", "evidence.referencesResolved", "evidence.stageList", "evidence.termination",
                 "evidence.deterministicReplay", "contrast.valueEquality", "control.memoryEmptyUnsupported",
-                "control.removedExcludesDocument", "control.tightBudgetExhausts", "control.unavailableRecall",
-                "control.failurePropagates");
+                "control.removedExcludesDocument", "control.swappedMatchesSource", "control.tightBudgetExhausts",
+                "control.unavailableRecall", "control.failurePropagates");
         var expectedRows = queries * Arm.values().length;
         var checks = new ArrayList<Check>();
         checks.add(new Check("evidence.rows", snapshot.rows().size() == expectedRows, snapshot.rows().size() + " of "
@@ -543,8 +565,7 @@ final class HtmlKnowledgeCycleExperiment {
         for (var name : names) {
             var failed = failures.getOrDefault(name, List.of());
             checks.add(new Check(name, failed.isEmpty(), failed.isEmpty() ? "held for all " + queries + " queries"
-                    : failed.size() + " violations, first: " + String.join("; ",
-                            failed.subList(0, Math.min(3, failed.size())))));
+                    : failed.size() + " violations: " + String.join("; ", failed)));
         }
         return checks;
     }

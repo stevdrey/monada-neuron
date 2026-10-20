@@ -175,11 +175,7 @@ public final class HtmlKnowledgeEvidenceTraceRunner {
                 checks.add(HtmlKnowledgePersistenceRunner.restartCheck(seed, traced, work));
                 snapshot = snapshot(work);
                 if (snapshot.isPresent()) {
-                    var scores = EvidenceTraceMetrics.score(querySet, corpus, snapshot.get());
-                    checks.addAll(scores.checks());
-                    var report = new HtmlKnowledgeEvidenceTraceReport(scores);
-                    rendered = Optional.of(new HtmlKnowledgeRecallRunner.Rendered(report.toJson(),
-                            report.toMarkdown()));
+                    rendered = scoreTrace(snapshot.get(), checks);
                 } else {
                     checks.add(new Check("trace.scored", false, "the trace phase left no readable snapshot (exit "
                             + traced.exitStatus() + "): " + traced.stderr()));
@@ -209,6 +205,26 @@ public final class HtmlKnowledgeEvidenceTraceRunner {
             return new Outcome(report, rendered, seed, tracePhase, files, options.outputDir());
         } finally {
             HtmlKnowledgeIngestionRunner.deleteTree(work.path());
+        }
+    }
+
+    /**
+     * Scores and renders a parsed trace snapshot, adding the scorer's checks. A snapshot that parses but is not a
+     * complete trace of the query set (a missing, duplicate or foreign row, or a field on the wrong arm) is rejected
+     * by the scorer; that becomes the failed check {@code trace.scored} and an empty result, so the run still writes
+     * its report, with {@code trace: null}, and exits {@code 1}.
+     */
+    Optional<HtmlKnowledgeRecallRunner.Rendered> scoreTrace(EvidenceTrace.Snapshot snapshot, List<Check> checks) {
+        try {
+            var scores = EvidenceTraceMetrics.score(querySet, corpus, snapshot);
+            var report = new HtmlKnowledgeEvidenceTraceReport(scores);
+            var rendered = new HtmlKnowledgeRecallRunner.Rendered(report.toJson(), report.toMarkdown());
+            checks.addAll(scores.checks());
+            return Optional.of(rendered);
+        } catch (IllegalArgumentException e) {
+            checks.add(new Check("trace.scored", false, "the trace snapshot was rejected by the scorer; nothing was"
+                    + " scored: " + e.getMessage()));
+            return Optional.empty();
         }
     }
 

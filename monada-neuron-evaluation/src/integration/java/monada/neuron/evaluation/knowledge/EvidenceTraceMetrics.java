@@ -9,6 +9,7 @@ import monada.neuron.evaluation.knowledge.RecallMetrics.Aggregate;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -90,13 +91,12 @@ final class EvidenceTraceMetrics {
     /**
      * Scores {@code snapshot} against {@code querySet}.
      *
-     * @throws IllegalArgumentException when the snapshot answers another query set or misses a query in an arm
+     * @throws IllegalArgumentException when the snapshot is not a complete trace of {@code querySet} (see
+     *     {@link #requireComplete}); this is the only exception scoring throws for a malformed snapshot
      */
     static Scores score(HtmlKnowledgeQuerySet querySet, HtmlKnowledgeCorpus corpus, Snapshot snapshot) {
         Objects.requireNonNull(querySet, "querySet must not be null");
-        if (!snapshot.queryHash().equals(querySet.queryHash())) {
-            throw new IllegalArgumentException("the snapshot answers queryHash " + snapshot.queryHash());
-        }
+        requireComplete(querySet, snapshot);
         var removedChunks = corpus.chunks().stream()
                 .filter(chunk -> chunk.documentId().equals(HtmlKnowledgeCycleExperiment.REMOVED_DOCUMENT))
                 .map(CorpusChunk::chunkId).toList();
@@ -133,6 +133,46 @@ final class EvidenceTraceMetrics {
                                 + " were all removed is a memory-supported relevant result: " + removedTargets
                                 : "reported as memory-supported after removal: " + removed));
         return new Scores(byArm, aggregates, contrastA, contrastU, removedTargets, checks);
+    }
+
+    /**
+     * Requires {@code snapshot} to be one complete trace of {@code querySet}: its {@code queryHash}, exactly one row
+     * per arm and query and no other row, every {@code inputQueryId} a query of the set, a contrast exactly on
+     * {@link Arm#MEMORY} rows, and B2 equality exactly on the arms that recall through the adapter. A phase file can
+     * be syntactically complete and still violate this, so the check runs before anything is scored.
+     *
+     * @throws IllegalArgumentException naming the first violation
+     */
+    static void requireComplete(HtmlKnowledgeQuerySet querySet, Snapshot snapshot) {
+        if (!snapshot.queryHash().equals(querySet.queryHash())) {
+            throw new IllegalArgumentException("the snapshot answers queryHash " + snapshot.queryHash());
+        }
+        var ids = new HashSet<String>();
+        querySet.queries().forEach(query -> ids.add(query.queryId()));
+        var seen = new HashSet<String>();
+        for (var row : snapshot.rows()) {
+            var key = row.arm() + " " + row.queryId();
+            if (!ids.contains(row.queryId()) || !ids.contains(row.inputQueryId())) {
+                throw new IllegalArgumentException("row " + key + " names a query outside the set (input "
+                        + row.inputQueryId() + ")");
+            }
+            if (!seen.add(key)) {
+                throw new IllegalArgumentException("duplicate row " + key);
+            }
+            if (row.contrast().isPresent() != (row.arm() == Arm.MEMORY)) {
+                throw new IllegalArgumentException("row " + key + (row.contrast().isPresent()
+                        ? " carries a memory-empty contrast" : " has no memory-empty contrast"));
+            }
+            if (row.recalledEqualsB2().isPresent() != row.arm().recallsThroughAdapter()) {
+                throw new IllegalArgumentException("row " + key + (row.recalledEqualsB2().isPresent()
+                        ? " records B2 equality for an arm without an adapter" : " does not record B2 equality"));
+            }
+        }
+        var expected = Arm.values().length * querySet.queries().size();
+        if (seen.size() != expected) {
+            throw new IllegalArgumentException("the snapshot holds " + seen.size() + " of " + expected + " rows ("
+                    + Arm.values().length + " arms x " + querySet.queries().size() + " queries)");
+        }
     }
 
     private static QueryScore score(JudgedQuery query, Row row) {

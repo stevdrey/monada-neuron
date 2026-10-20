@@ -23,8 +23,8 @@ final class EvidenceTrace {
     private static final String HEADER = String.join("\t", "arm", "queryId", "inputQueryId", "inputSignals",
             "requestMatchesCodec", "recordedStatus", "recorded", "memoryStatus", "admitted", "usedBySignal",
             "attached", "selected", "traceAmbiguous", "stages", "termination", "signalBudgetExhausted",
-            "outputSignals", "decision", "contrast");
-    private static final int COLUMNS = 19;
+            "outputSignals", "decision", "contrast", "recalledEqualsB2");
+    private static final int COLUMNS = 20;
     private static final String NONE = "-";
 
     private EvidenceTrace() {
@@ -45,7 +45,15 @@ final class EvidenceTrace {
         /** A closed adapter, which answers {@code UNAVAILABLE}. */
         UNAVAILABLE,
         /** A port that throws, which must fail the cycle at {@code MEMORY_RECALL}. */
-        THROWING
+        THROWING;
+
+        /**
+         * Whether this arm recalls through an open production adapter, so its recorded response can be compared with a
+         * direct B2 recall of the same request on the same root.
+         */
+        boolean recallsThroughAdapter() {
+            return this == MEMORY || this == SWAPPED || this == REMOVED || this == TIGHT_BUDGET;
+        }
     }
 
     /** One recalled result at the port boundary: its chunk (or unresolved reference) and score. */
@@ -113,12 +121,14 @@ final class EvidenceTrace {
      * @param outputSignals the cycle output Signal count
      * @param decision the host decision
      * @param contrast the memory-empty contrast; present only in {@link Arm#MEMORY}
+     * @param recalledEqualsB2 whether the recorded response equals a direct B2 recall of the same request on the same
+     *     root; present exactly for the arms that {@linkplain Arm#recallsThroughAdapter() recall through the adapter}
      */
     record Row(Arm arm, String queryId, String inputQueryId, int inputSignals, boolean requestMatchesCodec,
             String recordedStatus, List<Hit> recorded, String memoryStatus, List<String> admitted,
             List<String> usedBySignal, List<String> attached, List<String> selected, boolean traceAmbiguous,
             List<String> stages, String termination, boolean signalBudgetExhausted, int outputSignals,
-            EvidenceDecision decision, Optional<Contrast> contrast) {
+            EvidenceDecision decision, Optional<Contrast> contrast, Optional<Boolean> recalledEqualsB2) {
 
         Row {
             Objects.requireNonNull(arm, "arm must not be null");
@@ -135,6 +145,7 @@ final class EvidenceTrace {
             Objects.requireNonNull(termination, "termination must not be null");
             Objects.requireNonNull(decision, "decision must not be null");
             Objects.requireNonNull(contrast, "contrast must not be null");
+            Objects.requireNonNull(recalledEqualsB2, "recalledEqualsB2 must not be null");
         }
 
         /** The used chunks: carried by Signal or attached as evidence, distinct, in admitted order. */
@@ -149,7 +160,8 @@ final class EvidenceTrace {
                     Boolean.toString(requestMatchesCodec), recordedStatus, hits(recorded), memoryStatus,
                     list(admitted), list(usedBySignal), list(attached), list(selected), Boolean.toString(traceAmbiguous),
                     list(stages), termination, Boolean.toString(signalBudgetExhausted),
-                    Integer.toString(outputSignals), decision.name(), contrast.map(Contrast::render).orElse(NONE));
+                    Integer.toString(outputSignals), decision.name(), contrast.map(Contrast::render).orElse(NONE),
+                    recalledEqualsB2.map(String::valueOf).orElse(NONE));
         }
     }
 
@@ -202,7 +214,8 @@ final class EvidenceTrace {
                         parseList(cells[9]), parseList(cells[10]), parseList(cells[11]), bool(cells[12]),
                         parseList(cells[13]), cells[14], bool(cells[15]), Integer.parseInt(cells[16]),
                         EvidenceDecision.valueOf(cells[17]),
-                        cells[18].equals(NONE) ? Optional.empty() : Optional.of(Contrast.parse(cells[18]))));
+                        cells[18].equals(NONE) ? Optional.empty() : Optional.of(Contrast.parse(cells[18])),
+                        cells[19].equals(NONE) ? Optional.empty() : Optional.of(bool(cells[19]))));
             }
             return new Snapshot(lines[0].substring("# queryHash ".length()), rows);
         }

@@ -115,8 +115,11 @@ Distractor and unanswerable queries are the `distractor` category and the `U` po
 reported per category and per population.
 
 Each row records:
-- the cycle inputs and whether the request matched the codec;
-- the port's full recorded response (chunk ids and scores);
+- the cycle inputs and whether the request matched the codec (`requestMatchesCodec`);
+- the port's full recorded response (chunk ids and scores), and, for the arms that recall through an open adapter
+  (`MEMORY`, `SWAPPED`, `REMOVED`, `TIGHT_BUDGET`), whether it equals a direct B2 recall of the same request on the
+  same root (`recalledEqualsB2`, `null` for the other arms). Both flags sit next to `RelevantEvidenceUsed` in every
+  query row, so a metric computed from a non-equivalent recall is identifiable;
 - the admitted memory-stage result and its status;
 - the chunks carried by Signal into later stage outputs, attached as evidence, and selected by `EVALUATION`;
 - `traceAmbiguous`;
@@ -137,7 +140,7 @@ The seed JVM reports the `ingestion.*` checks of both roots. The trace JVM also 
 | `evidence.rows` | 7 arms × 32 queries rows |
 | `evidence.recallCompleted` | `MEMORY`, `SWAPPED` and `REMOVED` recorded one `COMPLETE` response per query |
 | `evidence.requestMatchesCodec` | every recorded request is the codec Signals with limit 5 |
-| `evidence.recalledEqualsB2` | the recorded `MEMORY` response equals a direct `adapter.recall` of the same request (B2) |
+| `evidence.recalledEqualsB2` | every row of `MEMORY`, `SWAPPED`, `REMOVED` and `TIGHT_BUDGET` has `recalledEqualsB2 = true`: its recorded response equals a direct `adapter.recall` of the same request on the same root (B2) |
 | `evidence.traceIntegrity` | the admitted results are an ordered prefix of the recorded response; the recalled slice of `outputSignals()` equals their Signals in order; every attached `MemoryReferenceEvidence` names an admitted reference |
 | `evidence.referencesResolved` | every admitted reference resolves; no row fails closed |
 | `evidence.stageList`, `evidence.termination` | `MEMORY_RECALL, REASONING, EVALUATION` and `COMPLETED` in every arm except `TIGHT_BUDGET` and `THROWING` |
@@ -145,9 +148,12 @@ The seed JVM reports the `ingestion.*` checks of both roots. The trace JVM also 
 | `contrast.valueEquality` | every compared post-recall component is a record, so the contrast never falls back to identity |
 | `control.memoryEmptyUnsupported` | every memory-empty run is `UNSUPPORTED` and attaches nothing |
 | `control.removedExcludesDocument` | no `REMOVED` recall returns a `doc:links` chunk or an unresolved reference |
+| `control.swappedMatchesSource` | every `SWAPPED` run recorded the same response and admitted the same result as the `MEMORY` run of its `inputQueryId`, so a difference is attributable to the slot, never to recall drift |
 | `control.tightBudgetExhausts` | `CONTEXT_BUDGET_EXHAUSTED` with the signal budget flag; at most one admitted result, a prefix of the response (status `PARTIAL` when more were recalled); no `EVALUATION` |
 | `control.unavailableRecall` | `UNAVAILABLE`, `RECALL_FAILED`, nothing attached |
 | `control.failurePropagates` | the cycle throws `CognitiveCycleException` at `MEMORY_RECALL` with the injected cause, no completed stage and a `FAILURE` snapshot |
+
+A failing check names every violating arm and query.
 
 The orchestrator adds:
 - `process.restart`: seed and trace ran in separate JVMs.
@@ -155,6 +161,9 @@ The orchestrator adds:
 - `control.removedRelevantNotSupported` (scorer): no query whose every relevant chunk belongs to `doc:links`
   (`q:exact-term-01`, `q:multi-evidence-02`, `q:paraphrase-01`, `q:paraphrase-04`) is `memorySupportedRelevant` in
   `REMOVED`. If no such query existed, the check would fail as "not exercised".
+- `trace.scored`, only on failure: the trace snapshot parsed but is not one complete trace of the query set (a
+  missing, duplicate or foreign row, a contrast outside `MEMORY`, or B2 equality on the wrong arms). The scorer
+  rejects it, nothing is scored, and the report is still written with `trace: null` and exit status `1`.
 
 ## Metrics
 
