@@ -1,9 +1,12 @@
 package monada.neuron.evaluation.knowledge;
 
 import com.monada.storage.audit.StorageIntegrityAuditor;
+import com.monada.api.MonadaMemory;
+import com.monada.api.MonadaMemoryOptions;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeIngestion.Check;
 import monada.neuron.evaluation.knowledge.PersistenceProbes.Row;
 import monada.neuron.evaluation.knowledge.PersistenceProbes.Snapshot;
+import monada.neuron.resonance.adapter.ResonanceStoreMemoryAdapter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -170,5 +173,26 @@ class HtmlKnowledgePersistenceTest {
 
     private static Check check(List<Check> checks, String name) {
         return checks.stream().filter(check -> check.name().equals(name)).findFirst().orElseThrow();
+    }
+
+    @Test
+    void aFailedTimingOpenIsAnExcludedSampleAndTheObservationStillRuns() {
+        var root = directory.resolve("store");
+        var seeded = persistence.seed(root);
+        var opens = new int[1];
+        var observation = persistence.observe(root, seeded.manifest(), () -> {
+            if (++opens[0] == 2) {
+                throw new IllegalStateException("injected open failure");
+            }
+            return MonadaMemory.open(root, MonadaMemoryOptions.defaults());
+        }, () -> ResonanceStoreMemoryAdapter.open(root, persistence.config()));
+
+        assertTrue(observation.checks().stream().allMatch(Check::passed), observation.checks().toString());
+        assertEquals("4", observation.metadata().get("perf.directOpen.measurementIterations"));
+        assertTrue(observation.metadata().get("perf.directOpen.excludedSamples").startsWith("1: repetition 2 threw"),
+                observation.metadata().get("perf.directOpen.excludedSamples"));
+        assertEquals("0", observation.metadata().get("perf.adapterOpen.excludedSamples"));
+        assertTrue(observation.metadata().get("perf.warmRecall.measurementMethod")
+                .contains("after one unmeasured recall on that same adapter"), "the observation adapter is warmed first");
     }
 }

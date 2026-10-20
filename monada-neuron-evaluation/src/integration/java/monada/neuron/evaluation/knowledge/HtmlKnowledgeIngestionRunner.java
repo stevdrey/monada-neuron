@@ -270,6 +270,10 @@ public final class HtmlKnowledgeIngestionRunner {
         }
 
         metadata.put("protocolVersion", PROTOCOL_VERSION);
+        metadata.put("runMode", (options.storeRoot().isPresent() ? "kept Store root" : "default (temporary Store root)")
+                + (options.mdn().isPresent() ? " with the external MDN snapshot" : "")
+                + "; profile html-knowledge-protocol-v1 corpus ingestion");
+        new RunEnvironment().describeHost(metadata);
         metadata.put("corpus.normalization", "strict UTF-8, CRLF/CR to LF, Unicode NFC, trimmed; fenced code kept");
         metadata.put("corpus.chunkingPolicy", CorpusChunker.POLICY);
         metadata.put("store.atomIds", "Store-generated (content-derived); mapped to chunks only through the manifest");
@@ -282,8 +286,9 @@ public final class HtmlKnowledgeIngestionRunner {
         var evaluation = new EvaluationReport(
                 Instant.now(),
                 EnvironmentMetadata.current(),
-                new RunConfiguration(0L, false, 0, 0,
-                        "single import per corpus; timings in metadata are one exploratory wall-clock sample"),
+                new RunConfiguration(0L, false, 0, 0, "one import under test per corpus plus up to "
+                        + (LatencyRow.REPETITIONS - 1) + " timed scratch imports (a skipped or failed one is listed in"
+                        + " its row's excludedSamples); " + LatencyRow.RUN_CONFIGURATION_NOTE),
                 List.of(),
                 TITLE);
         var report = new CheckedEvaluationReport(TITLE, "Ingestion Metadata", evaluation, checks, metadata);
@@ -368,8 +373,11 @@ public final class HtmlKnowledgeIngestionRunner {
             checks.addAll(result.checks());
             metadata.put(prefix + ".root",
                     keptRoot.isPresent() ? root.toAbsolutePath().toString() : "temporary (deleted)");
-            metadata.put(prefix + ".perf.ingestNanos", Long.toString(result.ingestNanos()));
-            metadata.put(prefix + ".perf.readbackNanos", Long.toString(result.readbackNanos()));
+            var timings = new HtmlKnowledgeIngestion(corpus).timings(result);
+            var scratchKey = "env." + (prefix.equals("store") ? "" : prefix.substring(0, prefix.lastIndexOf('.') + 1))
+                    + "timingScratch";
+            timings.describe(prefix + ".perf", "readback", scratchKey, metadata);
+            new RunEnvironment().describeStoreRoot("env." + prefix + "Root", root, metadata);
             var manifest = root.resolve("manifest.json");
             if (Files.exists(manifest)) {
                 StoreMetadata.manifestFields(Files.readString(manifest, StandardCharsets.UTF_8))
@@ -434,6 +442,19 @@ public final class HtmlKnowledgeIngestionRunner {
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
+        }
+    }
+
+    /**
+     * {@link #deleteTree} for cleanup that must never fail a run: returns what was left behind and why, or empty when
+     * the tree is gone.
+     */
+    static Optional<String> deleteTreeQuietly(Path root) {
+        try {
+            deleteTree(root);
+            return Optional.empty();
+        } catch (UncheckedIOException | SecurityException e) {
+            return Optional.of(root + " (" + e + ")");
         }
     }
 

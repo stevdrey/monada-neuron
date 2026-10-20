@@ -49,7 +49,7 @@ such a run is rejected with exit status 2 before anything is deleted, and the sn
 
 | File | Content |
 | :--- | :--- |
-| `html-knowledge-ingestion.json`, `.md` | semantic checks, metadata (versions, `corpusHash`, bounds, chunking policy, licenses, Store manifest fields, commits), environment |
+| `html-knowledge-ingestion.json`, `.md` | semantic checks, metadata (versions, `corpusHash`, bounds, chunking policy, licenses, Store manifest fields, commits, `runMode`, and the best-effort `env.*` fields: CPU model, total physical memory, salted `hostId`, and file system and storage type of each Store root), environment |
 | `html-kc-v1-chunks.tsv` | every chunk's labels and provenance: `chunkId`, `documentId`, `topic`, `section`, `source`, `license`, `attribution`, `[start, end)` code point span, `sha256`, `documentSha256`, conflict pair and role (no text) |
 | `html-kc-v1-manifest.tsv` | `chunkId → atomId → opaqueReference` for this import (no content hashes) |
 | `html-kc-ext-mdn-v1-*.tsv` | the same two files for a supplied snapshot, with `section` redacted to `sha256:<hex>` |
@@ -64,7 +64,14 @@ Semantic checks:
 | `ingestion.contentFidelity` | each returned atom's content hashes to the chunk `sha256` |
 | `ingestion.readback` | `resonate(<chunk text>).topK(<corpus size>).threshold(0.0)` returns the mapped atom with matching content |
 
-The `perf.*` metadata values are a single exploratory wall-clock sample and never affect a verdict.
+The `perf.ingest` and `perf.readback` rows are exploratory wall-clock measurements and never affect a verdict. Each
+reports `medianNanos` and `p95Nanos` over 5 imports: the import under test plus 4 imports into scratch roots. The
+scratch roots are created beside the root under test, in its parent directory, so they share its storage, and are
+deleted afterwards. `env.timingScratch.sameFileStoreAsStoreRoot` records this. A scratch import that fails is
+excluded from both rows and recorded in `<row>.excludedSamples`. That is metadata, never a semantic check: scratch
+roots exist only for latency, and latency never affects the verdict.
+Each row records its sampling (`warmupIterations`, `measurementIterations`, `operationsPerIteration`,
+`measurementMethod`, `validationInWindow`, `gcTelemetryScope`).
 
 ## Corpus
 

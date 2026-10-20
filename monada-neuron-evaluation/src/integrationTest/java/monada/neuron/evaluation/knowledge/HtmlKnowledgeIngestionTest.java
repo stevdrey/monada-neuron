@@ -7,12 +7,17 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.UncheckedIOException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class HtmlKnowledgeIngestionTest {
 
@@ -93,5 +98,82 @@ class HtmlKnowledgeIngestionTest {
 
     private static List<String> chunkSequence(IngestionManifest manifest) {
         return manifest.entries().stream().map(IngestionManifest.Entry::chunkId).toList();
+    }
+
+    @Test
+    void timingSamplesOfAFailedImportAreExcludedAsADiagnosticNeverACheck() {
+        var corpus = HtmlKnowledgeCorpus.bundled();
+        var ingestion = new HtmlKnowledgeIngestion(corpus);
+        var imported = ingestion.ingest(directory.resolve("store"));
+        var failed = new HtmlKnowledgeIngestion.Result(imported.root(), imported.manifest(),
+                List.of(new HtmlKnowledgeIngestion.Check("ingestion.readback", false, "injected")),
+                imported.ingestNanos(), imported.readbackNanos());
+
+        var timings = ingestion.timings(failed);
+        var metadata = new TreeMap<String, String>();
+        timings.describe("perf", "readback", "env.timingScratch", metadata);
+
+        assertEquals(Integer.toString(LatencyRow.REPETITIONS - 1), metadata.get("perf.ingest.measurementIterations"),
+                "only the scratch imports are sampled");
+        assertTrue(metadata.get("perf.ingest.excludedSamples").startsWith("1: the import under test failed"),
+                metadata.get("perf.ingest.excludedSamples"));
+        assertEquals("true", metadata.get("env.timingScratch.sameFileStoreAsStoreRoot"));
+        try (var children = Files.list(directory)) {
+            assertEquals(List.of(directory.resolve("store")), children.toList(), "scratch roots are deleted");
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    @Test
+    void timingSetupAndCleanupFailuresAreDiagnosticsNeverExceptions() throws IOException {
+        var ingestion = new HtmlKnowledgeIngestion(HtmlKnowledgeCorpus.bundled());
+        var parent = Files.createDirectories(directory.resolve("read-only-parent"));
+        var imported = ingestion.ingest(parent.resolve("store"));
+        assumeTrue(parent.toFile().setWritable(false), "the platform must honour a read-only directory");
+        try {
+            assumeFalse(Files.isWritable(parent), "a privileged user ignores directory permissions");
+
+            var timings = ingestion.timings(imported);
+            var metadata = new TreeMap<String, String>();
+            timings.describe("perf", "readback", "env.timingScratch", metadata);
+
+            assertEquals("1", metadata.get("perf.ingest.measurementIterations"), "only the import under test");
+            assertTrue(metadata.get("perf.ingest.excludedSamples").contains("scratch directory could not be created"),
+                    metadata.get("perf.ingest.excludedSamples"));
+            assertEquals("unknown (no scratch directory) (scratch imports skipped: only the import under test is"
+                    + " sampled)", metadata.get("env.timingScratch.sameFileStoreAsStoreRoot"));
+
+            var diagnostics = new ArrayList<String>();
+            HtmlKnowledgeIngestion.deleteQuietly(parent.resolve("store"), diagnostics);
+            assertTrue(diagnostics.getFirst().startsWith("scratch cleanup failed, left behind: "), diagnostics.toString());
+        } finally {
+            parent.toFile().setWritable(true);
+        }
+    }
+
+    @Test
+    void aScratchCleanupFailureIsInTheReturnedDiagnostics() throws IOException {
+        var ingestion = new HtmlKnowledgeIngestion(HtmlKnowledgeCorpus.bundled());
+        var imported = ingestion.ingest(directory.resolve("store"));
+        var scratch = Files.createDirectories(directory.resolve("scratch"));
+        var locked = Files.createDirectories(scratch.resolve("locked"));
+        Files.writeString(locked.resolve("pinned"), "x");
+        assumeTrue(locked.toFile().setWritable(false), "the platform must honour a read-only directory");
+        try {
+            assumeFalse(Files.isWritable(locked), "a privileged user ignores directory permissions");
+            var diagnostics = new ArrayList<String>();
+
+            var timings = ingestion.timings(imported, scratch, diagnostics);
+            var metadata = new TreeMap<String, String>();
+            timings.describe("perf", "readback", "env.timingScratch", metadata);
+
+            assertTrue(metadata.get("perf.ingest.excludedSamples").contains("scratch cleanup failed, left behind: "
+                    + scratch), metadata.get("perf.ingest.excludedSamples"));
+            assertEquals(Integer.toString(LatencyRow.REPETITIONS), metadata.get("perf.ingest.measurementIterations"),
+                    "a cleanup failure does not exclude any sample");
+        } finally {
+            locked.toFile().setWritable(true);
+        }
     }
 }

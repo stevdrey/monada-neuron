@@ -13,7 +13,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -172,6 +174,108 @@ public final class HtmlKnowledgeIngestion {
             }
         }
         return new Readback(failures, recalled);
+    }
+
+    /**
+     * Latency rows of an import: {@code ingest} (Store open plus one {@code remember} per chunk) and {@code readback}
+     * (one {@code resonate} per chunk, hashing in the window), each with up to {@link LatencyRow#REPETITIONS}
+     * samples, and the reasons for any excluded sample. The scratch roots exist only to sample latency, so a failed
+     * scratch import is a diagnostic, never a semantic check; the import under test is judged by its own checks.
+     */
+    record ImportTimings(LatencyRow ingest, LatencyRow readback, List<String> excluded, String scratchSameFileStore) {
+
+        ImportTimings {
+            excluded = List.copyOf(excluded);
+        }
+
+        /**
+         * Records both rows as {@code <prefix>.ingest} and {@code <prefix>.<readbackRow>}, each with its
+         * {@code excludedSamples} diagnostic, and whether the scratch roots shared the file store of the root under
+         * test as {@code <scratchKey>.sameFileStoreAsStoreRoot}. All of it is metadata, never a semantic check.
+         */
+        void describe(String prefix, String readbackRow, String scratchKey, Map<String, String> metadata) {
+            ingest.excluding(excluded).describe(prefix + ".ingest", metadata);
+            readback.excluding(excluded).describe(prefix + "." + readbackRow, metadata);
+            metadata.put(scratchKey + ".sameFileStoreAsStoreRoot", scratchSameFileStore);
+        }
+    }
+
+    /**
+     * Times {@code first}, an import already made, together with {@link LatencyRow#REPETITIONS} − 1 further imports
+     * of the same corpus into fresh scratch roots. The scratch roots live in a temporary directory beside
+     * {@code first}'s root, in the same parent, so every sample of a row uses the same storage; if that directory is
+     * nevertheless on another file store, the scratch imports are skipped and only {@code first} is sampled. The
+     * directory is deleted afterwards, and each extra root right after its import. A
+     * sample counts only when its import passed every check; a failed or throwing import is excluded from both rows
+     * and its reason recorded in {@code excludedSamples}, so a broken import is never published as a latency sample.
+     */
+    ImportTimings timings(Result first) {
+        // Timing only: no step below may throw, since latency never affects the verdict or the exit status. Every
+        // setup or cleanup failure becomes an excludedSamples diagnostic instead.
+        var diagnostics = new ArrayList<String>();
+        Path scratch = null;
+        try {
+            var parent = first.root().toAbsolutePath().normalize().getParent();
+            scratch = Files.createTempDirectory(parent, ".timing-scratch-");
+        } catch (IOException | RuntimeException e) {
+            diagnostics.add("scratch directory could not be created beside the root (" + e + "); only the import"
+                    + " under test is sampled");
+        }
+        return timings(first, scratch, diagnostics);
+    }
+
+    /** Deletes a timing-only path; a failure is recorded in {@code diagnostics} and never thrown. */
+    static void deleteQuietly(Path path, List<String> diagnostics) {
+        HtmlKnowledgeIngestionRunner.deleteTreeQuietly(path)
+                .ifPresent(left -> diagnostics.add("scratch cleanup failed, left behind: " + left));
+    }
+
+    /**
+     * Samples into {@code scratch} (null when it could not be created), deletes it, and only then builds the result,
+     * so a cleanup failure recorded in {@code failures} is part of the returned diagnostics.
+     */
+    ImportTimings timings(Result first, Path scratch, List<String> failures) {
+        var sameStore = scratch == null ? Optional.<Boolean>empty()
+                : new RunEnvironment().sameFileStore(first.root(), scratch);
+        var comparable = sameStore.orElse(false);
+        var ingest = new ArrayList<Long>();
+        var readback = new ArrayList<Long>();
+        if (first.allPassed()) {
+            ingest.add(first.ingestNanos());
+            readback.add(first.readbackNanos());
+        } else {
+            failures.add("the import under test failed a check (judged by its ingestion.* checks)");
+        }
+        for (var repetition = 1; comparable && repetition < LatencyRow.REPETITIONS; repetition++) {
+            var root = scratch.resolve("timing-import-" + repetition);
+            try {
+                var extra = ingest(root);
+                if (extra.allPassed()) {
+                    ingest.add(extra.ingestNanos());
+                    readback.add(extra.readbackNanos());
+                } else {
+                    failures.add("scratch import " + repetition + " failed " + extra.checks().stream()
+                            .filter(check -> !check.passed()).map(Check::name).toList());
+                }
+            } catch (RuntimeException e) {
+                failures.add("scratch import " + repetition + " threw " + e);
+            } finally {
+                deleteQuietly(root, failures);
+            }
+        }
+        if (scratch != null) {
+            deleteQuietly(scratch, failures);
+        }
+        var chunks = corpus.chunks().size();
+        return new ImportTimings(
+                LatencyRow.wallClock(LatencyRow.samples(ingest), chunks, "one Store open"
+                        + " plus one remember per chunk into a fresh root; sample 1 is the import under test, the others"
+                        + " go to deleted scratch roots; failed imports are excluded", false),
+                LatencyRow.wallClock(LatencyRow.samples(readback), chunks, "one resonate"
+                        + " per chunk on the just-imported root, with the content hash check in the window", true),
+                failures, (scratch == null ? "unknown (no scratch directory)"
+                        : sameStore.map(String::valueOf).orElse("unknown")) + (comparable ? ""
+                        : " (scratch imports skipped: only the import under test is sampled)"));
     }
 
     /**

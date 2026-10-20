@@ -13,7 +13,6 @@ import monada.neuron.evaluation.metrics.EvaluationReport.RunConfiguration;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.lang.management.ManagementFactory;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,7 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
-import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 /**
  * CLI of the HTML knowledge persistence experiment (Issue #106): imports {@code html-kc-v1} into a fresh Store root
@@ -43,17 +42,14 @@ public final class HtmlKnowledgePersistenceRunner {
     /** Report title. */
     public static final String TITLE = "Monada Neuron HTML Knowledge Persistence Report";
 
-    /** Wall-clock bound of one child phase. */
-    static final long PHASE_TIMEOUT_SECONDS = 300;
-
     private static final String NEURON_VERSION_PROPERTY = "monada.neuron.version";
     private static final String STORE_DIRECTORY_PROPERTY = "monada.resonance.store.dir";
-    private static final int STDERR_TAIL_LINES = 20;
     private static final String USAGE = "Usage: [--output-dir <dir>] [--store-root <dir>]";
 
     private final Options options;
     private final HtmlKnowledgeCorpus corpus;
     private final HtmlKnowledgePersistence persistence;
+    private final PhaseJvm phaseJvm = new PhaseJvm();
 
     HtmlKnowledgePersistenceRunner(Options options) {
         this.options = Objects.requireNonNull(options, "options must not be null");
@@ -233,9 +229,11 @@ public final class HtmlKnowledgePersistenceRunner {
             var evaluation = new EvaluationReport(
                     Instant.now(),
                     EnvironmentMetadata.current(),
-                    new RunConfiguration(0L, false, 0, 0, "one seed and one reopen JVM; the environment above is the"
-                            + " orchestrator's, each phase JVM's own is in <phase>.jvm.*; timings in metadata are"
-                            + " single exploratory wall-clock samples and never part of a verdict"),
+                    new RunConfiguration(0L, false, 0, 0, launchedPhases(List.of(HtmlKnowledgePersistencePhase.SEED,
+                            HtmlKnowledgePersistencePhase.REOPEN), Stream.concat(Stream.of(seed), reopen.stream())
+                            .toList()) + "; the environment above is the orchestrator's, each phase JVM's own is in"
+                            + " <phase>.jvm.*; "
+                            + LatencyRow.RUN_CONFIGURATION_NOTE),
                     List.of(),
                     TITLE);
             var report = new CheckedEvaluationReport(TITLE, "Persistence Metadata", evaluation, checks, metadata);
@@ -287,82 +285,24 @@ public final class HtmlKnowledgePersistenceRunner {
                 outputDir.resolve(version + "-reopen-recall.tsv"));
     }
 
-    /**
-     * Runs one phase in a child JVM with this JVM's {@code java} executable and class path, so the child loads
-     * exactly the classes under test, and with this JVM's heap, {@code -XX} and module flags (see
-     * {@link #forwardedJvmArguments()}), so both run with the same reported configuration.
-     */
     private PhaseRun launch(String phase, Path root, WorkDirectory work) {
-        var java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
-        var stdout = work.path().resolve(phase + ".out");
-        var stderr = work.path().resolve(phase + ".err");
-        var command = new ArrayList<String>();
-        command.add(java);
-        command.addAll(forwardedJvmArguments());
-        command.addAll(List.of("-cp", System.getProperty("java.class.path"),
-                HtmlKnowledgePersistencePhase.class.getName(), phase, root.toAbsolutePath().toString(),
-                work.path().toAbsolutePath().toString()));
-        var start = System.nanoTime();
-        Process process;
-        try {
-            process = new ProcessBuilder(command).redirectOutput(stdout.toFile()).redirectError(stderr.toFile())
-                    .start();
-        } catch (IOException e) {
-            throw new UncheckedIOException("cannot start the " + phase + " phase JVM", e);
-        }
-        try {
-            var exit = process.waitFor(PHASE_TIMEOUT_SECONDS, TimeUnit.SECONDS) ? process.exitValue() : -1;
-            if (exit == -1) {
-                terminate(process);
-            }
-            return new PhaseRun(phase, process.pid(), exit, System.nanoTime() - start, tail(stderr));
-        } catch (InterruptedException e) {
-            // Never leave a phase JVM writing into the work directory (or a kept root) that is about to be deleted.
-            terminate(process);
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("interrupted while waiting for the " + phase + " phase", e);
-        }
-    }
-
-    /** Kills {@code process} and waits for it to exit, even if this thread is interrupted meanwhile. */
-    private void terminate(Process process) {
-        process.destroyForcibly();
-        var interrupted = false;
-        while (process.isAlive()) {
-            try {
-                process.waitFor();
-            } catch (InterruptedException e) {
-                interrupted = true;
-            }
-        }
-        if (interrupted) {
-            Thread.currentThread().interrupt();
-        }
+        return phaseJvm.launch(HtmlKnowledgePersistencePhase.class, phase, root, work);
     }
 
     /**
-     * Returns the orchestrator's heap ({@code -Xms}, {@code -Xmx}, {@code -Xss}), {@code -XX:} and module
-     * ({@code --add-modules}, {@code --enable-preview}) arguments. System properties, agents and tool-specific
-     * arguments of a host such as a Gradle test worker are not forwarded.
+     * Describes which of the {@code planned} phase JVMs were actually launched, so a failed run's configuration never
+     * claims a phase, and the conditions it checks, that never ran.
      */
-    private List<String> forwardedJvmArguments() {
-        var input = ManagementFactory.getRuntimeMXBean().getInputArguments();
-        var forwarded = new ArrayList<String>();
-        for (var index = 0; index < input.size(); index++) {
-            var argument = input.get(index);
-            if (argument.equals("--add-modules") && index + 1 < input.size()) {
-                forwarded.add(argument);
-                forwarded.add(input.get(++index));
-            } else if (argument.startsWith("--add-modules=") || argument.equals("--enable-preview")
-                    || argument.startsWith("-Xms") || argument.startsWith("-Xmx") || argument.startsWith("-Xss")
-                    || argument.startsWith("-XX:")) {
-                forwarded.add(argument);
-            }
-        }
-        return forwarded;
+    static String launchedPhases(List<String> planned, List<PhaseRun> launched) {
+        var names = launched.stream().map(PhaseRun::phase).toList();
+        var missing = planned.stream().filter(phase -> !names.contains(phase)).toList();
+        return "phase JVMs launched: " + String.join(", ", names) + (missing.isEmpty() ? ""
+                : "; not launched: " + String.join(", ", missing) + " (an earlier phase did not complete or its root"
+                        + " could not be created)");
     }
 
-    private void collect(PhaseRun run, WorkDirectory work, List<Check> checks, Map<String, String> metadata) {
+    /** Adds a phase's checks and metadata, prefixed by its phase name, or a failed completion check. */
+    static void collect(PhaseRun run, WorkDirectory work, List<Check> checks, Map<String, String> metadata) {
         var resultFile = work.result(run.phase());
         if (!Files.exists(resultFile)) {
             checks.add(new Check(run.phase() + ".completed", false, "the " + run.phase() + " JVM exited "
@@ -387,7 +327,7 @@ public final class HtmlKnowledgePersistenceRunner {
      * (wrote its result and exited {@code 0} or {@code 1}). Semantic failures are reported by the phases' own checks
      * and do not fail this one.
      */
-    private Check restartCheck(PhaseRun seed, PhaseRun reopen, WorkDirectory work) {
+    static Check restartCheck(PhaseRun seed, PhaseRun reopen, WorkDirectory work) {
         var self = ProcessHandle.current().pid();
         var separate = seed.pid() != reopen.pid() && seed.pid() != self && reopen.pid() != self;
         var seedCompleted = completed(seed, work);
@@ -399,8 +339,17 @@ public final class HtmlKnowledgePersistenceRunner {
                 + (separate ? "; three distinct processes" : "; processes are not distinct"));
     }
 
-    private boolean completed(PhaseRun run, WorkDirectory work) {
-        return (run.exitStatus() == 0 || run.exitStatus() == 1) && Files.exists(work.result(run.phase()));
+    /** A phase completed when it exited {@code 0} or {@code 1} and left a complete, parseable result. */
+    private static boolean completed(PhaseRun run, WorkDirectory work) {
+        if ((run.exitStatus() != 0 && run.exitStatus() != 1) || !Files.exists(work.result(run.phase()))) {
+            return false;
+        }
+        try {
+            Result.parse(work.read(work.result(run.phase())));
+            return true;
+        } catch (IllegalArgumentException | UncheckedIOException e) {
+            return false;
+        }
     }
 
     private void describe(Path root, PhaseRun seed, Optional<PhaseRun> reopen, Map<String, String> metadata) {
@@ -419,7 +368,7 @@ public final class HtmlKnowledgePersistenceRunner {
         metadata.put("ordering.direct", "Store: score descending, then atom id ascending");
         metadata.put("ordering.neuron", "adapter: score descending, then query Signal index, then Store rank;"
                 + " deduplicated by atom");
-        metadata.put("phase.forwardedJvmArguments", String.join(" ", forwardedJvmArguments()));
+        metadata.put("phase.forwardedJvmArguments", String.join(" ", phaseJvm.forwardedJvmArguments()));
         metadata.put("phase.seed.pid", Long.toString(seed.pid()));
         metadata.put("phase.seed.exit", Integer.toString(seed.exitStatus()));
         metadata.put("phase.seed.nanos", Long.toString(seed.nanos()));
@@ -428,8 +377,17 @@ public final class HtmlKnowledgePersistenceRunner {
             metadata.put("phase.reopen.exit", Integer.toString(run.exitStatus()));
             metadata.put("phase.reopen.nanos", Long.toString(run.nanos()));
         });
-        metadata.put("store.root", options.storeRoot().isPresent() ? root.toAbsolutePath().toString()
-                : "temporary (deleted)");
+        describeStore(root, options.storeRoot(), metadata);
+        metadata.put("runMode", (options.storeRoot().isPresent() ? "kept Store root" : "default (temporary Store root)")
+                + "; profile html-knowledge-protocol-v1 persistence and restart");
+        var environment = new RunEnvironment();
+        environment.describeHost(metadata);
+        environment.describeStoreRoot("env.storeRoot", root, metadata);
+    }
+
+    /** Records the Store root, the persisted Store manifest and the Neuron and Store versions and commits. */
+    static void describeStore(Path root, Optional<Path> keptRoot, Map<String, String> metadata) {
+        metadata.put("store.root", keptRoot.isPresent() ? root.toAbsolutePath().toString() : "temporary (deleted)");
         var manifest = root.resolve("manifest.json");
         if (Files.exists(manifest)) {
             try {
@@ -446,15 +404,6 @@ public final class HtmlKnowledgePersistenceRunner {
         var storeDirectory = System.getProperty(STORE_DIRECTORY_PROPERTY);
         metadata.put("store.checkoutCommit",
                 StoreMetadata.gitCommit(storeDirectory == null ? null : Path.of(storeDirectory)));
-    }
-
-    private String tail(Path file) {
-        try {
-            var lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-            return String.join(" | ", lines.subList(Math.max(0, lines.size() - STDERR_TAIL_LINES), lines.size()));
-        } catch (IOException e) {
-            return "<stderr unreadable: " + e.getMessage() + ">";
-        }
     }
 
     private Path temporaryDirectory() {

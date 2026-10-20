@@ -47,6 +47,18 @@ public record CheckedEvaluationReport(
 
     /** Renders verdicts and metadata followed by the full measurement report. */
     public String toJson() {
+        return toJson(Map.of());
+    }
+
+    /**
+     * Renders verdicts and metadata, then each of {@code sections} as a top-level member whose value is the given raw
+     * JSON (in key order), then the full measurement report. Keeping the sections in the same object as the verdict
+     * means a consumer cannot read them without seeing {@code allChecksPassed}.
+     *
+     * @param sections member name to an already rendered JSON value, such as an object or {@code null}
+     */
+    public String toJson(Map<String, String> sections) {
+        Objects.requireNonNull(sections, "sections must not be null");
         var sb = new StringBuilder("{\n");
         sb.append("  \"title\": \"").append(escape(title)).append("\",\n");
         sb.append("  \"allChecksPassed\": ").append(allPassed()).append(",\n");
@@ -67,6 +79,10 @@ public record CheckedEvaluationReport(
             sb.append(++index < metadata.size() ? ",\n" : "\n");
         }
         sb.append("  },\n");
+        for (var section : new TreeMap<>(sections).entrySet()) {
+            sb.append("  \"").append(escape(section.getKey())).append("\": ")
+                    .append(section.getValue().strip()).append(",\n");
+        }
         sb.append("  \"evaluation\": ").append(evaluation.toJson().stripTrailing()).append("\n}\n");
         return sb.toString();
     }

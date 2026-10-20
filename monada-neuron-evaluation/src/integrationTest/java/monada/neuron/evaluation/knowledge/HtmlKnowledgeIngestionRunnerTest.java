@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class HtmlKnowledgeIngestionRunnerTest {
@@ -29,6 +30,12 @@ class HtmlKnowledgeIngestionRunnerTest {
         var written = HtmlKnowledgeIngestionRunner.write(outcome);
 
         assertTrue(outcome.report().allPassed(), outcome.report().toMarkdown());
+        assertTrue(outcome.report().checks().stream().noneMatch(check -> check.name().contains("timing")),
+                "scratch timing imports never produce a semantic check");
+        assertEquals("0", outcome.report().metadata().get("store.perf.ingest.excludedSamples"));
+        assertTrue(outcome.report().toJson().contains("plus up to 4 timed scratch imports (a skipped or failed one is listed in"));
+        assertTrue(outcome.report().toJson().contains("latency rows report median and p95"));
+        assertEquals("true", outcome.report().metadata().get("env.timingScratch.sameFileStoreAsStoreRoot"));
         assertTrue(outcome.external().isEmpty());
         assertEquals(4, written.size());
         var json = Files.readString(directory.resolve("html-knowledge-ingestion.json"));
@@ -36,6 +43,18 @@ class HtmlKnowledgeIngestionRunnerTest {
         assertTrue(json.contains("\"corpus.hash\": \"" + HtmlKnowledgeCorpus.bundled().corpusHash() + "\""));
         assertTrue(json.contains("\"protocolVersion\": \"html-knowledge-protocol-v1\""));
         assertTrue(json.contains("\"store.root\": \"temporary (deleted)\""));
+        for (var row : List.of("store.perf.ingest", "store.perf.readback")) {
+            assertEquals(Integer.toString(LatencyRow.REPETITIONS),
+                    outcome.report().metadata().get(row + ".measurementIterations"), row);
+            for (var field : List.of("medianNanos", "p95Nanos", "warmupIterations", "measurementIterations",
+                    "operationsPerIteration", "measurementMethod", "validationInWindow", "gcTelemetryScope")) {
+                assertTrue(outcome.report().metadata().containsKey(row + "." + field), row + "." + field);
+            }
+        }
+        for (var key : List.of("runMode", "env.cpuModel", "env.totalPhysicalMemoryBytes", "env.hostId",
+                "env.storeRoot.fileSystem", "env.storeRoot.storageType")) {
+            assertTrue(outcome.report().metadata().containsKey(key), key);
+        }
         assertTrue(Files.readString(directory.resolve("html-kc-v1-manifest.tsv")).contains(IngestionManifest.HEADER));
         assertTrue(Files.readString(directory.resolve("html-kc-v1-chunks.tsv")).contains("conflict:img-alt"));
         assertFalse(Files.exists(outcome.authored().result().root()));
@@ -284,5 +303,25 @@ class HtmlKnowledgeIngestionRunnerTest {
 
     private static String[] concat(String[] first, String[] second) {
         return Stream.concat(Stream.of(first), Stream.of(second)).toArray(String[]::new);
+    }
+
+    @Test
+    void quietDeletionReportsWhatWasLeftBehindInsteadOfThrowing() throws IOException {
+        var gone = Files.createDirectories(directory.resolve("gone/nested"));
+        Files.writeString(gone.resolve("file"), "x");
+        assertTrue(HtmlKnowledgeIngestionRunner.deleteTreeQuietly(directory.resolve("gone")).isEmpty());
+        assertFalse(Files.exists(directory.resolve("gone")));
+
+        var parent = Files.createDirectories(directory.resolve("locked"));
+        var kept = Files.createDirectories(parent.resolve("kept"));
+        parent.toFile().setWritable(false);
+        try {
+            assumeFalse(Files.isWritable(parent), "a privileged user ignores directory permissions");
+            var left = HtmlKnowledgeIngestionRunner.deleteTreeQuietly(parent);
+            assertTrue(left.orElseThrow().startsWith(parent + " ("), left.toString());
+            assertTrue(Files.exists(kept));
+        } finally {
+            parent.toFile().setWritable(true);
+        }
     }
 }

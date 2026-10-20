@@ -26,7 +26,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -179,8 +178,19 @@ public final class HtmlKnowledgePersistence {
      * @throws IngestionInputException when {@code root} holds no Store manifest
      */
     public Observation observe(Path root, IngestionManifest manifest) {
-        Objects.requireNonNull(manifest, "manifest must not be null");
         requireExistingStore(root);
+        return observe(root, manifest, () -> MonadaMemory.open(root, MonadaMemoryOptions.defaults()),
+                () -> ResonanceStoreMemoryAdapter.open(root, config()));
+    }
+
+    /**
+     * {@link #observe(Path, IngestionManifest)} with injectable openers. The timed opens and first recalls exist only
+     * for latency: each is caught, and a failure is an excluded sample, never a check. The handles that serve the
+     * observation are opened separately afterwards and are not caught, since the protocol requires them.
+     */
+    Observation observe(Path root, IngestionManifest manifest, Supplier<MonadaMemory> memoryOpener,
+            Supplier<ResonanceStoreMemoryAdapter> adapterOpener) {
+        Objects.requireNonNull(manifest, "manifest must not be null");
         var checks = new ArrayList<Check>();
         var metadata = new LinkedHashMap<String, String>();
         var count = corpus.chunks().size();
@@ -208,9 +218,23 @@ public final class HtmlKnowledgePersistence {
                         + ", defaults()) and the vector format is the current FIXED_RAW"
                 : "persisted [" + profile + "] differs from the expected default profile [" + expected + "]"));
 
-        var openStart = System.nanoTime();
-        var memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
-        metadata.put("perf.directOpenNanos", Long.toString(System.nanoTime() - openStart));
+        var directOpens = new ArrayList<Long>();
+        var directOpenFailures = new ArrayList<String>();
+        // MonadaMemory has no close: the Store opens its files only for the duration of each call, so an unreferenced
+        // timed handle holds no file descriptor or lock and costs heap only until the GC reclaims it.
+        for (var repetition = 1; repetition <= LatencyRow.REPETITIONS; repetition++) {
+            try {
+                var openStart = System.nanoTime();
+                memoryOpener.get();
+                directOpens.add(System.nanoTime() - openStart);
+            } catch (RuntimeException e) {
+                directOpenFailures.add("repetition " + repetition + " threw " + e);
+            }
+        }
+        LatencyRow.wallClock(LatencyRow.samples(directOpens), 1, "MonadaMemory.open on the"
+                + " same root, a fresh handle per sample; the observation uses a separately opened handle", false)
+                .excluding(directOpenFailures).describe("perf.directOpen", metadata);
+        var memory = memoryOpener.get();
         var readback = ingestion.readbackSweep(memory, manifest);
         var unread = readback.unread();
         checks.add(new Check("persistence.readback", unread.isEmpty(), unread.isEmpty()
@@ -229,10 +253,57 @@ public final class HtmlKnowledgePersistence {
         var referenceFailures = new ArrayList<String>();
         var signalFailures = new ArrayList<String>();
         var statusFailures = new ArrayList<String>();
-        var adapterOpenStart = System.nanoTime();
-        try (var adapter = ResonanceStoreMemoryAdapter.open(root, config())) {
-            metadata.put("perf.adapterOpenNanos", Long.toString(System.nanoTime() - adapterOpenStart));
-            var warm = new long[probes.size()];
+        var adapterOpens = new ArrayList<Long>();
+        var adapterOpenFailures = new ArrayList<String>();
+        var firstRecalls = new ArrayList<Long>();
+        var firstRecallFailures = new ArrayList<String>();
+        var firstProbe = new ResonanceMemoryRequest(List.of(codec.querySignal(probes.getFirst().probeId())), TOP_K);
+        for (var repetition = 0; repetition < LatencyRow.REPETITIONS; repetition++) {
+            ResonanceStoreMemoryAdapter opened;
+            try {
+                var adapterOpenStart = System.nanoTime();
+                opened = adapterOpener.get();
+                adapterOpens.add(System.nanoTime() - adapterOpenStart);
+            } catch (RuntimeException e) {
+                adapterOpenFailures.add("repetition " + (repetition + 1) + " threw " + e);
+                firstRecallFailures.add("adapter " + (repetition + 1) + " could not be opened");
+                continue;
+            }
+            // The first recall on each fresh adapter, before any other call on it; its result is discarded. A failed or
+            // non-COMPLETE call is excluded and recorded as a diagnostic, never a check: these calls exist only for
+            // latency, and neuron.recallComplete judges the probes the protocol requires.
+            try {
+                var recallStart = System.nanoTime();
+                var response = opened.recall(firstProbe);
+                var elapsed = System.nanoTime() - recallStart;
+                if (response.status() == ResonanceMemoryStatus.COMPLETE) {
+                    firstRecalls.add(elapsed);
+                } else {
+                    firstRecallFailures.add("adapter " + (repetition + 1) + " answered " + response.status());
+                }
+            } catch (RuntimeException e) {
+                firstRecallFailures.add("adapter " + (repetition + 1) + " threw " + e);
+            } finally {
+                opened.close();
+            }
+        }
+        LatencyRow.wallClock(LatencyRow.samples(adapterOpens), 1, "ResonanceStoreMemoryAdapter"
+                + ".open on the same root, a fresh adapter per sample; the observation uses a separately opened"
+                + " adapter", false).excluding(adapterOpenFailures).describe("perf.adapterOpen", metadata);
+        LatencyRow.wallClock(LatencyRow.samples(firstRecalls), 1, "the first adapter recall"
+                + " (first probe) on a freshly opened adapter, before any other call on it; the readback already ran in"
+                + " this JVM on another handle; failed or non-COMPLETE calls are excluded", false)
+                .excluding(firstRecallFailures).describe("perf.firstRecall", metadata);
+        try (var adapter = adapterOpener.get()) {
+            // The observation adapter has served no call yet: one unmeasured recall warms it, so every perf.warmRecall
+            // sample is a warm call. Its outcome is latency-only; the probes below are judged by neuron.recallComplete.
+            try {
+                adapter.recall(firstProbe);
+            } catch (RuntimeException ignored) {
+                // Latency-only warm-up; a real failure shows up in the measured probes.
+            }
+            // Only COMPLETE recalls are samples; any other status is reported by neuron.recallComplete.
+            var warm = new ArrayList<Long>();
             for (var index = 0; index < probes.size(); index++) {
                 var probe = probes.get(index);
                 var direct = memory.resonate(probe.query()).topK(TOP_K).threshold(THRESHOLD).execute().results();
@@ -244,9 +315,11 @@ public final class HtmlKnowledgePersistence {
                 var recallStart = System.nanoTime();
                 var response = adapter.recall(new ResonanceMemoryRequest(
                         List.of(codec.querySignal(probe.probeId())), TOP_K));
-                warm[index] = System.nanoTime() - recallStart;
+                var duration = System.nanoTime() - recallStart;
                 if (response.status() != ResonanceMemoryStatus.COMPLETE) {
                     statusFailures.add(probe.probeId() + "=" + response.status());
+                } else {
+                    warm.add(duration);
                 }
                 for (var rank = 0; rank < response.results().size(); rank++) {
                     var result = response.results().get(rank);
@@ -261,8 +334,11 @@ public final class HtmlKnowledgePersistence {
                     rows.add(new Row(probe.probeId(), NEURON, rank, byReference.orElse(UNMAPPED), result.score()));
                 }
             }
-            metadata.put("perf.firstRecallNanos", Long.toString(warm[0]));
-            metadata.put("perf.warmRecallMedianNanos", Long.toString(median(Arrays.copyOfRange(warm, 1, warm.length))));
+            new LatencyRow(LatencyRow.samples(warm), 1, 1, LatencyRow.WALL_CLOCK + "; one"
+                    + " adapter recall per probe on the observation adapter, after one unmeasured recall on that same"
+                    + " adapter; only the adapter recall is timed; non-COMPLETE recalls are excluded", false,
+                    LatencyRow.NO_GC_TELEMETRY)
+                    .excluding(statusFailures).describe("perf.warmRecall", metadata);
         }
 
         checks.add(new Check("neuron.recallComplete", statusFailures.isEmpty(), statusFailures.isEmpty()
@@ -565,7 +641,7 @@ public final class HtmlKnowledgePersistence {
      *
      * @throws IngestionInputException when {@code root/manifest.json} is not a regular file
      */
-    void requireExistingStore(Path root) {
+    static void requireExistingStore(Path root) {
         Objects.requireNonNull(root, "root must not be null");
         if (!Files.isRegularFile(root.resolve(MANIFEST_FILE))) {
             throw new IngestionInputException("store root " + root + " holds no " + MANIFEST_FILE
@@ -622,15 +698,6 @@ public final class HtmlKnowledgePersistence {
                 + (index < expected.size() ? expected.get(index).toTsv() : "<none>") + ", now "
                 + (index < actual.size() ? actual.get(index).toTsv() : "<none>") + " (" + expected.size() + " vs "
                 + actual.size() + " results)");
-    }
-
-    private long median(long[] values) {
-        if (values.length == 0) {
-            return 0L;
-        }
-        var sorted = values.clone();
-        Arrays.sort(sorted);
-        return sorted[sorted.length / 2];
     }
 
     private void rewriteAtomLog(Path root, String atomId,

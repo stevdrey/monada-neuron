@@ -6,7 +6,7 @@
 | :--- | :--- |
 | Protocol version | `html-knowledge-protocol-v1` |
 | Issue | [#104](https://github.com/stevdrey/monada-neuron/issues/104) (Experiment Knowledge 1/8) |
-| Implementation | Corpus contract delivered by #105 ([ingestion](../benchmarks/html-knowledge-ingestion.md)); ingestion readback, post-reopen (restart) and L2 attribution delivered by #106 ([persistence](../benchmarks/html-knowledge-persistence.md)); the rest of this document is the contract that issues #107 to #111 implement. |
+| Implementation | Corpus contract delivered by #105 ([ingestion](../benchmarks/html-knowledge-ingestion.md)); ingestion readback, post-reopen (restart) and L2 attribution delivered by #106 ([persistence](../benchmarks/html-knowledge-persistence.md)); query set `html-kq-v1`, L1/L2 judged recall and baselines B0 to B2c delivered by #107 ([recall](../benchmarks/html-knowledge-recall.md)); the rest of this document is the contract that issues #107 to #111 implement. |
 | Scope | Monada Neuron `monada-neuron-evaluation` optional `integration` / `integrationTest` source sets only |
 | Extensions | `l3-evidence-v1` (#108), `l4-answer-v1` (#109), `feedback-v1` (#110), `scaling-v1` (#111) |
 
@@ -824,7 +824,7 @@ issue fixes the exact task name in its own documentation.
 | :--- | :--- | :--- | :--- |
 | #105 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeIngestion` | import `html-kc-v1` into a temporary Store, write the manifest |
 | #106 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgePersistence` | persistence across separate JVMs, reopen and source-level readback through Neuron |
-| #107 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeRecall` | L1/L2 judged recall with B0/B1/B2 |
+| #107 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeRecall` | L1/L2 judged recall with B0/B1/B2/B2c over `html-kq-v1`, rerun in a reopen JVM and in a fresh-root replica JVM |
 | #108 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeEvidenceTrace` | L3 evidence use in a cognitive cycle |
 | #109 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeAnswers` | L4 grounded answers with B3 and abstention |
 | #110 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeFeedback` | [relevance feedback](#relevance-feedback-delivered-by-110) vs a no-feedback control |
@@ -851,3 +851,32 @@ source set, and do not change `./gradlew test` when it is absent.
 - No version change (issue #106): the ingestion readback and post-reopen (restart) conditions are implemented by
   `runHtmlKnowledgePersistence`, with a seed JVM and a separate reopen JVM, over a fixed probe set rather than the
   #107 query set. No definition, formula, label rule or report field changes.
+- No version change (issue #107). No definition, formula, label rule or report field changes.
+  - **Query set.** Delivered as `html-kq-v1`: 32 queries in
+    `monada-neuron-evaluation/src/integration/resources/html-kq-v1/queries.tsv`, scored by `runHtmlKnowledgeRecall`
+    ([recall](../benchmarks/html-knowledge-recall.md)).
+    - Errata before merge: `q:false-premise-03` gained its required refutation keyClaim. The `queryHash` changed from
+      `97b29b68…` to `e91b0404…`. No L1/L2 result changed.
+  - **Codec and inputs.** The L2 codec is the documented, text-only `token-packing v1`. The phase JVMs read a
+    labels-free workload, so only the scorer reads gold labels.
+  - **Queried limits.** Every system (B0, B1, B2, B2c) is queried at limits 1, 3 and 5, plus a limit-6 lookahead used
+    only for `tieAtCutoff` at k = 5 and never for `Ret_k`. Prefix stability and B2 = B2c are checked at every limit,
+    with their full expected comparison count. Scores are compared bit-exactly.
+  - **Failures.** An operational or fidelity failure of a measured query leaves a failure marker, so the query gets no
+    outcome instead of being scored as an abstention. A non-finite Store score fails its B1 or B2c layer.
+  - **Determinism and readback.** A reopen JVM checks restart determinism and repeats the full-corpus readback once, as
+    required. A `replica` JVM imports into its own fresh root to check fresh-root determinism.
+  - **Report integrity.** Exchanged phase files end with a count line, so a truncated file is rejected. The single
+    JSON report carries the verdict and the scored payload. The knowledge runners record the required run-mode and
+    environment fields.
+  - **Semantic boundary.** Only protocol-required operations are checks:
+    - the measured recalls with their fidelity, B2 = B2c and prefix stability;
+    - the ingestion of the root under test;
+    - the one required restarted-process readback;
+    - restart and fresh-root determinism.
+  - **Latency diagnostics.** Every other call exists only for latency, never decides `allChecksPassed`, catches its
+    own exceptions, and on failure is excluded from its row and recorded in `excludedSamples` (`perf.warmup.failures`
+    for the warm-up). These calls are the cold first-recall samples, the warm-up pass, the timed opens, readback
+    repetitions 2 to 5 and the scratch timing imports. The observation opens its own handles separately.
+  - **Latency rows.** Every latency row reports median and p95 with its sampling fields. Timing scratch roots and the
+    replica root sit beside the root under test, on the same storage.

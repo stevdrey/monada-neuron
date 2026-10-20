@@ -10,7 +10,7 @@ This page covers Experiment Knowledge 3/8, [#106](https://github.com/stevdrey/mo
 the protocol's [ingestion readback and post-reopen (restart)](../experiments/html-knowledge-v1.md#run-conditions)
 conditions. It exercises the textual `MonadaMemory` API, not `ExecutionMemory`.
 
-It does **not** score retrieval quality (#107), evidence use (#108) or answers (#109). Recalling a stored chunk is
+It does **not** score retrieval quality ([#107](html-knowledge-recall.md)), evidence use (#108) or answers (#109). Recalling a stored chunk is
 external memory, not reasoning, and nothing here learns HTML.
 
 ## Running
@@ -151,12 +151,30 @@ The metadata includes:
 - the codec description and scope, `probes.{version,hash,count,topK,threshold}` and the ordering rules;
 - `store.manifest.*` (version, encoder, normalizer, dimensions, vector format);
 - `store.implementationVersion` (`unknown` when the Store classes come from directories, not jars);
-- `store.checkoutCommit` and `neuron.commit` (`+dirty` when there are uncommitted changes), and `neuron.version`.
+- `store.checkoutCommit` and `neuron.commit` (`+dirty` when there are uncommitted changes), and `neuron.version`;
+- run identity: `runMode`, and best-effort environment fields `env.cpuModel`, `env.totalPhysicalMemoryBytes`, `env.hostId` (salted, truncated SHA-256 of the host name; the name itself is never written) and the Store root's `env.storeRoot.{fileSystem,storageType}`. A value that cannot be read is `unknown (<reason>)` and never fails a run.
 
-The `*.perf.*` values (open, first recall, warm-recall median) are single exploratory wall-clock samples. They never
-affect a verdict.
+The `*.perf.*` rows are exploratory wall-clock measurements, reported as `medianNanos` and `p95Nanos`, and never
+affect a verdict:
+- `perf.directOpen` and `perf.adapterOpen`: 5 fresh opens each;
+- `perf.firstRecall`: the first recall on each of those 5 fresh adapters, before any other call on it;
+- `perf.warmRecall`: one sample per probe.
 
-## Observed behaviour (Store `main`, 2026-10-17)
+Each row records its sampling as `<row>.{warmupIterations,measurementIterations,operationsPerIteration,`
+`measurementMethod,validationInWindow,gcTelemetryScope}`. A phase result ends with a line stating its counts, so an
+empty or truncated result counts as an incomplete phase. The reopen phase also requires a manifest entry for every
+chunk.
+
+## Observed behaviour
+
+First recorded on 2026-10-17 against Store `main`. Re-checked on 2026-10-19 on the final harness: Neuron `7cb32ee`
+with a clean tree, Store `b2583c2` (a clean clone), all 34 checks passing. Every statement below still holds as written.
+
+The timed opens (`perf.directOpen`, `perf.adapterOpen`) and the first recall on each freshly opened adapter are latency
+samples only. Each catches its own exceptions: a failed one is excluded from its row and recorded in
+`<row>.excludedSamples`, never as a check. The observation uses handles opened separately, which the protocol
+requires. Its adapter serves one unmeasured recall before the probes, so every `perf.warmRecall` sample is a warm
+call.
 
 - **Persistence:** all 33 chunks are persisted and read back with identical content in the restarted JVM. The 195
   direct results and the 195 adapter results (39 probes × 5) are bit-identical between the two processes.

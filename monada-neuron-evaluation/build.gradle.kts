@@ -166,6 +166,18 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
         args(quotedBenchmarkArgs())
     }
 
+    // Judged HTML recall (Issue #107, docs/benchmarks/html-knowledge-recall.md). Runs the html-kq-v1 queries through
+    // B0/B1/B2/B2c in a seed JVM and again in a separate reopen JVM, then scores them against the gold labels.
+    tasks.register<JavaExec>("runHtmlKnowledgeRecall") {
+        group = "benchmark"
+        description = "Measures judged html-kq-v1 recall through the Store and Neuron's memory port across separate JVMs (Issue #107)"
+        classpath = integration.runtimeClasspath
+        mainClass.set("monada.neuron.evaluation.knowledge.HtmlKnowledgeRecallRunner")
+        systemProperty("monada.neuron.version", project.version.toString())
+        systemProperty("monada.resonance.store.dir", rootProject.file("../monada-resonance-store").absolutePath)
+        args(quotedBenchmarkArgs())
+    }
+
     // Adapter-boundary JMH (Issue #49). Lives with the integration source set because it needs the
     // optional adapter; the generic `jmh` task only sees `main`.
     tasks.register<JavaExec>("jmhResonanceStoreAdapter") {
