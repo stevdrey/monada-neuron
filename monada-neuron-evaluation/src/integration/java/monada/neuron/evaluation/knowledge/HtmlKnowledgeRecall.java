@@ -11,6 +11,7 @@ import monada.neuron.resonance.adapter.OpaqueReference;
 import monada.neuron.resonance.adapter.ResonanceStoreAdapterConfig;
 import monada.neuron.resonance.adapter.ResonanceStoreMemoryAdapter;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -84,7 +85,7 @@ final class HtmlKnowledgeRecall {
     static final String FAILED = "<failed>";
 
     private static final int MAX_DETAILS = 5;
-    private static final int MAX_WORKLOAD_BYTES = 64 * 1024;
+    static final int MAX_WORKLOAD_BYTES = 64 * 1024;
 
     /** The systems under test and the control. */
     enum Layer {
@@ -144,13 +145,15 @@ final class HtmlKnowledgeRecall {
         }
 
         /**
-         * Parses {@link #renderTsv} output strictly; at most 64 KiB.
+         * Parses {@link #renderTsv} output strictly; at most 64 KiB of UTF-8, the encoding of the workload file.
          *
          * @throws IngestionInputException when the workload is malformed or oversize
          */
         static Workload parseTsv(String tsv) {
-            if (tsv.length() > MAX_WORKLOAD_BYTES) {
-                throw new IngestionInputException("workload exceeds " + MAX_WORKLOAD_BYTES + " characters");
+            // UTF-8 is never shorter than the UTF-16 length, so the char count rejects oversize text cheaply.
+            if (tsv.length() > MAX_WORKLOAD_BYTES
+                    || tsv.getBytes(StandardCharsets.UTF_8).length > MAX_WORKLOAD_BYTES) {
+                throw new IngestionInputException("workload exceeds " + MAX_WORKLOAD_BYTES + " UTF-8 bytes");
             }
             var lines = tsv.split("\n", -1);
             if (lines.length < 4 || !lines[0].startsWith(HASH_PREFIX) || !lines[1].equals(HEADER)
@@ -343,6 +346,8 @@ final class HtmlKnowledgeRecall {
         var excludedB1 = new ArrayList<String>();
         var excludedB2 = new ArrayList<String>();
         var sample = firstWithToken(queries);
+        // MonadaMemory has no close: the Store opens its files only for the duration of each call, so an unreferenced
+        // timed handle holds no file descriptor or lock and costs heap only until the GC reclaims it.
         for (var repetition = 1; repetition <= LatencyRow.REPETITIONS; repetition++) {
             ResonanceStoreMemoryAdapter timed = null;
             try {
@@ -374,16 +379,18 @@ final class HtmlKnowledgeRecall {
         try (var observing = handles.adapter()) {
             var observed = observe(handles.memory(), observing, manifest, queryHash, queries);
             var metadata = new LinkedHashMap<>(observed.metadata());
-            LatencyRow.wallClock(samples(opens), 2, "MonadaMemory.open plus the adapter's own open on the same root, a"
-                    + " fresh pair per sample; the observation uses a separately opened pair", false)
+            LatencyRow.wallClock(LatencyRow.samples(opens), 2, "MonadaMemory.open plus the adapter's own open on the"
+                    + " same root, a fresh pair per sample; the observation uses a separately opened pair", false)
                     .excluding(excludedOpens).describe("perf.open", metadata);
             var cold = "the first call on a freshly opened handle pair, made before any other call on it, for the"
                     + " first query with at least one token at limit 5; earlier in this JVM the ingestion or reopen"
                     + " readback already ran on other handles, and sample 1 is the phase's first query call";
-            LatencyRow.wallClock(samples(firstB1), 1, "B1 Store call; " + cold + "; failed calls are excluded", false)
+            LatencyRow.wallClock(LatencyRow.samples(firstB1), 1, "B1 Store call; " + cold + "; failed calls are"
+                    + " excluded", false)
                     .excluding(excludedB1).describe("perf.b1.firstRecall", metadata);
-            LatencyRow.wallClock(samples(firstB2), 1, "B2 adapter recall; " + cold + "; failed or non-COMPLETE calls"
-                    + " are excluded", false).excluding(excludedB2).describe("perf.b2.firstRecall", metadata);
+            LatencyRow.wallClock(LatencyRow.samples(firstB2), 1, "B2 adapter recall; " + cold + "; failed or"
+                    + " non-COMPLETE calls are excluded", false)
+                    .excluding(excludedB2).describe("perf.b2.firstRecall", metadata);
             return new Observation(observed.snapshot(), observed.checks(), metadata);
         }
     }
@@ -444,10 +451,6 @@ final class HtmlKnowledgeRecall {
         return new ColdSample(b1, b2, b1Failure, b2Failure);
     }
 
-    private static long[] samples(List<Long> values) {
-        return values.stream().mapToLong(Long::longValue).toArray();
-    }
-
     /**
      * Runs every query through an open {@code MonadaMemory} (B1, B2c) and an open adapter (B2), which may be bound to
      * any store-side recall; the caller owns both.
@@ -458,7 +461,8 @@ final class HtmlKnowledgeRecall {
         Objects.requireNonNull(queryHash, "queryHash must not be null");
         var run = new Run(manifest, queries.size());
         var warmupFailures = warmUp(memory, adapter, queries);
-        // Only calls that returned (B1) or answered COMPLETE (B2) report a duration; failures are in recall.completed.
+        // Only calls that returned (B1) or answered COMPLETE (B2) and mapped faithfully report a duration; every other
+        // measured call is an excluded sample, and its failure is in recall.completed or fidelity.*.
         var b1Nanos = new ArrayList<Long>();
         var b2Nanos = new ArrayList<Long>();
         var b1Excluded = new ArrayList<String>();
@@ -470,17 +474,21 @@ final class HtmlKnowledgeRecall {
                 run.prefix(query, Layer.B0, limit, b0, lexical(run, query, limit));
             }
             run.prefix(query, Layer.B0, MAX_LIMIT, lexical(run, query, LOOKAHEAD_LIMIT), b0);
+            var b1Sampled = b1Nanos.size();
             var b1 = direct(run, memory, query, MAX_LIMIT, b1Nanos::add);
-            if (b1 == null) {
-                b1Excluded.add(query.queryId() + " failed (see recall.completed)");
+            if (b1Nanos.size() == b1Sampled) {
+                b1Excluded.add(query.queryId() + (b1 == null ? " failed (see recall.completed)"
+                        : " failed source fidelity (see fidelity.source)"));
             }
             for (var limit : PREFIX_LIMITS) {
                 run.prefix(query, Layer.B1, limit, b1, direct(run, memory, query, limit));
             }
             run.prefix(query, Layer.B1, MAX_LIMIT, direct(run, memory, query, LOOKAHEAD_LIMIT), b1);
+            var b2Sampled = b2Nanos.size();
             var b2 = neuron(run, adapter, query, MAX_LIMIT, b2Nanos::add);
-            if (b2 == null) {
-                b2Excluded.add(query.queryId() + " failed (see recall.completed)");
+            if (b2Nanos.size() == b2Sampled) {
+                b2Excluded.add(query.queryId() + (b2 == null ? " failed (see recall.completed)"
+                        : " failed reference fidelity (see fidelity.reference)"));
             }
             var b2c = codecDirect(run, memory, query, MAX_LIMIT);
             run.compareControl(query, MAX_LIMIT, b2, b2c);
@@ -504,9 +512,9 @@ final class HtmlKnowledgeRecall {
                 : warmupFailures.size() + ": " + String.join("; ", warmupFailures));
         var timed = LatencyRow.WALL_CLOCK + "; one limit-5 call per query, only the Store call (B1) or the adapter"
                 + " recall (B2) is timed";
-        new LatencyRow(samples(b1Nanos), 1, 1, timed, false, LatencyRow.NO_GC_TELEMETRY)
+        new LatencyRow(LatencyRow.samples(b1Nanos), 1, 1, timed, false, LatencyRow.NO_GC_TELEMETRY)
                 .excluding(b1Excluded).describe("perf.b1.recallLimit5", metadata);
-        new LatencyRow(samples(b2Nanos), 1, 1, timed, false, LatencyRow.NO_GC_TELEMETRY)
+        new LatencyRow(LatencyRow.samples(b2Nanos), 1, 1, timed, false, LatencyRow.NO_GC_TELEMETRY)
                 .excluding(b2Excluded).describe("perf.b2.recallLimit5", metadata);
         metadata.put("perf.sampling", "warm: one unmeasured pass of every query through B1 and B2, then one measured"
                 + " limit-5 call per query and layer on the same open handles; median and p95 over those samples;"
@@ -590,23 +598,27 @@ final class HtmlKnowledgeRecall {
         return direct(run, memory, query, limit, nanos -> { });
     }
 
-    /** {@link #direct} that reports the duration of the Store call alone, without mapping or validation. */
+    /**
+     * {@link #direct} that reports the duration of the Store call alone, without mapping or validation, and only for a
+     * call that returned and mapped faithfully: a call that fails source fidelity yields no sample.
+     */
     private List<Row> direct(Run run, MonadaMemory memory, QueryText query, int limit, LongConsumer elapsed) {
         List<ResonanceResult> results;
+        long duration;
         try {
             var start = System.nanoTime();
             results = memory.resonate(query.text()).topK(limit).threshold(THRESHOLD).execute().results();
-            var duration = System.nanoTime() - start;
+            duration = System.nanoTime() - start;
             var rejected = rejectStoreResults(results);
             if (rejected.isPresent()) {
                 run.failure(query, Layer.B1, limit, rejected.get());
                 return null;
             }
-            elapsed.accept(duration);
         } catch (RuntimeException e) {
             run.failure(query, Layer.B1, limit, "threw " + e);
             return null;
         }
+        var unfaithful = run.sourceFailures.size();
         var rows = new ArrayList<Row>(results.size());
         for (var rank = 0; rank < results.size(); rank++) {
             var result = results.get(rank);
@@ -614,6 +626,9 @@ final class HtmlKnowledgeRecall {
             rows.add(new Row(query.queryId(), Layer.B1, limit, rank + 1, chunkId, result.score()));
         }
         run.rows.addAll(rows);
+        if (run.sourceFailures.size() == unfaithful) {
+            elapsed.accept(duration);
+        }
         return rows;
     }
 
@@ -622,7 +637,10 @@ final class HtmlKnowledgeRecall {
         return neuron(run, adapter, query, limit, nanos -> { });
     }
 
-    /** {@link #neuron} that reports the duration of the adapter recall alone, without mapping or validation. */
+    /**
+     * {@link #neuron} that reports the duration of the adapter recall alone, without mapping or validation, and only
+     * for a call that answered {@code COMPLETE} and mapped faithfully: an unmapped reference yields no sample.
+     */
     private List<Referenced> neuron(Run run, ResonanceStoreMemoryAdapter adapter, QueryText query, int limit,
             LongConsumer elapsed) {
         try {
@@ -634,7 +652,7 @@ final class HtmlKnowledgeRecall {
                 run.failure(query, Layer.B2, limit, "answered " + response.status());
                 return null;
             }
-            elapsed.accept(duration);
+            var unfaithful = run.referenceFailures.size();
             var referenced = new ArrayList<Referenced>(response.results().size());
             for (var rank = 0; rank < response.results().size(); rank++) {
                 var result = response.results().get(rank);
@@ -642,6 +660,9 @@ final class HtmlKnowledgeRecall {
                 var row = new Row(query.queryId(), Layer.B2, limit, rank + 1, chunkId, result.score());
                 run.rows.add(row);
                 referenced.add(new Referenced(result.reference(), row));
+            }
+            if (run.referenceFailures.size() == unfaithful) {
+                elapsed.accept(duration);
             }
             return referenced;
         } catch (RuntimeException e) {

@@ -58,6 +58,11 @@ record LatencyRow(long[] samples, int warmupIterations, int operationsPerIterati
                 gcTelemetryScope, reasons);
     }
 
+    /** Returns the successful durations collected in {@code values} as a sample array. */
+    static long[] samples(List<Long> values) {
+        return values.stream().mapToLong(Long::longValue).toArray();
+    }
+
     /** A wall-clock row without warm-up or GC telemetry. */
     static LatencyRow wallClock(long[] samples, int operationsPerIteration, String timed, boolean validationInWindow) {
         return new LatencyRow(samples, 0, operationsPerIteration, WALL_CLOCK + "; " + timed, validationInWindow,

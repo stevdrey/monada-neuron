@@ -445,6 +445,19 @@ public final class HtmlKnowledgeIngestionRunner {
         }
     }
 
+    /**
+     * {@link #deleteTree} for cleanup that must never fail a run: returns what was left behind and why, or empty when
+     * the tree is gone.
+     */
+    static Optional<String> deleteTreeQuietly(Path root) {
+        try {
+            deleteTree(root);
+            return Optional.empty();
+        } catch (UncheckedIOException | SecurityException e) {
+            return Optional.of(root + " (" + e + ")");
+        }
+    }
+
     private static String value(String[] args, int index, String option) {
         if (index >= args.length) {
             throw new IllegalArgumentException(option + " requires a value");

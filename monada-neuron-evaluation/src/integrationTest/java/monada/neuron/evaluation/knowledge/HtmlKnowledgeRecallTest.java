@@ -354,6 +354,37 @@ class HtmlKnowledgeRecallTest {
     }
 
     @Test
+    void aFidelityFailedMeasuredCallIsNeverALatencySample() {
+        var recall = new HtmlKnowledgeRecall(CORPUS);
+        var memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
+        try (var adapter = ResonanceStoreMemoryAdapter.open(root, recall.adapterConfig())) {
+            var observed = recall.observe(memory, adapter, swapped(), "swapped",
+                    List.of(new QueryText("swapped", CORPUS.chunks().get(0).text())));
+
+            assertFalse(observed.checks().stream().filter(check -> check.name().equals("fidelity.source"))
+                    .findFirst().orElseThrow().passed());
+            assertEquals("0", observed.metadata().get("perf.b1.recallLimit5.measurementIterations"),
+                    "the measured B1 call returned but failed source fidelity; " + observed.metadata());
+            assertTrue(observed.metadata().get("perf.b1.recallLimit5.excludedSamples")
+                    .contains("swapped failed source fidelity (see fidelity.source)"), observed.metadata().toString());
+        }
+    }
+
+    @Test
+    void theWorkloadBoundCountsUtf8BytesNotCharacters() {
+        // Two UTF-8 bytes per char: under the bound in chars, over it in bytes.
+        var accented = QueryText.renderTsv("h", List.of(new QueryText("q", "é".repeat(HtmlKnowledgeRecall
+                .MAX_WORKLOAD_BYTES / 2 + 1))));
+        assertTrue(accented.length() <= HtmlKnowledgeRecall.MAX_WORKLOAD_BYTES);
+        var thrown = assertThrows(IngestionInputException.class, () -> QueryText.parseTsv(accented));
+        assertTrue(thrown.getMessage().contains("UTF-8 bytes"), thrown.getMessage());
+
+        var ascii = QueryText.renderTsv("h", List.of(new QueryText("q", "e".repeat(HtmlKnowledgeRecall
+                .MAX_WORKLOAD_BYTES / 2 + 1))));
+        assertEquals(1, QueryText.parseTsv(ascii).queries().size());
+    }
+
+    @Test
     void scoresAreComparedBitExactly() {
         assertTrue(HtmlKnowledgeRecall.sameScore(0.5, 0.5));
         assertFalse(HtmlKnowledgeRecall.sameScore(0.0, -0.0), "signed zeros are different bits");

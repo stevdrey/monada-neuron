@@ -220,6 +220,8 @@ public final class HtmlKnowledgePersistence {
 
         var directOpens = new ArrayList<Long>();
         var directOpenFailures = new ArrayList<String>();
+        // MonadaMemory has no close: the Store opens its files only for the duration of each call, so an unreferenced
+        // timed handle holds no file descriptor or lock and costs heap only until the GC reclaims it.
         for (var repetition = 1; repetition <= LatencyRow.REPETITIONS; repetition++) {
             try {
                 var openStart = System.nanoTime();
@@ -229,7 +231,7 @@ public final class HtmlKnowledgePersistence {
                 directOpenFailures.add("repetition " + repetition + " threw " + e);
             }
         }
-        LatencyRow.wallClock(directOpens.stream().mapToLong(Long::longValue).toArray(), 1, "MonadaMemory.open on the"
+        LatencyRow.wallClock(LatencyRow.samples(directOpens), 1, "MonadaMemory.open on the"
                 + " same root, a fresh handle per sample; the observation uses a separately opened handle", false)
                 .excluding(directOpenFailures).describe("perf.directOpen", metadata);
         var memory = memoryOpener.get();
@@ -285,10 +287,10 @@ public final class HtmlKnowledgePersistence {
                 opened.close();
             }
         }
-        LatencyRow.wallClock(adapterOpens.stream().mapToLong(Long::longValue).toArray(), 1, "ResonanceStoreMemoryAdapter"
+        LatencyRow.wallClock(LatencyRow.samples(adapterOpens), 1, "ResonanceStoreMemoryAdapter"
                 + ".open on the same root, a fresh adapter per sample; the observation uses a separately opened"
                 + " adapter", false).excluding(adapterOpenFailures).describe("perf.adapterOpen", metadata);
-        LatencyRow.wallClock(firstRecalls.stream().mapToLong(Long::longValue).toArray(), 1, "the first adapter recall"
+        LatencyRow.wallClock(LatencyRow.samples(firstRecalls), 1, "the first adapter recall"
                 + " (first probe) on a freshly opened adapter, before any other call on it; the readback already ran in"
                 + " this JVM on another handle; failed or non-COMPLETE calls are excluded", false)
                 .excluding(firstRecallFailures).describe("perf.firstRecall", metadata);
@@ -332,7 +334,7 @@ public final class HtmlKnowledgePersistence {
                     rows.add(new Row(probe.probeId(), NEURON, rank, byReference.orElse(UNMAPPED), result.score()));
                 }
             }
-            new LatencyRow(warm.stream().mapToLong(Long::longValue).toArray(), 1, 1, LatencyRow.WALL_CLOCK + "; one"
+            new LatencyRow(LatencyRow.samples(warm), 1, 1, LatencyRow.WALL_CLOCK + "; one"
                     + " adapter recall per probe on the observation adapter, after one unmeasured recall on that same"
                     + " adapter; only the adapter recall is timed; non-COMPLETE recalls are excluded", false,
                     LatencyRow.NO_GC_TELEMETRY)

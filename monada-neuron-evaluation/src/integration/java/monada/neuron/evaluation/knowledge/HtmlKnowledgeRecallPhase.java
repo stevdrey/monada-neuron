@@ -130,7 +130,7 @@ public final class HtmlKnowledgeRecallPhase {
                                 ? " (the required readback, reported by its checks)" : ""));
             }
         }
-        var row = LatencyRow.wallClock(samples.stream().mapToLong(Long::longValue).toArray(), chunks, "Store open plus"
+        var row = LatencyRow.wallClock(LatencyRow.samples(samples), chunks, "Store open plus"
                 + " one resonate per chunk, with the content hash check in the window; repetition 1 is the required"
                 + " readback, 2 to 5 sample latency only", true).excluding(excluded);
         return new SampledReadbacks(required, row);

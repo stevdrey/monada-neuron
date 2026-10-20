@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class HtmlKnowledgeIngestionRunnerTest {
@@ -302,5 +303,25 @@ class HtmlKnowledgeIngestionRunnerTest {
 
     private static String[] concat(String[] first, String[] second) {
         return Stream.concat(Stream.of(first), Stream.of(second)).toArray(String[]::new);
+    }
+
+    @Test
+    void quietDeletionReportsWhatWasLeftBehindInsteadOfThrowing() throws IOException {
+        var gone = Files.createDirectories(directory.resolve("gone/nested"));
+        Files.writeString(gone.resolve("file"), "x");
+        assertTrue(HtmlKnowledgeIngestionRunner.deleteTreeQuietly(directory.resolve("gone")).isEmpty());
+        assertFalse(Files.exists(directory.resolve("gone")));
+
+        var parent = Files.createDirectories(directory.resolve("locked"));
+        var kept = Files.createDirectories(parent.resolve("kept"));
+        parent.toFile().setWritable(false);
+        try {
+            assumeFalse(Files.isWritable(parent), "a privileged user ignores directory permissions");
+            var left = HtmlKnowledgeIngestionRunner.deleteTreeQuietly(parent);
+            assertTrue(left.orElseThrow().startsWith(parent + " ("), left.toString());
+            assertTrue(Files.exists(kept));
+        } finally {
+            parent.toFile().setWritable(true);
+        }
     }
 }

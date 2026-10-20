@@ -355,12 +355,7 @@ public final class HtmlKnowledgeRecallRunner {
 
     /** Deletes the replica root; a failure is recorded as {@code cleanup.leftover} and never thrown. */
     private void deleteQuietly(Path path, Map<String, String> metadata) {
-        try {
-            HtmlKnowledgeIngestionRunner.deleteTree(path);
-            metadata.put("cleanup.leftover", "none");
-        } catch (UncheckedIOException | SecurityException e) {
-            metadata.put("cleanup.leftover", path + " (" + e + ")");
-        }
+        metadata.put("cleanup.leftover", HtmlKnowledgeIngestionRunner.deleteTreeQuietly(path).orElse("none"));
     }
 
     private Path temporaryDirectory() {

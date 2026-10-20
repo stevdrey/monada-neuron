@@ -226,11 +226,8 @@ public final class HtmlKnowledgeIngestion {
 
     /** Deletes a timing-only path; a failure is recorded in {@code diagnostics} and never thrown. */
     static void deleteQuietly(Path path, List<String> diagnostics) {
-        try {
-            HtmlKnowledgeIngestionRunner.deleteTree(path);
-        } catch (UncheckedIOException | SecurityException e) {
-            diagnostics.add("scratch cleanup failed, left behind: " + path + " (" + e + ")");
-        }
+        HtmlKnowledgeIngestionRunner.deleteTreeQuietly(path)
+                .ifPresent(left -> diagnostics.add("scratch cleanup failed, left behind: " + left));
     }
 
     /**
@@ -271,10 +268,10 @@ public final class HtmlKnowledgeIngestion {
         }
         var chunks = corpus.chunks().size();
         return new ImportTimings(
-                LatencyRow.wallClock(ingest.stream().mapToLong(Long::longValue).toArray(), chunks, "one Store open"
+                LatencyRow.wallClock(LatencyRow.samples(ingest), chunks, "one Store open"
                         + " plus one remember per chunk into a fresh root; sample 1 is the import under test, the others"
                         + " go to deleted scratch roots; failed imports are excluded", false),
-                LatencyRow.wallClock(readback.stream().mapToLong(Long::longValue).toArray(), chunks, "one resonate"
+                LatencyRow.wallClock(LatencyRow.samples(readback), chunks, "one resonate"
                         + " per chunk on the just-imported root, with the content hash check in the window", true),
                 failures, (scratch == null ? "unknown (no scratch directory)"
                         : sameStore.map(String::valueOf).orElse("unknown")) + (comparable ? ""
