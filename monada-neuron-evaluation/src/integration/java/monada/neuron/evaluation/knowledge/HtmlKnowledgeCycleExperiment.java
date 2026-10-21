@@ -270,11 +270,20 @@ final class HtmlKnowledgeCycleExperiment {
 
     /** Runs one fresh cycle over a fresh monad and a fresh recording port; a cycle failure is captured, not thrown. */
     Run execute(ResonanceMemoryPort port, String text, CognitiveBudget budget) {
+        return execute(port, text, budget, MEMORY_LIMIT);
+    }
+
+    /**
+     * {@link #execute(ResonanceMemoryPort, String, CognitiveBudget)} with memory-stage and reasoning limit
+     * {@code limit} instead of {@value #MEMORY_LIMIT}; the scaling profile (Issue #111) runs the cycle at every
+     * {@code k}.
+     */
+    Run execute(ResonanceMemoryPort port, String text, CognitiveBudget budget, int limit) {
         var inputs = codec.querySignals(text);
         var recorder = new RecordingMemoryPort(port);
         var cycle = new DeterministicCognitiveCycle(List.of(
-                new ResonanceMemoryCognitiveStage(recorder, MEMORY_LIMIT),
-                new RecalledEvidenceReasoningStage(MEMORY_LIMIT),
+                new ResonanceMemoryCognitiveStage(recorder, limit),
+                new RecalledEvidenceReasoningStage(limit),
                 new HypothesisEvaluationCognitiveStage(new ReferenceHypothesisEvaluationPolicy(), 1)));
         try {
             var result = cycle.execute(new PrimaryMonad(MONAD_ID), inputs, budget);

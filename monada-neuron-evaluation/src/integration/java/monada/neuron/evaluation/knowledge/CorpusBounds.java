@@ -26,6 +26,12 @@ public record CorpusBounds(
     /** Bounds of one user-supplied external tutorial snapshot (a single, longer document). */
     public static final CorpusBounds EXTERNAL = new CorpusBounds(1, 100, 1024, 100, 1, 256 * 1024, false);
 
+    /**
+     * Bounds of a scaling-family point {@code html-kc-v1-scale-<N>} (Issue #111): 25 to 500 chunks with the authored
+     * per-chunk and per-document limits; every generated distractor is its own single-chunk document.
+     */
+    public static final CorpusBounds SCALING = new CorpusBounds(25, 500, 1024, 8, 512, 32 * 1024, true);
+
     /** Chunk ids carry a two-digit ordinal ({@code 00} to {@code 99}), so a document holds at most 100 chunks. */
     public static final int MAX_ORDINALS = 100;
 
