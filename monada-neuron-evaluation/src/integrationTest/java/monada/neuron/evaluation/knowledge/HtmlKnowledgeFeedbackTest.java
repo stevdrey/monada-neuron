@@ -13,9 +13,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -53,6 +55,59 @@ class HtmlKnowledgeFeedbackTest {
     void everyArmRootOpensWithEveryKeyStrategyAndRankingFlag() {
         var check = feedback.strategyNeutral(arms);
         assertTrue(check.passed(), check.detail());
+    }
+
+    @Test
+    void aMissingArmRootFailsStrategyNeutralityWithoutBeingCreated() throws IOException {
+        var copy = copyArms("missing");
+        var root = HtmlKnowledgeFeedback.root(copy, FeedbackArm.TREATMENT_ENRICHED);
+        deleteTree(root);
+        var check = feedback.strategyNeutral(copy);
+        assertFalse(check.passed());
+        assertTrue(check.detail().contains(FeedbackArm.TREATMENT_ENRICHED.label() + ": no Store"), check.detail());
+        assertFalse(Files.exists(root), "the check must not create a store on a missing root");
+    }
+
+    @Test
+    void persistedNamesOnlyTheMissingEventInsteadOfShiftingTheRest() {
+        var arm = FeedbackArm.TREATMENT_NORMALIZED;
+        var chunks = MANIFESTS.get(arm).entries().stream().limit(3).map(IngestionManifest.Entry::chunkId).toList();
+        var plan = new FeedbackEvents(chunks.stream().map(chunk -> new Event("q:a", TEXT, chunk,
+                FeedbackSignal.NEGATIVE)).toList());
+        var stored = plan.events().stream().map(event -> new FeedbackEventLog.StoredEvent(event.text(),
+                arm.strategy().effectiveKey(event.text()), event.chunkId(), "rs-x", event.signal(),
+                HtmlKnowledgeFeedbackRunner.NEGATIVE_DELTA)).toList();
+        var complete = HtmlKnowledgeFeedbackRunner.persisted(arm, plan,
+                Optional.of(new FeedbackEventLog(stored, "sha", 1)));
+        assertTrue(complete.passed(), complete.detail());
+        var withoutFirst = HtmlKnowledgeFeedbackRunner.persisted(arm, plan,
+                Optional.of(new FeedbackEventLog(stored.subList(1, stored.size()), "sha", 1)));
+        assertFalse(withoutFirst.passed());
+        assertEquals("1 planned events not stored: q:a " + plan.events().getFirst().chunkId() + " NEGATIVE",
+                withoutFirst.detail());
+        var reversed = HtmlKnowledgeFeedbackRunner.persisted(arm, plan,
+                Optional.of(new FeedbackEventLog(stored.reversed(), "sha", 1)));
+        assertEquals("stored out of plan order", reversed.detail());
+    }
+
+    @Test
+    void theLogIsReadFromTheSegmentTheManifestRecords() throws IOException {
+        var copy = copyArms("segment");
+        var arm = FeedbackArm.TREATMENT_EXACT;
+        var root = HtmlKnowledgeFeedback.root(copy, arm);
+        var chunk = MANIFESTS.get(arm).entries().getFirst().chunkId();
+        assertTrue(feedback.apply(copy, arm, MANIFESTS.get(arm), new FeedbackEvents(List.of(
+                new Event("q:a", TEXT, chunk, FeedbackSignal.POSITIVE))), new ArrayList<>()).passed());
+        var manifest = root.resolve("manifest.json");
+        var json = Files.readString(manifest);
+        var segment = FeedbackEventLog.segment(root);
+        assertTrue(json.contains("\"" + segment + "\""), json);
+        Files.move(root.resolve(segment), root.resolve("feedback/moved.log"));
+        Files.writeString(manifest, json.replace("\"" + segment + "\"", "\"feedback/moved.log\""));
+        assertEquals("feedback/moved.log", FeedbackEventLog.segment(root));
+        var log = FeedbackEventLog.read(root, MANIFESTS.get(arm));
+        assertEquals(1, log.events().size());
+        assertEquals(chunk, log.events().getFirst().chunkId());
     }
 
     @Test
@@ -140,6 +195,14 @@ class HtmlKnowledgeFeedbackTest {
                         "FeedbackAssigner", "FeedbackQuerySplit", "FeedbackEffectMetrics")) {
                     assertFalse(bytes.contains(forbidden), type + " references " + forbidden);
                 }
+            }
+        }
+    }
+
+    private static void deleteTree(Path path) throws IOException {
+        try (var paths = Files.walk(path)) {
+            for (var file : paths.sorted(Comparator.reverseOrder()).toList()) {
+                Files.delete(file);
             }
         }
     }

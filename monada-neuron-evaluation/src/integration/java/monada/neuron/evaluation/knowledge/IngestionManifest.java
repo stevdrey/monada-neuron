@@ -42,6 +42,7 @@ public final class IngestionManifest {
     private final List<Entry> entries;
     private final Map<String, String> chunkIdByAtomId;
     private final Map<String, String> chunkIdByReference;
+    private final Map<String, Entry> entryByChunkId;
 
     /** Creates a manifest in import order; atom ids and references must be unique. */
     public IngestionManifest(String corpusVersion, String corpusHash, List<Entry> entries) {
@@ -50,7 +51,9 @@ public final class IngestionManifest {
         this.entries = List.copyOf(entries);
         var byAtom = new HashMap<String, String>();
         var byReference = new HashMap<String, String>();
+        var byChunk = new HashMap<String, Entry>();
         for (var entry : this.entries) {
+            byChunk.putIfAbsent(entry.chunkId(), entry);
             if (byAtom.put(entry.atomId(), entry.chunkId()) != null
                     || byReference.put(entry.opaqueReference(), entry.chunkId()) != null) {
                 throw new IllegalArgumentException("atom " + entry.atomId() + " is mapped to more than one chunk");
@@ -58,6 +61,7 @@ public final class IngestionManifest {
         }
         this.chunkIdByAtomId = Map.copyOf(byAtom);
         this.chunkIdByReference = Map.copyOf(byReference);
+        this.entryByChunkId = Map.copyOf(byChunk);
     }
 
     /** Returns the corpus version that was imported. */
@@ -82,7 +86,7 @@ public final class IngestionManifest {
 
     /** Returns the entry of {@code chunkId}, the only way an experiment turns a chunk label into this root's atom. */
     public Optional<Entry> entryForChunk(String chunkId) {
-        return entries.stream().filter(entry -> entry.chunkId().equals(chunkId)).findFirst();
+        return Optional.ofNullable(entryByChunkId.get(chunkId));
     }
 
     /** Maps an adapter opaque reference of this root back to its chunk id. */

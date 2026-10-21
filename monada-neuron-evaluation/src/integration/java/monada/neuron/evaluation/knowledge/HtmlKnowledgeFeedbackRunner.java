@@ -3,6 +3,7 @@ package monada.neuron.evaluation.knowledge;
 import com.monada.storage.feedback.FeedbackSignal;
 import monada.neuron.evaluation.knowledge.FeedbackEffectMetrics.ArmEffect;
 import monada.neuron.evaluation.knowledge.FeedbackEffectMetrics.RecallPath;
+import monada.neuron.evaluation.knowledge.FeedbackEffectMetrics.RowIndex;
 import monada.neuron.evaluation.knowledge.FeedbackKeyVariants.Variant;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeIngestion.Check;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgePersistencePhase.WorkDirectory;
@@ -24,7 +25,6 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumMap;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -192,6 +192,8 @@ public final class HtmlKnowledgeFeedbackRunner {
             var seedSnapshots = snapshots(work, HtmlKnowledgeFeedbackPhase.SEED, "");
             Optional<Rendered> rendered = Optional.empty();
             Optional<FeedbackEvents> plan = Optional.empty();
+            // The restarted process's observations, parsed once and shared by the checks, the scores and the rows file.
+            var reopened = new TreeMap<String, Map<FeedbackArm, Snapshot>>();
             if (seedSnapshots.size() == FeedbackArm.values().length && manifestsWritten(work)) {
                 checks.add(preFeedbackEqual(seedSnapshots));
                 var validity = split.validity();
@@ -201,8 +203,8 @@ public final class HtmlKnowledgeFeedbackRunner {
                 plan = derivePlan(split, seedSnapshots.get(FeedbackArm.TREATMENT_EXACT), checks);
                 if (plan.isPresent() && checks.stream().allMatch(Check::passed)) {
                     work.write(HtmlKnowledgeFeedbackPhase.plan(work), plan.get().toTsv());
-                    var scored = runFeedback(armsRoot, work, split, variants, plan.get(), seed, checks, metadata,
-                            phases);
+                    var scored = runFeedback(armsRoot, work, split, variants, plan.get(), seed,
+                            seedSnapshots.get(FeedbackArm.CONTROL), checks, metadata, phases, reopened);
                     rendered = scored.map(value -> {
                         var report = new HtmlKnowledgeFeedbackReport(corpus, value);
                         files.put(querySet.version() + "-feedback-events.tsv", report.eventsTsv());
@@ -230,7 +232,7 @@ public final class HtmlKnowledgeFeedbackRunner {
                     List.of(),
                     TITLE);
             var report = new CheckedEvaluationReport(TITLE, "Feedback Metadata", evaluation, checks, metadata);
-            var rows = rowsTsv(work, report.allPassed());
+            var rows = rowsTsv(reopened, report.allPassed());
             if (!rows.isEmpty()) {
                 files.put(querySet.version() + "-feedback-rows.tsv", rows);
             }
@@ -245,8 +247,9 @@ public final class HtmlKnowledgeFeedbackRunner {
      * left every snapshot it was asked for.
      */
     private Optional<HtmlKnowledgeFeedbackReport.Scored> runFeedback(Path armsRoot, WorkDirectory work,
-            FeedbackQuerySplit split, List<Variant> variants, FeedbackEvents plan, PhaseRun seed, List<Check> checks,
-            Map<String, String> metadata, List<PhaseRun> phases) {
+            FeedbackQuerySplit split, List<Variant> variants, FeedbackEvents plan, PhaseRun seed, Snapshot seedControl,
+            List<Check> checks, Map<String, String> metadata, List<PhaseRun> phases,
+            Map<String, Map<FeedbackArm, Snapshot>> reopened) {
         var feedbackRun = launch(HtmlKnowledgeFeedbackPhase.FEEDBACK, armsRoot, work, checks, metadata, phases);
         var feedbackSnapshots = snapshots(work, HtmlKnowledgeFeedbackPhase.FEEDBACK, "");
         var feedbackLogs = logs(work, HtmlKnowledgeFeedbackPhase.FEEDBACK);
@@ -260,15 +263,16 @@ public final class HtmlKnowledgeFeedbackRunner {
             return Optional.empty();
         }
         var reopen = launch(HtmlKnowledgeFeedbackPhase.REOPEN, armsRoot, work, checks, metadata, phases);
-        checks.add(restart(seed, feedbackRun, reopen, work));
+        checks.add(HtmlKnowledgePersistenceRunner.restartCheck(List.of(seed, feedbackRun, reopen), work));
         var reopenSnapshots = snapshots(work, HtmlKnowledgeFeedbackPhase.REOPEN, "");
         var disabledSnapshots = snapshots(work, HtmlKnowledgeFeedbackPhase.REOPEN, HtmlKnowledgeFeedbackPhase.DISABLED);
+        reopened.put("", reopenSnapshots);
+        reopened.put(HtmlKnowledgeFeedbackPhase.DISABLED, disabledSnapshots);
         var reopenLogs = logs(work, HtmlKnowledgeFeedbackPhase.REOPEN);
         for (var arm : FeedbackArm.values()) {
             checks.add(logUnchanged(arm, feedbackLogs.get(arm), reopenLogs.get(arm)));
             checks.add(restartEqual(arm, feedbackSnapshots.get(arm), reopenSnapshots.get(arm)));
         }
-        var seedControl = snapshots(work, HtmlKnowledgeFeedbackPhase.SEED, "").get(FeedbackArm.CONTROL);
         checks.add(controlStable(seedControl, feedbackSnapshots.get(FeedbackArm.CONTROL),
                 reopenSnapshots.get(FeedbackArm.CONTROL)));
         var control = reopenSnapshots.get(FeedbackArm.CONTROL);
@@ -347,7 +351,7 @@ public final class HtmlKnowledgeFeedbackRunner {
         for (var arm : FeedbackArm.treatments()) {
             if (!reference.equals(seed.get(arm))) {
                 different.add(arm.label() + " (first difference at row "
-                        + firstDifference(reference.rows(), seed.get(arm).rows()) + ")");
+                        + HtmlKnowledgeRecall.firstDifference(reference.rows(), seed.get(arm).rows()) + ")");
             }
         }
         return new Check("arms.preFeedbackEqual", different.isEmpty(), different.isEmpty()
@@ -360,35 +364,61 @@ public final class HtmlKnowledgeFeedbackRunner {
     /**
      * {@code feedback.persisted.<arm>}: the arm's feedback log, read back at the storage level, holds exactly the plan,
      * in plan order, each event with the key the arm's strategy computes, the planned chunk and signal and the Store's
-     * default delta.
+     * default delta. Stored events are matched to planned ones by query, chunk and signal, so one missing or extra
+     * event is named on its own instead of shifting every later comparison.
      */
-    private Check persisted(FeedbackArm arm, FeedbackEvents plan, Optional<FeedbackEventLog> log) {
+    static Check persisted(FeedbackArm arm, FeedbackEvents plan, Optional<FeedbackEventLog> log) {
         var name = "feedback.persisted." + arm.label();
         if (log.isEmpty()) {
             return new Check(name, false, "the feedback phase left no readable log for " + arm.label());
         }
         var stored = log.get().events();
-        var problems = new ArrayList<String>();
-        if (stored.size() != plan.events().size()) {
-            problems.add(stored.size() + " stored events, " + plan.events().size() + " planned");
-        }
-        for (var i = 0; i < Math.min(stored.size(), plan.events().size()); i++) {
-            var event = plan.events().get(i);
-            var actual = stored.get(i);
-            var expectedDelta = event.signal() == FeedbackSignal.POSITIVE ? POSITIVE_DELTA : NEGATIVE_DELTA;
-            if (!actual.query().equals(event.text())
-                    || !actual.queryKey().equals(arm.strategy().effectiveKey(event.text()))
-                    || !actual.chunkId().equals(event.chunkId()) || actual.signal() != event.signal()
-                    || !HtmlKnowledgeRecall.sameScore(actual.delta(), expectedDelta)) {
-                problems.add("event " + (i + 1) + " (" + event.queryId() + " " + event.chunkId() + ")");
+        var unmatched = new ArrayList<>(stored);
+        var missing = new ArrayList<String>();
+        var wrong = new ArrayList<String>();
+        var matchedOrder = new ArrayList<Integer>();
+        for (var event : plan.events()) {
+            var match = unmatched.stream().filter(actual -> actual.query().equals(event.text())
+                    && actual.chunkId().equals(event.chunkId()) && actual.signal() == event.signal()).findFirst();
+            if (match.isEmpty()) {
+                missing.add(event.queryId() + " " + event.chunkId() + " " + event.signal());
+                continue;
             }
+            var actual = match.get();
+            unmatched.remove(actual);
+            matchedOrder.add(stored.indexOf(actual));
+            var expectedDelta = event.signal() == FeedbackSignal.POSITIVE ? POSITIVE_DELTA : NEGATIVE_DELTA;
+            if (!actual.queryKey().equals(arm.strategy().effectiveKey(event.text()))
+                    || !HtmlKnowledgeRecall.sameScore(actual.delta(), expectedDelta)) {
+                wrong.add(event.queryId() + " " + event.chunkId() + " (key " + actual.queryKey() + ", delta "
+                        + actual.delta() + ")");
+            }
+        }
+        var inOrder = matchedOrder.equals(matchedOrder.stream().sorted().toList());
+        var problems = new ArrayList<String>();
+        if (!missing.isEmpty()) {
+            problems.add(missing.size() + " planned events not stored: " + first(missing));
+        }
+        if (!unmatched.isEmpty()) {
+            problems.add(unmatched.size() + " stored events not planned: " + first(unmatched.stream()
+                    .map(event -> event.chunkId() + " " + event.signal()).toList()));
+        }
+        if (!wrong.isEmpty()) {
+            problems.add(wrong.size() + " stored with a wrong key or delta: " + first(wrong));
+        }
+        if (!inOrder) {
+            problems.add("stored out of plan order");
         }
         return new Check(name, problems.isEmpty(), problems.isEmpty()
                 ? "the root's feedback log (" + log.get().logBytes() + " bytes) holds all " + stored.size()
                         + " planned events in order, each with its " + arm.strategy().label()
                         + " query key, chunk, signal and delta ±" + POSITIVE_DELTA
-                : "stored log differs from the plan: " + String.join("; ", problems.subList(0,
-                        Math.min(5, problems.size()))));
+                : String.join("; ", problems));
+    }
+
+    private static String first(List<String> details) {
+        return String.join(", ", details.subList(0, Math.min(5, details.size())))
+                + (details.size() > 5 ? " and " + (details.size() - 5) + " more" : "");
     }
 
     /**
@@ -404,7 +434,7 @@ public final class HtmlKnowledgeFeedbackRunner {
         if (control == null || treatment == null) {
             return new Check(name, false, "unverified: the feedback phase left no snapshot to compare");
         }
-        var differing = plan.queryIds().stream().filter(id -> !sameRows(
+        var differing = plan.queryIds().stream().filter(id -> !HtmlKnowledgeRecall.sameRows(
                 control.rows(id, Layer.B1, HtmlKnowledgeRecall.MAX_LIMIT),
                 treatment.rows(id, Layer.B1, HtmlKnowledgeRecall.MAX_LIMIT))).toList();
         return new Check(name, !differing.isEmpty(), differing.isEmpty()
@@ -413,31 +443,6 @@ public final class HtmlKnowledgeFeedbackRunner {
                 : differing.size() + " of " + plan.queryIds().size() + " calibration queries with events return a"
                         + " different B1 limit-5 result (chunk ids, order or scores) than the control before the"
                         + " restart");
-    }
-
-    /** {@code process.restart}: four distinct processes, and every phase JVM finished its phase. */
-    private Check restart(PhaseRun seed, PhaseRun feedback, PhaseRun reopen, WorkDirectory work) {
-        var self = ProcessHandle.current().pid();
-        var pids = new HashSet<>(List.of(seed.pid(), feedback.pid(), reopen.pid(), self));
-        var separate = pids.size() == 4;
-        var completed = Stream.of(seed, feedback, reopen).allMatch(run -> completed(run, work));
-        return new Check("process.restart", separate && completed, Stream.of(seed, feedback, reopen)
-                .map(run -> run.phase() + " JVM pid " + run.pid() + " exited " + run.exitStatus()
-                        + (completed(run, work) ? " after its phase" : " without a result"))
-                .reduce((a, b) -> a + "; " + b).orElse("") + "; orchestrator pid " + self
-                + (separate ? "; " + pids.size() + " distinct processes" : "; processes are not distinct"));
-    }
-
-    private static boolean completed(PhaseRun run, WorkDirectory work) {
-        if ((run.exitStatus() != 0 && run.exitStatus() != 1) || !Files.exists(work.result(run.phase()))) {
-            return false;
-        }
-        try {
-            HtmlKnowledgePersistencePhase.Result.parse(work.read(work.result(run.phase())));
-            return true;
-        } catch (IllegalArgumentException | UncheckedIOException e) {
-            return false;
-        }
     }
 
     /** {@code feedback.logUnchangedAcrossRestart.<arm>}: the restarted process reads the same log, byte for byte. */
@@ -464,7 +469,7 @@ public final class HtmlKnowledgeFeedbackRunner {
         return new Check(name, equal, equal
                 ? "all " + after.rows().size() + " rows of the feedback phase are identical in the restarted process"
                         + " (feedback-aware ranking, every layer, limit, query and variant; bit-exact scores)"
-                : "first difference at row " + firstDifference(before.rows(), after.rows()));
+                : "first difference at row " + HtmlKnowledgeRecall.firstDifference(before.rows(), after.rows()));
     }
 
     /** {@code determinism.controlStable}: the control returns the same results in all three phases. */
@@ -493,7 +498,8 @@ public final class HtmlKnowledgeFeedbackRunner {
                 ? "with feedback-aware ranking disabled, the treatment root reproduces all " + control.rows().size()
                         + " control rows (every query including no-answer and blank, every variant, B0, B1, B2 and"
                         + " B2c; bit-exact scores) although its log holds the events"
-                : "first difference from the control at row " + firstDifference(control.rows(), disabled.rows()));
+                : "first difference from the control at row "
+                        + HtmlKnowledgeRecall.firstDifference(control.rows(), disabled.rows()));
     }
 
     /**
@@ -508,6 +514,8 @@ public final class HtmlKnowledgeFeedbackRunner {
         }
         var eventKeys = FeedbackEffectMetrics.eventKeys(plan, arm);
         var codec = new TokenPackingSignalCodec();
+        var controlRows = RowIndex.of(control);
+        var treatmentRows = RowIndex.of(treatment);
         var differing = new ArrayList<String>();
         var collisions = new ArrayList<String>();
         for (var id : ids) {
@@ -521,7 +529,7 @@ public final class HtmlKnowledgeFeedbackRunner {
                 if (collides && (layer == Layer.B2 || layer == Layer.B2C)) {
                     continue;
                 }
-                if (!layerRows(control, id, layer).equals(layerRows(treatment, id, layer))) {
+                if (!controlRows.rows(id, layer).equals(treatmentRows.rows(id, layer))) {
                     differing.add(id + " " + layer.label());
                 }
             }
@@ -534,10 +542,6 @@ public final class HtmlKnowledgeFeedbackRunner {
                 + "; codec keyCollision (B2/B2c not compared): " + (collisions.isEmpty() ? "none" : collisions));
     }
 
-    private static List<Row> layerRows(Snapshot snapshot, String id, Layer layer) {
-        return snapshot.rows().stream().filter(row -> row.queryId().equals(id) && row.layer() == layer).toList();
-    }
-
     /** Records every named observation that is never a check. */
     private void diagnose(FeedbackQuerySplit split, List<Variant> variants, Snapshot seedControl, Snapshot control,
             Snapshot controlDisabled, List<ArmEffect> effects, Map<String, String> metadata,
@@ -545,7 +549,8 @@ public final class HtmlKnowledgeFeedbackRunner {
         var sameBase = 0;
         var differentBase = new ArrayList<String>();
         for (var variant : variants) {
-            if (sameRows(seedControl.rows(variant.sourceId(), Layer.B1, HtmlKnowledgeRecall.MAX_LIMIT),
+            if (HtmlKnowledgeRecall.sameRows(
+                    seedControl.rows(variant.sourceId(), Layer.B1, HtmlKnowledgeRecall.MAX_LIMIT),
                     seedControl.rows(variant.variantId(), Layer.B1, HtmlKnowledgeRecall.MAX_LIMIT))) {
                 sameBase++;
             } else {
@@ -674,13 +679,13 @@ public final class HtmlKnowledgeFeedbackRunner {
      * on and off), headed by the run's hashes and verdict. Earlier phases are covered by the restart and stability
      * checks and are not repeated here.
      */
-    private String rowsTsv(WorkDirectory work, boolean allPassed) {
+    private String rowsTsv(Map<String, Map<FeedbackArm, Snapshot>> reopened, boolean allPassed) {
         var tsv = new StringBuilder("# raw scored rows, not a verified result on their own: corpusHash "
                 + corpus.corpusHash() + ", queryHash " + querySet.queryHash() + ", allChecksPassed " + allPassed
                 + " (see " + REPORT_JSON + ")\nobservation\tqueryId\tlayer\trank\tchunkId\tscore\n");
         var rows = 0;
         for (var suffix : List.of("", HtmlKnowledgeFeedbackPhase.DISABLED)) {
-            for (var entry : snapshots(work, HtmlKnowledgeFeedbackPhase.REOPEN, suffix).entrySet()) {
+            for (var entry : reopened.getOrDefault(suffix, Map.of()).entrySet()) {
                 for (var row : entry.getValue().rows()) {
                     if (row.limit() != HtmlKnowledgeRecall.MAX_LIMIT
                             || (row.layer() != Layer.B1 && row.layer() != Layer.B2)) {
@@ -753,27 +758,6 @@ public final class HtmlKnowledgeFeedbackRunner {
         var environment = new RunEnvironment();
         environment.describeHost(metadata);
         environment.describeStoreRoot("env.storeRoot", armsRoot, metadata);
-    }
-
-    private static boolean sameRows(List<Row> first, List<Row> second) {
-        if (first.size() != second.size()) {
-            return false;
-        }
-        for (var i = 0; i < first.size(); i++) {
-            if (!first.get(i).chunkId().equals(second.get(i).chunkId())
-                    || !HtmlKnowledgeRecall.sameScore(first.get(i).score(), second.get(i).score())) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static int firstDifference(List<Row> left, List<Row> right) {
-        var index = 0;
-        while (index < left.size() && index < right.size() && left.get(index).equals(right.get(index))) {
-            index++;
-        }
-        return index;
     }
 
     private static List<QueryText> texts(List<JudgedQuery> queries) {

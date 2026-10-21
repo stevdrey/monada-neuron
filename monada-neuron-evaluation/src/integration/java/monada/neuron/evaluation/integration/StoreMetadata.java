@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
@@ -32,6 +33,20 @@ public final class StoreMetadata {
             }
         }
         return fields;
+    }
+
+    /**
+     * Returns the string or scalar value of top-level manifest field {@code name}, read without opening the Store, or
+     * empty when the manifest has no such field.
+     */
+    public static Optional<String> manifestField(String manifestJson, String name) {
+        var matcher = FIELD.matcher(manifestJson);
+        while (matcher.find()) {
+            if (matcher.group(1).equals(name)) {
+                return Optional.of(matcher.group(2) != null ? matcher.group(2) : matcher.group(3));
+            }
+        }
+        return Optional.empty();
     }
 
     /** Returns the short git commit, suffixed {@code +dirty} for uncommitted changes, or {@code unknown}. */

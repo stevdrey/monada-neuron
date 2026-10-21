@@ -3,10 +3,12 @@ package monada.neuron.evaluation.knowledge;
 import com.monada.storage.feedback.FeedbackSignal;
 import com.monada.storage.feedback.FeedbackStore;
 import com.monada.storage.feedback.FileFeedbackStore;
+import monada.neuron.evaluation.integration.StoreMetadata;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.QueryText;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -60,9 +62,26 @@ record FeedbackEventLog(List<StoredEvent> events, String logSha256, long logByte
         Objects.requireNonNull(logSha256, "logSha256 must not be null");
     }
 
-    /** Returns the log file of {@code root}: the Store's default feedback segment, which every new root uses. */
+    /**
+     * Returns the feedback segment of {@code root} as its Store manifest records it, or the Store's default segment
+     * when the manifest names none (the Store's own parser applies the same default). The manifest is read as text: the
+     * Store's manifest loader creates directories, and a read must never write.
+     *
+     * @throws IngestionInputException when the root has no Store manifest
+     */
+    static String segment(Path root) {
+        HtmlKnowledgePersistence.requireExistingStore(root);
+        try {
+            var manifest = Files.readString(root.resolve("manifest.json"), StandardCharsets.UTF_8);
+            return StoreMetadata.manifestField(manifest, "feedbackSegment").orElse(FeedbackStore.DEFAULT_SEGMENT);
+        } catch (IOException e) {
+            throw new UncheckedIOException("cannot read the Store manifest of " + root, e);
+        }
+    }
+
+    /** Returns the feedback log file of {@code root}, at the segment its manifest records. */
     static Path logFile(Path root) {
-        return root.resolve(FeedbackStore.DEFAULT_SEGMENT);
+        return root.resolve(segment(root));
     }
 
     /**
@@ -72,15 +91,15 @@ record FeedbackEventLog(List<StoredEvent> events, String logSha256, long logByte
      * @throws UncheckedIOException when the log cannot be read
      */
     static FeedbackEventLog read(Path root, IngestionManifest manifest) {
-        var file = logFile(root);
+        var segment = segment(root);
+        var file = root.resolve(segment);
         if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IngestionInputException("Store root " + root + " has no feedback log at "
-                    + FeedbackStore.DEFAULT_SEGMENT);
+            throw new IngestionInputException("Store root " + root + " has no feedback log at " + segment);
         }
         try {
             var bytes = Files.readAllBytes(file);
             var events = new ArrayList<StoredEvent>();
-            for (var event : new FileFeedbackStore(root).findAll()) {
+            for (var event : new FileFeedbackStore(root, segment).findAll()) {
                 var chunkId = manifest.chunkIdForAtom(event.atomId());
                 var reference = chunkId.flatMap(manifest::entryForChunk).map(IngestionManifest.Entry::opaqueReference);
                 events.add(new StoredEvent(event.query(), event.queryKey(),

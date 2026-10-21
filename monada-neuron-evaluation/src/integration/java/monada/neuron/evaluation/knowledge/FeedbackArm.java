@@ -39,6 +39,7 @@ enum FeedbackArm {
         ENRICHED("lexically-enriched");
 
         private final String label;
+        private FeedbackQueryKeyStrategy defaultStrategy;
 
         KeyStrategy(String label) {
             this.label = label;
@@ -64,9 +65,26 @@ enum FeedbackArm {
          */
         String effectiveKey(String query) {
             Objects.requireNonNull(query, "query must not be null");
-            var key = create(MonadaMemoryOptions.defaults().textNormalizer()).keyFor(query);
+            var key = defaultStrategy().keyFor(query);
             return key.isBlank() ? query : key;
         }
+
+        /**
+         * Returns this strategy over the default normalizer, created once: building the default options loads the
+         * Store's lexical resources, and the strategies are stateless wrappers of an immutable normalizer.
+         */
+        private synchronized FeedbackQueryKeyStrategy defaultStrategy() {
+            if (defaultStrategy == null) {
+                defaultStrategy = create(DefaultNormalizer.INSTANCE);
+            }
+            return defaultStrategy;
+        }
+    }
+
+    /** The default normalizer, loaded on first use. */
+    private static final class DefaultNormalizer {
+
+        static final TextNormalizer INSTANCE = MonadaMemoryOptions.defaults().textNormalizer();
     }
 
     private final String directory;

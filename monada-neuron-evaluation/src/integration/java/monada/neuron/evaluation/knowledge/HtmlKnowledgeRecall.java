@@ -815,6 +815,29 @@ final class HtmlKnowledgeRecall {
         return Double.doubleToLongBits(first) == Double.doubleToLongBits(second);
     }
 
+    /** Whether two row lists hold the same chunks in the same order with bit-exactly equal scores. */
+    static boolean sameRows(List<Row> first, List<Row> second) {
+        if (first.size() != second.size()) {
+            return false;
+        }
+        for (var i = 0; i < first.size(); i++) {
+            if (!first.get(i).chunkId().equals(second.get(i).chunkId())
+                    || !sameScore(first.get(i).score(), second.get(i).score())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Returns the index of the first row where {@code left} and {@code right} differ (record equality). */
+    static int firstDifference(List<Row> left, List<Row> right) {
+        var index = 0;
+        while (index < left.size() && index < right.size() && left.get(index).equals(right.get(index))) {
+            index++;
+        }
+        return index;
+    }
+
     /**
      * The protocol's {@code tieAtCutoff}: the scores at ranks {@code k} and {@code k + 1} are bit-exactly equal, so the
      * cutoff splits a tie group. Labels-free, so both the recall scorer and the answer phase share this one rule.

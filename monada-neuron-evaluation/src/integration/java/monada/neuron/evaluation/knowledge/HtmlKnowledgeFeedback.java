@@ -88,6 +88,13 @@ final class HtmlKnowledgeFeedback {
         var opens = 0;
         for (var arm : FeedbackArm.values()) {
             var root = root(armsRoot, arm);
+            try {
+                // MonadaMemory.open would create an empty store on a missing root and pass for the wrong reason.
+                HtmlKnowledgePersistence.requireExistingStore(root);
+            } catch (IngestionInputException e) {
+                failures.add(arm.label() + ": no Store to open (" + e.getMessage() + ")");
+                continue;
+            }
             for (var options : FeedbackArm.values()) {
                 for (var feedbackAware : List.of(true, false)) {
                     opens++;

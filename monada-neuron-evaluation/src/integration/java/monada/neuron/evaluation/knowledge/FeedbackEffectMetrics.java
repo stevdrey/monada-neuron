@@ -272,6 +272,8 @@ final class FeedbackEffectMetrics {
             throw new IllegalArgumentException("compare a treatment arm with the control");
         }
         var eventKeys = eventKeys(plan, arm);
+        var controlRows = RowIndex.of(control);
+        var treatmentRows = RowIndex.of(treatment);
         var codec = new TokenPackingSignalCodec();
         var byId = new LinkedHashMap<String, JudgedQuery>();
         querySet.queries().forEach(query -> byId.put(query.queryId(), query));
@@ -296,7 +298,7 @@ final class FeedbackEffectMetrics {
                 var texts = path == RecallPath.DIRECT ? List.of(member.text()) : codecTexts(codec, member.text());
                 var exercised = (int) texts.stream().filter(text -> !text.isBlank())
                         .filter(text -> eventKeys.contains(arm.strategy().effectiveKey(text))).count();
-                queries.add(pair(member, path, exercised, control, treatment));
+                queries.add(pair(member, path, exercised, controlRows, treatmentRows));
             }
         }
         var populations = new ArrayList<PopulationEffect>();
@@ -324,7 +326,8 @@ final class FeedbackEffectMetrics {
     private record Member(String id, String text, JudgedQuery source, Population population) {
     }
 
-    private static QueryEffect pair(Member member, RecallPath path, int exercised, Snapshot control, Snapshot treatment) {
+    private static QueryEffect pair(Member member, RecallPath path, int exercised, RowIndex control,
+            RowIndex treatment) {
         var controlScore = score(member, path.layer(), control);
         var treatmentScore = score(member, path.layer(), treatment);
         var controlRows = control.rows(member.id(), path.layer(), K);
@@ -345,7 +348,7 @@ final class FeedbackEffectMetrics {
         var tSet = new HashSet<>(t);
         var churn = (int) (c.stream().filter(id -> !tSet.contains(id)).count()
                 + t.stream().filter(id -> !cSet.contains(id)).count());
-        var changed = !sameRows(controlRows, treatmentRows);
+        var changed = !HtmlKnowledgeRecall.sameRows(controlRows, treatmentRows);
         var relevantRanks = new TreeMap<String, String>();
         for (var chunk : new TreeSet<>(member.source().relevant())) {
             relevantRanks.put(chunk, rank(c, chunk) + "->" + rank(t, chunk));
@@ -379,23 +382,41 @@ final class FeedbackEffectMetrics {
                 && HtmlKnowledgeRecall.sameScore(scores.get(row.chunkId()), row.score()));
     }
 
-    /** Whether two row lists hold the same chunks in the same order with bit-exactly equal scores. */
-    private static boolean sameRows(List<Row> first, List<Row> second) {
-        if (first.size() != second.size()) {
-            return false;
-        }
-        for (var i = 0; i < first.size(); i++) {
-            if (!first.get(i).chunkId().equals(second.get(i).chunkId())
-                    || !HtmlKnowledgeRecall.sameScore(first.get(i).score(), second.get(i).score())) {
-                return false;
-            }
-        }
-        return true;
+    private static QueryScore score(Member member, Layer layer, RowIndex rows) {
+        return RecallMetrics.layerScore(member.source(), layer, rows.rows(member.id(), layer, K),
+                rows.rows(member.id(), layer, HtmlKnowledgeRecall.LOOKAHEAD_LIMIT));
     }
 
-    private static QueryScore score(Member member, Layer layer, Snapshot snapshot) {
-        return RecallMetrics.layerScore(member.source(), layer, snapshot.rows(member.id(), layer, K),
-                snapshot.rows(member.id(), layer, HtmlKnowledgeRecall.LOOKAHEAD_LIMIT));
+    /**
+     * The rows of one snapshot grouped once by query, layer and limit, in rank order, so pairing every query does not
+     * rescan the whole snapshot ({@link Snapshot#rows(String, Layer, int)} is a linear scan).
+     */
+    record RowIndex(Map<String, List<Row>> byKey) {
+
+        static RowIndex of(Snapshot snapshot) {
+            var byKey = new HashMap<String, List<Row>>();
+            snapshot.rows().forEach(row -> byKey.computeIfAbsent(key(row.queryId(), row.layer(), row.limit()),
+                    unused -> new ArrayList<>()).add(row));
+            return new RowIndex(byKey);
+        }
+
+        /** Returns the rows of {@code queryId} from {@code layer} at {@code limit}, in rank order. */
+        List<Row> rows(String queryId, Layer layer, int limit) {
+            return byKey.getOrDefault(key(queryId, layer, limit), List.of());
+        }
+
+        /** Returns every row of {@code queryId} from {@code layer}, at every limit, in snapshot order. */
+        List<Row> rows(String queryId, Layer layer) {
+            var rows = new ArrayList<Row>();
+            for (var limit : List.of(1, 3, HtmlKnowledgeRecall.MAX_LIMIT, HtmlKnowledgeRecall.LOOKAHEAD_LIMIT)) {
+                rows.addAll(rows(queryId, layer, limit));
+            }
+            return rows;
+        }
+
+        private static String key(String queryId, Layer layer, int limit) {
+            return queryId + "\u0000" + layer.name() + "\u0000" + limit;
+        }
     }
 
     private static List<String> ids(QueryScore score) {
