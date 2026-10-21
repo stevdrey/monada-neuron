@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 
 import static monada.neuron.evaluation.knowledge.HtmlKnowledgeRecallReport.aggregateJson;
@@ -212,6 +213,10 @@ final class HtmlKnowledgeFeedbackReport {
                 + ", \"path\": " + string(query.path().label())
                 + ", \"queryId\": " + string(query.queryId())
                 + ", \"sourceId\": " + string(query.source().queryId())
+                + ", \"category\": " + string(query.source().category().label())
+                + ", \"answerability\": " + string(query.source().answerability().name())
+                + ", \"required\": " + strings(new TreeSet<>(query.source().required()))
+                + ", \"supporting\": " + strings(new TreeSet<>(query.source().supporting()))
                 + ", \"population\": " + string(query.population().label())
                 + ", \"exercisedKeys\": " + query.exercisedKeys()
                 + ", \"comparability\": " + string(query.comparability().label())
@@ -230,7 +235,10 @@ final class HtmlKnowledgeFeedbackReport {
                         .map(entry -> string(entry.getKey()) + ": " + string(entry.getValue()))
                         .collect(Collectors.joining(", ", "{ ", " }"))
                 + ", \"regression\": " + strings(query.regression())
-                + ", \"improvement\": " + strings(query.improvement()) + " }";
+                + ", \"improvement\": " + strings(query.improvement())
+                + ",\n      \"controlResult\": " + HtmlKnowledgeRecallReport.queryLayerJson(query.controlScore())
+                + ",\n      \"treatmentResult\": " + HtmlKnowledgeRecallReport.queryLayerJson(query.treatmentScore())
+                + " }";
     }
 
     /** Renders the scored payload as Markdown. */

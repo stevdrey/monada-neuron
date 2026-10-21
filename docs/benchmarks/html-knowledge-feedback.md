@@ -52,7 +52,7 @@ With `--store-root`, the four arm roots are kept under that directory, which mus
 
 | File | Content |
 | :--- | :--- |
-| `html-knowledge-feedback.json` | The single machine-readable report: `allChecksPassed`, the checks, metadata and environment. The scored payload is under `feedback` (`null` when nothing was scored). It holds the hashes, the arms and their persisted logs, the split, every event, the comparisons, every per-query pair, the diagnostics, the follow-up candidates and the `scope` statement. |
+| `html-knowledge-feedback.json` | The single machine-readable report: `allChecksPassed`, the checks, metadata and environment. The scored payload is under `feedback` (`null` when nothing was scored). It holds the hashes, the arms and their persisted logs, the split, every event, the comparisons, every per-query pair (category, answerability, expected chunks, and for each arm the returned chunk ids with ranks and scores, outcome and `tieAtCutoff` per `k`, metrics and miss diagnostics), the diagnostics, the follow-up candidates and the `scope` statement. |
 | `html-knowledge-feedback.md` | The same report in readable form. The direct Store and the Neuron adapter paths are separate sections. |
 | `html-kq-v1-feedback-rows.tsv` | Raw scored rows from the restarted process: limit-5 B1 and B2 results of every arm, with feedback-aware ranking on and off, and hexadecimal scores. The first line states the hashes and `allChecksPassed`. |
 | `html-kq-v1-feedback-events.tsv` | Every stored event of every arm: query, stored query key, chunk id, opaque reference, signal and hexadecimal delta. It contains no atom ids and no timestamps. |
@@ -114,7 +114,9 @@ Each non-blank calibration query gets three variants:
 - `spacing`: every space doubled;
 - `punctuation`: the final `?` removed, or added when there is none.
 
-That makes 54 variants. A variant is scored with its source query's labels and is always `in-sample (tuned)`.
+That makes 54 variants. A variant is scored with its source query's labels. A variant of a query that received events
+is `in-sample (tuned)`; a variant of a calibration query without events joins `calibration-without-events`, so it is a
+leak check like its source.
 `variants.keyPreserving` requires each variant to keep its normalized and lexically enriched keys and to change its
 exact key, and every workload text to be distinct.
 
@@ -185,7 +187,7 @@ path (direct Store B1 and Neuron adapter B2) and each population.
 | Population | Role |
 | :--- | :--- |
 | `calibration-with-events` | `in-sample (tuned)`: the re-asked query. This is the only population whose keys received events. |
-| `calibration-without-events` | Leak check. |
+| `calibration-without-events` | Leak check: the calibration queries without events and their variants. |
 | `held-out` | Transfer check. |
 | `key-variant/<transform>` | `in-sample (tuned)`: variants of queries with events. |
 
@@ -231,7 +233,7 @@ of about 18 KB.
 | :--- | :--- | :--- | :--- |
 | `calibration-with-events` (13) | 13 changed; ΔRecall@5 +0.038, ΔPrecision@5 +0.015, ΔMRR@5 +0.164; 4 improved, 0 regressed | same as exact | same as exact |
 | `key-variant/*` (13 each) | 0 changed | same effect as the re-asked query | same effect as the re-asked query |
-| `calibration-without-events` (6) | 0 changed | 0 changed | 0 changed |
+| `calibration-without-events` (21: 6 queries and 15 variants) | 0 changed | 0 changed | 0 changed |
 | `held-out` (13) | 0 changed: **no effect** | 0 changed: **no effect** | 0 changed: **no effect** |
 
 The four in-sample improvements are:

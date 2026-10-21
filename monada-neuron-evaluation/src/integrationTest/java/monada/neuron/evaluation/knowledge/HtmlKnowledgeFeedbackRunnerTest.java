@@ -69,6 +69,11 @@ class HtmlKnowledgeFeedbackRunnerTest {
         assertTrue(json.contains("\"splitHash\": "));
         assertTrue(json.contains("\"variantHash\": "));
         assertTrue(json.contains("not Forge worker-route adaptation"));
+        // The protocol's per-query row: labels, and each arm's ranks, scores, outcome and tieAtCutoff.
+        for (var field : List.of("\"category\": ", "\"answerability\": ", "\"required\": ", "\"supporting\": ",
+                "\"controlResult\": ", "\"treatmentResult\": ", "\"tieAtCutoff\": ", "\"missDiagnostics\": ")) {
+            assertTrue(json.contains(field), field);
+        }
     }
 
     @Test

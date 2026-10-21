@@ -158,13 +158,15 @@ final class FeedbackEffectMetrics {
      * @param relevantRanks per relevant chunk in code point order, {@code control→treatment} 1-based ranks ({@value #ABSENT_RANK} = absent)
      * @param regression why the pair is a regression, empty when it is not
      * @param improvement why the pair is an improvement, empty when it is not
+     * @param controlScore the control's full score: returned ranks and scores, outcome and {@code tieAtCutoff} per k
+     * @param treatmentScore the treatment's full score
      */
     record QueryEffect(String queryId, JudgedQuery source, Population population, RecallPath path, int exercisedKeys,
             Comparability comparability, List<String> control, List<String> treatment, Outcome controlOutcome,
             Outcome treatmentOutcome, Map<String, OptionalDouble> controlMetrics,
             Map<String, OptionalDouble> treatmentMetrics, int churn, boolean changed, boolean orderChangedOnly,
             boolean scoreChangedOnly, Map<String, String> relevantRanks, List<String> regression,
-            List<String> improvement) {
+            List<String> improvement, QueryScore controlScore, QueryScore treatmentScore) {
 
         QueryEffect {
             control = List.copyOf(control);
@@ -174,6 +176,8 @@ final class FeedbackEffectMetrics {
             relevantRanks = Collections.unmodifiableMap(new TreeMap<>(relevantRanks));
             regression = List.copyOf(regression);
             improvement = List.copyOf(improvement);
+            Objects.requireNonNull(controlScore, "controlScore must not be null");
+            Objects.requireNonNull(treatmentScore, "treatmentScore must not be null");
         }
 
         /** Returns {@code treatment − control} of {@code metric}, undefined when either is undefined. */
@@ -281,10 +285,10 @@ final class FeedbackEffectMetrics {
             members.add(new Member(query.queryId(), query.text(), query, population));
         }
         for (var variant : variants) {
-            if (plan.queryIds().contains(variant.sourceId())) {
-                members.add(new Member(variant.variantId(), variant.text(), byId.get(variant.sourceId()),
-                        Population.of(variant.transform())));
-            }
+            // A variant of a calibration query without events is, like its source, a leak check.
+            members.add(new Member(variant.variantId(), variant.text(), byId.get(variant.sourceId()),
+                    plan.queryIds().contains(variant.sourceId()) ? Population.of(variant.transform())
+                            : Population.CALIBRATION_WITHOUT_EVENTS));
         }
         var queries = new ArrayList<QueryEffect>();
         for (var path : RecallPath.values()) {
@@ -357,7 +361,8 @@ final class FeedbackEffectMetrics {
                 comparable ? changes(controlOutcome, treatmentOutcome, controlMetrics, treatmentMetrics, true)
                         : List.of(),
                 comparable ? changes(controlOutcome, treatmentOutcome, controlMetrics, treatmentMetrics, false)
-                        : List.of());
+                        : List.of(),
+                controlScore, treatmentScore);
     }
 
     /**

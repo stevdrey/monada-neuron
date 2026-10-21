@@ -232,7 +232,7 @@ final class HtmlKnowledgeRecallReport {
                 .toList();
     }
 
-    private String diagnostics(QueryScore score) {
+    private static String diagnostics(QueryScore score) {
         if (!score.completed() || score.query().relevant().isEmpty()) {
             return "";
         }
@@ -242,7 +242,12 @@ final class HtmlKnowledgeRecallReport {
         return missing.isEmpty() ? "" : " (missing required " + String.join(", ", missing) + ")";
     }
 
-    private String queryLayerJson(QueryScore score) {
+    /**
+     * Renders one query's result through one layer: returned chunk ids with ranks and scores, outcome, {@code tieAtCutoff}
+     * and metrics per {@code k}, and miss diagnostics. The relevance-feedback report (Issue #110) renders each control
+     * and treatment result with it, so both experiments share the protocol's per-query row.
+     */
+    static String queryLayerJson(QueryScore score) {
         if (!score.completed()) {
             return "{ \"completed\": false }";
         }

@@ -2,7 +2,6 @@ package monada.neuron.evaluation.knowledge;
 
 import com.monada.storage.feedback.FeedbackSignal;
 import monada.neuron.evaluation.knowledge.FeedbackEffectMetrics.ArmEffect;
-import monada.neuron.evaluation.knowledge.FeedbackEffectMetrics.Comparability;
 import monada.neuron.evaluation.knowledge.FeedbackEffectMetrics.RecallPath;
 import monada.neuron.evaluation.knowledge.FeedbackKeyVariants.Variant;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeIngestion.Check;
@@ -568,7 +567,7 @@ public final class HtmlKnowledgeFeedbackRunner {
                                 : entry.getValue()));
         for (var effect : effects) {
             var exercised = effect.queries().stream().filter(query -> query.path() == RecallPath.NEURON
-                    && query.population().withEvents() && query.comparability() != Comparability.NOT_EXERCISED)
+                    && query.population().withEvents() && query.exercisedKeys() > 0)
                     .count();
             var total = effect.queries().stream().filter(query -> query.path() == RecallPath.NEURON
                     && query.population().withEvents()).count();
@@ -604,7 +603,7 @@ public final class HtmlKnowledgeFeedbackRunner {
                 }
             }
             var exercised = effect.queries().stream().anyMatch(query -> query.path() == RecallPath.NEURON
-                    && query.population().withEvents() && query.comparability() != Comparability.NOT_EXERCISED);
+                    && query.population().withEvents() && query.exercisedKeys() > 0);
             if (!exercised) {
                 followUps.add("Neuron: under the " + effect.arm().strategy().label() + " key strategy no B2 query"
                         + " reaches a key with events, because the adapter sends one Store query per codec token;"

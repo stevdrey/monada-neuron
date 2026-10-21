@@ -136,6 +136,21 @@ class FeedbackEffectMetricsTest {
         assertFalse(effect.changed());
     }
 
+    @Test
+    void variantsOfCalibrationQueriesWithoutEventsAreLeakChecks() {
+        var plan = plan(new Event(CALIBRATION.queryId(), CALIBRATION.text(), RELEVANT, FeedbackSignal.POSITIVE));
+        var other = SPLIT.calibration().stream().filter(query -> !query.text().isBlank()
+                && !query.queryId().equals(CALIBRATION.queryId())).findFirst().orElseThrow();
+        var variants = FeedbackKeyVariants.of(List.of(new QueryText(other.queryId(), other.text())));
+        var arm = FeedbackEffectMetrics.compare(QUERIES, SPLIT, variants, plan, FeedbackArm.TREATMENT_EXACT,
+                snapshot(List.of()), snapshot(List.of()));
+        for (var variant : variants) {
+            var effect = effect(arm, variant.variantId(), RecallPath.DIRECT);
+            assertEquals(Population.CALIBRATION_WITHOUT_EVENTS, effect.population());
+            assertEquals(other.queryId(), effect.source().queryId());
+        }
+    }
+
     private static QueryEffect effect(ArmEffect arm, String queryId, RecallPath path) {
         return arm.queries().stream().filter(query -> query.queryId().equals(queryId) && query.path() == path)
                 .findFirst().orElseThrow();
