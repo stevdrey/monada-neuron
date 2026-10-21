@@ -169,6 +169,8 @@ final class HtmlKnowledgeCycleExperiment {
             emptyByText.put(query.queryId(), memoryEmpty);
             rows.add(row(Arm.MEMORY, query.queryId(), query.queryId(), real, full, memoryEmpty,
                     Optional.of(contrast(real, memoryEmpty))));
+            checkIntegrity(Arm.MEMORY, query.queryId(), real, failures);
+            checkValueEquality(real, failures);
 
             var replay = execute(full.adapter(), query.text(), BUDGET);
             if (!replay.equals(real)) {
@@ -179,6 +181,7 @@ final class HtmlKnowledgeCycleExperiment {
             var memoryEmpty = emptyByText.get(query.queryId());
             rows.add(row(Arm.MEMORY_EMPTY, query.queryId(), query.queryId(), memoryEmpty, full, memoryEmpty,
                     Optional.empty()));
+            checkIntegrity(Arm.MEMORY_EMPTY, query.queryId(), memoryEmpty, failures);
         }
         for (var index = 0; index < queries.size(); index++) {
             var slot = queries.get(index);
@@ -187,22 +190,26 @@ final class HtmlKnowledgeCycleExperiment {
             rows.add(row(Arm.SWAPPED, slot.queryId(), input.queryId(), run, full, emptyByText.get(input.queryId()),
                     Optional.empty()));
             checkSwapped(run, realByText.get(input.queryId()), slot.queryId(), input.queryId(), failures);
+            checkIntegrity(Arm.SWAPPED, slot.queryId(), run, failures);
         }
         for (var query : queries) {
             var run = execute(removed.adapter(), query.text(), BUDGET);
             rows.add(row(Arm.REMOVED, query.queryId(), query.queryId(), run, removed,
                     emptyByText.get(query.queryId()), Optional.empty()));
+            checkIntegrity(Arm.REMOVED, query.queryId(), run, failures);
         }
         for (var query : queries) {
             var run = execute(full.adapter(), query.text(), tightBudget(query.text()));
             rows.add(row(Arm.TIGHT_BUDGET, query.queryId(), query.queryId(), run, full,
                     emptyByText.get(query.queryId()), Optional.empty()));
             checkTight(run, realByText.get(query.queryId()), query.queryId(), failures);
+            checkIntegrity(Arm.TIGHT_BUDGET, query.queryId(), run, failures);
         }
         for (var query : queries) {
             var run = execute(closed, query.text(), BUDGET);
             rows.add(row(Arm.UNAVAILABLE, query.queryId(), query.queryId(), run, full,
                     emptyByText.get(query.queryId()), Optional.empty()));
+            checkIntegrity(Arm.UNAVAILABLE, query.queryId(), run, failures);
         }
         var injected = new IllegalStateException("injected recall failure");
         for (var query : queries) {
@@ -213,11 +220,6 @@ final class HtmlKnowledgeCycleExperiment {
                     emptyByText.get(query.queryId()), Optional.empty()));
             checkThrowing(run, injected, query.queryId(), failures);
         }
-        for (var run : realByText.values()) {
-            checkIntegrity(run, full.resolver(), failures);
-            checkValueEquality(run, failures);
-        }
-
         var snapshot = new Snapshot(queryHash, rows);
         return new Observation(snapshot, checks(snapshot, queries.size(), failures), metadata());
     }
@@ -438,36 +440,46 @@ final class HtmlKnowledgeCycleExperiment {
         }).toList();
     }
 
-    /** Trace integrity of one real-port run ({@code l3-evidence-v1}); any violation is a failure. */
-    private void checkIntegrity(Run run, RecalledReferenceResolver resolver, Map<String, List<String>> failures) {
+    /**
+     * Records the trace-integrity violations of one run of {@code arm} for {@code queryId}. Every arm except
+     * {@link Arm#THROWING}, which has no memory result, is checked; its references are resolved on its row against
+     * its own root's resolver ({@code evidence.referencesResolved}).
+     */
+    private void checkIntegrity(Arm arm, String queryId, Run run, Map<String, List<String>> failures) {
+        integrityViolations(run).forEach(violation -> fail(failures, "evidence.traceIntegrity", arm + " " + queryId
+                + ": " + violation));
+    }
+
+    /**
+     * The trace-integrity violations of one run ({@code l3-evidence-v1}): exactly one recorded port call and a memory
+     * result; the admitted results are an ordered prefix of the recorded response; the recalled slice of the memory
+     * output equals their Signals in order; every attached {@code MemoryReferenceEvidence} names an admitted
+     * reference. Whether admitted references resolve is {@code evidence.referencesResolved}, judged on the rows.
+     */
+    List<String> integrityViolations(Run run) {
+        var violations = new ArrayList<String>();
         var memory = run.memory();
         if (memory.isEmpty() || run.calls().size() != 1) {
-            fail(failures, "evidence.traceIntegrity", "no memory result or not exactly one port call");
-            return;
+            violations.add("no memory result or not exactly one port call");
+            return violations;
         }
         var recorded = run.calls().getFirst().response().results();
         var admitted = memory.get().response().results();
         if (admitted.size() > recorded.size() || !recorded.subList(0, admitted.size()).equals(admitted)) {
-            fail(failures, "evidence.traceIntegrity", "admitted results are not a prefix of the recorded response");
+            violations.add("admitted results are not a prefix of the recorded response");
         }
         if (!admittedSignals(memory.get()).equals(admitted.stream().map(ResonanceMemoryResult::signal).toList())) {
-            fail(failures, "evidence.traceIntegrity", "the recalled output slice differs from the admitted Signals");
+            violations.add("the recalled output slice differs from the admitted Signals");
         }
         var references = new HashSet<String>(references(admitted));
-        for (var reference : references(admitted)) {
-            if (!resolver.resolve(reference).resolved()) {
-                fail(failures, "evidence.referencesResolved", "admitted reference " + reference + " "
-                        + resolver.resolve(reference).status());
-            }
-        }
         run.stageResults().stream().filter(ReasoningCognitiveStageResult.class::isInstance)
                 .map(ReasoningCognitiveStageResult.class::cast)
                 .flatMap(result -> result.hypotheses().hypotheses().stream())
                 .flatMap(hypothesis -> hypothesis.evidence().stream())
                 .filter(item -> !(item instanceof MemoryReferenceEvidence reference)
                         || !references.contains(reference.reference()))
-                .forEach(item -> fail(failures, "evidence.traceIntegrity", "attached evidence " + item
-                        + " is not an admitted reference"));
+                .forEach(item -> violations.add("attached evidence " + item + " is not an admitted reference"));
+        return violations;
     }
 
     /** The memory-empty contrast compares by value only: every compared component must be a record. */
@@ -512,17 +524,16 @@ final class HtmlKnowledgeCycleExperiment {
     }
 
     private List<Check> checks(Snapshot snapshot, int queries, Map<String, List<String>> failures) {
-        for (var arm : List.of(Arm.MEMORY, Arm.SWAPPED, Arm.REMOVED)) {
-            snapshot.rows(arm).stream().filter(row -> !row.recordedStatus().equals("COMPLETE"))
-                    .forEach(row -> fail(failures, "evidence.recallCompleted", arm + " " + row.queryId() + " "
-                            + row.recordedStatus()));
-        }
-        for (var arm : List.of(Arm.MEMORY, Arm.MEMORY_EMPTY, Arm.SWAPPED, Arm.REMOVED, Arm.TIGHT_BUDGET,
-                Arm.UNAVAILABLE)) {
-            snapshot.rows(arm).stream().filter(row -> !row.requestMatchesCodec())
-                    .forEach(row -> fail(failures, "evidence.requestMatchesCodec", arm + " " + row.queryId()));
-        }
-        for (var arm : List.of(Arm.MEMORY, Arm.MEMORY_EMPTY, Arm.SWAPPED, Arm.REMOVED, Arm.UNAVAILABLE)) {
+        snapshot.rows().stream().filter(row -> row.arm().expectsCompleteRecall()
+                && !row.recordedStatus().equals(ResonanceMemoryStatus.COMPLETE.name()))
+                .forEach(row -> fail(failures, "evidence.recallCompleted", row.arm() + " " + row.queryId() + " "
+                        + row.recordedStatus()));
+        snapshot.rows().stream().filter(row -> row.arm() != Arm.THROWING && !row.requestMatchesCodec())
+                .forEach(row -> fail(failures, "evidence.requestMatchesCodec", row.arm() + " " + row.queryId()));
+        for (var arm : Arm.values()) {
+            if (arm == Arm.TIGHT_BUDGET || arm == Arm.THROWING) {
+                continue; // their stage list and termination are the subject of their own control checks
+            }
             for (var row : snapshot.rows(arm)) {
                 if (!row.stages().equals(STAGES.stream().map(Enum::name).toList())) {
                     fail(failures, "evidence.stageList", arm + " " + row.queryId() + " " + row.stages());

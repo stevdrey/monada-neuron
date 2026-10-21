@@ -119,10 +119,47 @@ class EvidenceTraceMetricsTest {
         b2OnEmptyArm.set(emptyIndex, withContrastAndB2(empty, Optional.empty(), Optional.of(true)));
         var extra = new ArrayList<>(rows);
         extra.add(rows.getLast());
-        for (var invalid : List.of(duplicate, foreign, noContrast, b2OnEmptyArm, extra)) {
+        var memoryIndex = 1;
+        var unswapped = new ArrayList<>(rows);
+        unswapped.set(memoryIndex, withInputAndStatus(rows.get(memoryIndex), rows.get(0).queryId(),
+                rows.get(memoryIndex).recordedStatus()));
+        var swappedIndex = 2 * QUERY_SET.queries().size();
+        var swapped = rows.get(swappedIndex);
+        assertEquals(Arm.SWAPPED, swapped.arm());
+        var swappedOwnText = new ArrayList<>(rows);
+        swappedOwnText.set(swappedIndex, withInputAndStatus(swapped, swapped.queryId(), swapped.recordedStatus()));
+        var tightIndex = 4 * QUERY_SET.queries().size();
+        var tight = rows.get(tightIndex);
+        assertEquals(Arm.TIGHT_BUDGET, tight.arm());
+        var tightPartial = new ArrayList<>(rows);
+        tightPartial.set(tightIndex, withInputAndStatus(tight, tight.inputQueryId(), "PARTIAL"));
+        for (var invalid : List.of(duplicate, foreign, noContrast, b2OnEmptyArm, extra, unswapped, swappedOwnText,
+                tightPartial)) {
             assertThrows(IllegalArgumentException.class, () -> EvidenceTraceMetrics.score(QUERY_SET, CORPUS,
                     new Snapshot(QUERY_SET.queryHash(), invalid)));
         }
+    }
+
+    private static Row withInputAndStatus(Row row, String inputQueryId, String recordedStatus) {
+        return new Row(row.arm(), row.queryId(), inputQueryId, row.inputSignals(), row.requestMatchesCodec(),
+                recordedStatus, row.recorded(), row.memoryStatus(), row.admitted(), row.usedBySignal(),
+                row.attached(), row.selected(), row.traceAmbiguous(), row.stages(), row.termination(),
+                row.signalBudgetExhausted(), row.outputSignals(), row.decision(), row.contrast(),
+                row.recalledEqualsB2());
+    }
+
+    /** The query whose text {@code arm} sends for slot {@code queryId}: its own, or the swapped one in set order. */
+    static String input(Arm arm, String queryId) {
+        var queries = QUERY_SET.queries();
+        if (arm != Arm.SWAPPED) {
+            return queryId;
+        }
+        for (var index = 0; index < queries.size(); index++) {
+            if (queries.get(index).queryId().equals(queryId)) {
+                return queries.get(HtmlKnowledgeCycleExperiment.swapIndex(index, queries.size())).queryId();
+            }
+        }
+        throw new IllegalArgumentException(queryId);
     }
 
     private static Row withContrastAndB2(Row row, Optional<Contrast> contrast, Optional<Boolean> recalledEqualsB2) {
@@ -152,7 +189,8 @@ class EvidenceTraceMetricsTest {
         if (!admitted.isEmpty()) {
             recorded.add(new Hit("chk:links#04", 0.1));
         }
-        return new Row(arm, queryId, queryId, 1, true, "COMPLETE", recorded, "COMPLETE", admitted, admitted, admitted,
+        return new Row(arm, queryId, input(arm, queryId), 1, true, arm.expectedRecordedStatus(), recorded,
+                "COMPLETE", admitted, admitted, admitted,
                 admitted, ambiguous, List.of("MEMORY_RECALL", "REASONING", "EVALUATION"), "COMPLETED", false, 1,
                 decision, arm == Arm.MEMORY ? Optional.of(new Contrast(false, false, false, "none", 1, 1, false))
                         : Optional.empty(), arm.recallsThroughAdapter() ? Optional.of(true) : Optional.empty());

@@ -111,7 +111,8 @@ class HtmlKnowledgeEvidenceTraceRunnerTest {
         var rows = new ArrayList<EvidenceTrace.Row>();
         for (var arm : EvidenceTrace.Arm.values()) {
             for (var query : querySet.queries()) {
-                rows.add(new EvidenceTrace.Row(arm, query.queryId(), query.queryId(), 1, true, "COMPLETE", List.of(),
+                rows.add(new EvidenceTrace.Row(arm, query.queryId(), EvidenceTraceMetricsTest.input(arm,
+                        query.queryId()), 1, true, arm.expectedRecordedStatus(), List.of(),
                         "COMPLETE", List.of(), List.of(), List.of(), List.of(), false, List.of(), "COMPLETED", false, 1,
                         EvidenceDecision.UNSUPPORTED, arm == EvidenceTrace.Arm.MEMORY
                                 ? Optional.of(new EvidenceTrace.Contrast(false, false, false, "none", 1, 1, false))

@@ -138,11 +138,11 @@ The seed JVM reports the `ingestion.*` checks of both roots. The trace JVM also 
 | Check | Pass condition |
 | :--- | :--- |
 | `evidence.rows` | 7 arms × 32 queries rows |
-| `evidence.recallCompleted` | `MEMORY`, `SWAPPED` and `REMOVED` recorded one `COMPLETE` response per query |
-| `evidence.requestMatchesCodec` | every recorded request is the codec Signals with limit 5 |
+| `evidence.recallCompleted` | every arm whose port must complete recorded one `COMPLETE` response per query: the adapter arms `MEMORY`, `SWAPPED`, `REMOVED` and `TIGHT_BUDGET` (the tight budget truncates admission, not the port call) and the memory-empty port |
+| `evidence.requestMatchesCodec` | every recorded request, in every arm except `THROWING`, is the codec Signals with limit 5 |
 | `evidence.recalledEqualsB2` | every row of `MEMORY`, `SWAPPED`, `REMOVED` and `TIGHT_BUDGET` has `recalledEqualsB2 = true`: its recorded response equals a direct `adapter.recall` of the same request on the same root (B2) |
-| `evidence.traceIntegrity` | the admitted results are an ordered prefix of the recorded response; the recalled slice of `outputSignals()` equals their Signals in order; every attached `MemoryReferenceEvidence` names an admitted reference |
-| `evidence.referencesResolved` | every admitted reference resolves; no row fails closed |
+| `evidence.traceIntegrity` | for every run with a memory result (every arm except `THROWING`): exactly one recorded port call; the admitted results are an ordered prefix of the recorded response; the recalled slice of `outputSignals()` equals their Signals in order; every attached `MemoryReferenceEvidence` names an admitted reference |
+| `evidence.referencesResolved` | every admitted reference resolves against its own root's resolver; no row fails closed |
 | `evidence.stageList`, `evidence.termination` | `MEMORY_RECALL, REASONING, EVALUATION` and `COMPLETED` in every arm except `TIGHT_BUDGET` and `THROWING` |
 | `evidence.deterministicReplay` | a fresh cycle with a fresh monad reproduces every `MEMORY` run by value: cycle result, snapshot and recorded calls |
 | `contrast.valueEquality` | every compared post-recall component is a record, so the contrast never falls back to identity |
@@ -162,7 +162,10 @@ The orchestrator adds:
   (`q:exact-term-01`, `q:multi-evidence-02`, `q:paraphrase-01`, `q:paraphrase-04`) is `memorySupportedRelevant` in
   `REMOVED`. If no such query existed, the check would fail as "not exercised".
 - `trace.scored`, only on failure: the trace snapshot parsed but is not one complete trace of the query set (a
-  missing, duplicate or foreign row, a contrast outside `MEMORY`, or B2 equality on the wrong arms). The scorer
+  missing, duplicate or foreign row; an input text other than the arm prescribes, which is the slot's own query, or
+  for `SWAPPED` the query `(i + n/2) mod n` in query-set order; a recorded status other than the arm requires, which
+  is `COMPLETE`, `UNAVAILABLE` for `UNAVAILABLE`, or none for `THROWING`; a contrast outside `MEMORY`; or B2 equality
+  on the wrong arms). The scorer
   rejects it, nothing is scored, and the report is still written with `trace: null` and exit status `1`.
 
 ## Metrics

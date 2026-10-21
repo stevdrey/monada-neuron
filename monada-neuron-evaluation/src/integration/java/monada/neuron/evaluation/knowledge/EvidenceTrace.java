@@ -54,6 +54,24 @@ final class EvidenceTrace {
         boolean recallsThroughAdapter() {
             return this == MEMORY || this == SWAPPED || this == REMOVED || this == TIGHT_BUDGET;
         }
+
+        /**
+         * Whether the port must answer {@code COMPLETE} in this arm: every adapter arm (the tight budget truncates
+         * admission, not the port call) and the memory-empty port. {@link #UNAVAILABLE} must answer
+         * {@code UNAVAILABLE}, and {@link #THROWING} records no response.
+         */
+        boolean expectsCompleteRecall() {
+            return recallsThroughAdapter() || this == MEMORY_EMPTY;
+        }
+
+        /** The recorded status a trace row of this arm must carry. */
+        String expectedRecordedStatus() {
+            return switch (this) {
+                case UNAVAILABLE -> "UNAVAILABLE";
+                case THROWING -> "none";
+                default -> "COMPLETE";
+            };
+        }
     }
 
     /** One recalled result at the port boundary: its chunk (or unresolved reference) and score. */

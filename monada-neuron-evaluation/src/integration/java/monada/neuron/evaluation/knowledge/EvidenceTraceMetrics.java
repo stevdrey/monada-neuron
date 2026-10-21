@@ -9,6 +9,7 @@ import monada.neuron.evaluation.knowledge.RecallMetrics.Aggregate;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -137,9 +138,11 @@ final class EvidenceTraceMetrics {
 
     /**
      * Requires {@code snapshot} to be one complete trace of {@code querySet}: its {@code queryHash}, exactly one row
-     * per arm and query and no other row, every {@code inputQueryId} a query of the set, a contrast exactly on
-     * {@link Arm#MEMORY} rows, and B2 equality exactly on the arms that recall through the adapter. A phase file can
-     * be syntactically complete and still violate this, so the check runs before anything is scored.
+     * per arm and query and no other row, each arm's prescribed input (the slot's own query, or for
+     * {@link Arm#SWAPPED} the query {@link HtmlKnowledgeCycleExperiment#swapIndex} names in query-set order, which is
+     * the workload order), each arm's expected recorded status, a contrast exactly on {@link Arm#MEMORY} rows, and B2
+     * equality exactly on the arms that recall through the adapter. A phase file can be syntactically complete and
+     * still violate this, so the check runs before anything is scored.
      *
      * @throws IllegalArgumentException naming the first violation
      */
@@ -147,14 +150,28 @@ final class EvidenceTraceMetrics {
         if (!snapshot.queryHash().equals(querySet.queryHash())) {
             throw new IllegalArgumentException("the snapshot answers queryHash " + snapshot.queryHash());
         }
-        var ids = new HashSet<String>();
-        querySet.queries().forEach(query -> ids.add(query.queryId()));
+        var queries = querySet.queries();
+        var indexById = new HashMap<String, Integer>();
+        for (var index = 0; index < queries.size(); index++) {
+            indexById.put(queries.get(index).queryId(), index);
+        }
         var seen = new HashSet<String>();
         for (var row : snapshot.rows()) {
             var key = row.arm() + " " + row.queryId();
-            if (!ids.contains(row.queryId()) || !ids.contains(row.inputQueryId())) {
-                throw new IllegalArgumentException("row " + key + " names a query outside the set (input "
-                        + row.inputQueryId() + ")");
+            var index = indexById.get(row.queryId());
+            if (index == null) {
+                throw new IllegalArgumentException("row " + key + " names a query outside the set");
+            }
+            var input = row.arm() == Arm.SWAPPED
+                    ? queries.get(HtmlKnowledgeCycleExperiment.swapIndex(index, queries.size())).queryId()
+                    : row.queryId();
+            if (!row.inputQueryId().equals(input)) {
+                throw new IllegalArgumentException("row " + key + " was sent the text of " + row.inputQueryId()
+                        + ", but its arm prescribes " + input);
+            }
+            if (!row.recordedStatus().equals(row.arm().expectedRecordedStatus())) {
+                throw new IllegalArgumentException("row " + key + " recorded status " + row.recordedStatus()
+                        + ", but its arm requires " + row.arm().expectedRecordedStatus());
             }
             if (!seen.add(key)) {
                 throw new IllegalArgumentException("duplicate row " + key);

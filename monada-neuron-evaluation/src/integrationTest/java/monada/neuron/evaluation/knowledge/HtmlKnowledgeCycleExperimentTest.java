@@ -166,6 +166,36 @@ class HtmlKnowledgeCycleExperimentTest {
     }
 
     @Test
+    void traceIntegrityRejectsAMemoryResultThatIsNotThePrefixOfTheRecordedResponse() {
+        var experiment = new HtmlKnowledgeCycleExperiment();
+        var first = experiment.execute(full.adapter(), text("q:exact-term-01"), HtmlKnowledgeCycleExperiment.BUDGET);
+        var second = experiment.execute(full.adapter(), text("q:code-example-02"),
+                HtmlKnowledgeCycleExperiment.BUDGET);
+        assertEquals(List.of(), experiment.integrityViolations(first));
+        var forged = new HtmlKnowledgeCycleExperiment.Run(first.inputs(), second.calls(), first.result(),
+                Optional.empty());
+        assertTrue(experiment.integrityViolations(forged).contains(
+                "admitted results are not a prefix of the recorded response"), "the port recorded another recall");
+    }
+
+    @Test
+    void aPartialRecallFailsEveryArmThatMustComplete() {
+        // The port itself answers PARTIAL: the tight budget truncates admission only, so its rows must fail too.
+        var partial = new Root("full", request -> {
+            var response = full.adapter().recall(request);
+            return new ResonanceMemoryResponse(ResonanceMemoryStatus.PARTIAL, response.resultLimit(),
+                    response.results());
+        }, full.resolver());
+        var degraded = new HtmlKnowledgeCycleExperiment().run(partial, removed, closed, QUERY_SET.queryHash(), texts);
+        var completed = degraded.checks().stream().filter(check -> check.name().equals("evidence.recallCompleted"))
+                .findFirst().orElseThrow();
+        assertFalse(completed.passed());
+        for (var arm : List.of("MEMORY ", "SWAPPED ", "TIGHT_BUDGET ")) {
+            assertTrue(completed.detail().contains(arm), arm + completed.detail());
+        }
+    }
+
+    @Test
     void theTraceSideReferencesNoGoldLabelType() throws IOException {
         for (var type : List.of("HtmlKnowledgeCycleExperiment", "HtmlKnowledgeCycleExperiment$Run",
                 "HtmlKnowledgeEvidenceTracePhase", "RecalledEvidenceReasoningStage", "RecalledReferenceResolver",
@@ -181,7 +211,11 @@ class HtmlKnowledgeCycleExperimentTest {
         }
     }
 
-    private static Root root(String name, HtmlKnowledgeCorpus corpus) {
+    private static String text(String queryId) {
+        return texts.stream().filter(query -> query.queryId().equals(queryId)).findFirst().orElseThrow().text();
+    }
+
+        private static Root root(String name, HtmlKnowledgeCorpus corpus) {
         var path = directory.resolve(name);
         var manifest = new HtmlKnowledgeIngestion(corpus).ingest(path).manifest();
         var readback = new HtmlKnowledgeIngestion(corpus)
