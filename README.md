@@ -229,7 +229,10 @@ versioned HTML corpus and offline ingestion are delivered
 separate JVMs with Neuron recall traced to exact Store atoms is verified
 ([`runHtmlKnowledgePersistence`](docs/benchmarks/html-knowledge-persistence.md), issue #106). Judged L1/L2 recall
 over the curated `html-kq-v1` query set is measured against a lexical baseline
-([`runHtmlKnowledgeRecall`](docs/benchmarks/html-knowledge-recall.md), issue #107); evidence use and grounded answers
+([`runHtmlKnowledgeRecall`](docs/benchmarks/html-knowledge-recall.md), issue #107). A bounded Neuron cycle is traced
+from query Signals through the recalled references to the evidence its later stages carry, with memory-off,
+removed-document and failure controls
+([`runHtmlKnowledgeEvidenceTrace`](docs/benchmarks/html-knowledge-evidence-trace.md), issue #108); grounded answers
 are still planned.
 
 **Module path.** A JPMS host writes `requires monada.neuron;`. The jar is an automatic module, so it declares no

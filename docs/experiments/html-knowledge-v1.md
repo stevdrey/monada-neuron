@@ -6,7 +6,7 @@
 | :--- | :--- |
 | Protocol version | `html-knowledge-protocol-v1` |
 | Issue | [#104](https://github.com/stevdrey/monada-neuron/issues/104) (Experiment Knowledge 1/8) |
-| Implementation | Corpus contract delivered by #105 ([ingestion](../benchmarks/html-knowledge-ingestion.md)); ingestion readback, post-reopen (restart) and L2 attribution delivered by #106 ([persistence](../benchmarks/html-knowledge-persistence.md)); query set `html-kq-v1`, L1/L2 judged recall and baselines B0 to B2c delivered by #107 ([recall](../benchmarks/html-knowledge-recall.md)); the rest of this document is the contract that issues #107 to #111 implement. |
+| Implementation | Corpus contract delivered by #105 ([ingestion](../benchmarks/html-knowledge-ingestion.md)); ingestion readback, post-reopen (restart) and L2 attribution delivered by #106 ([persistence](../benchmarks/html-knowledge-persistence.md)); query set `html-kq-v1`, L1/L2 judged recall and baselines B0 to B2c delivered by #107 ([recall](../benchmarks/html-knowledge-recall.md)); L3 evidence use (`l3-evidence-v1`) delivered by #108 ([evidence trace](../benchmarks/html-knowledge-evidence-trace.md)); the rest of this document is the contract that issues #109 to #111 implement. |
 | Scope | Monada Neuron `monada-neuron-evaluation` optional `integration` / `integrationTest` source sets only |
 | Extensions | `l3-evidence-v1` (#108), `l4-answer-v1` (#109), `feedback-v1` (#110), `scaling-v1` (#111) |
 
@@ -389,7 +389,9 @@ side by side without claiming parity.
 
 ## Evidence use (L3, delivered by #108)
 
-Extension `l3-evidence-v1`: minimum requirements; #108 may refine them in its own documentation.
+Extension `l3-evidence-v1`: minimum requirements; #108 may refine them in its own documentation. Delivered by #108:
+see [the evidence trace page](../benchmarks/html-knowledge-evidence-trace.md) for the cycle, the controls and the
+refinements it fixes.
 
 Signals carry no identifiers ([ADR 0005](../adr/0005-signals-without-identifiers.md)), and the core does not
 attach `MemoryReferenceEvidence` to anything on its own. L3 therefore traces evidence through what the code
@@ -825,7 +827,7 @@ issue fixes the exact task name in its own documentation.
 | #105 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeIngestion` | import `html-kc-v1` into a temporary Store, write the manifest |
 | #106 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgePersistence` | persistence across separate JVMs, reopen and source-level readback through Neuron |
 | #107 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeRecall` | L1/L2 judged recall with B0/B1/B2/B2c over `html-kq-v1`, rerun in a reopen JVM and in a fresh-root replica JVM |
-| #108 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeEvidenceTrace` | L3 evidence use in a cognitive cycle |
+| #108 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeEvidenceTrace` | L3 evidence use in a bounded cognitive cycle, with memory-empty, swapped, removed-document, tight-budget and failed-recall controls |
 | #109 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeAnswers` | L4 grounded answers with B3 and abstention |
 | #110 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeFeedback` | [relevance feedback](#relevance-feedback-delivered-by-110) vs a no-feedback control |
 | #111 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeScaling` | L6 profile over the [scaling family](#scaling-family-delivered-by-111) |
@@ -880,3 +882,10 @@ source set, and do not change `./gradlew test` when it is absent.
     repetitions 2 to 5 and the scratch timing imports. The observation opens its own handles separately.
   - **Latency rows.** Every latency row reports median and p95 with its sampling fields. Timing scratch roots and the
     replica root sit beside the root under test, on the same storage.
+- No version change (issue #108). No definition, formula, label rule or report field changes. `l3-evidence-v1` is
+  delivered by `runHtmlKnowledgeEvidenceTrace` ([evidence trace](../benchmarks/html-knowledge-evidence-trace.md)),
+  which fixes what the extension left open:
+  - the cycle `MEMORY_RECALL -> REASONING -> EVALUATION` with an evaluation-only evidence consumer;
+  - the default trace key and memory-stage limit 5;
+  - a reference resolver that trusts only chunks read back in the trace process;
+  - the host decision, and the controls beyond the mandatory memory-empty contrast.
