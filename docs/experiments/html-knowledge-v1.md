@@ -897,5 +897,7 @@ source set, and do not change `./gradlew test` when it is absent.
     verdict;
   - the refutation `keyClaim` of a `FALSE_PREMISE` query is its first `keyClaim`;
   - `conflictDisclosed` is `false` by rule when the eligible citations do not cover both chunks of the pair;
-  - the components B3, B3c (`in-sample (tuned)`) and a `TEST_DOUBLE` generator that is never judged;
+  - the components B3, B3c (`in-sample (tuned)`), the conservative B3s (in-sample, designed after review: it abstains
+    unless one retrieved sentence holds every content token of the question) and a `TEST_DOUBLE` generator that is
+    never judged;
   - the human verdicts `html-l4-judgments-v1`, keyed by the exact answer and frozen by hash.

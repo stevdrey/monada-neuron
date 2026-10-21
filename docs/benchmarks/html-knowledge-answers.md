@@ -96,6 +96,7 @@ bound to different layers, roots or `answerK` values are separate report rows.
 | :--- | :--- | :--- | :--- |
 | `B3` | extractive baseline | the protocol's B3 (see below); abstains on an empty `E(q)` or a best score of 0 | none |
 | `B3c` | extractive baseline | B3, but it also abstains unless the chosen segment contains at least half of the query's distinct tokens | **in-sample (tuned)** |
+| `B3s` | extractive, conservative | the first segment, scanning every chunk of `E(q)` in rank order, that contains **every** content token of the question (its distinct tokens minus a fixed list of generic English function words that names no HTML term); otherwise `INSUFFICIENT_EVIDENCE` | **in-sample** (designed after review) |
 | `generator-test-double` | `TEST_DOUBLE` | echoes the first segment of the first excerpt, citing it; never judged, never scored for quality | none |
 
 B3 takes the first chunk of `E(q)` and splits its text into segments (`EvidenceSegmenter`):
@@ -113,6 +114,17 @@ example. The cost is `O(chunkLength)`.
 the questions whose supporting chunk was removed, because function words such as "the" always score at least 1. B3
 is kept unchanged as the protocol floor. B3c adds one coverage rule, chosen after seeing that behavior, so every B3c
 result on `html-kq-v1` is `in-sample (tuned)`. No held-out query set exists yet.
+
+**Why B3s exists.** Review of #109 found that neither floor meets the issue's answer/abstention acceptance cases. B3
+answers the novice `<a>` question off target and answers unanswerable and removed-document questions. B3c still answers
+the `<a>` question off target. B3s is an explicitly named, conservative, evaluation-only demonstration of safe
+abstention:
+- it answers only when one retrieved sentence holds every content word of the question;
+- otherwise it abstains;
+- it uses no threshold, ratio or gold label: its only fixed parameter is a generic function-word list.
+
+It was designed after seeing these failures, so its results on `html-kq-v1` are in-sample like B3c's. B3 and B3c stay
+unchanged and are still reported.
 
 **The generator seam.** `GroundedAnswerGenerator` is an evaluation-only port. It takes a question and bounded excerpts
 (at most 5, each a prefix of at most 4096 code points of the Store-returned text) and returns a proposed response with
@@ -188,7 +200,7 @@ While any judged row of a group is unjudged, the group withholds its metric mean
 
 ## Results (2026-10-21)
 
-Measured on Neuron `3608221` (clean tree) and Store `2fd5e5e` (clean checkout), with Azul OpenJDK 27 on Linux, an AMD
+Measured on Neuron `2744995` (clean tree) and Store `3391195` (clean checkout), with Azul OpenJDK 27 on Linux, an AMD
 Ryzen 7 7730U and Store roots on `tmpfs`. Each run used one seed JVM and one answer JVM. Two full runs on that commit
 gave byte-identical `answers` payloads, with all 21 checks passing and no row unscored or unjudged.
 
@@ -200,6 +212,8 @@ The table covers the full root at `answerK = 5`:
 | B1 | B3c | 17/22 | 2 | 0 | 1 | 0 / 0 | 0 / 0 | 0 | 10 / 5 / 14 | 0.667 | 0.345 | 1.000 |
 | B2 | B3 | 11/22 | 0 | 0 | 17 | 0 / 3 | 0 / 2 | 7 | 2 / 0 / 1 | 0.000 | 0.667 | 0.200 |
 | B2 | B3c | 11/22 | 0 | 0 | 2 | 0 / 0 | 0 / 0 | 0 | 10 / 10 / 10 | 0.000 | 0.333 | 1.000 |
+| B1 | B3s | 17/22 | 2 | 0 | 0 | 0 / 0 | 0 / 0 | 0 | 10 / 5 / 15 | 1.000 | 0.333 | 1.000 |
+| B2 | B3s | 11/22 | 2 | 0 | 0 | 0 / 0 | 0 / 0 | 0 | 10 / 11 / 9 | 1.000 | 0.333 | 1.000 |
 
 `ClaimSupport` and `CitationFidelity` are 1.000 in every row: every claim is an eligible exact quote. No answer is
 `UNSUPPORTED`, `CONTRADICTED` or `FALSE_PREMISE_ACCEPTED`. B3 answers do not depend on `answerK`, because B3 uses only
@@ -210,7 +224,7 @@ The generator test double cites eligibly in every row (`CitationFidelity` 1.000)
 `tieAtCutoff` is `false` in every row: no evidence set ends inside a tie group, as #107 found for B1 and B2.
 
 Answer latency, a diagnostic only, was measured as one answer over `E(q)` of B1 at `answerK = 5` on the full root, 32
-samples, with recall excluded. Medians: B3 29 µs, B3c 27 µs, test double 14 µs.
+samples, with recall excluded. Medians: B3 42 µs, B3c 37 µs, B3s 122 µs (it scans every chunk of `E(q)`), test double 25 µs.
 
 Observations, not tuned away:
 
@@ -233,6 +247,15 @@ Observations, not tuned away:
   - B3 still answers all four from other chunks. B3c abstains on three of them (`EVIDENCE_MISS_ABSTENTION`) but
     answers `exact-term-01` off target, as it does on the full root. Removal alone does not force abstention: only
     the coverage rule does, and not always.
+- **B3s meets the acceptance cases by abstaining.**
+  - **The `<a>` question:** B3s abstains, because no retrieved sentence holds both "HTML" and "element", on every
+    root, layer and `answerK`.
+  - **Unanswerable questions:** it abstains on every one (`AbstentionRecall` 1.000).
+  - **Removed document:** it abstains on all four queries whose relevant chunks were removed with `doc:links`.
+  - **What it answers:** only `exact-term-03` (defer) and `exact-term-05` (sandbox), both `SUPPORTED_CORRECT`, on
+    both layers and roots at `answerK = 5`. Scanning past the first chunk is what lets it answer them from B2.
+  - **The cost:** 15 wrong abstentions on B1 at `answerK = 5`. Safe abstention with lexical evidence is cheap only
+    because it rarely answers. A relevant answer to the `<a>` question needs more than lexical matching.
 - **Conflicts are not reconciled.** No answer cites both chunks of the conflicting-source pair, so none can disclose
   the conflict. The answers are `CONFLICT_HIDDEN` when both chunks were retrieved, and `CONFLICT_EVIDENCE_MISSING`
   otherwise.
@@ -242,6 +265,8 @@ Observations, not tuned away:
 
 ## Limits
 
+- B3s demonstrates safe abstention, not answering ability. Its function-word list was fixed after review, and its
+  results here are in-sample.
 - B3 and B3c are lexical floors. They quote one sentence of the first retrieved chunk. They never combine chunks,
   never rephrase, and do not understand the question.
 - B3c's rule is in-sample (tuned), and there is no held-out query set. A threshold or rule chosen on these 32 queries
@@ -268,7 +293,8 @@ extension leaves to #109:
   lookahead at `answerK = 5` that must extend the limit-5 list.
 - **Citations and completeness.** A citation must cover at least one code point. Eligibility, not exact quoting, is
   the semantic check. The scored snapshot must be the complete row matrix.
-- **Components and layers.** The components are B3, B3c (in-sample, tuned) and the `TEST_DOUBLE` generator.
+- **Components and layers.** The components are B3, B3c (in-sample, tuned), the conservative B3s (in-sample,
+  designed after review) and the `TEST_DOUBLE` generator.
   `TEST_DOUBLE` rows are never judged and get no status. Both `B1` and `B2` are evaluated at `answerK` 1, 3 and 5,
   on the full root and on the root without `doc:links`.
 - **Judgments.** They are kept in `html-l4-judgments-v1`, keyed by the exact answer and frozen by hash. A missing
