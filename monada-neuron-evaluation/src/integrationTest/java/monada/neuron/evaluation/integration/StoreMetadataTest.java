@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -50,5 +51,13 @@ class StoreMetadataTest {
         var process = new ProcessBuilder(command).directory(directory.toFile()).redirectErrorStream(true)
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
         return process.waitFor();
+    }
+
+    @Test
+    void manifestFieldDecodesJsonStringEscapes() {
+        var top = "{ \"feedbackSegment\": \"feedback\\\\a \\\"b\\\" \\u0063.log\", \"dimensions\": 128 }";
+        assertEquals(Optional.of("feedback\\a \"b\" c.log"), StoreMetadata.manifestField(top, "feedbackSegment"));
+        assertEquals(Optional.of("128"), StoreMetadata.manifestField(top, "dimensions"));
+        assertEquals(Optional.empty(), StoreMetadata.manifestField(top, "missing"));
     }
 }

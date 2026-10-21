@@ -13,7 +13,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -61,7 +60,7 @@ class HtmlKnowledgeFeedbackTest {
     void aMissingArmRootFailsStrategyNeutralityWithoutBeingCreated() throws IOException {
         var copy = copyArms("missing");
         var root = HtmlKnowledgeFeedback.root(copy, FeedbackArm.TREATMENT_ENRICHED);
-        deleteTree(root);
+        HtmlKnowledgeIngestionRunner.deleteTree(root);
         var check = feedback.strategyNeutral(copy);
         assertFalse(check.passed());
         assertTrue(check.detail().contains(FeedbackArm.TREATMENT_ENRICHED.label() + ": no Store"), check.detail());
@@ -195,14 +194,6 @@ class HtmlKnowledgeFeedbackTest {
                         "FeedbackAssigner", "FeedbackQuerySplit", "FeedbackEffectMetrics")) {
                     assertFalse(bytes.contains(forbidden), type + " references " + forbidden);
                 }
-            }
-        }
-    }
-
-    private static void deleteTree(Path path) throws IOException {
-        try (var paths = Files.walk(path)) {
-            for (var file : paths.sorted(Comparator.reverseOrder()).toList()) {
-                Files.delete(file);
             }
         }
     }

@@ -8,7 +8,10 @@ import com.monada.api.NormalizedQueryKeyStrategy;
 import com.monada.encoder.TextNormalizer;
 
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -39,7 +42,6 @@ enum FeedbackArm {
         ENRICHED("lexically-enriched");
 
         private final String label;
-        private FeedbackQueryKeyStrategy defaultStrategy;
 
         KeyStrategy(String label) {
             this.label = label;
@@ -65,26 +67,27 @@ enum FeedbackArm {
          */
         String effectiveKey(String query) {
             Objects.requireNonNull(query, "query must not be null");
-            var key = defaultStrategy().keyFor(query);
+            var key = Defaults.STRATEGIES.get(this).keyFor(query);
             return key.isBlank() ? query : key;
-        }
-
-        /**
-         * Returns this strategy over the default normalizer, created once: building the default options loads the
-         * Store's lexical resources, and the strategies are stateless wrappers of an immutable normalizer.
-         */
-        private synchronized FeedbackQueryKeyStrategy defaultStrategy() {
-            if (defaultStrategy == null) {
-                defaultStrategy = create(DefaultNormalizer.INSTANCE);
-            }
-            return defaultStrategy;
         }
     }
 
-    /** The default normalizer, loaded on first use. */
-    private static final class DefaultNormalizer {
+    /**
+     * Every key strategy over the default normalizer, created once on first use: building the default options loads the
+     * Store's lexical resources, and the strategies are stateless wrappers of an immutable normalizer.
+     */
+    private static final class Defaults {
 
-        static final TextNormalizer INSTANCE = MonadaMemoryOptions.defaults().textNormalizer();
+        static final Map<KeyStrategy, FeedbackQueryKeyStrategy> STRATEGIES = strategies();
+
+        private static Map<KeyStrategy, FeedbackQueryKeyStrategy> strategies() {
+            var normalizer = MonadaMemoryOptions.defaults().textNormalizer();
+            var strategies = new EnumMap<KeyStrategy, FeedbackQueryKeyStrategy>(KeyStrategy.class);
+            for (var strategy : KeyStrategy.values()) {
+                strategies.put(strategy, strategy.create(normalizer));
+            }
+            return Collections.unmodifiableMap(strategies);
+        }
     }
 
     private final String directory;

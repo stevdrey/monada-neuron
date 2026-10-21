@@ -388,34 +388,47 @@ final class FeedbackEffectMetrics {
     }
 
     /**
-     * The rows of one snapshot grouped once by query, layer and limit, in rank order, so pairing every query does not
-     * rescan the whole snapshot ({@link Snapshot#rows(String, Layer, int)} is a linear scan).
+     * The rows of one snapshot grouped once by query, layer and limit (in rank order) and by query and layer (in
+     * snapshot order, every recorded limit), so pairing every query does not rescan the whole snapshot
+     * ({@link Snapshot#rows(String, Layer, int)} is a linear scan). Both groupings are derived from the snapshot alone,
+     * so no limit can be left out, and both are unmodifiable.
      */
-    record RowIndex(Map<String, List<Row>> byKey) {
+    record RowIndex(Map<String, List<Row>> byLimit, Map<String, List<Row>> byLayer) {
+
+        RowIndex {
+            byLimit = copy(byLimit);
+            byLayer = copy(byLayer);
+        }
 
         static RowIndex of(Snapshot snapshot) {
-            var byKey = new HashMap<String, List<Row>>();
-            snapshot.rows().forEach(row -> byKey.computeIfAbsent(key(row.queryId(), row.layer(), row.limit()),
-                    unused -> new ArrayList<>()).add(row));
-            return new RowIndex(byKey);
+            var byLimit = new HashMap<String, List<Row>>();
+            var byLayer = new HashMap<String, List<Row>>();
+            for (var row : snapshot.rows()) {
+                byLimit.computeIfAbsent(key(row.queryId(), row.layer()) + "\u0000" + row.limit(),
+                        unused -> new ArrayList<>()).add(row);
+                byLayer.computeIfAbsent(key(row.queryId(), row.layer()), unused -> new ArrayList<>()).add(row);
+            }
+            return new RowIndex(byLimit, byLayer);
         }
 
         /** Returns the rows of {@code queryId} from {@code layer} at {@code limit}, in rank order. */
         List<Row> rows(String queryId, Layer layer, int limit) {
-            return byKey.getOrDefault(key(queryId, layer, limit), List.of());
+            return byLimit.getOrDefault(key(queryId, layer) + "\u0000" + limit, List.of());
         }
 
-        /** Returns every row of {@code queryId} from {@code layer}, at every limit, in snapshot order. */
+        /** Returns every row of {@code queryId} from {@code layer}, at every recorded limit, in snapshot order. */
         List<Row> rows(String queryId, Layer layer) {
-            var rows = new ArrayList<Row>();
-            for (var limit : List.of(1, 3, HtmlKnowledgeRecall.MAX_LIMIT, HtmlKnowledgeRecall.LOOKAHEAD_LIMIT)) {
-                rows.addAll(rows(queryId, layer, limit));
-            }
-            return rows;
+            return byLayer.getOrDefault(key(queryId, layer), List.of());
         }
 
-        private static String key(String queryId, Layer layer, int limit) {
-            return queryId + "\u0000" + layer.name() + "\u0000" + limit;
+        private static String key(String queryId, Layer layer) {
+            return queryId + "\u0000" + layer.name();
+        }
+
+        private static Map<String, List<Row>> copy(Map<String, List<Row>> rows) {
+            var copy = new HashMap<String, List<Row>>();
+            rows.forEach((key, value) -> copy.put(key, List.copyOf(value)));
+            return Map.copyOf(copy);
         }
     }
 
