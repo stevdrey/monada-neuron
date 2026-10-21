@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -328,15 +329,29 @@ public final class HtmlKnowledgePersistenceRunner {
      * and do not fail this one.
      */
     static Check restartCheck(PhaseRun seed, PhaseRun reopen, WorkDirectory work) {
+        return restartCheck(List.of(seed, reopen), work);
+    }
+
+    /**
+     * {@link #restartCheck(PhaseRun, PhaseRun, WorkDirectory)} for any number of phase JVMs: every phase and the
+     * orchestrator run in distinct processes, and every phase JVM finished its phase.
+     */
+    static Check restartCheck(List<PhaseRun> runs, WorkDirectory work) {
         var self = ProcessHandle.current().pid();
-        var separate = seed.pid() != reopen.pid() && seed.pid() != self && reopen.pid() != self;
-        var seedCompleted = completed(seed, work);
-        var reopenCompleted = completed(reopen, work);
-        return new Check("process.restart", separate && seedCompleted && reopenCompleted, "seed JVM pid "
-                + seed.pid() + " exited " + seed.exitStatus() + (seedCompleted ? " after its phase" : " without a result")
-                + "; reopen JVM pid " + reopen.pid() + " exited " + reopen.exitStatus()
-                + (reopenCompleted ? " after its phase" : " without a result") + "; orchestrator pid " + self
-                + (separate ? "; three distinct processes" : "; processes are not distinct"));
+        var pids = new HashSet<Long>();
+        runs.forEach(run -> pids.add(run.pid()));
+        pids.add(self);
+        var separate = pids.size() == runs.size() + 1;
+        var detail = new StringBuilder();
+        var allCompleted = true;
+        for (var run : runs) {
+            var completed = completed(run, work);
+            allCompleted &= completed;
+            detail.append(run.phase()).append(" JVM pid ").append(run.pid()).append(" exited ").append(run.exitStatus())
+                    .append(completed ? " after its phase" : " without a result").append("; ");
+        }
+        return new Check("process.restart", separate && allCompleted, detail + "orchestrator pid " + self
+                + (separate ? "; " + pids.size() + " distinct processes" : "; processes are not distinct"));
     }
 
     /** A phase completed when it exited {@code 0} or {@code 1} and left a complete, parseable result. */

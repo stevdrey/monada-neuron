@@ -242,7 +242,7 @@ public final class HtmlKnowledgeRecallRunner {
         return new Check("determinism.freshRootEqual", separate && equal, (equal
                 ? "a second import into a fresh root (replica JVM pid " + replica.pid() + ") reproduced all "
                         + seedSnapshot.rows().size() + " rows: mapped chunk ids, order and bit-exact scores"
-                : "the replica differs from the seed at row " + firstDifference(seedSnapshot.rows(),
+                : "the replica differs from the seed at row " + HtmlKnowledgeRecall.firstDifference(seedSnapshot.rows(),
                         replicated.get().rows()))
                 + (separate ? "" : "; the replica did not run in its own process"));
     }
@@ -257,17 +257,9 @@ public final class HtmlKnowledgeRecallRunner {
         var detail = equal
                 ? "all " + rows.size() + " results of B0, B1, B2 and B2c at limits 1, 3 and 5 are identical in the"
                         + " reopen JVM: chunk ids through each phase's manifest, order and bit-exact scores"
-                : "first difference at row " + firstDifference(seed.rows(), rows) + " (seed " + seed.rows().size()
-                        + " rows, reopen " + rows.size() + " rows)";
+                : "first difference at row " + HtmlKnowledgeRecall.firstDifference(seed.rows(), rows) + " (seed "
+                        + seed.rows().size() + " rows, reopen " + rows.size() + " rows)";
         return new Check("determinism.restartEqual", equal, detail);
-    }
-
-    private static int firstDifference(List<HtmlKnowledgeRecall.Row> left, List<HtmlKnowledgeRecall.Row> right) {
-        var index = 0;
-        while (index < left.size() && index < right.size() && left.get(index).equals(right.get(index))) {
-            index++;
-        }
-        return index;
     }
 
     /** Returns the snapshot of {@code phase} when its result and snapshot exist and the snapshot parses. */

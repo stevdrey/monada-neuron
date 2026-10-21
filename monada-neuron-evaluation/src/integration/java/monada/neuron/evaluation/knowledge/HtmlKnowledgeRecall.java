@@ -304,8 +304,15 @@ final class HtmlKnowledgeRecall {
 
     /** Returns the adapter configuration of B2: the L2 codec, the production decoder, default Store options. */
     ResonanceStoreAdapterConfig adapterConfig() {
-        return new ResonanceStoreAdapterConfig(codec, new HashedSignalDecoder(), MonadaMemoryOptions.defaults(),
-                THRESHOLD);
+        return adapterConfig(MonadaMemoryOptions.defaults());
+    }
+
+    /**
+     * Returns the adapter configuration of B2 with explicit Store {@code options}, so the relevance-feedback experiment
+     * (Issue #110) can open each arm with its own feedback key strategy, or with feedback-aware ranking disabled.
+     */
+    ResonanceStoreAdapterConfig adapterConfig(MonadaMemoryOptions options) {
+        return new ResonanceStoreAdapterConfig(codec, new HashedSignalDecoder(), options, THRESHOLD);
     }
 
     /**
@@ -316,9 +323,19 @@ final class HtmlKnowledgeRecall {
      * @throws IngestionInputException when {@code root} holds no Store manifest
      */
     Observation observe(Path root, IngestionManifest manifest, String queryHash, List<QueryText> queries) {
+        return observe(root, MonadaMemoryOptions.defaults(), manifest, queryHash, queries);
+    }
+
+    /**
+     * {@link #observe(Path, IngestionManifest, String, List)} with both handles opened with the same Store
+     * {@code options}. The options must match the root's persisted encoding profile; only ranking-side options (the
+     * feedback key strategy and feedback-aware ranking) may differ from the defaults the root was imported with.
+     */
+    Observation observe(Path root, MonadaMemoryOptions options, IngestionManifest manifest, String queryHash,
+            List<QueryText> queries) {
         HtmlKnowledgePersistence.requireExistingStore(root);
-        return observe(() -> new Handles(MonadaMemory.open(root, MonadaMemoryOptions.defaults()),
-                ResonanceStoreMemoryAdapter.open(root, adapterConfig())), manifest, queryHash, queries);
+        return observe(() -> new Handles(MonadaMemory.open(root, options),
+                ResonanceStoreMemoryAdapter.open(root, adapterConfig(options))), manifest, queryHash, queries);
     }
 
     /** A {@code MonadaMemory} and an adapter opened on the same root. */
@@ -796,6 +813,29 @@ final class HtmlKnowledgeRecall {
      */
     static boolean sameScore(double first, double second) {
         return Double.doubleToLongBits(first) == Double.doubleToLongBits(second);
+    }
+
+    /** Whether two row lists hold the same chunks in the same order with bit-exactly equal scores. */
+    static boolean sameRows(List<Row> first, List<Row> second) {
+        if (first.size() != second.size()) {
+            return false;
+        }
+        for (var i = 0; i < first.size(); i++) {
+            if (!first.get(i).chunkId().equals(second.get(i).chunkId())
+                    || !sameScore(first.get(i).score(), second.get(i).score())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Returns the index of the first row where {@code left} and {@code right} differ (record equality). */
+    static int firstDifference(List<Row> left, List<Row> right) {
+        var index = 0;
+        while (index < left.size() && index < right.size() && left.get(index).equals(right.get(index))) {
+            index++;
+        }
+        return index;
     }
 
     /**

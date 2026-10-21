@@ -163,8 +163,11 @@ final class RecallMetrics {
         return new Scores(queries, aggregates, abstentions);
     }
 
-    /** Returns the score of one query through one layer; a failure marker row leaves it without an outcome. */
-    private static QueryScore layerScore(JudgedQuery query, Layer layer, List<Row> rows, List<Row> lookahead) {
+    /**
+     * Returns the score of one query through one layer; a failure marker row leaves it without an outcome. The
+     * relevance-feedback experiment (Issue #110) scores a surface variant's rows against its source query's labels.
+     */
+    static QueryScore layerScore(JudgedQuery query, Layer layer, List<Row> rows, List<Row> lookahead) {
         if (rows.stream().anyMatch(row -> row.chunkId().equals(HtmlKnowledgeRecall.FAILED))) {
             return new QueryScore(query, layer, Optional.empty(), Map.of());
         }
