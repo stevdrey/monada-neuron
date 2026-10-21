@@ -253,45 +253,19 @@ public final class HtmlKnowledgeEvidenceTraceRunner {
     }
 
     private void describe(Path root, PhaseRun seed, Optional<PhaseRun> trace, Map<String, String> metadata) {
-        metadata.put("protocolVersion", HtmlKnowledgeIngestionRunner.PROTOCOL_VERSION);
+        HtmlKnowledgePersistenceRunner.describeTwoRootRun(corpus, querySet, HtmlKnowledgeCycleExperiment.REMOVED_DOCUMENT,
+                phaseJvm, Stream.of(Optional.of(seed), trace).flatMap(Optional::stream).toList(), root,
+                options.storeRoot(), EXTENSION + " evidence trace", metadata);
         metadata.put("extensions", EXTENSION);
         metadata.put("reopenMode", "restart (seed and trace in separate JVM processes)");
-        metadata.put("corpus.version", corpus.version());
-        metadata.put("corpus.hash", corpus.corpusHash());
-        metadata.put("corpus.chunks", Integer.toString(corpus.chunks().size()));
-        var removed = HtmlKnowledgeEvidenceTracePhase.withoutDocument(corpus,
-                HtmlKnowledgeCycleExperiment.REMOVED_DOCUMENT);
-        metadata.put("corpus.removed.version", removed.version());
-        metadata.put("corpus.removed.hash", removed.corpusHash());
-        metadata.put("corpus.removed.chunks", Integer.toString(removed.chunks().size()));
-        metadata.put("query.version", querySet.version());
-        metadata.put("query.hash", querySet.queryHash());
-        metadata.put("query.count", Integer.toString(querySet.queries().size()));
-        metadata.put("query.heldOutHash", "none");
         metadata.put("query.tuning", "not tuned: no parameter was chosen on this set (t is the Store default)");
-        metadata.put("seed", "none (no randomness)");
         metadata.put("k", Integer.toString(HtmlKnowledgeCycleExperiment.MEMORY_LIMIT) + " (memory-stage limit)");
-        metadata.put("threshold", Double.toString(HtmlKnowledgeRecall.THRESHOLD));
-        metadata.put("codec", TokenPackingSignalCodec.describe());
         metadata.put("codec.scope", "a function of the query text only; reads no query id or gold label");
         metadata.put("memoryPort", "ResonanceStoreMemoryAdapter with the L2 codec, HashedSignalDecoder and default"
                 + " options, the same configuration as B2 of html-knowledge-recall");
         metadata.put("resolver", "RecalledReferenceResolver: manifest reference -> chunkId, trusted only for chunks the"
                 + " trace JVM read back from the reopened root with bytes hashing to the corpus sha256; unknown or"
                 + " unverified references fail closed");
-        metadata.put("phase.forwardedJvmArguments", String.join(" ", phaseJvm.forwardedJvmArguments()));
-        for (var run : Stream.of(Optional.of(seed), trace).flatMap(Optional::stream).toList()) {
-            metadata.put("phase." + run.phase() + ".pid", Long.toString(run.pid()));
-            metadata.put("phase." + run.phase() + ".exit", Integer.toString(run.exitStatus()));
-            metadata.put("process." + run.phase() + ".wallNanos", Long.toString(run.nanos()));
-        }
-        HtmlKnowledgePersistenceRunner.describeStore(root.resolve(HtmlKnowledgeEvidenceTracePhase.FULL),
-                options.storeRoot(), metadata);
-        metadata.put("runMode", (options.storeRoot().isPresent() ? "kept Store root" : "default (temporary Store root)")
-                + "; profile html-knowledge-protocol-v1 " + EXTENSION + " evidence trace");
-        var environment = new RunEnvironment();
-        environment.describeHost(metadata);
-        environment.describeStoreRoot("env.storeRoot", root, metadata);
     }
 
     private Path temporaryDirectory() {

@@ -79,6 +79,14 @@ final class AnswerMetrics {
      * @param source {@code exact-quote}, {@code rule: ...}, or {@code reviewer <id> (drafted by ...): <reason>}
      */
     record Judged(boolean value, String source) {
+
+        /** The source of a verdict that is still missing; its value is a provisional {@code false}. */
+        static final String NOT_JUDGED = "not judged";
+
+        /** Whether a rule or a reviewer decided this value; {@code false} while the verdict is missing. */
+        boolean judged() {
+            return !source.equals(NOT_JUDGED);
+        }
     }
 
     /**
@@ -144,10 +152,13 @@ final class AnswerMetrics {
      * @param component the component
      * @param kind its kind
      * @param scored rows with a status
+     * @param answered completed rows whose component answered rather than abstained
      * @param unscored rows whose recall failed
      * @param unjudged judged rows with a missing verdict
      * @param statuses count per status
-     * @param metrics macro mean of each per-query metric over the rows it is defined for
+     * @param metrics macro mean of each per-query metric over the rows it is defined for; withheld (undefined) while
+     *     any judged row of the group is unjudged, as are both abstention values, so a partial population is never
+     *     published as a number
      * @param abstentionPrecision abstentions with {@code Rel(q) = ∅} over abstentions
      * @param abstentionRecall abstentions with {@code Rel(q) = ∅} over scored queries with {@code Rel(q) = ∅}
      * @param retrievalComplete scored answerable queries whose {@code E(q)} holds every required chunk
@@ -155,7 +166,8 @@ final class AnswerMetrics {
      * @param overrides reviewer verdicts on edges that differ from the matcher
      */
     record GroupAggregate(String root, String layer, int answerK, String component, AnswerComponent.Kind kind,
-            int scored, int unscored, int unjudged, Map<Status, Integer> statuses, Map<String, Aggregate> metrics,
+            int scored, int answered, int unscored, int unjudged, Map<Status, Integer> statuses,
+            Map<String, Aggregate> metrics,
             OptionalDouble abstentionPrecision, OptionalDouble abstentionRecall, int retrievalComplete,
             int answerable, int overrides) {
     }
@@ -242,6 +254,15 @@ final class AnswerMetrics {
                 ? "every claim, flag and candidate key-claim edge of every judged answer has a recorded verdict ("
                         + judgments.origin() + ")"
                 : missing.size() + " items are not judged yet; see the judgment template"));
+        var doubles = answers.stream().filter(answer -> answer.row().kind() == AnswerComponent.Kind.TEST_DOUBLE)
+                .toList();
+        var scoredDoubles = doubles.stream().filter(AnswerMetrics::scoredForQuality)
+                .map(answer -> answer.row().component() + " " + answer.row().queryId()).toList();
+        checks.add(new Check("generator.testDoubleUnscored", scoredDoubles.isEmpty(), scoredDoubles.isEmpty()
+                ? "none of the " + doubles.size() + " TEST_DOUBLE rows got a status, a verdict, an edge, a matching, a"
+                        + " judgment lookup or a gold-relative metric; only CitationFidelity is reported for them"
+                : scoredDoubles.size() + " TEST_DOUBLE rows were scored for quality: "
+                        + String.join("; ", scoredDoubles.subList(0, Math.min(5, scoredDoubles.size())))));
         checks.add(new Check("judgment.noStaleEntries", stale.isEmpty(), stale.isEmpty()
                 ? "every recorded judgment belongs to an answer of this run"
                 : stale.size() + " judgments match no answer of this run: "
@@ -307,7 +328,13 @@ final class AnswerMetrics {
         }
         var edges = new ArrayList<Edge>();
         for (var claim : claims) {
-            if (!claim.supported().value()) {
+            // A claim whose support is still pending gets its candidate edges listed now, so one template pass asks
+            // for every verdict; once the reviewer rules it unsupported, recorded edge verdicts are consumed, unused.
+            var pending = !claim.supported().judged();
+            if (!claim.supported().value() && !pending) {
+                for (var keyIndex = 1; keyIndex <= query.keyClaims().size(); keyIndex++) {
+                    lookup.consume("claim" + claim.index() + ".edge" + keyIndex);
+                }
                 continue;
             }
             var claimTokens = HtmlTokens.distinct(claim.text());
@@ -315,8 +342,11 @@ final class AnswerMetrics {
                 var keyClaim = query.keyClaims().get(keyIndex - 1);
                 var matcher = claimTokens.containsAll(HtmlTokens.distinct(keyClaim));
                 var reviewer = lookup.get("claim" + claim.index() + ".edge" + keyIndex, matcher ? "accept" : "reject",
-                        "keyClaim " + keyIndex + ": " + keyClaim + "\nclaim: " + claim.text());
-                edges.add(new Edge(keyIndex, claim.index(), matcher, reviewer));
+                        "keyClaim " + keyIndex + ": " + keyClaim + "\nclaim: " + claim.text()
+                                + (pending ? "\nneeded only if claim" + claim.index() + ".supported = true" : ""));
+                if (!pending) {
+                    edges.add(new Edge(keyIndex, claim.index(), matcher, reviewer));
+                }
             }
         }
         var answerability = query.answerability();
@@ -431,7 +461,15 @@ final class AnswerMetrics {
             missing.putIfAbsent(key, new Missing(key, proposal, "query " + query.queryId() + " (" + query.answerability()
                     + "): " + query.text() + "\nfirst seen: " + row.component() + " " + row.root() + "/" + row.layer()
                     + "/k" + row.answerK() + "\nanswer: " + answer + "\n" + context));
-            return new Judged(false, "not judged");
+            return new Judged(false, Judged.NOT_JUDGED);
+        }
+
+        /** Marks a recorded verdict of {@code item} as used without requiring it: it no longer applies. */
+        void consume(String item) {
+            var key = new Key(query.queryId(), answer, item);
+            if (judgments.verdict(key).isPresent()) {
+                used.add(key);
+            }
         }
     }
 
@@ -557,29 +595,35 @@ final class AnswerMetrics {
             var statuses = new EnumMap<Status, Integer>(Status.class);
             scored.forEach(answer -> statuses.merge(answer.status().get(), 1, Integer::sum));
             var population = first.kind() == AnswerComponent.Kind.TEST_DOUBLE ? completed : scored;
+            var unjudged = (int) completed.stream().filter(answer -> answer.judged() && answer.status().isEmpty())
+                    .count();
             var metrics = new LinkedHashMap<String, Aggregate>();
             for (var metric : METRICS) {
-                metrics.put(metric, RecallMetrics.mean(population.stream().map(answer -> answer.metrics().get(metric))
-                        .toList()));
+                metrics.put(metric, unjudged > 0 ? new Aggregate(OptionalDouble.empty(), 0, completed.size())
+                        : RecallMetrics.mean(population.stream().map(answer -> answer.metrics().get(metric)).toList()));
             }
             var abstentions = scored.stream().filter(answer -> answer.row().outcome() == Outcome.ABSTAINED).toList();
             var correct = (int) abstentions.stream().filter(answer -> answer.query().relevant().isEmpty()).count();
             var empty = (int) scored.stream().filter(answer -> answer.query().relevant().isEmpty()).count();
             var answerable = scored.stream().filter(answer -> !answer.query().relevant().isEmpty()).toList();
+            var answered = (int) completed.stream().filter(answer -> answer.row().outcome() == Outcome.ANSWERED)
+                    .count();
             aggregates.add(new GroupAggregate(first.root(), first.layer(), first.answerK(), first.component(),
-                    first.kind(), scored.size(), group.size() - completed.size(),
-                    (int) completed.stream().filter(answer -> answer.judged() && answer.status().isEmpty()).count(),
-                    statuses, metrics, RecallMetrics.ratio(correct, abstentions.size()),
-                    RecallMetrics.ratio(correct, empty),
+                    first.kind(), scored.size(), answered, group.size() - completed.size(), unjudged, statuses, metrics,
+                    unjudged > 0 ? OptionalDouble.empty() : RecallMetrics.ratio(correct, abstentions.size()),
+                    unjudged > 0 ? OptionalDouble.empty() : RecallMetrics.ratio(correct, empty),
                     (int) answerable.stream().filter(ScoredAnswer::retrievalComplete).count(), answerable.size(),
                     (int) scored.stream().flatMap(answer -> answer.edges().stream()).filter(Edge::overridden).count()));
         }
         return aggregates;
     }
 
-    /** Returns the distinct chunk ids cited by {@code answer}, in first-citation order. */
-    static Set<String> citedChunks(ScoredAnswer answer) {
-        return answer.row().citations().stream().map(span -> span.citation().chunkId())
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+    /** Whether a row carries anything judged or gold-relative: what a test double must never get. */
+    private static boolean scoredForQuality(ScoredAnswer answer) {
+        return answer.status().isPresent() || !answer.flags().isEmpty() || !answer.claims().isEmpty()
+                || !answer.edges().isEmpty() || !answer.matcherMatching().isEmpty()
+                || !answer.finalMatching().isEmpty() || !answer.missing().isEmpty()
+                || METRICS.stream().filter(metric -> !metric.equals("CitationFidelity"))
+                        .anyMatch(metric -> answer.metrics().get(metric).isPresent());
     }
 }

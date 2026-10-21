@@ -386,6 +386,45 @@ public final class HtmlKnowledgePersistenceRunner {
     }
 
     /** Records the Store root, the persisted Store manifest and the Neuron and Store versions and commits. */
+    /**
+     * Records the run identity shared by the two-root knowledge experiments (#108 evidence trace, #109 grounded answers):
+     * protocol, corpus and removed-document corpus, query set, threshold, codec, the launched phase JVMs, the Store and
+     * the environment. Each runner adds only its extension-specific fields.
+     *
+     * @param profile the run-mode profile suffix, such as {@code "l3-evidence-v1 evidence trace"}
+     */
+    static void describeTwoRootRun(HtmlKnowledgeCorpus corpus, HtmlKnowledgeQuerySet querySet, String removedDocument,
+            PhaseJvm phaseJvm, List<PhaseRun> runs, Path root, Optional<Path> keptRoot, String profile,
+            Map<String, String> metadata) {
+        metadata.put("protocolVersion", HtmlKnowledgeIngestionRunner.PROTOCOL_VERSION);
+        metadata.put("corpus.version", corpus.version());
+        metadata.put("corpus.hash", corpus.corpusHash());
+        metadata.put("corpus.chunks", Integer.toString(corpus.chunks().size()));
+        var removed = HtmlKnowledgeEvidenceTracePhase.withoutDocument(corpus, removedDocument);
+        metadata.put("corpus.removed.version", removed.version());
+        metadata.put("corpus.removed.hash", removed.corpusHash());
+        metadata.put("corpus.removed.chunks", Integer.toString(removed.chunks().size()));
+        metadata.put("query.version", querySet.version());
+        metadata.put("query.hash", querySet.queryHash());
+        metadata.put("query.count", Integer.toString(querySet.queries().size()));
+        metadata.put("query.heldOutHash", "none");
+        metadata.put("seed", "none (no randomness)");
+        metadata.put("threshold", Double.toString(HtmlKnowledgeRecall.THRESHOLD));
+        metadata.put("codec", TokenPackingSignalCodec.describe());
+        metadata.put("phase.forwardedJvmArguments", String.join(" ", phaseJvm.forwardedJvmArguments()));
+        for (var run : runs) {
+            metadata.put("phase." + run.phase() + ".pid", Long.toString(run.pid()));
+            metadata.put("phase." + run.phase() + ".exit", Integer.toString(run.exitStatus()));
+            metadata.put("process." + run.phase() + ".wallNanos", Long.toString(run.nanos()));
+        }
+        describeStore(root.resolve(HtmlKnowledgeEvidenceTracePhase.FULL), keptRoot, metadata);
+        metadata.put("runMode", (keptRoot.isPresent() ? "kept Store root" : "default (temporary Store root)")
+                + "; profile html-knowledge-protocol-v1 " + profile);
+        var environment = new RunEnvironment();
+        environment.describeHost(metadata);
+        environment.describeStoreRoot("env.storeRoot", root, metadata);
+    }
+
     static void describeStore(Path root, Optional<Path> keptRoot, Map<String, String> metadata) {
         metadata.put("store.root", keptRoot.isPresent() ? root.toAbsolutePath().toString() : "temporary (deleted)");
         var manifest = root.resolve("manifest.json");

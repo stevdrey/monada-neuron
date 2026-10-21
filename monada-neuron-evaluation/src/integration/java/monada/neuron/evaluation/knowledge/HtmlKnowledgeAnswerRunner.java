@@ -115,7 +115,9 @@ public final class HtmlKnowledgeAnswerRunner {
                 System.exit(2);
                 return;
             }
-            ask(args[1], System.out);
+            if (!ask(args[1], System.out)) {
+                System.exit(1);
+            }
             return;
         }
         Options options;
@@ -282,56 +284,37 @@ public final class HtmlKnowledgeAnswerRunner {
     }
 
     private void describe(Path root, PhaseRun seed, Optional<PhaseRun> answer, Map<String, String> metadata) {
-        metadata.put("protocolVersion", HtmlKnowledgeIngestionRunner.PROTOCOL_VERSION);
+        HtmlKnowledgePersistenceRunner.describeTwoRootRun(corpus, querySet, HtmlKnowledgeQaExperiment.REMOVED_DOCUMENT,
+                phaseJvm, Stream.of(Optional.of(seed), answer).flatMap(Optional::stream).toList(), root,
+                options.storeRoot(), EXTENSION + " grounded answers", metadata);
         metadata.put("extensions", EXTENSION);
         metadata.put("reopenMode", "restart (seed and answer in separate JVM processes)");
-        metadata.put("corpus.version", corpus.version());
-        metadata.put("corpus.hash", corpus.corpusHash());
-        metadata.put("corpus.chunks", Integer.toString(corpus.chunks().size()));
-        var removed = HtmlKnowledgeEvidenceTracePhase.withoutDocument(corpus, HtmlKnowledgeQaExperiment.REMOVED_DOCUMENT);
-        metadata.put("corpus.removed.version", removed.version());
-        metadata.put("corpus.removed.hash", removed.corpusHash());
-        metadata.put("corpus.removed.chunks", Integer.toString(removed.chunks().size()));
-        metadata.put("query.version", querySet.version());
-        metadata.put("query.hash", querySet.queryHash());
-        metadata.put("query.count", Integer.toString(querySet.queries().size()));
-        metadata.put("query.heldOutHash", "none");
         metadata.put("query.tuning", "B3c is in-sample (tuned): its coverage rule was chosen after inspecting B3 on"
                 + " this set; B3 and the retrieval layers are not tuned");
         metadata.put("judgments.version", AnswerJudgments.VERSION);
         metadata.put("judgments.hash", judgments.hash());
         metadata.put("judgments.origin", judgments.origin());
-        metadata.put("seed", "none (no randomness)");
         metadata.put("evidenceLayers", String.join(", ", AnswerTrace.LAYERS)
                 + " (B2 content from the B2c control for the same atoms)");
         metadata.put("answerK", AnswerTrace.ANSWER_KS.stream().map(String::valueOf).collect(Collectors.joining(", ")));
-        metadata.put("threshold", Double.toString(HtmlKnowledgeRecall.THRESHOLD));
-        metadata.put("codec", TokenPackingSignalCodec.describe());
-        metadata.put("phase.forwardedJvmArguments", String.join(" ", phaseJvm.forwardedJvmArguments()));
-        for (var run : Stream.of(Optional.of(seed), answer).flatMap(Optional::stream).toList()) {
-            metadata.put("phase." + run.phase() + ".pid", Long.toString(run.pid()));
-            metadata.put("phase." + run.phase() + ".exit", Integer.toString(run.exitStatus()));
-            metadata.put("process." + run.phase() + ".wallNanos", Long.toString(run.nanos()));
-        }
-        HtmlKnowledgePersistenceRunner.describeStore(root.resolve(HtmlKnowledgeAnswerPhase.FULL), options.storeRoot(),
-                metadata);
-        metadata.put("runMode", (options.storeRoot().isPresent() ? "kept Store root" : "default (temporary Store root)")
-                + "; profile html-knowledge-protocol-v1 " + EXTENSION + " grounded answers");
-        var environment = new RunEnvironment();
-        environment.describeHost(metadata);
-        environment.describeStoreRoot("env.storeRoot", root, metadata);
     }
 
     /**
      * Answers one ad-hoc question, unscored: imports {@code html-kc-v1} into a temporary root, then prints what B3 and
-     * B3c answer from the B1 and B2 hits at {@code answerK = 5}. Nothing is judged, and no gold label is read.
+     * B3c answer from the B1 and B2 hits at {@code answerK = 5}. Nothing is judged, and no gold label is read. When the
+     * import fails any check, it prints the failed checks and answers nothing.
+     *
+     * @return whether the import passed every check and the question was answered
      */
-    static void ask(String question, PrintStream out) {
+    static boolean ask(String question, PrintStream out) {
         var corpus = HtmlKnowledgeCorpus.bundled();
         var directory = temporaryDirectory("monada-neuron-html-ask-");
         try {
             var root = directory.resolve("store");
             var imported = new HtmlKnowledgeIngestion(corpus).ingest(root);
+            if (!importPassed(imported.checks(), out)) {
+                return false;
+            }
             var memory = MonadaMemory.open(root, MonadaMemoryOptions.defaults());
             var evidence = new RecalledEvidence(corpus, imported.manifest());
             out.println("Question: " + question);
@@ -358,9 +341,18 @@ public final class HtmlKnowledgeAnswerRunner {
                     }
                 }
             }
+            return true;
         } finally {
             HtmlKnowledgeIngestionRunner.deleteTree(directory);
         }
+    }
+
+    /** Prints every failed import check and returns {@code false}, or returns {@code true} when all passed. */
+    static boolean importPassed(List<Check> checks, PrintStream out) {
+        var failed = checks.stream().filter(check -> !check.passed()).toList();
+        failed.forEach(check -> out.println("Import check failed, nothing answered: " + check.name() + ": "
+                + check.detail()));
+        return failed.isEmpty();
     }
 
     private static String render(HtmlKnowledgeCorpus corpus, GroundedAnswer answer) {

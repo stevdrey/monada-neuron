@@ -4,7 +4,6 @@ import monada.neuron.evaluation.knowledge.AnswerTrace.ClaimRow;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.QueryText;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -198,8 +197,7 @@ final class AnswerJudgments {
         var tsv = new StringBuilder("# " + VERSION + " template: fill verdict, reason, reviewer and draftedBy, then"
                 + " drop the proposal and context columns\n");
         tsv.append(HEADER).append("\tproposal\tcontext\n");
-        var rows = new ArrayList<>(missing);
-        for (var row : rows) {
+        for (var row : missing) {
             tsv.append(String.join("\t", row.key().queryId(), QueryText.escape(row.key().answer()), row.key().item(),
                     "", "", "", "", row.proposal(), QueryText.escape(row.context()))).append('\n');
         }

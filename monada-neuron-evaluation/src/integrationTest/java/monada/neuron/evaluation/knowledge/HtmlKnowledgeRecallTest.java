@@ -393,7 +393,7 @@ class HtmlKnowledgeRecallTest {
         var differences = HtmlKnowledgeRecall.prefixDifferences(List.of(positive), List.of(negative), 3);
         assertEquals(1, differences.size(), "the same chunk with -0.0 instead of +0.0 is a difference");
         assertFalse(differences.getFirst().straddlingTie());
-        assertFalse(RecallMetrics.tieAtCutoff(List.of(0.0, -0.0), 1), "+0.0 and -0.0 are no tie");
+        assertFalse(HtmlKnowledgeRecall.tieAtCutoff(List.of(0.0, -0.0), 1), "+0.0 and -0.0 are no tie");
     }
 
     @Test

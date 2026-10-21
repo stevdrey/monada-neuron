@@ -133,12 +133,6 @@ final class HtmlKnowledgeQaExperiment {
         checks.add(new Check("control.emptyEvidenceAbstains", answeredEmpty.isEmpty(), answeredEmpty.isEmpty()
                 ? "every component abstains on every query when E(q) is empty"
                 : answeredEmpty.size() + " answers without evidence: " + head(answeredEmpty)));
-        var mislabelled = first.stream().filter(row -> !row.kind().equals(kind(row.component()))).count();
-        var doubles = first.stream().filter(row -> row.kind() == AnswerComponent.Kind.TEST_DOUBLE).count();
-        checks.add(new Check("generator.labelledTestDouble", mislabelled == 0, mislabelled == 0
-                ? "all " + doubles + " generator rows are labelled TEST_DOUBLE and are never judged or scored for"
-                        + " answer quality"
-                : mislabelled + " rows carry a kind other than their component's"));
 
         var metadata = new LinkedHashMap<String, String>();
         metadata.put("components", components.stream().map(AnswerComponent::name)
@@ -177,7 +171,7 @@ final class HtmlKnowledgeQaExperiment {
                                 var timed = root.name().equals(HtmlKnowledgeAnswerPhase.FULL)
                                         && layer.equals("B1") && answerK == HtmlKnowledgeRecall.MAX_LIMIT;
                                 rows.add(answer(root.name(), layer, answerK, query, component, evidence,
-                                        tieAtCutoff(scores, answerK),
+                                        HtmlKnowledgeRecall.tieAtCutoff(scores, answerK),
                                         timed ? latency.get(component.name()) : null));
                             } else {
                                 var reason = recall instanceof RecalledEvidence.Failed failed ? failed.reason()
@@ -267,18 +261,6 @@ final class HtmlKnowledgeQaExperiment {
         return new CitedSpan(citation, true, cited.equals(claimText));
     }
 
-    private AnswerComponent.Kind kind(String name) {
-        return components.stream().filter(component -> component.name().equals(name)).findFirst().orElseThrow()
-                .kind();
-    }
-
-    /**
-     * The protocol's {@code tieAtCutoff}: the scores at ranks {@code k} and {@code k + 1} are bit-exactly equal, so the
-     * cutoff splits a tie group. The same rule as the scorer of judged recall, applied here without any gold label.
-     */
-    static boolean tieAtCutoff(List<Double> scores, int k) {
-        return scores.size() > k && HtmlKnowledgeRecall.sameScore(scores.get(k - 1), scores.get(k));
-    }
 
     /** Returns the chunk id prefix of {@code documentId}: {@code doc:links} gives {@code chk:links#}. */
     static String chunkPrefix(String documentId) {

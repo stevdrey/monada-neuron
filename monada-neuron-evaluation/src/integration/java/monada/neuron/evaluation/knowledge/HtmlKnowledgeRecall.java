@@ -798,6 +798,14 @@ final class HtmlKnowledgeRecall {
         return Double.doubleToLongBits(first) == Double.doubleToLongBits(second);
     }
 
+    /**
+     * The protocol's {@code tieAtCutoff}: the scores at ranks {@code k} and {@code k + 1} are bit-exactly equal, so the
+     * cutoff splits a tie group. Labels-free, so both the recall scorer and the answer phase share this one rule.
+     */
+    static boolean tieAtCutoff(List<Double> scores, int k) {
+        return scores.size() > k && sameScore(scores.get(k - 1), scores.get(k));
+    }
+
     /** A query and layer left without an outcome. */
     private record FailedLayer(String queryId, Layer layer) {
     }

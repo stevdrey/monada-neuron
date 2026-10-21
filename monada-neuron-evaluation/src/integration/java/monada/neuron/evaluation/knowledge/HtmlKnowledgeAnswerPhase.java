@@ -10,7 +10,6 @@ import monada.neuron.resonance.adapter.ResonanceStoreMemoryAdapter;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 
@@ -88,26 +87,13 @@ public final class HtmlKnowledgeAnswerPhase {
         work.write(HtmlKnowledgeEvidenceTracePhase.manifestFile(work, name), imported.manifest().toTsv());
     }
 
-    /** Reopens root {@code name}, reads every chunk back through a new handle, then opens the answer handles. */
+    /** Reopens root {@code name} with the shared verified readback, then opens the answer handles. */
     private HtmlKnowledgeQaExperiment.Root reopen(String name, HtmlKnowledgeCorpus source, Path storeRoot,
             List<Check> checks) {
-        var root = HtmlKnowledgeEvidenceTracePhase.root(storeRoot, name);
-        HtmlKnowledgePersistence.requireExistingStore(root);
-        var manifest = IngestionManifest.parseTsv(work.read(HtmlKnowledgeEvidenceTracePhase.manifestFile(work, name)),
-                source.version(), source.corpusHash()).requireComplete(source);
-        var readback = new HtmlKnowledgeIngestion(source)
-                .readbackSweep(MonadaMemory.open(root, MonadaMemoryOptions.defaults()), manifest);
-        var unmapped = new HashSet<>(readback.recalledAtomIds());
-        manifest.entries().forEach(entry -> unmapped.remove(entry.atomId()));
-        checks.add(new Check(name + ".persistence.readback", readback.unread().isEmpty(), readback.unread().isEmpty()
-                ? "every " + source.version() + " chunk was read back from the reopened root with matching bytes"
-                : "not read back: " + readback.unread()));
-        checks.add(new Check(name + ".persistence.noUnmappedAtoms", unmapped.isEmpty(), unmapped.isEmpty()
-                ? "every atom the readback returned maps through the manifest"
-                : unmapped.size() + " atoms are not in the manifest"));
-        var recall = new HtmlKnowledgeRecall(source);
-        return new HtmlKnowledgeQaExperiment.Root(name, MonadaMemory.open(root, MonadaMemoryOptions.defaults()),
-                ResonanceStoreMemoryAdapter.open(root, recall.adapterConfig()), new RecalledEvidence(source, manifest));
+        var reopened = HtmlKnowledgeEvidenceTracePhase.verifiedReopen(name, source, storeRoot, work, checks);
+        return new HtmlKnowledgeQaExperiment.Root(name, MonadaMemory.open(reopened.root(),
+                MonadaMemoryOptions.defaults()), ResonanceStoreMemoryAdapter.open(reopened.root(),
+                new HtmlKnowledgeRecall(source).adapterConfig()), new RecalledEvidence(source, reopened.manifest()));
     }
 
     /** Returns the phase names, in launch order. */

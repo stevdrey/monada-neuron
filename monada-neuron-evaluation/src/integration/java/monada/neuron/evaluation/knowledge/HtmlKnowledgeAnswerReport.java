@@ -76,6 +76,7 @@ final class HtmlKnowledgeAnswerReport {
         return "{ \"root\": " + string(aggregate.root()) + ", \"layer\": " + string(aggregate.layer())
                 + ", \"answerK\": " + aggregate.answerK() + ", \"component\": " + string(aggregate.component())
                 + ", \"kind\": " + string(aggregate.kind().name()) + ", \"scored\": " + aggregate.scored()
+                + ", \"answered\": " + aggregate.answered()
                 + ", \"unscored\": " + aggregate.unscored() + ", \"unjudged\": " + aggregate.unjudged()
                 + ", \"statuses\": { " + aggregate.statuses().entrySet().stream()
                         .map(entry -> string(entry.getKey().name()) + ": " + entry.getValue())
@@ -176,6 +177,11 @@ final class HtmlKnowledgeAnswerReport {
             var s = aggregate.statuses();
             md.append("| ").append(aggregate.root()).append(" | ").append(aggregate.layer()).append(" | ")
                     .append(aggregate.answerK()).append(" | ").append(aggregate.component()).append(" | ");
+            if (aggregate.unjudged() > 0) {
+                md.append("incomplete: ").append(aggregate.unjudged()).append(" unjudged; no quality value is"
+                        + " published |").append(" |".repeat(14)).append('\n');
+                continue;
+            }
             md.append(aggregate.scored()).append(" | ").append(aggregate.retrievalComplete()).append("/")
                     .append(aggregate.answerable()).append(" | ")
                     .append(count(s, Status.SUPPORTED_CORRECT, Status.FALSE_PREMISE_CORRECTED, Status.CONFLICT_SURFACED))
@@ -198,7 +204,7 @@ final class HtmlKnowledgeAnswerReport {
         scores.aggregates().stream().filter(aggregate -> aggregate.kind() == AnswerComponent.Kind.TEST_DOUBLE)
                 .forEach(aggregate -> md.append("| ").append(aggregate.root()).append(" | ").append(aggregate.layer())
                         .append(" | ").append(aggregate.answerK()).append(" | ").append(aggregate.component())
-                        .append(" | ").append(answered(aggregate)).append(" | ")
+                        .append(" | ").append(aggregate.answered()).append(" | ")
                         .append(format(aggregate.metrics().get("CitationFidelity").value())).append(" |\n"));
         md.append("\n### Answers on the full root, B1, k = 5\n\n");
         md.append("| Query | Component | Retrieval complete | Status | Answer |\n| :--- | :--- | :--- | :--- | :--- |\n");
@@ -212,13 +218,6 @@ final class HtmlKnowledgeAnswerReport {
         md.append("\n### Limits\n\n");
         LIMITS.forEach(limit -> md.append("- ").append(limit).append('\n'));
         return md.toString();
-    }
-
-    private long answered(GroupAggregate aggregate) {
-        return scores.answers().stream().filter(answer -> answer.row().root().equals(aggregate.root())
-                && answer.row().layer().equals(aggregate.layer()) && answer.row().answerK() == aggregate.answerK()
-                && answer.row().component().equals(aggregate.component())
-                && answer.row().outcome() == AnswerTrace.Outcome.ANSWERED).count();
     }
 
     private static String cell(ScoredAnswer answer) {

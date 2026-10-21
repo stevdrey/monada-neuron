@@ -100,7 +100,16 @@ class AnswerMetricsTest {
                 span("chk:links#00", 0, 34, true, false)));
         var unjudged = score(row, judgments(EXACT, row, "claim1.contradicted", "false"));
         assertEquals(Optional.empty(), unjudged.status());
-        assertTrue(unjudged.missing().contains("claim1.supported"), unjudged.missing().toString());
+        assertEquals(List.of("claim1.supported", "claim1.edge1"), unjudged.missing(),
+                "one template pass asks for support and for every candidate edge of the pending claim");
+
+        var ruledOut = AnswerMetrics.score(QUERY_SET, new Snapshot(QUERY_SET.queryHash(), List.of(row)),
+                judgments(EXACT, row, "claim1.supported", "false", "claim1.contradicted", "false", "claim1.edge1",
+                        "accept"));
+        assertEquals(Status.UNSUPPORTED, ruledOut.answers().getFirst().status().orElseThrow());
+        assertEquals(List.of(), ruledOut.answers().getFirst().edges(), "an unsupported claim has no edge");
+        assertTrue(ruledOut.checks().stream().allMatch(Check::passed),
+                "the edge verdict recorded before support was ruled out is consumed, not stale");
         var judged = score(row, judgments(EXACT, row, "claim1.supported", "true", "claim1.contradicted", "false",
                 "claim1.edge1", "reject"));
         assertEquals(Status.SUPPORTED_OFF_TARGET, judged.status().orElseThrow());
@@ -177,6 +186,8 @@ class AnswerMetricsTest {
         var scored = scores.answers().getFirst();
         assertEquals(Optional.empty(), scored.status());
         assertFalse(scored.judged());
+        assertTrue(scores.checks().stream().filter(check -> check.name().equals("generator.testDoubleUnscored"))
+                .findFirst().orElseThrow().passed());
         assertTrue(scores.missing().isEmpty());
         assertEquals(OptionalDouble.of(1.0), scored.metrics().get("CitationFidelity"));
         assertEquals(OptionalDouble.empty(), scored.metrics().get("CitationPrecision"),
@@ -186,6 +197,22 @@ class AnswerMetricsTest {
         assertEquals(OptionalDouble.empty(), aggregate.get("CitationPrecision").value());
         assertEquals(OptionalDouble.empty(), aggregate.get("CitationRecall").value());
         assertEquals(OptionalDouble.of(1.0), aggregate.get("CitationFidelity").value());
+    }
+
+    @Test
+    void anAggregateWithAnUnjudgedRowPublishesNoQualityValue() {
+        var abstention = abstained("q:out-of-domain-01", List.of("chk:forms#00"));
+        var unjudged = answered("q:no-answer-01", List.of("chk:forms#00"), claim("A form collects input.",
+                span("chk:forms#00", 0, 22, true, true)));
+        var scores = AnswerMetrics.score(QUERY_SET, new Snapshot(QUERY_SET.queryHash(), List.of(abstention, unjudged)),
+                AnswerJudgments.none());
+        var aggregate = scores.aggregates().getFirst();
+        assertEquals(1, aggregate.unjudged());
+        assertEquals(1, aggregate.answered());
+        assertEquals(1, aggregate.statuses().get(Status.CORRECT_ABSTENTION));
+        assertEquals(OptionalDouble.empty(), aggregate.abstentionRecall(), "1/1 would hide the unjudged answer");
+        assertEquals(OptionalDouble.empty(), aggregate.abstentionPrecision());
+        aggregate.metrics().values().forEach(value -> assertEquals(OptionalDouble.empty(), value.value()));
     }
 
     @Test

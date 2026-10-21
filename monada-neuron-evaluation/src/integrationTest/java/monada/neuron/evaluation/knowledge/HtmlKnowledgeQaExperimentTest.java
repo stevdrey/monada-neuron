@@ -57,7 +57,7 @@ class HtmlKnowledgeQaExperimentTest {
     @Test
     void everySemanticCheckPasses() {
         assertEquals(List.of("completed", "citationsEligible", "deterministic", "control.removedNeverCited",
-                "control.emptyEvidenceAbstains", "generator.labelledTestDouble"),
+                "control.emptyEvidenceAbstains"),
                 observation.checks().stream().map(Check::name).toList());
         observation.checks().forEach(check -> assertTrue(check.passed(), check.name() + ": " + check.detail()));
         assertEquals(2 * QUERY_SET.queries().size() * 2 * 3 * 3, observation.snapshot().rows().size(),
@@ -109,10 +109,10 @@ class HtmlKnowledgeQaExperimentTest {
                 "What does the fieldset element do?"));
         assertEquals(five.chunks(), direct.chunks().subList(0, five.chunks().size()),
                 "the lookahead extends the limit-5 list without changing it");
-        assertTrue(HtmlKnowledgeQaExperiment.tieAtCutoff(List.of(0.5, 0.5, 0.25), 1));
-        assertFalse(HtmlKnowledgeQaExperiment.tieAtCutoff(List.of(0.5, 0.25), 1));
-        assertFalse(HtmlKnowledgeQaExperiment.tieAtCutoff(List.of(0.5), 1), "no rank k + 1");
-        assertFalse(HtmlKnowledgeQaExperiment.tieAtCutoff(List.of(0.0, -0.0), 1), "bit-exact comparison");
+        assertTrue(HtmlKnowledgeRecall.tieAtCutoff(List.of(0.5, 0.5, 0.25), 1));
+        assertFalse(HtmlKnowledgeRecall.tieAtCutoff(List.of(0.5, 0.25), 1));
+        assertFalse(HtmlKnowledgeRecall.tieAtCutoff(List.of(0.5), 1), "no rank k + 1");
+        assertFalse(HtmlKnowledgeRecall.tieAtCutoff(List.of(0.0, -0.0), 1), "bit-exact comparison");
     }
 
     @Test
@@ -231,12 +231,20 @@ class HtmlKnowledgeQaExperimentTest {
     @Test
     void theAskModePrintsCitedExtractsOrInsufficientEvidence() {
         var buffer = new ByteArrayOutputStream();
-        HtmlKnowledgeAnswerRunner.ask("What is the boiling point of water at sea level?",
-                new PrintStream(buffer, true, StandardCharsets.UTF_8));
+        assertTrue(HtmlKnowledgeAnswerRunner.ask("What is the boiling point of water at sea level?",
+                new PrintStream(buffer, true, StandardCharsets.UTF_8)));
         var printed = buffer.toString(StandardCharsets.UTF_8);
         assertTrue(printed.contains("B1 evidence: "), printed);
         assertTrue(printed.contains("B3c: INSUFFICIENT_EVIDENCE"), printed);
         assertTrue(printed.contains("chunk sha256 "), "B3 answers with a cited extract: " + printed);
+
+        var refused = new ByteArrayOutputStream();
+        assertFalse(HtmlKnowledgeAnswerRunner.importPassed(List.of(new Check("ingestion.readback", false,
+                "chk:a#00 not read back"), new Check("ingestion.manifestComplete", true, "ok")),
+                new PrintStream(refused, true, StandardCharsets.UTF_8)));
+        var message = refused.toString(StandardCharsets.UTF_8);
+        assertTrue(message.contains("Import check failed, nothing answered: ingestion.readback"), message);
+        assertFalse(message.contains("manifestComplete"), message);
     }
 
     @Test

@@ -92,10 +92,11 @@ class HtmlKnowledgeAnswerRunnerTest {
             names.add("answer." + root + ".persistence.noUnmappedAtoms");
         }
         for (var check : List.of("completed", "citationsEligible", "deterministic", "control.removedNeverCited",
-                "control.emptyEvidenceAbstains", "generator.labelledTestDouble")) {
+                "control.emptyEvidenceAbstains")) {
             names.add("answer." + check);
         }
         names.addAll(List.of("process.restart", "answer.scored", "judgment.complete", "judgment.noStaleEntries",
+                "generator.testDoubleUnscored",
                 "judgment.hashFrozen"));
         return Set.copyOf(names);
     }

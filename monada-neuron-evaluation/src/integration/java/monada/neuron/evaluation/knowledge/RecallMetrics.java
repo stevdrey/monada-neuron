@@ -175,7 +175,8 @@ final class RecallMetrics {
         var byK = new LinkedHashMap<Integer, KScore>();
         for (var k : KS) {
             var prefix = chunkIds.subList(0, Math.min(k, chunkIds.size()));
-            var tie = k < HtmlKnowledgeRecall.MAX_LIMIT ? tieAtCutoff(scores, k) : tieAtCutoff(lookaheadScores, k);
+            var tie = k < HtmlKnowledgeRecall.MAX_LIMIT ? HtmlKnowledgeRecall.tieAtCutoff(scores, k)
+                    : HtmlKnowledgeRecall.tieAtCutoff(lookaheadScores, k);
             byK.put(k, new KScore(outcome(query.required(), query.relevant(), prefix), tie, perQuery(query, prefix, k)));
         }
         return new QueryScore(query, layer, Optional.of(returned), Map.copyOf(byK));
@@ -246,11 +247,6 @@ final class RecallMetrics {
             return Outcome.PARTIAL;
         }
         return retK.isEmpty() ? Outcome.NO_EVIDENCE : Outcome.MISS_WITH_RESULTS;
-    }
-
-    /** Whether the tie group at rank {@code k} straddles the cutoff: the scores at ranks {@code k} and {@code k+1} are equal. */
-    static boolean tieAtCutoff(List<Double> scores, int k) {
-        return scores.size() > k && HtmlKnowledgeRecall.sameScore(scores.get(k - 1), scores.get(k));
     }
 
     /** Returns the macro mean of the defined {@code values}. */
