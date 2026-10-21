@@ -38,12 +38,16 @@ final class EvidenceTraceMetrics {
      *
      * @param query the judged query the slot is scored against
      * @param row the trace row
+     * @param scored whether the row's recorded port status is the one its arm requires; an unscored row (an
+     *     operational recall failure) has every value undefined and is excluded from every aggregate and population,
+     *     as the protocol's "completed recalls only" rule requires, without discarding the other rows
      * @param admittedFraction admitted / recorded results
      * @param usedFraction used / admitted chunks
      * @param relevantEvidenceUsed whether a used chunk is relevant ({@code A} only)
      * @param memorySupportedRelevant {@code SUPPORTED} and a used chunk is relevant
      */
-    record QueryScore(JudgedQuery query, Row row, OptionalDouble admittedFraction, OptionalDouble usedFraction,
+    record QueryScore(JudgedQuery query, Row row, boolean scored, OptionalDouble admittedFraction,
+            OptionalDouble usedFraction,
             OptionalDouble relevantEvidenceUsed, boolean memorySupportedRelevant) {
     }
 
@@ -58,16 +62,19 @@ final class EvidenceTraceMetrics {
     /**
      * The aggregates of one arm.
      *
+     * @param unscored rows excluded because their recorded port status is not the one the arm requires
      * @param admittedFraction mean over every query with a recorded result
      * @param usedFraction mean over every query with an admitted, unambiguous trace
      * @param relevantEvidenceUsed mean over {@code A}
-     * @param decisions decision counts over every query
-     * @param memorySupportedRelevant {@code SUPPORTED} with a relevant used chunk, out of {@code |A|}
-     * @param unsupportedClaims {@code SUPPORTED} decisions on {@code U} (no relevant chunk exists), out of {@code |U|}
+     * @param decisions decision counts over every scored query
+     * @param memorySupportedRelevant {@code SUPPORTED} with a relevant used chunk, out of the scored {@code A}
+     * @param supportedOnUnanswerable {@code SUPPORTED} decisions on {@code U}, where no relevant chunk exists (false
+     *     support), out of the scored {@code U}
      * @param byCategory decision counts and {@code RelevantEvidenceUsed} per category
      */
-    record ArmAggregate(Aggregate admittedFraction, Aggregate usedFraction, Aggregate relevantEvidenceUsed,
-            Map<EvidenceDecision, Integer> decisions, Count memorySupportedRelevant, Count unsupportedClaims,
+    record ArmAggregate(int unscored, Aggregate admittedFraction, Aggregate usedFraction,
+            Aggregate relevantEvidenceUsed, Map<EvidenceDecision, Integer> decisions, Count memorySupportedRelevant,
+            Count supportedOnUnanswerable,
             Map<Category, CategoryAggregate> byCategory) {
     }
 
@@ -80,8 +87,8 @@ final class EvidenceTraceMetrics {
      *
      * @param byArm per-query scores per arm, in workload order
      * @param aggregates aggregates per arm
-     * @param contrastAnswerable memory-empty contrast {@code differs} over {@code A}
-     * @param contrastUnanswerable memory-empty contrast {@code differs} over {@code U}
+     * @param contrastAnswerable memory-empty contrast {@code differs} over the scored {@code A} of {@link Arm#MEMORY}
+     * @param contrastUnanswerable memory-empty contrast {@code differs} over the scored {@code U} of {@link Arm#MEMORY}
      * @param removedTargets queries whose every relevant chunk belongs to the removed document
      * @param checks the scorer's semantic checks
      */
@@ -92,8 +99,9 @@ final class EvidenceTraceMetrics {
     /**
      * Scores {@code snapshot} against {@code querySet}.
      *
-     * @throws IllegalArgumentException when the snapshot is not a complete trace of {@code querySet} (see
-     *     {@link #requireComplete}); this is the only exception scoring throws for a malformed snapshot
+     * @throws IllegalArgumentException when the snapshot is not structurally one complete trace of {@code querySet}
+     *     (see {@link #requireComplete}); this is the only exception scoring throws for a malformed snapshot. A row
+     *     whose recorded status breaks its arm's contract is not structural: it is scored as unscored
      */
     static Scores score(HtmlKnowledgeQuerySet querySet, HtmlKnowledgeCorpus corpus, Snapshot snapshot) {
         Objects.requireNonNull(querySet, "querySet must not be null");
@@ -137,12 +145,13 @@ final class EvidenceTraceMetrics {
     }
 
     /**
-     * Requires {@code snapshot} to be one complete trace of {@code querySet}: its {@code queryHash}, exactly one row
-     * per arm and query and no other row, each arm's prescribed input (the slot's own query, or for
-     * {@link Arm#SWAPPED} the query {@link HtmlKnowledgeCycleExperiment#swapIndex} names in query-set order, which is
-     * the workload order), each arm's expected recorded status, a contrast exactly on {@link Arm#MEMORY} rows, and B2
-     * equality exactly on the arms that recall through the adapter. A phase file can be syntactically complete and
-     * still violate this, so the check runs before anything is scored.
+     * Requires {@code snapshot} to be structurally one complete trace of {@code querySet}, by each arm's contract: its
+     * {@code queryHash}, exactly one row per arm and query and no other row, each arm's prescribed input (the slot's
+     * own query, or for an arm that {@linkplain Arm#swapsInput() swaps inputs} the query
+     * {@link HtmlKnowledgeCycleExperiment#swapIndex} names in query-set order, which is the workload order), a contrast
+     * exactly on arms that {@linkplain Arm#hasContrast() have one}, and B2 equality exactly on the arms that recall
+     * through the adapter. A phase file can be syntactically complete and still violate this, so the check runs before
+     * anything is scored.
      *
      * @throws IllegalArgumentException naming the first violation
      */
@@ -162,21 +171,17 @@ final class EvidenceTraceMetrics {
             if (index == null) {
                 throw new IllegalArgumentException("row " + key + " names a query outside the set");
             }
-            var input = row.arm() == Arm.SWAPPED
+            var input = row.arm().swapsInput()
                     ? queries.get(HtmlKnowledgeCycleExperiment.swapIndex(index, queries.size())).queryId()
                     : row.queryId();
             if (!row.inputQueryId().equals(input)) {
                 throw new IllegalArgumentException("row " + key + " was sent the text of " + row.inputQueryId()
                         + ", but its arm prescribes " + input);
             }
-            if (!row.recordedStatus().equals(row.arm().expectedRecordedStatus())) {
-                throw new IllegalArgumentException("row " + key + " recorded status " + row.recordedStatus()
-                        + ", but its arm requires " + row.arm().expectedRecordedStatus());
-            }
             if (!seen.add(key)) {
                 throw new IllegalArgumentException("duplicate row " + key);
             }
-            if (row.contrast().isPresent() != (row.arm() == Arm.MEMORY)) {
+            if (row.contrast().isPresent() != row.arm().hasContrast()) {
                 throw new IllegalArgumentException("row " + key + (row.contrast().isPresent()
                         ? " carries a memory-empty contrast" : " has no memory-empty contrast"));
             }
@@ -193,19 +198,25 @@ final class EvidenceTraceMetrics {
     }
 
     private static QueryScore score(JudgedQuery query, Row row) {
+        if (!row.recordedStatus().equals(row.arm().expectedRecordedStatus())) {
+            return new QueryScore(query, row, false, OptionalDouble.empty(), OptionalDouble.empty(),
+                    OptionalDouble.empty(), false);
+        }
         var relevant = query.relevant();
         var used = row.used();
-        var admittedFraction = ratio(row.admitted().size(), row.recorded().size());
-        var usedFraction = row.traceAmbiguous() ? OptionalDouble.empty() : ratio(used.size(), row.admitted().size());
+        var admittedFraction = RecallMetrics.ratio(row.admitted().size(), row.recorded().size());
+        var usedFraction = row.traceAmbiguous() ? OptionalDouble.empty()
+                : RecallMetrics.ratio(used.size(), row.admitted().size());
         var relevantUsed = used.stream().anyMatch(relevant::contains);
         var relevantEvidenceUsed = !query.answerable() || row.traceAmbiguous() ? OptionalDouble.empty()
                 : OptionalDouble.of(relevantUsed ? 1.0 : 0.0);
         var supported = query.answerable() && !row.traceAmbiguous() && relevantUsed
                 && row.decision() == EvidenceDecision.SUPPORTED;
-        return new QueryScore(query, row, admittedFraction, usedFraction, relevantEvidenceUsed, supported);
+        return new QueryScore(query, row, true, admittedFraction, usedFraction, relevantEvidenceUsed, supported);
     }
 
-    private static ArmAggregate aggregate(List<QueryScore> scores) {
+    private static ArmAggregate aggregate(List<QueryScore> all) {
+        var scores = all.stream().filter(QueryScore::scored).toList();
         var answerable = scores.stream().filter(score -> score.query().answerable()).toList();
         var unanswerable = scores.stream().filter(score -> !score.query().answerable()).toList();
         var byCategory = new EnumMap<Category, CategoryAggregate>(Category.class);
@@ -216,7 +227,7 @@ final class EvidenceTraceMetrics {
                         RecallMetrics.mean(inCategory.stream().map(QueryScore::relevantEvidenceUsed).toList())));
             }
         }
-        return new ArmAggregate(
+        return new ArmAggregate(all.size() - scores.size(),
                 RecallMetrics.mean(scores.stream().map(QueryScore::admittedFraction).toList()),
                 RecallMetrics.mean(scores.stream().map(QueryScore::usedFraction).toList()),
                 RecallMetrics.mean(answerable.stream().map(QueryScore::relevantEvidenceUsed).toList()),
@@ -237,13 +248,10 @@ final class EvidenceTraceMetrics {
     }
 
     private static Count contrast(List<QueryScore> memory, boolean answerable) {
-        var population = memory.stream().filter(score -> score.query().answerable() == answerable).toList();
+        var population = memory.stream().filter(score -> score.scored() && score.query().answerable() == answerable)
+                .toList();
         return new Count((int) population.stream().filter(score -> score.row().contrast().orElseThrow().differs())
                 .count(), population.size());
-    }
-
-    private static OptionalDouble ratio(int numerator, int denominator) {
-        return denominator == 0 ? OptionalDouble.empty() : OptionalDouble.of((double) numerator / denominator);
     }
 
     /** The relevant chunk ids of {@code query}, sorted, for reports. */

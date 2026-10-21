@@ -331,7 +331,7 @@ final class HtmlKnowledgeRecallReport {
         return json.append(" } }").toString();
     }
 
-    private static String aggregateJson(Aggregate aggregate) {
+    static String aggregateJson(Aggregate aggregate) {
         return "{ \"value\": " + number(aggregate.value()) + ", \"nDefined\": " + aggregate.nDefined()
                 + ", \"nUndefined\": " + aggregate.nUndefined() + " }";
     }

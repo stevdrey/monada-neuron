@@ -43,7 +43,7 @@ class EvidenceTraceMetricsTest {
         var unanswerable = score(scores, Arm.MEMORY, UNANSWERABLE);
         assertEquals(OptionalDouble.empty(), unanswerable.relevantEvidenceUsed(), "scored over A only");
         assertFalse(unanswerable.memorySupportedRelevant());
-        assertEquals(1, scores.aggregates().get(Arm.MEMORY).unsupportedClaims().count(),
+        assertEquals(1, scores.aggregates().get(Arm.MEMORY).supportedOnUnanswerable().count(),
                 "SUPPORTED on a query with no relevant chunk is counted, never hidden");
         var empty = score(scores, Arm.MEMORY, "q:exact-term-02");
         assertEquals(OptionalDouble.empty(), empty.admittedFraction(), "nothing recorded: undefined, not 0 or 1");
@@ -128,16 +128,38 @@ class EvidenceTraceMetricsTest {
         assertEquals(Arm.SWAPPED, swapped.arm());
         var swappedOwnText = new ArrayList<>(rows);
         swappedOwnText.set(swappedIndex, withInputAndStatus(swapped, swapped.queryId(), swapped.recordedStatus()));
-        var tightIndex = 4 * QUERY_SET.queries().size();
-        var tight = rows.get(tightIndex);
-        assertEquals(Arm.TIGHT_BUDGET, tight.arm());
-        var tightPartial = new ArrayList<>(rows);
-        tightPartial.set(tightIndex, withInputAndStatus(tight, tight.inputQueryId(), "PARTIAL"));
+        var contrastOnSwapped = new ArrayList<>(rows);
+        contrastOnSwapped.set(swappedIndex, withContrastAndB2(swapped,
+                Optional.of(new Contrast(false, false, false, "none", 1, 1, false)), swapped.recalledEqualsB2()));
         for (var invalid : List.of(duplicate, foreign, noContrast, b2OnEmptyArm, extra, unswapped, swappedOwnText,
-                tightPartial)) {
+                contrastOnSwapped)) {
             assertThrows(IllegalArgumentException.class, () -> EvidenceTraceMetrics.score(QUERY_SET, CORPUS,
                     new Snapshot(QUERY_SET.queryHash(), invalid)));
         }
+    }
+
+    @Test
+    void aFailedRecallLeavesOnlyThatRowUnscored() {
+        var relevant = List.copyOf(query(ANSWERABLE).relevant());
+        var failed = withInputAndStatus(row(Arm.MEMORY, ANSWERABLE, relevant, relevant.size(),
+                EvidenceDecision.SUPPORTED, false), ANSWERABLE, "FAILED");
+        var tight = withInputAndStatus(row(Arm.TIGHT_BUDGET, ANSWERABLE, List.of(), 0, EvidenceDecision.INCOMPLETE,
+                false), ANSWERABLE, "PARTIAL");
+        var scores = EvidenceTraceMetrics.score(QUERY_SET, CORPUS, snapshot(Map.of(key(Arm.MEMORY, ANSWERABLE),
+                failed, key(Arm.TIGHT_BUDGET, ANSWERABLE), tight)));
+        var score = score(scores, Arm.MEMORY, ANSWERABLE);
+        assertFalse(score.scored());
+        assertEquals(OptionalDouble.empty(), score.relevantEvidenceUsed());
+        assertFalse(score.memorySupportedRelevant(), "an operational failure is never support");
+        var memory = scores.aggregates().get(Arm.MEMORY);
+        assertEquals(1, memory.unscored());
+        assertEquals(21, memory.memorySupportedRelevant().of(), "excluded from the answerable population");
+        assertEquals(21, memory.relevantEvidenceUsed().nDefined() + memory.relevantEvidenceUsed().nUndefined());
+        assertEquals(31, memory.decisions().values().stream().mapToInt(Integer::intValue).sum());
+        assertEquals(21, scores.contrastAnswerable().of(), "excluded from the contrast too");
+        assertEquals(1, scores.aggregates().get(Arm.TIGHT_BUDGET).unscored(),
+                "the tight budget truncates admission, not the port call");
+        assertTrue(score(scores, Arm.MEMORY, "q:exact-term-02").scored(), "the other rows are still scored");
     }
 
     private static Row withInputAndStatus(Row row, String inputQueryId, String recordedStatus) {

@@ -60,10 +60,10 @@ final class RecalledReferenceResolver {
      * Builds the resolver of one root.
      *
      * @param corpus the corpus the root was imported from
-     * @param manifest that root's import manifest, complete for {@code corpus}
+     * @param manifest that root's import manifest, complete for {@code corpus}; {@link IngestionManifest} already
+     *     rejects two entries sharing an atom or a reference, so an ambiguous pointer cannot reach the resolver
      * @param unverifiedChunkIds the chunks the readback in this process did not read back with matching bytes
-     * @throws IllegalArgumentException when two manifest entries share a reference (an ambiguous pointer) or a manifest
-     *     chunk is not in the corpus
+     * @throws IllegalArgumentException when a manifest chunk is not in the corpus
      */
     RecalledReferenceResolver(HtmlKnowledgeCorpus corpus, IngestionManifest manifest, Set<String> unverifiedChunkIds) {
         Objects.requireNonNull(corpus, "corpus must not be null");
@@ -73,12 +73,8 @@ final class RecalledReferenceResolver {
         for (var entry : manifest.entries()) {
             var chunk = corpus.chunk(entry.chunkId()).orElseThrow(() -> new IllegalArgumentException(
                     "manifest chunk " + entry.chunkId() + " is not in corpus " + corpus.version()));
-            var previous = targets.putIfAbsent(entry.opaqueReference(),
+            targets.put(entry.opaqueReference(),
                     new Target(chunk.chunkId(), chunk.sha256(), !unverified.contains(chunk.chunkId())));
-            if (previous != null) {
-                throw new IllegalArgumentException("ambiguous reference " + entry.opaqueReference() + " for "
-                        + previous.chunkId() + " and " + entry.chunkId());
-            }
         }
         this.byReference = Map.copyOf(targets);
     }

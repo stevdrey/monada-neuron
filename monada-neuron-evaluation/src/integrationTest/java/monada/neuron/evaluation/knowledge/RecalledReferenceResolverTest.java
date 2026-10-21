@@ -46,7 +46,8 @@ class RecalledReferenceResolverTest {
         var first = entries.get(0);
         var second = entries.get(1);
         entries.set(1, new IngestionManifest.Entry(second.chunkId(), second.atomId(), first.opaqueReference()));
-        // One reference for two chunks is an ambiguous pointer: no manifest, and so no resolver, can hold it.
+        // One reference for two chunks is an ambiguous pointer. IngestionManifest rejects it, which is the guarantee
+        // the resolver relies on: no manifest, and so no resolver, can hold an ambiguous reference.
         assertThrows(IllegalArgumentException.class, () -> manifest(entries));
         var removed = HtmlKnowledgeEvidenceTracePhase.withoutDocument(CORPUS,
                 HtmlKnowledgeCycleExperiment.REMOVED_DOCUMENT);

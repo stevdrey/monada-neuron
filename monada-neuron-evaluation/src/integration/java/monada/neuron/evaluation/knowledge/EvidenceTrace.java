@@ -30,47 +30,79 @@ final class EvidenceTrace {
     private EvidenceTrace() {
     }
 
-    /** The experiment arms, in the fixed order the trace phase runs them (real port first). */
+    /**
+     * The experiment arms, in the fixed order the trace phase runs them (real port first). Each arm carries its whole
+     * contract, which both the trace phase's checks and the scorer's validation read, so an arm can never be exempted
+     * from a rule by omission.
+     */
     enum Arm {
         /** The production adapter over the full reopened root. */
-        MEMORY,
+        MEMORY(true, "COMPLETE", true, true, false),
         /** A port that answers {@code COMPLETE} with no results (memory disabled). */
-        MEMORY_EMPTY,
+        MEMORY_EMPTY(false, "COMPLETE", true, false, false),
         /** The full root, with each slot sent the text of another query. */
-        SWAPPED,
+        SWAPPED(true, "COMPLETE", true, false, true),
         /** The production adapter over a root imported without the removed document. */
-        REMOVED,
-        /** The full root under a signal budget that admits at most one recalled result. */
-        TIGHT_BUDGET,
+        REMOVED(true, "COMPLETE", true, false, false),
+        /**
+         * The full root under a signal budget that admits at most one recalled result. The budget truncates
+         * admission, not the port call, so the recall must still complete; the cycle ends before {@code EVALUATION}.
+         */
+        TIGHT_BUDGET(true, "COMPLETE", false, false, false),
         /** A closed adapter, which answers {@code UNAVAILABLE}. */
-        UNAVAILABLE,
-        /** A port that throws, which must fail the cycle at {@code MEMORY_RECALL}. */
-        THROWING;
+        UNAVAILABLE(false, "UNAVAILABLE", true, false, false),
+        /** A port that throws, which must fail the cycle at {@code MEMORY_RECALL}; it records no response. */
+        THROWING(false, "none", false, false, false);
+
+        private final boolean recallsThroughAdapter;
+        private final String expectedRecordedStatus;
+        private final boolean expectsFullCycle;
+        private final boolean hasContrast;
+        private final boolean swapsInput;
+
+        Arm(boolean recallsThroughAdapter, String expectedRecordedStatus, boolean expectsFullCycle,
+                boolean hasContrast, boolean swapsInput) {
+            this.recallsThroughAdapter = recallsThroughAdapter;
+            this.expectedRecordedStatus = expectedRecordedStatus;
+            this.expectsFullCycle = expectsFullCycle;
+            this.hasContrast = hasContrast;
+            this.swapsInput = swapsInput;
+        }
 
         /**
          * Whether this arm recalls through an open production adapter, so its recorded response can be compared with a
          * direct B2 recall of the same request on the same root.
          */
         boolean recallsThroughAdapter() {
-            return this == MEMORY || this == SWAPPED || this == REMOVED || this == TIGHT_BUDGET;
+            return recallsThroughAdapter;
+        }
+
+        /** The recorded port status a trace row of this arm must carry; {@code none} when no response is recorded. */
+        String expectedRecordedStatus() {
+            return expectedRecordedStatus;
+        }
+
+        /** Whether the port must answer {@code COMPLETE} in this arm. */
+        boolean expectsCompleteRecall() {
+            return expectedRecordedStatus.equals("COMPLETE");
         }
 
         /**
-         * Whether the port must answer {@code COMPLETE} in this arm: every adapter arm (the tight budget truncates
-         * admission, not the port call) and the memory-empty port. {@link #UNAVAILABLE} must answer
-         * {@code UNAVAILABLE}, and {@link #THROWING} records no response.
+         * Whether a run of this arm executes every stage ({@code MEMORY_RECALL, REASONING, EVALUATION}) and
+         * terminates {@code COMPLETED}; the other arms are judged by their own control checks.
          */
-        boolean expectsCompleteRecall() {
-            return recallsThroughAdapter() || this == MEMORY_EMPTY;
+        boolean expectsFullCycle() {
+            return expectsFullCycle;
         }
 
-        /** The recorded status a trace row of this arm must carry. */
-        String expectedRecordedStatus() {
-            return switch (this) {
-                case UNAVAILABLE -> "UNAVAILABLE";
-                case THROWING -> "none";
-                default -> "COMPLETE";
-            };
+        /** Whether rows of this arm carry the memory-empty contrast. */
+        boolean hasContrast() {
+            return hasContrast;
+        }
+
+        /** Whether a slot of this arm is sent another query's text ({@code HtmlKnowledgeCycleExperiment.swapIndex}). */
+        boolean swapsInput() {
+            return swapsInput;
         }
     }
 

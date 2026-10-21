@@ -18,6 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -176,6 +177,42 @@ class HtmlKnowledgeCycleExperimentTest {
                 Optional.empty());
         assertTrue(experiment.integrityViolations(forged).contains(
                 "admitted results are not a prefix of the recorded response"), "the port recorded another recall");
+    }
+
+    @Test
+    void anUnresolvedReferenceAnywhereTheCycleCarriedOneIsReported() {
+        var tight = observation.snapshot().rows(Arm.TIGHT_BUDGET).stream()
+                .filter(row -> row.recorded().size() > 1).findFirst().orElseThrow();
+        assertEquals(Optional.empty(), HtmlKnowledgeCycleExperiment.unresolved(tight));
+        var hits = new ArrayList<>(tight.recorded());
+        hits.set(hits.size() - 1, new EvidenceTrace.Hit(EvidenceTrace.UNRESOLVED_PREFIX + "rs-unknown", 0.1));
+        var forged = new EvidenceTrace.Row(tight.arm(), tight.queryId(), tight.inputQueryId(), tight.inputSignals(),
+                tight.requestMatchesCodec(), tight.recordedStatus(), hits, tight.memoryStatus(), tight.admitted(),
+                tight.usedBySignal(), tight.attached(), tight.selected(), tight.traceAmbiguous(), tight.stages(),
+                tight.termination(), tight.signalBudgetExhausted(), tight.outputSignals(), tight.decision(),
+                tight.contrast(), tight.recalledEqualsB2());
+        assertEquals(Optional.of("carries unresolved ?rs-unknown"), HtmlKnowledgeCycleExperiment.unresolved(forged),
+                "a recorded hit beyond the admitted prefix still has to resolve");
+    }
+
+    @Test
+    void replayComparesFailedRunsWithoutExceptionIdentity() {
+        var experiment = new HtmlKnowledgeCycleExperiment();
+        var injected = new IllegalStateException("injected");
+        var first = experiment.execute(request -> {
+            throw injected;
+        }, text("q:exact-term-01"), HtmlKnowledgeCycleExperiment.BUDGET);
+        var second = experiment.execute(request -> {
+            throw injected;
+        }, text("q:exact-term-01"), HtmlKnowledgeCycleExperiment.BUDGET);
+        assertTrue(HtmlKnowledgeCycleExperiment.sameRun(first, second), "same stage, calls, snapshot and cause");
+        var other = experiment.execute(request -> {
+            throw new IllegalStateException("another");
+        }, text("q:exact-term-01"), HtmlKnowledgeCycleExperiment.BUDGET);
+        assertFalse(HtmlKnowledgeCycleExperiment.sameRun(first, other));
+        var memory = experiment.execute(full.adapter(), text("q:exact-term-01"), HtmlKnowledgeCycleExperiment.BUDGET);
+        assertTrue(HtmlKnowledgeCycleExperiment.sameRun(memory, experiment.execute(full.adapter(),
+                text("q:exact-term-01"), HtmlKnowledgeCycleExperiment.BUDGET)));
     }
 
     @Test

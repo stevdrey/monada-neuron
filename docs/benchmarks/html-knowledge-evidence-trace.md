@@ -142,12 +142,12 @@ The seed JVM reports the `ingestion.*` checks of both roots. The trace JVM also 
 | `evidence.requestMatchesCodec` | every recorded request, in every arm except `THROWING`, is the codec Signals with limit 5 |
 | `evidence.recalledEqualsB2` | every row of `MEMORY`, `SWAPPED`, `REMOVED` and `TIGHT_BUDGET` has `recalledEqualsB2 = true`: its recorded response equals a direct `adapter.recall` of the same request on the same root (B2) |
 | `evidence.traceIntegrity` | for every run with a memory result (every arm except `THROWING`): exactly one recorded port call; the admitted results are an ordered prefix of the recorded response; the recalled slice of `outputSignals()` equals their Signals in order; every attached `MemoryReferenceEvidence` names an admitted reference |
-| `evidence.referencesResolved` | every admitted reference resolves against its own root's resolver; no row fails closed |
+| `evidence.referencesResolved` | every reference the cycle carried resolves against its own root's resolver, in every arm: the recorded response (including hits beyond the admitted prefix), the admitted results, the attached and the selected evidence; no row fails closed |
 | `evidence.stageList`, `evidence.termination` | `MEMORY_RECALL, REASONING, EVALUATION` and `COMPLETED` in every arm except `TIGHT_BUDGET` and `THROWING` |
-| `evidence.deterministicReplay` | a fresh cycle with a fresh monad reproduces every `MEMORY` run by value: cycle result, snapshot and recorded calls |
+| `evidence.deterministicReplay` | in every arm, a second fresh cycle with a fresh monad reproduces each run by value: cycle result, snapshot and recorded calls; a failed run (`THROWING`) is compared by its calls, failed stage, completed stages, snapshot and the identity of its cause, since exceptions have no value equality |
 | `contrast.valueEquality` | every compared post-recall component is a record, so the contrast never falls back to identity |
 | `control.memoryEmptyUnsupported` | every memory-empty run is `UNSUPPORTED` and attaches nothing |
-| `control.removedExcludesDocument` | no `REMOVED` recall returns a `doc:links` chunk or an unresolved reference |
+| `control.removedExcludesDocument` | no `REMOVED` recall returns a `doc:links` chunk |
 | `control.swappedMatchesSource` | every `SWAPPED` run recorded the same response and admitted the same result as the `MEMORY` run of its `inputQueryId`, so a difference is attributable to the slot, never to recall drift |
 | `control.tightBudgetExhausts` | `CONTEXT_BUDGET_EXHAUSTED` with the signal budget flag; at most one admitted result, a prefix of the response (status `PARTIAL` when more were recalled); no `EVALUATION` |
 | `control.unavailableRecall` | `UNAVAILABLE`, `RECALL_FAILED`, nothing attached |
@@ -161,12 +161,21 @@ The orchestrator adds:
 - `control.removedRelevantNotSupported` (scorer): no query whose every relevant chunk belongs to `doc:links`
   (`q:exact-term-01`, `q:multi-evidence-02`, `q:paraphrase-01`, `q:paraphrase-04`) is `memorySupportedRelevant` in
   `REMOVED`. If no such query existed, the check would fail as "not exercised".
-- `trace.scored`, only on failure: the trace snapshot parsed but is not one complete trace of the query set (a
-  missing, duplicate or foreign row; an input text other than the arm prescribes, which is the slot's own query, or
-  for `SWAPPED` the query `(i + n/2) mod n` in query-set order; a recorded status other than the arm requires, which
-  is `COMPLETE`, `UNAVAILABLE` for `UNAVAILABLE`, or none for `THROWING`; a contrast outside `MEMORY`; or B2 equality
-  on the wrong arms). The scorer
-  rejects it, nothing is scored, and the report is still written with `trace: null` and exit status `1`.
+- `trace.scored`, only on failure: the trace snapshot parsed but is not structurally one complete trace of the query
+  set (a missing, duplicate or foreign row; an input text other than the arm prescribes, which is the slot's own
+  query, or for `SWAPPED` the query `(i + n/2) mod n` in query-set order; a contrast outside `MEMORY`; or B2 equality
+  on the wrong arms). The scorer rejects it, nothing is scored, and the report is still written with `trace: null` and
+  exit status `1`.
+
+Every arm's contract (its recorded port status, whether it recalls through the adapter, runs the full cycle, carries
+the contrast or swaps its input) is declared once on `EvidenceTrace.Arm`; the trace-phase checks and the scorer both
+read it.
+
+**Unscored rows.** Only completed recalls are scored, as in [judged recall](html-knowledge-recall.md#checks). A row
+whose recorded status differs from its arm's contract (`COMPLETE`, `UNAVAILABLE` for `UNAVAILABLE`, none for
+`THROWING`), for example an operational `FAILED` recall, is **unscored**: every value of that row is `null`, it is
+excluded from every aggregate, decision count, population and contrast count, and each arm reports its `unscored`
+count. It is never support. The other rows are still scored, and `evidence.recallCompleted` still fails the run.
 
 ## Metrics
 
@@ -183,7 +192,7 @@ As defined by `l3-evidence-v1`, per query and arm. Aggregates are macro means wi
 Also reported:
 - the decision counts, overall and per category;
 - `memorySupportedRelevant` over `A`;
-- `unsupportedClaims`: `SUPPORTED` decisions on `U`, where no relevant chunk exists.
+- `supportedOnUnanswerable`: `SUPPORTED` decisions on `U`, where no relevant chunk exists (false support).
 
 No latency row is reported. The recall path's latency is the B2 row of [judged recall](html-knowledge-recall.md),
 and adapter overhead is the [adapter JMH](resonance-store-adapter-overhead.md).

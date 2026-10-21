@@ -80,6 +80,8 @@ class HtmlKnowledgeEvidenceTraceRunnerTest {
         assertTrue(json.contains("\"trace\": { \"limits\": ["), "the limits travel with the scored payload");
         assertTrue(json.contains("not a language-generation result"));
         assertTrue(json.contains("nothing here trains model weights"));
+        assertTrue(json.contains("\"supportedOnUnanswerable\": {"), "false support is named for what it counts");
+        assertTrue(json.contains("\"unscored\": 0"), "a clean run leaves no row unscored");
         for (var arm : EvidenceTrace.Arm.values()) {
             assertTrue(json.contains("\"" + arm.name() + "\": { \"AdmittedFraction\""), arm.name());
         }

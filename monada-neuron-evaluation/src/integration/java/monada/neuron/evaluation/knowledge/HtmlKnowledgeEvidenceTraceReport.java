@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import static monada.neuron.evaluation.knowledge.HtmlKnowledgeRecallReport.aggregateJson;
 import static monada.neuron.evaluation.knowledge.HtmlKnowledgeRecallReport.format;
 import static monada.neuron.evaluation.knowledge.HtmlKnowledgeRecallReport.number;
 import static monada.neuron.evaluation.knowledge.HtmlKnowledgeRecallReport.string;
@@ -34,7 +35,7 @@ final class HtmlKnowledgeEvidenceTraceReport {
             "Stored text is external memory: nothing here trains model weights, and no learning is claimed.",
             "SUPPORTED means only that the cycle carried resolvable recalled evidence. With t = 0.0 the Store returns"
                     + " results for every non-blank query, so most queries without any relevant chunk are SUPPORTED"
-                    + " too; see unsupportedClaims.",
+                    + " too; see supportedOnUnanswerable.",
             "\"Used\" means carried (passed through or attached by the documented evaluation-only consumer), not that"
                     + " it influenced anything; influence is what the memory-empty contrast probes.",
             "The reasoning stage is an evaluation-only consumer with one fixed proposition, not a production semantic"
@@ -82,15 +83,15 @@ final class HtmlKnowledgeEvidenceTraceReport {
         LIMITS.forEach(limit -> md.append("- ").append(limit).append('\n'));
         md.append("\n### Arms\n\n| Arm | AdmittedFraction | UsedFraction | RelevantEvidenceUsed (A) |"
                 + " memory-supported relevant (A) | SUPPORTED on U | SUPPORTED | UNSUPPORTED | RECALL_FAILED |"
-                + " INCOMPLETE | FAILED_CLOSED |\n| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
-                + " ---: |\n");
+                + " INCOMPLETE | FAILED_CLOSED | unscored |\n| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+                + " ---: | ---: | ---: | ---: |\n");
         scores.aggregates().forEach((arm, aggregate) -> md.append("| ").append(arm.name()).append(" | ")
                 .append(cell(aggregate.admittedFraction())).append(" | ").append(cell(aggregate.usedFraction()))
                 .append(" | ").append(cell(aggregate.relevantEvidenceUsed())).append(" | ")
                 .append(countCell(aggregate.memorySupportedRelevant())).append(" | ")
-                .append(countCell(aggregate.unsupportedClaims())).append(" | ")
+                .append(countCell(aggregate.supportedOnUnanswerable())).append(" | ")
                 .append(aggregate.decisions().values().stream().map(String::valueOf)
-                        .collect(Collectors.joining(" | "))).append(" |\n"));
+                        .collect(Collectors.joining(" | "))).append(" | ").append(aggregate.unscored()).append(" |\n"));
         md.append("\nMemory-empty contrast (`differs`): answerable ").append(countCell(scores.contrastAnswerable()))
                 .append(", unanswerable ").append(countCell(scores.contrastUnanswerable())).append(".\n");
         md.append("\nRemoved document `").append(HtmlKnowledgeCycleExperiment.REMOVED_DOCUMENT)
@@ -125,8 +126,9 @@ final class HtmlKnowledgeEvidenceTraceReport {
         return "{ \"AdmittedFraction\": " + aggregateJson(aggregate.admittedFraction()) + ", \"UsedFraction\": "
                 + aggregateJson(aggregate.usedFraction()) + ", \"RelevantEvidenceUsed\": "
                 + aggregateJson(aggregate.relevantEvidenceUsed()) + ", \"memorySupportedRelevant\": "
-                + countJson(aggregate.memorySupportedRelevant()) + ", \"unsupportedClaims\": "
-                + countJson(aggregate.unsupportedClaims()) + ", \"decisions\": " + decisionsJson(aggregate.decisions())
+                + countJson(aggregate.memorySupportedRelevant()) + ", \"supportedOnUnanswerable\": "
+                + countJson(aggregate.supportedOnUnanswerable()) + ", \"unscored\": " + aggregate.unscored()
+                + ", \"decisions\": " + decisionsJson(aggregate.decisions())
                 + ", \"byCategory\": { " + aggregate.byCategory().entrySet().stream()
                         .map(entry -> string(entry.getKey().label()) + ": { \"decisions\": "
                                 + decisionsJson(entry.getValue().decisions()) + ", \"RelevantEvidenceUsed\": "
@@ -136,7 +138,8 @@ final class HtmlKnowledgeEvidenceTraceReport {
 
     private static String queryJson(QueryScore score) {
         Row row = score.row();
-        return "{ \"inputQueryId\": " + string(row.inputQueryId()) + ", \"inputSignals\": " + row.inputSignals()
+        return "{ \"scored\": " + score.scored() + ", \"inputQueryId\": " + string(row.inputQueryId())
+                + ", \"inputSignals\": " + row.inputSignals()
                 + ", \"requestMatchesCodec\": " + row.requestMatchesCodec() + ", \"recalledEqualsB2\": "
                 + row.recalledEqualsB2().map(String::valueOf).orElse("null") + ", \"recordedStatus\": "
                 + string(row.recordedStatus()) + ", \"recorded\": [" + row.recorded().stream()
@@ -164,11 +167,6 @@ final class HtmlKnowledgeEvidenceTraceReport {
     private static String decisionsJson(Map<EvidenceDecision, Integer> decisions) {
         return decisions.entrySet().stream().map(entry -> string(entry.getKey().name()) + ": " + entry.getValue())
                 .collect(Collectors.joining(", ", "{ ", " }"));
-    }
-
-    private static String aggregateJson(Aggregate aggregate) {
-        return "{ \"value\": " + number(aggregate.value()) + ", \"nDefined\": " + aggregate.nDefined()
-                + ", \"nUndefined\": " + aggregate.nUndefined() + " }";
     }
 
     private static String countJson(Count count) {

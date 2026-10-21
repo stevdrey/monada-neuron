@@ -42,6 +42,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * The L3 evidence-use experiment of {@code html-knowledge-protocol-v1} (Issue #108, extension {@code l3-evidence-v1}):
@@ -163,19 +164,16 @@ final class HtmlKnowledgeCycleExperiment {
                 request.maxResults(), List.of());
 
         for (var query : queries) {
-            var real = execute(full.adapter(), query.text(), BUDGET);
-            var memoryEmpty = execute(empty, query.text(), BUDGET);
+            var real = executeTwice(Arm.MEMORY, query.queryId(), () -> execute(full.adapter(), query.text(), BUDGET),
+                    failures);
+            var memoryEmpty = executeTwice(Arm.MEMORY_EMPTY, query.queryId(),
+                    () -> execute(empty, query.text(), BUDGET), failures);
             realByText.put(query.queryId(), real);
             emptyByText.put(query.queryId(), memoryEmpty);
             rows.add(row(Arm.MEMORY, query.queryId(), query.queryId(), real, full, memoryEmpty,
                     Optional.of(contrast(real, memoryEmpty))));
             checkIntegrity(Arm.MEMORY, query.queryId(), real, failures);
             checkValueEquality(real, failures);
-
-            var replay = execute(full.adapter(), query.text(), BUDGET);
-            if (!replay.equals(real)) {
-                fail(failures, "evidence.deterministicReplay", query.queryId() + " differs on a fresh cycle");
-            }
         }
         for (var query : queries) {
             var memoryEmpty = emptyByText.get(query.queryId());
@@ -186,36 +184,40 @@ final class HtmlKnowledgeCycleExperiment {
         for (var index = 0; index < queries.size(); index++) {
             var slot = queries.get(index);
             var input = queries.get(swapIndex(index, queries.size()));
-            var run = execute(full.adapter(), input.text(), BUDGET);
+            var run = executeTwice(Arm.SWAPPED, slot.queryId(), () -> execute(full.adapter(), input.text(), BUDGET),
+                    failures);
             rows.add(row(Arm.SWAPPED, slot.queryId(), input.queryId(), run, full, emptyByText.get(input.queryId()),
                     Optional.empty()));
             checkSwapped(run, realByText.get(input.queryId()), slot.queryId(), input.queryId(), failures);
             checkIntegrity(Arm.SWAPPED, slot.queryId(), run, failures);
         }
         for (var query : queries) {
-            var run = execute(removed.adapter(), query.text(), BUDGET);
+            var run = executeTwice(Arm.REMOVED, query.queryId(),
+                    () -> execute(removed.adapter(), query.text(), BUDGET), failures);
             rows.add(row(Arm.REMOVED, query.queryId(), query.queryId(), run, removed,
                     emptyByText.get(query.queryId()), Optional.empty()));
             checkIntegrity(Arm.REMOVED, query.queryId(), run, failures);
         }
         for (var query : queries) {
-            var run = execute(full.adapter(), query.text(), tightBudget(query.text()));
+            var run = executeTwice(Arm.TIGHT_BUDGET, query.queryId(),
+                    () -> execute(full.adapter(), query.text(), tightBudget(query.text())), failures);
             rows.add(row(Arm.TIGHT_BUDGET, query.queryId(), query.queryId(), run, full,
                     emptyByText.get(query.queryId()), Optional.empty()));
             checkTight(run, realByText.get(query.queryId()), query.queryId(), failures);
             checkIntegrity(Arm.TIGHT_BUDGET, query.queryId(), run, failures);
         }
         for (var query : queries) {
-            var run = execute(closed, query.text(), BUDGET);
+            var run = executeTwice(Arm.UNAVAILABLE, query.queryId(), () -> execute(closed, query.text(), BUDGET),
+                    failures);
             rows.add(row(Arm.UNAVAILABLE, query.queryId(), query.queryId(), run, full,
                     emptyByText.get(query.queryId()), Optional.empty()));
             checkIntegrity(Arm.UNAVAILABLE, query.queryId(), run, failures);
         }
         var injected = new IllegalStateException("injected recall failure");
         for (var query : queries) {
-            var run = execute(request -> {
+            var run = executeTwice(Arm.THROWING, query.queryId(), () -> execute(request -> {
                 throw injected;
-            }, query.text(), BUDGET);
+            }, query.text(), BUDGET), failures);
             rows.add(row(Arm.THROWING, query.queryId(), query.queryId(), run, full,
                     emptyByText.get(query.queryId()), Optional.empty()));
             checkThrowing(run, injected, query.queryId(), failures);
@@ -233,6 +235,35 @@ final class HtmlKnowledgeCycleExperiment {
     CognitiveBudget tightBudget(String text) {
         var signals = codec.querySignals(text).size();
         return new CognitiveBudget(BUDGET.maxSteps(), 2 * signals + 1, BUDGET.maxTraceEntries());
+    }
+
+    /**
+     * Runs {@code execution} twice, each time over a fresh cycle, monad and recording port, records an
+     * {@code evidence.deterministicReplay} failure when the two runs differ, and returns the first. Every arm goes
+     * through here, so replay determinism is checked for all of them.
+     */
+    private Run executeTwice(Arm arm, String queryId, Supplier<Run> execution, Map<String, List<String>> failures) {
+        var run = execution.get();
+        if (!sameRun(run, execution.get())) {
+            fail(failures, "evidence.deterministicReplay", arm + " " + queryId + " differs on a fresh cycle");
+        }
+        return run;
+    }
+
+    /**
+     * Value equality of two runs. A failed run carries an exception, which has no value equality, so it is compared by
+     * its inputs, recorded calls, failed stage, completed stage results, snapshot and the identity of its cause.
+     */
+    static boolean sameRun(Run first, Run second) {
+        if (first.failure().isEmpty() || second.failure().isEmpty()) {
+            return first.equals(second);
+        }
+        var left = first.failure().get();
+        var right = second.failure().get();
+        return first.inputs().equals(second.inputs()) && first.calls().equals(second.calls())
+                && left.failedStage() == right.failedStage()
+                && left.completedStageResults().equals(right.completedStageResults())
+                && left.snapshot().equals(right.snapshot()) && left.getCause() == right.getCause();
     }
 
     /** Runs one fresh cycle over a fresh monad and a fresh recording port; a cycle failure is captured, not thrown. */
@@ -528,11 +559,11 @@ final class HtmlKnowledgeCycleExperiment {
                 && !row.recordedStatus().equals(ResonanceMemoryStatus.COMPLETE.name()))
                 .forEach(row -> fail(failures, "evidence.recallCompleted", row.arm() + " " + row.queryId() + " "
                         + row.recordedStatus()));
-        snapshot.rows().stream().filter(row -> row.arm() != Arm.THROWING && !row.requestMatchesCodec())
+        snapshot.rows().stream().filter(row -> !row.requestMatchesCodec())
                 .forEach(row -> fail(failures, "evidence.requestMatchesCodec", row.arm() + " " + row.queryId()));
         for (var arm : Arm.values()) {
-            if (arm == Arm.TIGHT_BUDGET || arm == Arm.THROWING) {
-                continue; // their stage list and termination are the subject of their own control checks
+            if (!arm.expectsFullCycle()) {
+                continue; // judged by the arm's own control check
             }
             for (var row : snapshot.rows(arm)) {
                 if (!row.stages().equals(STAGES.stream().map(Enum::name).toList())) {
@@ -543,12 +574,8 @@ final class HtmlKnowledgeCycleExperiment {
                 }
             }
         }
-        for (var row : snapshot.rows()) {
-            if (row.decision() == EvidenceDecision.FAILED_CLOSED || row.admitted().stream()
-                    .anyMatch(chunk -> chunk.startsWith(EvidenceTrace.UNRESOLVED_PREFIX))) {
-                fail(failures, "evidence.referencesResolved", row.arm() + " " + row.queryId() + " failed closed");
-            }
-        }
+        snapshot.rows().forEach(row -> unresolved(row).ifPresent(problem ->
+                fail(failures, "evidence.referencesResolved", row.arm() + " " + row.queryId() + " " + problem)));
         snapshot.rows(Arm.MEMORY_EMPTY).stream().filter(row -> row.decision() != EvidenceDecision.UNSUPPORTED
                 || !row.attached().isEmpty()).forEach(row -> fail(failures, "control.memoryEmptyUnsupported",
                         row.queryId() + " " + row.decision()));
@@ -557,8 +584,7 @@ final class HtmlKnowledgeCycleExperiment {
                 .forEach(row -> fail(failures, "evidence.recalledEqualsB2", row.arm() + " " + row.queryId()));
         var removedSlug = REMOVED_DOCUMENT.substring("doc:".length());
         snapshot.rows(Arm.REMOVED).stream().filter(row -> row.recorded().stream()
-                .anyMatch(hit -> hit.chunkId().startsWith("chk:" + removedSlug + "#")
-                        || hit.chunkId().startsWith(EvidenceTrace.UNRESOLVED_PREFIX)))
+                .anyMatch(hit -> hit.chunkId().startsWith("chk:" + removedSlug + "#")))
                 .forEach(row -> fail(failures, "control.removedExcludesDocument", row.queryId()));
         snapshot.rows(Arm.UNAVAILABLE).stream().filter(row -> !row.recordedStatus().equals("UNAVAILABLE")
                 || row.decision() != EvidenceDecision.RECALL_FAILED || !row.attached().isEmpty())
@@ -579,6 +605,24 @@ final class HtmlKnowledgeCycleExperiment {
                     : failed.size() + " violations: " + String.join("; ", failed)));
         }
         return checks;
+    }
+
+    /**
+     * The first reference problem of one row, if any: a {@code FAILED_CLOSED} decision, or an unresolved reference
+     * anywhere the cycle carried one (the recorded response, the admitted results, the attached and the selected
+     * evidence), against that row's own root.
+     */
+    static Optional<String> unresolved(Row row) {
+        if (row.decision() == EvidenceDecision.FAILED_CLOSED) {
+            return Optional.of("failed closed");
+        }
+        var carried = new ArrayList<String>();
+        row.recorded().forEach(hit -> carried.add(hit.chunkId()));
+        carried.addAll(row.admitted());
+        carried.addAll(row.attached());
+        carried.addAll(row.selected());
+        return carried.stream().filter(label -> label.startsWith(EvidenceTrace.UNRESOLVED_PREFIX)).findFirst()
+                .map(label -> "carries unresolved " + label);
     }
 
     private static void fail(Map<String, List<String>> failures, String check, String detail) {
