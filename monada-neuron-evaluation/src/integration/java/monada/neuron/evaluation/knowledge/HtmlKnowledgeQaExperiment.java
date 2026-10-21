@@ -72,10 +72,11 @@ final class HtmlKnowledgeQaExperiment {
 
     private final List<AnswerComponent> components;
 
-    /** The #109 components: B3, B3c and the generator test double. */
+    /** The #109 components: B3, B3c, B3s and the generator test double. */
     HtmlKnowledgeQaExperiment() {
         this(List.of(new ExtractiveAnswerer(ExtractiveAnswerer.Rule.B3),
                 new ExtractiveAnswerer(ExtractiveAnswerer.Rule.B3C),
+                new ExtractiveAnswerer(ExtractiveAnswerer.Rule.B3S),
                 new TestDoubleAnswerGenerator().asComponent()));
     }
 

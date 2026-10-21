@@ -88,6 +88,26 @@ class ExtractiveAnswererTest {
     }
 
     @Test
+    void b3sQuotesTheFirstSegmentOverAllChunksThatHoldEveryContentToken() {
+        var b3s = new ExtractiveAnswerer(ExtractiveAnswerer.Rule.B3S);
+        var evidence = List.of(chunk("chk:a#00", "The img element embeds a picture. Images need alt text."),
+                chunk("chk:b#00", "The defer attribute runs a script after parsing. Defer scripts keep order."));
+        var answer = assertInstanceOf(Answered.class, b3s.answer("What does the defer attribute do on a script?",
+                evidence));
+        assertEquals("The defer attribute runs a script after parsing.", answer.claims().getFirst().text());
+        assertEquals(List.of(new Citation("chk:b#00", 0, 48)), answer.claims().getFirst().citations(),
+                "it scans past the first chunk, in rank order");
+        assertInstanceOf(Abstained.class, b3s.answer("What does the defer attribute do on an iframe?", evidence),
+                "no single segment holds both defer and iframe");
+        assertInstanceOf(Abstained.class, b3s.answer("What is the boiling point of water?", evidence));
+        var functionOnly = assertInstanceOf(Abstained.class, b3s.answer("What is it?", evidence));
+        assertTrue(functionOnly.reason().contains("no content token"), functionOnly.reason());
+        assertTrue(b3s.tuning().startsWith("in-sample"));
+        assertTrue(ExtractiveAnswerer.FUNCTION_WORDS.stream().noneMatch(word -> List.of("html", "element",
+                "attribute", "href", "link").contains(word)), "the function-word list names no HTML term");
+    }
+
+    @Test
     void theTestDoubleEchoesTheFirstSegmentAndIsLabelled() {
         var generator = new TestDoubleAnswerGenerator().asComponent();
         assertEquals(AnswerComponent.Kind.TEST_DOUBLE, generator.kind());

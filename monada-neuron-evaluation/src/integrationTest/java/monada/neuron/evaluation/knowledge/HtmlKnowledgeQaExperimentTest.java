@@ -60,7 +60,7 @@ class HtmlKnowledgeQaExperimentTest {
                 "control.emptyEvidenceAbstains"),
                 observation.checks().stream().map(Check::name).toList());
         observation.checks().forEach(check -> assertTrue(check.passed(), check.name() + ": " + check.detail()));
-        assertEquals(2 * QUERY_SET.queries().size() * 2 * 3 * 3, observation.snapshot().rows().size(),
+        assertEquals(2 * QUERY_SET.queries().size() * 2 * 3 * 4, observation.snapshot().rows().size(),
                 "roots x queries x layers x answerK x components");
     }
 
@@ -81,6 +81,47 @@ class HtmlKnowledgeQaExperimentTest {
         }
         assertTrue(observation.snapshot().rows().stream().anyMatch(row -> row.queryId().equals(NOVICE)
                 && row.component().equals("B3") && row.outcome() == Outcome.ANSWERED));
+    }
+
+    /**
+     * Issue #109's answer/abstention acceptance cases for the conservative B3s path, on every root, layer and
+     * {@code answerK}: the novice {@code <a>} question is answered only from a relevant chunk, otherwise it abstains;
+     * every unanswerable question abstains; and every question whose relevant chunks were all in the removed
+     * document abstains on the root without it. Relevance is checked here, by the test, against the gold labels; B3s
+     * itself never reads them.
+     */
+    @Test
+    void theConservativePathAnswersOnlyFromRelevantEvidenceAndOtherwiseAbstains() {
+        var prefix = HtmlKnowledgeQaExperiment.chunkPrefix(HtmlKnowledgeQaExperiment.REMOVED_DOCUMENT);
+        var removedTargets = QUERY_SET.queries().stream().filter(query -> !query.relevant().isEmpty()
+                && query.relevant().stream().allMatch(chunk -> chunk.startsWith(prefix))).map(JudgedQuery::queryId)
+                .toList();
+        assertEquals(List.of("q:exact-term-01", "q:multi-evidence-02", "q:paraphrase-01", "q:paraphrase-04"),
+                removedTargets.stream().sorted().toList());
+        var answered = 0;
+        for (var row : observation.snapshot().rows()) {
+            if (!row.component().equals("B3s")) {
+                continue;
+            }
+            var query = QUERY_SET.queries().stream().filter(candidate -> candidate.queryId().equals(row.queryId()))
+                    .findFirst().orElseThrow();
+            var where = row.root() + "/" + row.layer() + "/k" + row.answerK() + "/" + row.queryId() + ": " + row;
+            if (query.relevant().isEmpty() || row.root().equals("removed") && removedTargets.contains(row.queryId())) {
+                assertEquals(Outcome.ABSTAINED, row.outcome(), where);
+                assertTrue(row.detail().startsWith(GroundedAnswer.INSUFFICIENT_EVIDENCE), where);
+            } else if (row.outcome() == Outcome.ANSWERED) {
+                answered++;
+                for (var span : row.citations()) {
+                    assertTrue(span.eligible() && span.exactQuote(), where);
+                    assertTrue(query.relevant().contains(span.citation().chunkId()), "cites a relevant chunk: " + where);
+                }
+            }
+        }
+        assertTrue(answered > 0, "B3s is not a component that never answers");
+        assertTrue(observation.snapshot().rows().stream().filter(row -> row.component().equals("B3s")
+                && row.queryId().equals(NOVICE)).allMatch(row -> row.outcome() == Outcome.ABSTAINED
+                || row.citations().stream().allMatch(span -> span.citation().chunkId().equals("chk:links#00"))),
+                "the novice <a> question is answered from the links chunk or abstains");
     }
 
     @Test
