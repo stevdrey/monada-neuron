@@ -676,37 +676,50 @@ final class HtmlKnowledgeRecall {
      * descending, then query Signal index, then Store rank; best candidate per atom; cut to {@code limit}.
      */
     private List<Referenced> codecDirect(Run run, MonadaMemory memory, QueryText query, int limit) {
-        var best = new HashMap<String, Candidate>();
+        var perSignal = new ArrayList<List<ResonanceResult>>();
         try {
-            var signals = codec.querySignals(query.text());
-            for (var signalIndex = 0; signalIndex < signals.size(); signalIndex++) {
-                var text = codec.encode(signals.get(signalIndex));
-                var results = memory.resonate(text).topK(limit).threshold(THRESHOLD).execute().results();
+            for (var signal : codec.querySignals(query.text())) {
+                var results = memory.resonate(codec.encode(signal)).topK(limit).threshold(THRESHOLD).execute()
+                        .results();
                 var rejected = rejectStoreResults(results);
                 if (rejected.isPresent()) {
                     run.failure(query, Layer.B2C, limit, rejected.get());
                     return null;
                 }
-                for (var rank = 0; rank < results.size(); rank++) {
-                    var candidate = new Candidate(results.get(rank), signalIndex, rank);
-                    best.merge(candidate.result().atom().id(), candidate,
-                            (left, right) -> MERGE_ORDER.compare(left, right) <= 0 ? left : right);
-                }
+                perSignal.add(results);
             }
         } catch (RuntimeException e) {
             run.failure(query, Layer.B2C, limit, "threw " + e);
             return null;
         }
-        var merged = best.values().stream().sorted(MERGE_ORDER).limit(limit).toList();
+        var merged = mergeCodecResults(perSignal, limit);
         var referenced = new ArrayList<Referenced>(merged.size());
         for (var rank = 0; rank < merged.size(); rank++) {
-            var result = merged.get(rank).result();
+            var result = merged.get(rank);
             var chunkId = run.mapAtom(query, Layer.B2C, result);
             var row = new Row(query.queryId(), Layer.B2C, limit, rank + 1, chunkId, result.score());
             run.rows.add(row);
             referenced.add(new Referenced(opaqueReference.of(result.atom().id()), row));
         }
         return referenced;
+    }
+
+    /**
+     * The adapter's documented merge of the Store results of each codec query Signal, in Signal order: score
+     * descending, then query Signal index, then Store rank; the best candidate per atom; cut to {@code limit}. B2c and
+     * the L4 evidence of B2 (Issue #109) both use it, so the control is never re-implemented.
+     */
+    static List<ResonanceResult> mergeCodecResults(List<List<ResonanceResult>> perSignal, int limit) {
+        var best = new HashMap<String, Candidate>();
+        for (var signalIndex = 0; signalIndex < perSignal.size(); signalIndex++) {
+            var results = perSignal.get(signalIndex);
+            for (var rank = 0; rank < results.size(); rank++) {
+                var candidate = new Candidate(results.get(rank), signalIndex, rank);
+                best.merge(candidate.result().atom().id(), candidate,
+                        (left, right) -> MERGE_ORDER.compare(left, right) <= 0 ? left : right);
+            }
+        }
+        return best.values().stream().sorted(MERGE_ORDER).limit(limit).map(Candidate::result).toList();
     }
 
     private static final Comparator<Candidate> MERGE_ORDER = Comparator
