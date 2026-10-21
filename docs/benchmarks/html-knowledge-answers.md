@@ -82,7 +82,9 @@ Outputs, under `build/reports/benchmarks/` of `monada-neuron-evaluation`:
 
 Each row records `E(q)` with every chunk's rank and score, and the protocol's `tieAtCutoff` at `answerK`: whether
 the scores at ranks `answerK` and `answerK + 1` are bit-exactly equal. At `answerK = 5` the rank-6 score comes from a
-separate limit-6 lookahead call, which never enters `E(q)`. Every returned atom must map through the root's
+separate limit-6 lookahead call, which never enters `E(q)`. That call must extend the limit-5 list under #107's prefix
+rule: the same chunks with bit-exact scores, except an equal-score substitution inside a tie that straddles the cutoff.
+If it does not, the recall fails, so `tieAtCutoff` never describes a different list than `E(q)`. Every returned atom must map through the root's
 manifest, and its content must hash to the corpus `sha256`. Otherwise
 the recall fails (`completed`) and that query and layer get no L4 row. Corpus text is never substituted. Evaluations
 bound to different layers, roots or `answerK` values are separate report rows.
@@ -154,12 +156,12 @@ Quality numbers are never checks. The run fails only on these:
 | `answer.<root>.persistence.readback`, `.noUnmappedAtoms` | the answer JVM read every chunk of both roots back, and every returned atom maps through the manifest |
 | `process.restart` | the seed and answer phases ran in separate JVM processes |
 | `answer.completed` | every bound recall completed with verified Store content |
-| `answer.citationsEligible` | every citation of every component names a chunk of `E(q)` with valid bounds, and quotes its claim exactly |
+| `answer.citationsEligible` | every citation of every component names a chunk of `E(q)` with valid, non-empty bounds. Exact quoting is counted in the detail but is not required: an eligible non-exact claim goes to a human `supported` verdict |
 | `answer.deterministic` | a second execution in the answer JVM reproduced every answer row |
 | `answer.control.removedNeverCited` | no answer over the root without `doc:links` cites one of its chunks |
 | `answer.control.emptyEvidenceAbstains` | every component abstains on every query when `E(q)` is empty |
 | `answer.generator.labelledTestDouble` | every generator row is labelled `TEST_DOUBLE` |
-| `answer.scored` | the scorer accepted the answer snapshot |
+| `answer.scored` | the snapshot holds exactly one row per root, layer, `answerK`, query and component, and the scorer accepted it |
 | `judgment.complete` | every claim, flag and candidate edge of every judged answer has a verdict |
 | `judgment.noStaleEntries` | every recorded verdict belongs to an answer of this run |
 | `judgment.hashFrozen` | the judgments file is the approved one |
@@ -181,7 +183,7 @@ Per root, layer, `answerK` and component:
 
 ## Results (2026-10-21)
 
-Measured on Neuron `cc9d192` (clean tree) and Store `1811666` (clean checkout), with Azul OpenJDK 27 on Linux, an AMD
+Measured on Neuron `71831c5` (clean tree) and Store `b25c698` (clean checkout), with Azul OpenJDK 27 on Linux, an AMD
 Ryzen 7 7730U and Store roots on `tmpfs`. Each run used one seed JVM and one answer JVM. Two full runs on that commit
 gave byte-identical `answers` payloads, with all 21 checks passing and no row unscored or unjudged.
 
@@ -203,7 +205,7 @@ The generator test double cites eligibly in every row (`CitationFidelity` 1.000)
 `tieAtCutoff` is `false` in every row: no evidence set ends inside a tie group, as #107 found for B1 and B2.
 
 Answer latency, a diagnostic only, was measured as one answer over `E(q)` of B1 at `answerK = 5` on the full root, 32
-samples, with recall excluded. Medians: B3 24 µs, B3c 22 µs, test double 14 µs.
+samples, with recall excluded. Medians: B3 25 µs, B3c 20 µs, test double 14 µs.
 
 Observations, not tuned away:
 
@@ -258,7 +260,9 @@ extension leaves to #109:
 - **Conflict disclosure.** `conflictDisclosed` is `false` by rule when the eligible citations do not cover both
   chunks of the pair.
 - **Retrieval in every row.** Each row keeps `E(q)` with ranks and scores and its `tieAtCutoff`, from a limit-6
-  lookahead at `answerK = 5`.
+  lookahead at `answerK = 5` that must extend the limit-5 list.
+- **Citations and completeness.** A citation must cover at least one code point. Eligibility, not exact quoting, is
+  the semantic check. The scored snapshot must be the complete row matrix.
 - **Components and layers.** The components are B3, B3c (in-sample, tuned) and the `TEST_DOUBLE` generator.
   `TEST_DOUBLE` rows are never judged and get no status. Both `B1` and `B2` are evaluated at `answerK` 1, 3 and 5,
   on the full root and on the root without `doc:links`.
