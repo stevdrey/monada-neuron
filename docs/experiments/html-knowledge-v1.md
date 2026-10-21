@@ -693,7 +693,8 @@ candidates. They are not removed or relabeled to improve a score.
 Extension `feedback-v1`: minimum requirements; #110 may refine them in its own documentation. Delivered by `runHtmlKnowledgeFeedback`;
 its refinements are listed in [relevance feedback](../benchmarks/html-knowledge-feedback.md#refinements-of-feedback-v1).
 The statement below that the Store's public API has no read of stored feedback still holds; #110 complements the
-behavioral audit with a storage-level read of each root's log through the Store's public `FileFeedbackStore`.
+behavioral audit with a storage-level read of each root's log, at the segment its manifest records, through the
+Store's public `FileFeedbackStore`.
 
 **Ownership.** Relevance state belongs to Monada Resonance Store. Feedback is written only through the Store's
 public `MonadaMemory.feedback(query, atomId, signal)` and persists in the Store root. Neuron holds no relevance

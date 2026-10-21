@@ -21,6 +21,7 @@ import java.util.OptionalDouble;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FeedbackEffectMetricsTest {
@@ -149,6 +150,17 @@ class FeedbackEffectMetricsTest {
             assertEquals(Population.CALIBRATION_WITHOUT_EVENTS, effect.population());
             assertEquals(other.queryId(), effect.source().queryId());
         }
+    }
+
+    @Test
+    void theRowIndexKeepsEveryRecordedLimitAndIsUnmodifiable() {
+        var id = CALIBRATION.queryId();
+        var rows = List.of(new Row(id, Layer.B1, 2, 1, OTHER, 0.5), new Row(id, Layer.B1, 5, 1, THIRD, 0.4),
+                new Row(id, Layer.B2, 5, 1, OTHER, 0.3));
+        var index = FeedbackEffectMetrics.RowIndex.of(snapshot(rows));
+        assertEquals(rows.subList(0, 2), index.rows(id, Layer.B1), "a limit outside 1, 3, 5 and 6 is still compared");
+        assertEquals(List.of(rows.get(1)), index.rows(id, Layer.B1, 5));
+        assertThrows(UnsupportedOperationException.class, () -> index.rows(id, Layer.B1).clear());
     }
 
     private static QueryEffect effect(ArmEffect arm, String queryId, RecallPath path) {

@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
@@ -97,9 +98,15 @@ record FeedbackEventLog(List<StoredEvent> events, String logSha256, long logByte
             throw new IngestionInputException("Store root " + root + " has no feedback log at " + segment);
         }
         try {
+            // The Store's parser reads the file itself, so the raw bytes are read before and after it: equal bytes
+            // prove that the hash, the size and the parsed events all describe one version of the log.
             var bytes = Files.readAllBytes(file);
+            var parsed = new FileFeedbackStore(root, segment).findAll();
+            if (!Arrays.equals(bytes, Files.readAllBytes(file))) {
+                throw new IllegalStateException("the feedback log of " + root + " changed while it was being read");
+            }
             var events = new ArrayList<StoredEvent>();
-            for (var event : new FileFeedbackStore(root, segment).findAll()) {
+            for (var event : parsed) {
                 var chunkId = manifest.chunkIdForAtom(event.atomId());
                 var reference = chunkId.flatMap(manifest::entryForChunk).map(IngestionManifest.Entry::opaqueReference);
                 events.add(new StoredEvent(event.query(), event.queryKey(),

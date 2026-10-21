@@ -146,9 +146,17 @@ Each phase runs in its own JVM. The phase JVMs read only the labels-free workloa
    - observe every arm with feedback-aware ranking on, then every arm with it off.
 
 **Reading the log back.** `MonadaMemory` has no public read of stored feedback. The harness therefore reads the root's
-log through the Store's public `FileFeedbackStore`, after checking that the log exists, because that constructor
-creates a missing log. Atom ids are mapped to chunk ids and opaque references through the arm's own manifest, and
-creation times are dropped.
+log through the Store's public `FileFeedbackStore`:
+
+- the log is the segment recorded as `feedbackSegment` in the root's `manifest.json`, or the Store's default segment
+  when the manifest names none. The manifest is read as text, because the Store's manifest loader creates
+  directories;
+- the log must exist before it is read, because the `FileFeedbackStore` constructor creates a missing log;
+- the raw bytes are read before and after parsing, and must be equal, so the log hash, its size and the parsed events
+  describe one version of the log.
+
+Atom ids are mapped to chunk ids and opaque references through the arm's own manifest, and creation times are
+dropped.
 
 The protocol's path order is followed per query: B1 and B2c are recorded before B2.
 
