@@ -6,7 +6,7 @@
 | :--- | :--- |
 | Protocol version | `html-knowledge-protocol-v1` |
 | Issue | [#104](https://github.com/stevdrey/monada-neuron/issues/104) (Experiment Knowledge 1/8) |
-| Implementation | Corpus contract delivered by #105 ([ingestion](../benchmarks/html-knowledge-ingestion.md)); ingestion readback, post-reopen (restart) and L2 attribution delivered by #106 ([persistence](../benchmarks/html-knowledge-persistence.md)); query set `html-kq-v1`, L1/L2 judged recall and baselines B0 to B2c delivered by #107 ([recall](../benchmarks/html-knowledge-recall.md)); L3 evidence use (`l3-evidence-v1`) delivered by #108 ([evidence trace](../benchmarks/html-knowledge-evidence-trace.md)); L4 grounded answers (`l4-answer-v1`), baseline B3 and the generator seam delivered by #109 ([grounded answers](../benchmarks/html-knowledge-answers.md)); the rest of this document is the contract that issues #110 and #111 implement. |
+| Implementation | Corpus contract delivered by #105 ([ingestion](../benchmarks/html-knowledge-ingestion.md)); ingestion readback, post-reopen (restart) and L2 attribution delivered by #106 ([persistence](../benchmarks/html-knowledge-persistence.md)); query set `html-kq-v1`, L1/L2 judged recall and baselines B0 to B2c delivered by #107 ([recall](../benchmarks/html-knowledge-recall.md)); L3 evidence use (`l3-evidence-v1`) delivered by #108 ([evidence trace](../benchmarks/html-knowledge-evidence-trace.md)); L4 grounded answers (`l4-answer-v1`), baseline B3 and the generator seam delivered by #109 ([grounded answers](../benchmarks/html-knowledge-answers.md)); relevance feedback versus a no-feedback control (`feedback-v1`) delivered by #110 ([relevance feedback](../benchmarks/html-knowledge-feedback.md)); the rest of this document is the contract that issue #111 implements. |
 | Scope | Monada Neuron `monada-neuron-evaluation` optional `integration` / `integrationTest` source sets only |
 | Extensions | `l3-evidence-v1` (#108), `l4-answer-v1` (#109), `feedback-v1` (#110), `scaling-v1` (#111) |
 
@@ -690,7 +690,10 @@ candidates. They are not removed or relabeled to improve a score.
 
 ## Relevance feedback (delivered by #110)
 
-Extension `feedback-v1`: minimum requirements; #110 may refine them in its own documentation.
+Extension `feedback-v1`: minimum requirements; #110 may refine them in its own documentation. Delivered by `runHtmlKnowledgeFeedback`;
+its refinements are listed in [relevance feedback](../benchmarks/html-knowledge-feedback.md#refinements-of-feedback-v1).
+The statement below that the Store's public API has no read of stored feedback still holds; #110 complements the
+behavioral audit with a storage-level read of each root's log through the Store's public `FileFeedbackStore`.
 
 **Ownership.** Relevance state belongs to Monada Resonance Store. Feedback is written only through the Store's
 public `MonadaMemory.feedback(query, atomId, signal)` and persists in the Store root. Neuron holds no relevance
@@ -830,7 +833,7 @@ issue fixes the exact task name in its own documentation.
 | #107 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeRecall` | L1/L2 judged recall with B0/B1/B2/B2c over `html-kq-v1`, rerun in a reopen JVM and in a fresh-root replica JVM |
 | #108 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeEvidenceTrace` | L3 evidence use in a bounded cognitive cycle, with memory-empty, swapped, removed-document, tight-budget and failed-recall controls |
 | #109 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeAnswers` | L4 grounded answers with B3, the in-sample B3c variant, abstention, a `TEST_DOUBLE` generator seam and frozen human judgments; `--ask` answers one question, unscored |
-| #110 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeFeedback` | [relevance feedback](#relevance-feedback-delivered-by-110) vs a no-feedback control |
+| #110 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeFeedback` | [relevance feedback](#relevance-feedback-delivered-by-110) vs a no-feedback control: one control and three key-strategy treatment roots, seed, feedback and restarted reopen JVMs, a feedback-disabled reference |
 | #111 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeScaling` | L6 profile over the [scaling family](#scaling-family-delivered-by-111) |
 
 All planned tasks require the sibling `../monada-resonance-store` checkout, like the existing integration
@@ -901,3 +904,13 @@ source set, and do not change `./gradlew test` when it is absent.
     unless one retrieved sentence holds every content token of the question) and a `TEST_DOUBLE` generator that is
     never judged;
   - the human verdicts `html-l4-judgments-v1`, keyed by the exact answer and frozen by hash.
+- No version change (issue #110). No definition, formula, label rule or report field changes. `feedback-v1` is
+  delivered by `runHtmlKnowledgeFeedback` ([relevance feedback](../benchmarks/html-knowledge-feedback.md)), keeping
+  its event rule, `feedbackHash` (`html-kf-v1`), populations and persistence audit, and refining what it left open:
+  - one treatment root per public Store feedback key strategy (exact, normalized, lexically enriched), each
+    imported like the control, plus `in-sample (tuned)` surface variants of the calibration queries;
+  - the split (`html-kf-split-v1`) groups queries by key under every strategy, so one split serves every arm;
+  - a storage-level read-back of each root's feedback log, checked against the plan and across the restart;
+  - a feedback-disabled reopen of each treatment root, which must reproduce the control bit for bit;
+  - prefix stability of treatment arms after events is a diagnostic, because the Store's feedback-aware candidate
+    pool depends on the requested limit.

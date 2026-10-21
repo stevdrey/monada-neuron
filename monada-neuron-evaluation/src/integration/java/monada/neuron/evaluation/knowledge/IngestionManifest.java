@@ -80,6 +80,11 @@ public final class IngestionManifest {
         return Optional.ofNullable(chunkIdByAtomId.get(atomId));
     }
 
+    /** Returns the entry of {@code chunkId}, the only way an experiment turns a chunk label into this root's atom. */
+    public Optional<Entry> entryForChunk(String chunkId) {
+        return entries.stream().filter(entry -> entry.chunkId().equals(chunkId)).findFirst();
+    }
+
     /** Maps an adapter opaque reference of this root back to its chunk id. */
     public Optional<String> chunkIdForReference(String opaqueReference) {
         return Optional.ofNullable(chunkIdByReference.get(opaqueReference));

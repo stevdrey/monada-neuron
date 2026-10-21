@@ -234,7 +234,11 @@ from query Signals through the recalled references to the evidence its later sta
 removed-document and failure controls
 ([`runHtmlKnowledgeEvidenceTrace`](docs/benchmarks/html-knowledge-evidence-trace.md), issue #108). Cited extractive
 answers with abstention are scored at L4 against frozen human judgments, with an optional generator seam exercised only
-by a labelled test double ([`runHtmlKnowledgeAnswers`](docs/benchmarks/html-knowledge-answers.md), issue #109).
+by a labelled test double ([`runHtmlKnowledgeAnswers`](docs/benchmarks/html-knowledge-answers.md), issue #109). The Store's
+query-scoped relevance feedback is compared with a no-feedback control on calibration, held-out and surface-variant
+queries, through the Store and through Neuron, across a restart
+([`runHtmlKnowledgeFeedback`](docs/benchmarks/html-knowledge-feedback.md), issue #110); this is retrieval-rank feedback
+inside the Store, not cognitive or worker-route adaptation.
 
 **Module path.** A JPMS host writes `requires monada.neuron;`. The jar is an automatic module, so it declares no
 `requires jdk.incubator.vector` and the scalar fallback applies unless the host adds the module itself.
