@@ -199,9 +199,10 @@ and adapter overhead is the [adapter JMH](resonance-store-adapter-overhead.md).
 
 ## Results (2026-10-20)
 
-Neuron `b6e5d61` (clean tree), Store `1445726`, Azul OpenJDK 27 on Linux, AMD Ryzen 7 7730U, Store roots on
+Neuron `150f5a7` (clean tree), Store `ae11a04`, Azul OpenJDK 27 on Linux, AMD Ryzen 7 7730U, Store roots on
 `tmpfs`. One seed JVM and one trace JVM per run. All 29
-checks passed. Two full runs gave identical `trace` payloads and identical raw rows.
+checks passed. Two full runs on that commit gave byte-identical `trace` payloads and raw rows, with no row
+unscored.
 
 | Arm | AdmittedFraction | UsedFraction | RelevantEvidenceUsed (A) | memory-supported relevant (A) | SUPPORTED on U | SUPPORTED | UNSUPPORTED | RECALL_FAILED | INCOMPLETE |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
