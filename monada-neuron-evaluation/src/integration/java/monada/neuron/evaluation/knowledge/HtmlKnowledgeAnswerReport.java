@@ -9,8 +9,6 @@ import monada.neuron.evaluation.knowledge.AnswerMetrics.Scores;
 import monada.neuron.evaluation.knowledge.AnswerMetrics.Status;
 import monada.neuron.evaluation.knowledge.AnswerTrace.CitedSpan;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -172,17 +170,12 @@ final class HtmlKnowledgeAnswerReport {
                 + " AbstentionRecall |\n");
         md.append("| :--- | :--- | ---: | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
                 + " ---: | ---: | ---: | ---: | ---: |\n");
-        for (var aggregate : scores.aggregates()) {
+        var judged = scores.aggregates().stream()
+                .filter(aggregate -> aggregate.kind() != AnswerComponent.Kind.TEST_DOUBLE).toList();
+        for (var aggregate : judged) {
             var s = aggregate.statuses();
             md.append("| ").append(aggregate.root()).append(" | ").append(aggregate.layer()).append(" | ")
                     .append(aggregate.answerK()).append(" | ").append(aggregate.component()).append(" | ");
-            if (aggregate.kind() == AnswerComponent.Kind.TEST_DOUBLE) {
-                var cells = new ArrayList<>(Collections.nCopies(15, ""));
-                cells.set(0, "TEST_DOUBLE: not judged");
-                cells.set(14, "CitationFidelity " + format(aggregate.metrics().get("CitationFidelity").value()));
-                md.append(String.join(" | ", cells)).append(" |\n");
-                continue;
-            }
             md.append(aggregate.scored()).append(" | ").append(aggregate.retrievalComplete()).append("/")
                     .append(aggregate.answerable()).append(" | ")
                     .append(count(s, Status.SUPPORTED_CORRECT, Status.FALSE_PREMISE_CORRECTED, Status.CONFLICT_SURFACED))
@@ -200,6 +193,13 @@ final class HtmlKnowledgeAnswerReport {
                     .append(format(aggregate.abstentionPrecision())).append(" | ")
                     .append(format(aggregate.abstentionRecall())).append(" |\n");
         }
+        md.append("\nTest doubles are never judged; only their citation mechanics are reported.\n\n");
+        md.append("| Root | Layer | k | Component | Answered | CitationFidelity |\n| :--- | :--- | ---: | :--- | ---: | ---: |\n");
+        scores.aggregates().stream().filter(aggregate -> aggregate.kind() == AnswerComponent.Kind.TEST_DOUBLE)
+                .forEach(aggregate -> md.append("| ").append(aggregate.root()).append(" | ").append(aggregate.layer())
+                        .append(" | ").append(aggregate.answerK()).append(" | ").append(aggregate.component())
+                        .append(" | ").append(answered(aggregate)).append(" | ")
+                        .append(format(aggregate.metrics().get("CitationFidelity").value())).append(" |\n"));
         md.append("\n### Answers on the full root, B1, k = 5\n\n");
         md.append("| Query | Component | Retrieval complete | Status | Answer |\n| :--- | :--- | :--- | :--- | :--- |\n");
         scores.answers().stream().filter(answer -> answer.row().root().equals(HtmlKnowledgeAnswerPhase.FULL)
@@ -212,6 +212,13 @@ final class HtmlKnowledgeAnswerReport {
         md.append("\n### Limits\n\n");
         LIMITS.forEach(limit -> md.append("- ").append(limit).append('\n'));
         return md.toString();
+    }
+
+    private long answered(GroupAggregate aggregate) {
+        return scores.answers().stream().filter(answer -> answer.row().root().equals(aggregate.root())
+                && answer.row().layer().equals(aggregate.layer()) && answer.row().answerK() == aggregate.answerK()
+                && answer.row().component().equals(aggregate.component())
+                && answer.row().outcome() == AnswerTrace.Outcome.ANSWERED).count();
     }
 
     private static String cell(ScoredAnswer answer) {

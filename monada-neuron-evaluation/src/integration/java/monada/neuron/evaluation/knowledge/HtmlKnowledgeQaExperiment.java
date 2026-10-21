@@ -101,14 +101,18 @@ final class HtmlKnowledgeQaExperiment {
         checks.add(new Check("completed", failed.isEmpty(), failed.isEmpty()
                 ? "every bound recall completed with verified Store content, for every root, layer and query"
                 : failed.size() + " recalls failed and are not scored: " + head(failed)));
-        var ineligible = first.stream().filter(row -> row.citations().stream()
-                        .anyMatch(span -> !span.eligible() || !span.exactQuote()))
+        var ineligible = first.stream().filter(row -> row.citations().stream().anyMatch(span -> !span.eligible()))
                 .map(row -> row.component() + " " + row.root() + "/" + row.layer() + "/k" + row.answerK() + "/"
                         + row.queryId()).toList();
+        var citations = first.stream().mapToLong(row -> row.citations().size()).sum();
+        var exact = first.stream().mapToLong(row -> row.citations().stream().filter(CitedSpan::exactQuote).count())
+                .sum();
+        // Exact quoting is not required: a non-exact claim with an eligible citation goes to a human support verdict.
         checks.add(new Check("citationsEligible", ineligible.isEmpty(), ineligible.isEmpty()
                 ? "every citation of every component names a chunk of E(q), whose Store-returned bytes hash to the"
-                        + " corpus sha256, with valid bounds, and quotes its claim exactly"
-                : ineligible.size() + " answers carry an ineligible or inexact citation: " + head(ineligible)));
+                        + " corpus sha256, with valid bounds; " + exact + " of " + citations
+                        + " citations quote their claim exactly"
+                : ineligible.size() + " answers carry an ineligible citation: " + head(ineligible)));
         checks.add(new Check("deterministic", first.equals(second), first.equals(second)
                 ? "a second execution in this process reproduced all " + first.size() + " answer rows"
                 : "a second execution differs from the first"));
@@ -163,8 +167,9 @@ final class HtmlKnowledgeQaExperiment {
                     var lookahead = recall(root, layer, query, HtmlKnowledgeRecall.LOOKAHEAD_LIMIT);
                     for (var answerK : AnswerTrace.ANSWER_KS) {
                         for (var component : components) {
+                            var mismatch = extensionMismatch(layer, query, recall, lookahead);
                             if (recall instanceof RecalledEvidence.Retrieved retrieved
-                                    && lookahead instanceof RecalledEvidence.Retrieved ahead) {
+                                    && lookahead instanceof RecalledEvidence.Retrieved ahead && mismatch.isEmpty()) {
                                 var evidence = retrieved.chunks().subList(0,
                                         Math.min(answerK, retrieved.chunks().size()));
                                 var scores = (answerK < HtmlKnowledgeRecall.MAX_LIMIT ? retrieved : ahead).chunks()
@@ -176,7 +181,8 @@ final class HtmlKnowledgeQaExperiment {
                                         timed ? latency.get(component.name()) : null));
                             } else {
                                 var reason = recall instanceof RecalledEvidence.Failed failed ? failed.reason()
-                                        : "lookahead: " + ((RecalledEvidence.Failed) lookahead).reason();
+                                        : lookahead instanceof RecalledEvidence.Failed failed ? "lookahead: "
+                                        + failed.reason() : mismatch.orElseThrow();
                                 rows.add(new AnswerRow(root.name(), layer, answerK, query.queryId(), component.name(),
                                         component.kind(), List.of(), Optional.empty(), Outcome.RECALL_FAILED, reason,
                                         List.of()));
@@ -196,6 +202,31 @@ final class HtmlKnowledgeQaExperiment {
     private RecalledEvidence.Recall recall(Root root, String layer, QueryText query, int limit) {
         return layer.equals("B1") ? root.evidence().direct(root.memory(), query.text(), limit)
                 : root.evidence().neuron(root.adapter(), root.memory(), query.text(), limit);
+    }
+
+    /**
+     * Why the limit-6 lookahead does not extend the limit-5 list, or empty when it does: with #107's rule, the prefix
+     * must match chunk by chunk with bit-exact scores, except for an equal-score substitution inside a tie group that
+     * straddles the cutoff. Otherwise its rank-6 score would describe a different list than {@code E(q)}.
+     */
+    Optional<String> extensionMismatch(String layer, QueryText query, RecalledEvidence.Recall recall,
+            RecalledEvidence.Recall lookahead) {
+        if (!(recall instanceof RecalledEvidence.Retrieved five)
+                || !(lookahead instanceof RecalledEvidence.Retrieved six)) {
+            return Optional.empty();
+        }
+        var differences = HtmlKnowledgeRecall.prefixDifferences(rows(layer, query, six), rows(layer, query, five),
+                HtmlKnowledgeRecall.MAX_LIMIT).stream().filter(difference -> !difference.straddlingTie())
+                .map(HtmlKnowledgeRecall.PrefixDifference::detail).toList();
+        return differences.isEmpty() ? Optional.empty()
+                : Optional.of(layer + " limit-6 lookahead does not extend the limit-5 list: " + head(differences));
+    }
+
+    private static List<HtmlKnowledgeRecall.Row> rows(String layer, QueryText query,
+            RecalledEvidence.Retrieved retrieved) {
+        return retrieved.chunks().stream().map(chunk -> new HtmlKnowledgeRecall.Row(query.queryId(),
+                HtmlKnowledgeRecall.Layer.ofLabel(layer), retrieved.chunks().size(), chunk.rank(), chunk.chunkId(),
+                chunk.score())).toList();
     }
 
     private AnswerRow answer(String root, String layer, int answerK, QueryText query, AnswerComponent component,

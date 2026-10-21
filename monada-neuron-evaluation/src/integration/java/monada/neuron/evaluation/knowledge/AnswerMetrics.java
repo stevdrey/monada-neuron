@@ -174,6 +174,47 @@ final class AnswerMetrics {
             List<Missing> missing, String judgmentsHash, List<String> staleJudgments) {
     }
 
+    /**
+     * Rejects a snapshot that is not exactly one row per root, layer, {@code answerK}, query and component, each with
+     * its component's kind, so a partial, duplicated or foreign set of rows can never be scored as the experiment.
+     *
+     * @throws IllegalArgumentException naming the first duplicate, foreign or missing rows
+     */
+    static void requireComplete(Snapshot snapshot, HtmlKnowledgeQuerySet querySet, List<String> roots,
+            List<AnswerComponent> components) {
+        var kinds = components.stream().collect(Collectors.toMap(AnswerComponent::name, AnswerComponent::kind));
+        var expected = new LinkedHashSet<List<Object>>();
+        for (var root : roots) {
+            for (var layer : AnswerTrace.LAYERS) {
+                for (var answerK : AnswerTrace.ANSWER_KS) {
+                    for (var query : querySet.queries()) {
+                        for (var component : components) {
+                            expected.add(List.of(root, layer, answerK, query.queryId(), component.name()));
+                        }
+                    }
+                }
+            }
+        }
+        var seen = new HashSet<List<Object>>();
+        var problems = new ArrayList<String>();
+        for (var row : snapshot.rows()) {
+            var key = List.<Object>of(row.root(), row.layer(), row.answerK(), row.queryId(), row.component());
+            if (!expected.contains(key)) {
+                problems.add("foreign row " + key);
+            } else if (!seen.add(key)) {
+                problems.add("duplicate row " + key);
+            } else if (row.kind() != kinds.get(row.component())) {
+                problems.add("row " + key + " has kind " + row.kind());
+            }
+        }
+        expected.stream().filter(key -> !seen.contains(key)).limit(5).forEach(key -> problems.add("missing row " + key));
+        if (!problems.isEmpty()) {
+            throw new IllegalArgumentException("the answer snapshot is not one row per root, layer, answerK, query and"
+                    + " component (" + expected.size() + " expected, " + snapshot.rows().size() + " found): "
+                    + String.join("; ", problems.subList(0, Math.min(5, problems.size()))));
+        }
+    }
+
     /** Scores {@code snapshot} against the gold labels of {@code querySet} and {@code judgments}. */
     static Scores score(HtmlKnowledgeQuerySet querySet, Snapshot snapshot, AnswerJudgments judgments) {
         Objects.requireNonNull(querySet, "querySet must not be null");

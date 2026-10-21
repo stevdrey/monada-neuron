@@ -240,14 +240,17 @@ public final class HtmlKnowledgeAnswerRunner {
     }
 
     /**
-     * Scores a parsed snapshot. A snapshot the scorer rejects becomes the failed check {@code answer.scored} and an
+     * Scores a parsed snapshot. A snapshot that is not the complete row matrix, or that the scorer rejects, becomes the failed check {@code answer.scored} and an
      * empty result, so the run still writes its report, with {@code answers: null}, and exits {@code 1}.
      */
     Optional<HtmlKnowledgeRecallRunner.Rendered> score(AnswerTrace.Snapshot snapshot, List<Check> checks,
             Map<String, String> files) {
         try {
+            var components = new HtmlKnowledgeQaExperiment().components();
+            AnswerMetrics.requireComplete(snapshot, querySet, List.of(HtmlKnowledgeAnswerPhase.FULL,
+                    HtmlKnowledgeAnswerPhase.REMOVED), components);
             var scores = AnswerMetrics.score(querySet, snapshot, judgments);
-            var report = new HtmlKnowledgeAnswerReport(scores, corpus, new HtmlKnowledgeQaExperiment().components());
+            var report = new HtmlKnowledgeAnswerReport(scores, corpus, components);
             checks.add(new Check("answer.scored", true, "the scorer accepted the answer snapshot: "
                     + scores.answers().size() + " answer rows"));
             checks.addAll(scores.checks());

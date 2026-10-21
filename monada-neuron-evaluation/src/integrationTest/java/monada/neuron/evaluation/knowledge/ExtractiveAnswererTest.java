@@ -117,6 +117,8 @@ class ExtractiveAnswererTest {
         assertEquals("chk:links#00:3:9", citation.render());
         assertEquals(citation, Citation.parse(citation.render()));
         assertThrows(IllegalArgumentException.class, () -> new Citation("chk:a#00", 5, 4));
+        assertThrows(IllegalArgumentException.class, () -> new Citation("chk:a#00", 5, 5), "an empty span cites nothing");
+        assertThrows(IllegalArgumentException.class, () -> Citation.parse("chk:a#00:3:3"));
         assertThrows(IllegalArgumentException.class, () -> new Citation("chk:a#00", -1, 4));
         assertThrows(IllegalArgumentException.class, () -> new Answered(List.of()));
     }

@@ -21,10 +21,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Runs the grounded-answer experiment in-process over two freshly imported roots; it sees query ids and texts only. */
@@ -114,6 +116,71 @@ class HtmlKnowledgeQaExperimentTest {
     }
 
     @Test
+    void aLookaheadThatDoesNotExtendTheBoundListIsAFailedRecall() {
+        var experiment = new HtmlKnowledgeQaExperiment();
+        var query = new QueryText("q", "text");
+        var five = retrieved("a", 0.5, "b", 0.4, "c", 0.4, "d", 0.4, "e", 0.4);
+        assertEquals(Optional.empty(), experiment.extensionMismatch("B1", query, five,
+                retrieved("a", 0.5, "b", 0.4, "c", 0.4, "d", 0.4, "e", 0.4, "f", 0.3)));
+        assertEquals(Optional.empty(), experiment.extensionMismatch("B1", query, five,
+                retrieved("a", 0.5, "b", 0.4, "c", 0.4, "d", 0.4, "f", 0.4, "e", 0.4)),
+                "an equal-score substitution inside a tie straddling the cutoff is allowed");
+        assertTrue(experiment.extensionMismatch("B1", query, five,
+                retrieved("a", 0.5, "x", 0.45, "b", 0.4, "c", 0.4, "d", 0.4, "e", 0.4)).isPresent());
+        assertTrue(experiment.extensionMismatch("B2", query, retrieved("a", 0.5, "b", 0.4),
+                retrieved("a", 0.5, "c", 0.4, "b", 0.4)).isPresent(), "a shorter list cannot gain a result");
+    }
+
+    @Test
+    void anEligibleParaphraseIsNotAFailedRunAndTheMatrixMustBeComplete() {
+        AnswerComponent paraphraser = new AnswerComponent() {
+            public String name() {
+                return "paraphraser";
+            }
+
+            public String description() {
+                return "test component";
+            }
+
+            public Kind kind() {
+                return Kind.TEST_DOUBLE;
+            }
+
+            public String tuning() {
+                return "none";
+            }
+
+            public GroundedAnswer answer(String question, List<EvidenceChunk> evidence) {
+                return evidence.isEmpty() ? GroundedAnswer.Abstained.insufficient("none")
+                        : new GroundedAnswer.Answered(List.of(new GroundedAnswer.Claim("In other words.",
+                        List.of(new Citation(evidence.getFirst().chunkId(), 0, 3)))));
+            }
+        };
+        var texts = List.of(new QueryText(NOVICE, QUERY_SET.queries().stream()
+                .filter(query -> query.queryId().equals(NOVICE)).findFirst().orElseThrow().text()));
+        var observed = new HtmlKnowledgeQaExperiment(List.of(paraphraser)).run(List.of(full), QUERY_SET.queryHash(),
+                texts);
+        var eligible = observed.checks().stream().filter(check -> check.name().equals("citationsEligible"))
+                .findFirst().orElseThrow();
+        assertTrue(eligible.passed(), eligible.detail());
+        assertTrue(eligible.detail().contains(" 0 of "), eligible.detail());
+
+        var components = new HtmlKnowledgeQaExperiment().components();
+        var roots = List.of("full", "removed");
+        var rows = observation.snapshot().rows();
+        AnswerMetrics.requireComplete(observation.snapshot(), QUERY_SET, roots, components);
+        var missing = new AnswerTrace.Snapshot(QUERY_SET.queryHash(), rows.subList(1, rows.size()));
+        assertTrue(assertThrowsMessage(missing, roots, components).contains("missing row"));
+        var duplicated = new ArrayList<>(rows);
+        duplicated.add(rows.getFirst());
+        assertTrue(assertThrowsMessage(new AnswerTrace.Snapshot(QUERY_SET.queryHash(), duplicated), roots, components)
+                .contains("duplicate row"));
+        var withoutDoubles = rows.stream().filter(row -> row.kind() != AnswerComponent.Kind.TEST_DOUBLE).toList();
+        assertTrue(assertThrowsMessage(new AnswerTrace.Snapshot(QUERY_SET.queryHash(), withoutDoubles), roots,
+                components).contains("missing row"));
+    }
+
+    @Test
     void blankQueriesHaveEmptyEvidenceAndEveryComponentAbstains() {
         for (var row : observation.snapshot().rows()) {
             if (row.queryId().startsWith("q:blank-")) {
@@ -186,6 +253,21 @@ class HtmlKnowledgeQaExperimentTest {
                 }
             }
         }
+    }
+
+    private static String assertThrowsMessage(AnswerTrace.Snapshot snapshot, List<String> roots,
+            List<AnswerComponent> components) {
+        return assertThrows(IllegalArgumentException.class,
+                () -> AnswerMetrics.requireComplete(snapshot, QUERY_SET, roots, components)).getMessage();
+    }
+
+    private static RecalledEvidence.Retrieved retrieved(Object... idsAndScores) {
+        var chunks = new ArrayList<EvidenceChunk>();
+        for (var i = 0; i < idsAndScores.length; i += 2) {
+            chunks.add(new EvidenceChunk("chk:" + idsAndScores[i] + "#00", i / 2 + 1, (Double) idsAndScores[i + 1],
+                    "text"));
+        }
+        return new RecalledEvidence.Retrieved(chunks);
     }
 
     private static IngestionManifest swapped() {

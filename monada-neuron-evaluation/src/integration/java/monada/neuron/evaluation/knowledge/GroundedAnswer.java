@@ -14,7 +14,8 @@ sealed interface GroundedAnswer permits GroundedAnswer.Abstained, GroundedAnswer
     String INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE";
 
     /**
-     * A half-open {@code [start, end)} range of code points into the normalized text of one evidence chunk.
+     * A non-empty half-open {@code [start, end)} range of code points into the normalized text of one evidence chunk; an
+     * empty range cites no evidence and is rejected.
      *
      * @param chunkId the cited chunk
      * @param start first cited code point (inclusive)
@@ -24,7 +25,7 @@ sealed interface GroundedAnswer permits GroundedAnswer.Abstained, GroundedAnswer
 
         public Citation {
             Objects.requireNonNull(chunkId, "chunkId must not be null");
-            if (start < 0 || end < start) {
+            if (start < 0 || end <= start) {
                 throw new IllegalArgumentException("invalid citation range [" + start + ", " + end + ")");
             }
         }
