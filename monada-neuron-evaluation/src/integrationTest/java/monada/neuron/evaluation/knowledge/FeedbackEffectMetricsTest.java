@@ -79,6 +79,37 @@ class FeedbackEffectMetricsTest {
     }
 
     @Test
+    void aReorderingIsOrderOnlyOnlyWhenEveryChunkKeepsItsScore() {
+        var plan = plan(new Event(CALIBRATION.queryId(), CALIBRATION.text(), RELEVANT, FeedbackSignal.POSITIVE));
+        var id = CALIBRATION.queryId();
+        var control = snapshot(List.of(row(id, 1, OTHER, 0.5), row(id, 2, THIRD, 0.4)));
+        var swapped = snapshot(List.of(row(id, 1, THIRD, 0.4), row(id, 2, OTHER, 0.5)));
+        var rescored = snapshot(List.of(row(id, 1, THIRD, 0.6), row(id, 2, OTHER, 0.5)));
+        var orderOnly = effect(FeedbackEffectMetrics.compare(QUERIES, SPLIT, List.of(), plan,
+                FeedbackArm.TREATMENT_EXACT, control, swapped), id, RecallPath.DIRECT);
+        assertTrue(orderOnly.orderChangedOnly());
+        var reordered = effect(FeedbackEffectMetrics.compare(QUERIES, SPLIT, List.of(), plan,
+                FeedbackArm.TREATMENT_EXACT, control, rescored), id, RecallPath.DIRECT);
+        assertFalse(reordered.orderChangedOnly());
+        assertTrue(reordered.changed());
+    }
+
+    @Test
+    void renderedMapsIterateInKeyOrder() {
+        var plan = plan(new Event(CALIBRATION.queryId(), CALIBRATION.text(), RELEVANT, FeedbackSignal.POSITIVE));
+        var arm = FeedbackEffectMetrics.compare(QUERIES, SPLIT, List.of(), plan, FeedbackArm.TREATMENT_EXACT,
+                snapshot(List.of()), snapshot(List.of()));
+        for (var population : arm.populations()) {
+            var keys = List.copyOf(population.transitions().keySet());
+            assertEquals(keys.stream().sorted().toList(), keys);
+        }
+        for (var query : arm.queries()) {
+            var keys = List.copyOf(query.relevantRanks().keySet());
+            assertEquals(keys.stream().sorted().toList(), keys);
+        }
+    }
+
+    @Test
     void lostHitsAndLostAbstentionsAreRegressions() {
         assertEquals(List.of("HIT -> PARTIAL"), FeedbackEffectMetrics.changes(Outcome.HIT, Outcome.PARTIAL, Map.of(),
                 Map.of(), true));
@@ -124,6 +155,10 @@ class FeedbackEffectMetricsTest {
             rows.add(new Row(queryId, layer, HtmlKnowledgeRecall.MAX_LIMIT, i + 1, chunks[i], 0.5 - i * 0.1));
         }
         return rows;
+    }
+
+    private static Row row(String queryId, int rank, String chunk, double score) {
+        return new Row(queryId, Layer.B1, HtmlKnowledgeRecall.MAX_LIMIT, rank, chunk, score);
     }
 
     private static JudgedQuery query(String id) {

@@ -11,6 +11,8 @@ import monada.neuron.evaluation.knowledge.RecallMetrics.QueryScore;
 import monada.neuron.evaluation.knowledge.RecallMetrics.Ranked;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -151,9 +153,9 @@ final class FeedbackEffectMetrics {
      * @param treatmentMetrics the treatment's per-query metrics (answerable queries only)
      * @param churn {@code |Ret_5^T Δ Ret_5^C|}
      * @param changed whether the chunk lists or any score bit differs
-     * @param orderChangedOnly same chunk set, different order
+     * @param orderChangedOnly same chunk set with bit-exactly the same score per chunk, different order
      * @param scoreChangedOnly same chunks in the same order, some score bit differs
-     * @param relevantRanks per relevant chunk, {@code control→treatment} 1-based ranks ({@value #ABSENT_RANK} = absent)
+     * @param relevantRanks per relevant chunk in code point order, {@code control→treatment} 1-based ranks ({@value #ABSENT_RANK} = absent)
      * @param regression why the pair is a regression, empty when it is not
      * @param improvement why the pair is an improvement, empty when it is not
      */
@@ -169,7 +171,7 @@ final class FeedbackEffectMetrics {
             treatment = List.copyOf(treatment);
             controlMetrics = Map.copyOf(controlMetrics);
             treatmentMetrics = Map.copyOf(treatmentMetrics);
-            relevantRanks = Map.copyOf(relevantRanks);
+            relevantRanks = Collections.unmodifiableMap(new TreeMap<>(relevantRanks));
             regression = List.copyOf(regression);
             improvement = List.copyOf(improvement);
         }
@@ -212,7 +214,7 @@ final class FeedbackEffectMetrics {
      * @param control means over comparable answerable queries, by metric
      * @param treatment means over comparable answerable queries, by metric
      * @param delta means of the paired deltas, by metric
-     * @param transitions outcome transitions of comparable queries, {@code control -> treatment}
+     * @param transitions outcome transitions of comparable queries, {@code control -> treatment}, in key order
      * @param changed comparable queries whose results differ at all
      * @param meanChurn mean churn over comparable queries
      * @param controlNoAnswerFalsePositiveRate fraction of comparable {@code U} queries with a non-empty control list
@@ -233,7 +235,7 @@ final class FeedbackEffectMetrics {
             control = Map.copyOf(control);
             treatment = Map.copyOf(treatment);
             delta = Map.copyOf(delta);
-            transitions = Map.copyOf(transitions);
+            transitions = Collections.unmodifiableMap(new TreeMap<>(transitions));
             regressions = List.copyOf(regressions);
             improvements = List.copyOf(improvements);
         }
@@ -351,11 +353,25 @@ final class FeedbackEffectMetrics {
         var comparable = comparability == Comparability.COMPARABLE;
         return new QueryEffect(member.id(), member.source(), member.population(), path, exercised, comparability, c,
                 t, controlOutcome, treatmentOutcome, controlMetrics, treatmentMetrics, churn, changed,
-                !c.equals(t) && cSet.equals(tSet), c.equals(t) && changed, relevantRanks,
+                !c.equals(t) && sameScoresByChunk(controlRows, treatmentRows), c.equals(t) && changed, relevantRanks,
                 comparable ? changes(controlOutcome, treatmentOutcome, controlMetrics, treatmentMetrics, true)
                         : List.of(),
                 comparable ? changes(controlOutcome, treatmentOutcome, controlMetrics, treatmentMetrics, false)
                         : List.of());
+    }
+
+    /**
+     * Whether two row lists hold the same chunks, in any order, each with a bit-exactly equal score; a reordering that
+     * also changed a score is not an order-only change.
+     */
+    private static boolean sameScoresByChunk(List<Row> first, List<Row> second) {
+        if (first.size() != second.size()) {
+            return false;
+        }
+        var scores = new HashMap<String, Double>();
+        first.forEach(row -> scores.put(row.chunkId(), row.score()));
+        return scores.size() == first.size() && second.stream().allMatch(row -> scores.containsKey(row.chunkId())
+                && HtmlKnowledgeRecall.sameScore(scores.get(row.chunkId()), row.score()));
     }
 
     /** Whether two row lists hold the same chunks in the same order with bit-exactly equal scores. */
