@@ -62,9 +62,9 @@ class RecallMetricsTest {
 
     @Test
     void tiesAtTheCutoffAreFlagged() {
-        assertTrue(RecallMetrics.tieAtCutoff(List.of(0.9, 0.5, 0.5), 2));
-        assertFalse(RecallMetrics.tieAtCutoff(List.of(0.9, 0.5, 0.5), 1));
-        assertFalse(RecallMetrics.tieAtCutoff(List.of(0.9, 0.5), 2), "nothing beyond the cutoff");
+        assertTrue(HtmlKnowledgeRecall.tieAtCutoff(List.of(0.9, 0.5, 0.5), 2));
+        assertFalse(HtmlKnowledgeRecall.tieAtCutoff(List.of(0.9, 0.5, 0.5), 1));
+        assertFalse(HtmlKnowledgeRecall.tieAtCutoff(List.of(0.9, 0.5), 2), "nothing beyond the cutoff");
     }
 
     @Test

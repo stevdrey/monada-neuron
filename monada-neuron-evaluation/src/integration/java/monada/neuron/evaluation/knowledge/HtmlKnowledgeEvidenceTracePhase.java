@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Entrypoint of one evidence-trace phase (Issue #108), run by {@link HtmlKnowledgeEvidenceTraceRunner} in its own JVM,
@@ -122,6 +123,34 @@ public final class HtmlKnowledgeEvidenceTracePhase {
      * back, then opens the production adapter that serves the cycles.
      */
     private Root reopen(String name, HtmlKnowledgeCorpus source, Path storeRoot, List<Check> checks) {
+        var reopened = verifiedReopen(name, source, storeRoot, work, checks);
+        var resolver = new RecalledReferenceResolver(source, reopened.manifest(), reopened.unread());
+        var adapter = ResonanceStoreMemoryAdapter.open(reopened.root(),
+                new HtmlKnowledgeRecall(source).adapterConfig());
+        return new Root(name, adapter, resolver);
+    }
+
+    /**
+     * A reopened root.
+     *
+     * @param root the Store root
+     * @param manifest its import manifest, complete for its corpus
+     * @param unread the chunks not read back with matching bytes in this process
+     */
+    record Reopened(Path root, IngestionManifest manifest, Set<String> unread) {
+
+        Reopened {
+            unread = Set.copyOf(unread);
+        }
+    }
+
+    /**
+     * Reopens root {@code name} of a seeded store root and reads every chunk back through a new handle, adding the
+     * {@code <name>.persistence.readback} and {@code <name>.persistence.noUnmappedAtoms} checks. Shared by the
+     * evidence-trace (#108) and grounded-answer (#109) phases.
+     */
+    static Reopened verifiedReopen(String name, HtmlKnowledgeCorpus source, Path storeRoot, WorkDirectory work,
+            List<Check> checks) {
         var root = root(storeRoot, name);
         HtmlKnowledgePersistence.requireExistingStore(root);
         var manifest = IngestionManifest.parseTsv(work.read(manifestFile(work, name)), source.version(),
@@ -136,9 +165,7 @@ public final class HtmlKnowledgeEvidenceTracePhase {
         checks.add(new Check(name + ".persistence.noUnmappedAtoms", unmapped.isEmpty(), unmapped.isEmpty()
                 ? "every atom the readback returned maps through the manifest"
                 : unmapped.size() + " atoms are not in the manifest"));
-        var resolver = new RecalledReferenceResolver(source, manifest, new HashSet<>(readback.unread()));
-        var adapter = ResonanceStoreMemoryAdapter.open(root, new HtmlKnowledgeRecall(source).adapterConfig());
-        return new Root(name, adapter, resolver);
+        return new Reopened(root, manifest, new HashSet<>(readback.unread()));
     }
 
     private static Check prefixed(String name, Check check) {

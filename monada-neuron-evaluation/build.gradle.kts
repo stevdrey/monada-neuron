@@ -191,6 +191,20 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
         args(quotedBenchmarkArgs())
     }
 
+    // HTML grounded answers (Issue #109, docs/benchmarks/html-knowledge-answers.md). Seeds two roots in one JVM, answers
+    // every html-kq-v1 query from a second JVM with the extractive baselines and the generator test double, then scores
+    // the answers against the gold labels and the frozen human judgments. -PbenchmarkArgs='--ask "<question>"' answers
+    // one ad-hoc question instead, unscored.
+    tasks.register<JavaExec>("runHtmlKnowledgeAnswers") {
+        group = "benchmark"
+        description = "Answers html-kq-v1 with cited extractive baselines and abstention, scored at L4 (Issue #109)"
+        classpath = integration.runtimeClasspath
+        mainClass.set("monada.neuron.evaluation.knowledge.HtmlKnowledgeAnswerRunner")
+        systemProperty("monada.neuron.version", project.version.toString())
+        systemProperty("monada.resonance.store.dir", rootProject.file("../monada-resonance-store").absolutePath)
+        args(quotedBenchmarkArgs())
+    }
+
     // Adapter-boundary JMH (Issue #49). Lives with the integration source set because it needs the
     // optional adapter; the generic `jmh` task only sees `main`.
     tasks.register<JavaExec>("jmhResonanceStoreAdapter") {
