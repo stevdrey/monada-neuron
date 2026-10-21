@@ -46,7 +46,8 @@ Options, exit statuses and output preparation are the same as for
 `--ask` is an unscored demonstration. It imports the corpus into a temporary root and prints the B1 and B2 evidence.
 For each, it prints what B3 and B3c answer: the quoted sentence, plus the cited chunk, its code-point span, its
 document and section, and its content hash. When the evidence does not support an answer, it prints
-`INSUFFICIENT_EVIDENCE` with the reason. A citation is never a URL. It reads no gold label.
+`INSUFFICIENT_EVIDENCE` with the reason. A citation is never a URL. It reads no gold label. If the import fails any
+check, it prints the failed checks, answers nothing and exits `1`.
 
 Outputs, under `build/reports/benchmarks/` of `monada-neuron-evaluation`:
 
@@ -138,7 +139,7 @@ inherits an old verdict.
 | :--- | :--- |
 | `supported` | **rule**: a claim with an eligible citation that quotes it exactly is supported (`exact-quote`), and a claim with no eligible citation is not. Any other claim needs a human verdict, but no judged component produced one |
 | `contradicted` | human, for every claim (53, all `false`) |
-| key-claim edges | the matcher proposes (every B0 token of the `keyClaim` occurs in the claim); a human accepts or rejects **every** candidate edge (58: 8 accepted, 3 of them overriding the matcher) |
+| key-claim edges | the matcher proposes (every B0 token of the `keyClaim` occurs in the claim); a human accepts or rejects **every** candidate edge (58: 8 accepted, 3 of them overriding the matcher). A claim whose `supported` verdict is still pending has its edges listed in the same template pass; if it is then ruled unsupported, those edge verdicts are consumed, not reported stale |
 | `premiseAccepted` | human, `FALSE_PREMISE` answers only (5, all `false`) |
 | `premiseCorrected` | rule: a supported claim matches the first (refutation) `keyClaim` in the final matching |
 | `conflictDisclosed` | rule `false` when the eligible citations do not cover both chunks of the pair, otherwise human (no answer cited both) |
@@ -160,10 +161,10 @@ Quality numbers are never checks. The run fails only on these:
 | `answer.deterministic` | a second execution in the answer JVM reproduced every answer row |
 | `answer.control.removedNeverCited` | no answer over the root without `doc:links` cites one of its chunks |
 | `answer.control.emptyEvidenceAbstains` | every component abstains on every query when `E(q)` is empty |
-| `answer.generator.labelledTestDouble` | every generator row is labelled `TEST_DOUBLE` |
 | `answer.scored` | the snapshot holds exactly one row per root, layer, `answerK`, query and component, and the scorer accepted it |
 | `judgment.complete` | every claim, flag and candidate edge of every judged answer has a verdict |
 | `judgment.noStaleEntries` | every recorded verdict belongs to an answer of this run |
+| `generator.testDoubleUnscored` | no `TEST_DOUBLE` row got a status, a verdict, an edge, a matching, a judgment lookup or a gold-relative metric |
 | `judgment.hashFrozen` | the judgments file is the approved one |
 
 ## Metrics
@@ -179,11 +180,15 @@ Per root, layer, `answerK` and component:
 - the macro means under the undefined-value rules;
 - `AbstentionPrecision` and `AbstentionRecall`;
 - **retrieval complete**: answerable queries whose `E(q)` holds every required chunk. This is reported next to the
-  answer statuses, never merged into them.
+  answer statuses, never merged into them;
+- the number of answered rows.
+
+While any judged row of a group is unjudged, the group withholds its metric means and both abstention values (JSON
+`null`, "incomplete" in the Markdown), so a partial population is never published as a number.
 
 ## Results (2026-10-21)
 
-Measured on Neuron `71831c5` (clean tree) and Store `b25c698` (clean checkout), with Azul OpenJDK 27 on Linux, an AMD
+Measured on Neuron `3608221` (clean tree) and Store `2fd5e5e` (clean checkout), with Azul OpenJDK 27 on Linux, an AMD
 Ryzen 7 7730U and Store roots on `tmpfs`. Each run used one seed JVM and one answer JVM. Two full runs on that commit
 gave byte-identical `answers` payloads, with all 21 checks passing and no row unscored or unjudged.
 
@@ -205,7 +210,7 @@ The generator test double cites eligibly in every row (`CitationFidelity` 1.000)
 `tieAtCutoff` is `false` in every row: no evidence set ends inside a tie group, as #107 found for B1 and B2.
 
 Answer latency, a diagnostic only, was measured as one answer over `E(q)` of B1 at `answerK = 5` on the full root, 32
-samples, with recall excluded. Medians: B3 25 µs, B3c 20 µs, test double 14 µs.
+samples, with recall excluded. Medians: B3 29 µs, B3c 27 µs, test double 14 µs.
 
 Observations, not tuned away:
 
