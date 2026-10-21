@@ -70,7 +70,7 @@ class HtmlKnowledgeQaExperimentTest {
             }
             for (var claim : row.claims()) {
                 for (var span : claim.citations()) {
-                    assertTrue(row.evidence().contains(span.citation().chunkId()), row.toString());
+                    assertTrue(row.chunkIds().contains(span.citation().chunkId()), row.toString());
                     var text = CORPUS.chunk(span.citation().chunkId()).orElseThrow().text();
                     assertEquals(claim.text(), text.substring(text.offsetByCodePoints(0, span.citation().start()),
                             text.offsetByCodePoints(0, span.citation().end())));
@@ -87,9 +87,30 @@ class HtmlKnowledgeQaExperimentTest {
         assertEquals("chk:links#", prefix);
         for (var row : observation.snapshot().rows()) {
             if (row.root().equals("removed")) {
-                assertTrue(row.evidence().stream().noneMatch(chunk -> chunk.startsWith(prefix)), row.toString());
+                assertTrue(row.chunkIds().stream().noneMatch(chunk -> chunk.startsWith(prefix)), row.toString());
             }
         }
+    }
+
+    @Test
+    void everyCompletedRowKeepsItsRetrievalScoresAndTieAtCutoff() {
+        for (var row : observation.snapshot().rows()) {
+            assertTrue(row.tieAtCutoff().isPresent(), row.toString());
+            assertTrue(row.evidence().size() <= row.answerK());
+            for (var rank = 1; rank < row.evidence().size(); rank++) {
+                assertTrue(row.evidence().get(rank - 1).score() >= row.evidence().get(rank).score(), row.toString());
+            }
+        }
+        var direct = assertInstanceOf(RecalledEvidence.Retrieved.class, full.evidence().direct(full.memory(),
+                "What does the fieldset element do?", HtmlKnowledgeRecall.LOOKAHEAD_LIMIT));
+        var five = assertInstanceOf(RecalledEvidence.Retrieved.class, full.evidence().direct(full.memory(),
+                "What does the fieldset element do?"));
+        assertEquals(five.chunks(), direct.chunks().subList(0, five.chunks().size()),
+                "the lookahead extends the limit-5 list without changing it");
+        assertTrue(HtmlKnowledgeQaExperiment.tieAtCutoff(List.of(0.5, 0.5, 0.25), 1));
+        assertFalse(HtmlKnowledgeQaExperiment.tieAtCutoff(List.of(0.5, 0.25), 1));
+        assertFalse(HtmlKnowledgeQaExperiment.tieAtCutoff(List.of(0.5), 1), "no rank k + 1");
+        assertFalse(HtmlKnowledgeQaExperiment.tieAtCutoff(List.of(0.0, -0.0), 1), "bit-exact comparison");
     }
 
     @Test

@@ -67,6 +67,9 @@ class HtmlKnowledgeAnswerRunnerTest {
         assertTrue(json.contains("\"answers\": {"), "scored payload present");
         assertTrue(json.contains("\"matcherMatching\""));
         assertTrue(json.contains("\"chunkSha256\""));
+        assertTrue(json.contains("\"tieAtCutoff\": "));
+        assertTrue(json.contains("\"evidence\": [ { \"rank\": 1, \"chunkId\": "));
+        assertTrue(json.contains("\"relevant\": "));
         assertFalse(json.contains("NaN"));
     }
 

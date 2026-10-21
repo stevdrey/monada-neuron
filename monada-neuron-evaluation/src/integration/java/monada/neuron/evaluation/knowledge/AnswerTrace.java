@@ -7,11 +7,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * The raw L4 rows the answer phase writes and the orchestrator scores (Issue #109). One {@link AnswerRow} per root,
- * evidence layer, {@code answerK}, query and component; the evidence set is recorded as the chunk ids the layer
- * returned, and every citation carries the two mechanical facts the phase verified on the Store-returned text:
+ * evidence layer, {@code answerK}, query and component; the evidence set is recorded as the chunk ids and scores the
+ * layer returned, in rank order, with the protocol's {@code tieAtCutoff} at {@code answerK}, and every citation carries the two mechanical facts the phase verified on the Store-returned text:
  * {@code eligible} (its chunk is in {@code E(q)} and its bounds are valid for that chunk's text) and {@code exactQuote}
  * (the claim text equals the cited text). The rows hold no gold label.
  */
@@ -24,9 +25,10 @@ final class AnswerTrace {
     static final List<Integer> ANSWER_KS = List.of(1, 3, 5);
 
     private static final String NONE = "-";
-    private static final String HEADER = "root\tlayer\tanswerK\tqueryId\tcomponent\tkind\tevidence\toutcome\tdetail"
-            + "\tclaim\ttext\tcitations\teligible\texactQuote";
-    private static final int COLUMNS = 14;
+    private static final String HEADER = "root\tlayer\tanswerK\tqueryId\tcomponent\tkind\tevidence\ttieAtCutoff"
+            + "\toutcome\tdetail\tclaim\ttext\tcitations\teligible\texactQuote";
+    private static final int COLUMNS = 15;
+    private static final int HEAD = 10;
 
     private AnswerTrace() {
     }
@@ -39,6 +41,31 @@ final class AnswerTrace {
         ABSTAINED,
         /** The bound recall failed, so the component was not run; never scored. */
         RECALL_FAILED
+    }
+
+    /**
+     * One chunk of {@code E(q)} as the layer returned it; its rank is its 1-based position in the list.
+     *
+     * @param chunkId the chunk the returned atom maps to
+     * @param score the score the layer returned
+     */
+    record Hit(String chunkId, double score) {
+
+        Hit {
+            Objects.requireNonNull(chunkId, "chunkId must not be null");
+        }
+
+        private String render() {
+            return chunkId + "@" + Double.toHexString(score);
+        }
+
+        private static Hit parse(String cell) {
+            var at = cell.lastIndexOf('@');
+            if (at <= 0) {
+                throw new IllegalArgumentException("not an evidence hit: " + cell);
+            }
+            return new Hit(cell.substring(0, at), Double.parseDouble(cell.substring(at + 1)));
+        }
     }
 
     /**
@@ -81,13 +108,17 @@ final class AnswerTrace {
      * @param queryId the query
      * @param component the component name
      * @param kind the component kind
-     * @param evidence the chunk ids of {@code E(q)} in rank order
+     * @param evidence {@code E(q)} in rank order, with the scores the layer returned
+     * @param tieAtCutoff whether the scores at ranks {@code answerK} and {@code answerK + 1} of the layer's list are
+     *     bit-exactly equal (at {@code answerK = 5}, from a separate limit-6 lookahead call); empty when the recall
+     *     failed
      * @param outcome what happened
      * @param detail the abstention or failure reason, empty for an answer
      * @param claims the claims of an answer, empty otherwise
      */
     record AnswerRow(String root, String layer, int answerK, String queryId, String component,
-            AnswerComponent.Kind kind, List<String> evidence, Outcome outcome, String detail, List<ClaimRow> claims) {
+            AnswerComponent.Kind kind, List<Hit> evidence, Optional<Boolean> tieAtCutoff, Outcome outcome, String detail,
+            List<ClaimRow> claims) {
 
         AnswerRow {
             Objects.requireNonNull(root, "root must not be null");
@@ -97,12 +128,22 @@ final class AnswerTrace {
             Objects.requireNonNull(kind, "kind must not be null");
             Objects.requireNonNull(outcome, "outcome must not be null");
             Objects.requireNonNull(detail, "detail must not be null");
+            Objects.requireNonNull(tieAtCutoff, "tieAtCutoff must not be null");
             evidence = List.copyOf(evidence);
+            if ((outcome == Outcome.RECALL_FAILED) != tieAtCutoff.isEmpty()) {
+                throw new IllegalArgumentException(outcome + " row of " + queryId + " must "
+                        + (tieAtCutoff.isEmpty() ? "" : "not ") + "omit tieAtCutoff");
+            }
             claims = List.copyOf(claims);
             if ((outcome == Outcome.ANSWERED) == claims.isEmpty()) {
                 throw new IllegalArgumentException(outcome + " row of " + queryId + " has " + claims.size()
                         + " claims");
             }
+        }
+
+        /** Returns the chunk ids of {@code E(q)} in rank order. */
+        List<String> chunkIds() {
+            return evidence.stream().map(Hit::chunkId).toList();
         }
 
         /** Returns the citations of every claim, in emitted order. */
@@ -112,7 +153,8 @@ final class AnswerTrace {
 
         private List<String> render() {
             var head = List.of(root, layer, Integer.toString(answerK), queryId, component, kind.name(),
-                    list(evidence), outcome.name(), QueryText.escape(detail));
+                    list(evidence.stream().map(Hit::render).toList()),
+                    tieAtCutoff.map(String::valueOf).orElse(NONE), outcome.name(), QueryText.escape(detail));
             if (claims.isEmpty()) {
                 return List.of(String.join("\t", head) + "\t0\t\t" + NONE + "\t" + NONE + "\t" + NONE);
             }
@@ -171,21 +213,21 @@ final class AnswerTrace {
                 if (cells.length != COLUMNS) {
                     throw new IllegalArgumentException("malformed answer row " + (i + 1));
                 }
-                var claimIndex = Integer.parseInt(cells[9]);
+                var claimIndex = Integer.parseInt(cells[HEAD]);
                 if (claimIndex <= 1) {
                     if (open != null) {
                         rows.add(row(open, claims));
                     }
                     open = cells;
                     claims = new ArrayList<>();
-                } else if (open == null || !Arrays.equals(open, 0, 9, cells, 0, 9)
+                } else if (open == null || !Arrays.equals(open, 0, HEAD, cells, 0, HEAD)
                         || claimIndex != claims.size() + 1) {
                     throw new IllegalArgumentException("claim " + claimIndex + " on line " + (i + 1)
                             + " does not continue its answer");
                 }
                 if (claimIndex > 0) {
                     claims.add(claim(i + 1, cells));
-                } else if (!cells[10].isEmpty() || !cells[11].equals(NONE)) {
+                } else if (!cells[HEAD + 1].isEmpty() || !cells[HEAD + 2].equals(NONE)) {
                     throw new IllegalArgumentException("claimless row " + (i + 1) + " carries a claim");
                 }
             }
@@ -197,14 +239,15 @@ final class AnswerTrace {
 
         private static AnswerRow row(String[] cells, List<ClaimRow> claims) {
             return new AnswerRow(cells[0], cells[1], Integer.parseInt(cells[2]), cells[3], cells[4],
-                    AnswerComponent.Kind.valueOf(cells[5]), parseList(cells[6]), Outcome.valueOf(cells[7]),
-                    QueryText.unescape("detail", cells[8]), claims);
+                    AnswerComponent.Kind.valueOf(cells[5]), parseList(cells[6]).stream().map(Hit::parse).toList(),
+                    cells[7].equals(NONE) ? Optional.empty() : Optional.of(bool(cells[7])), Outcome.valueOf(cells[8]),
+                    QueryText.unescape("detail", cells[9]), claims);
         }
 
         private static ClaimRow claim(int line, String[] cells) {
-            var citations = parseList(cells[11]);
-            var eligible = parseList(cells[12]);
-            var exact = parseList(cells[13]);
+            var citations = parseList(cells[HEAD + 2]);
+            var eligible = parseList(cells[HEAD + 3]);
+            var exact = parseList(cells[HEAD + 4]);
             if (eligible.size() != citations.size() || exact.size() != citations.size()) {
                 throw new IllegalArgumentException("citation flags of line " + line + " do not match its citations");
             }
@@ -213,7 +256,7 @@ final class AnswerTrace {
                 spans.add(new CitedSpan(Citation.parse(citations.get(index)), bool(eligible.get(index)),
                         bool(exact.get(index))));
             }
-            return new ClaimRow(QueryText.unescape("claim of line " + line, cells[10]), spans);
+            return new ClaimRow(QueryText.unescape("claim of line " + line, cells[HEAD + 1]), spans);
         }
     }
 

@@ -210,24 +210,27 @@ final class AnswerMetrics {
 
     private static ScoredAnswer scoreRow(JudgedQuery query, AnswerRow row, AnswerJudgments judgments, Set<Key> used,
             Map<Key, Missing> missing) {
-        var evidence = Set.copyOf(row.evidence());
+        var evidence = Set.copyOf(row.chunkIds());
         var retrievalComplete = evidence.containsAll(query.required());
         var citations = row.citations();
         var metrics = new LinkedHashMap<String, OptionalDouble>();
         var eligible = citations.stream().filter(CitedSpan::eligible).toList();
         metrics.put("CitationFidelity", RecallMetrics.ratio(eligible.size(), citations.size()));
         var groups = groups(eligible);
-        var matched = citationMatching(groups, query.evidenceSpans());
-        metrics.put("CitationPrecision", RecallMetrics.ratio(matched, citations.size()));
-        metrics.put("CitationRecall", RecallMetrics.ratio(matched, query.evidenceSpans().size()));
         var merged = eligible.size() - groups.size();
         if (row.kind() != AnswerComponent.Kind.EXTRACTIVE_BASELINE || row.outcome() == Outcome.RECALL_FAILED) {
+            // A test double gets only its citation mechanics: nothing relative to the gold spans or key claims.
+            metrics.put("CitationPrecision", OptionalDouble.empty());
+            metrics.put("CitationRecall", OptionalDouble.empty());
             metrics.put("ClaimSupport", OptionalDouble.empty());
             metrics.put("KeyClaimCoverage", OptionalDouble.empty());
             metrics.put("KeyClaimCoverage(matcher)", OptionalDouble.empty());
             return new ScoredAnswer(row, query, retrievalComplete, Optional.empty(), Map.of(), List.of(), List.of(),
                     List.of(), List.of(), metrics, merged, List.of());
         }
+        var matched = citationMatching(groups, query.evidenceSpans());
+        metrics.put("CitationPrecision", RecallMetrics.ratio(matched, citations.size()));
+        metrics.put("CitationRecall", RecallMetrics.ratio(matched, query.evidenceSpans().size()));
         if (row.outcome() == Outcome.ABSTAINED) {
             metrics.put("ClaimSupport", OptionalDouble.empty());
             metrics.put("KeyClaimCoverage", OptionalDouble.empty());

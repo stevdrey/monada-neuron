@@ -170,7 +170,7 @@ class AnswerMetricsTest {
     @Test
     void aTestDoubleRowIsNeverJudgedOrGivenAStatus() {
         var row = new AnswerRow("full", "B1", 5, EXACT, "generator-test-double", AnswerComponent.Kind.TEST_DOUBLE,
-                List.of("chk:links#00"), Outcome.ANSWERED, "", List.of(claim(CLAIM,
+                hits(List.of("chk:links#00")), Optional.of(false), Outcome.ANSWERED, "", List.of(claim(CLAIM,
                 span("chk:links#00", 0, 34, true, true))));
         var scores = AnswerMetrics.score(QUERY_SET, new Snapshot(QUERY_SET.queryHash(), List.of(row)),
                 AnswerJudgments.none());
@@ -179,6 +179,13 @@ class AnswerMetricsTest {
         assertFalse(scored.judged());
         assertTrue(scores.missing().isEmpty());
         assertEquals(OptionalDouble.of(1.0), scored.metrics().get("CitationFidelity"));
+        assertEquals(OptionalDouble.empty(), scored.metrics().get("CitationPrecision"),
+                "a citation that overlaps the gold span still earns no gold-relative score");
+        assertEquals(OptionalDouble.empty(), scored.metrics().get("CitationRecall"));
+        var aggregate = scores.aggregates().getFirst().metrics();
+        assertEquals(OptionalDouble.empty(), aggregate.get("CitationPrecision").value());
+        assertEquals(OptionalDouble.empty(), aggregate.get("CitationRecall").value());
+        assertEquals(OptionalDouble.of(1.0), aggregate.get("CitationFidelity").value());
     }
 
     @Test
@@ -216,13 +223,20 @@ class AnswerMetricsTest {
                         claim("second", span("chk:links#00", 5, 11, true, true))),
                 abstained(EXACT, List.of()),
                 new AnswerRow("full", "B2", 1, EXACT, "B3", AnswerComponent.Kind.EXTRACTIVE_BASELINE, List.of(),
-                        Outcome.RECALL_FAILED, "B2 threw x", List.of()));
+                        Optional.empty(), Outcome.RECALL_FAILED, "B2 threw x", List.of()),
+                new AnswerRow("full", "B2", 3, EXACT, "B3", AnswerComponent.Kind.EXTRACTIVE_BASELINE,
+                        List.of(new AnswerTrace.Hit("chk:links#00", 0x1.8p-1), new AnswerTrace.Hit("chk:forms#00", -0.0)),
+                        Optional.of(true), Outcome.ABSTAINED, "INSUFFICIENT_EVIDENCE: x", List.of()));
         var snapshot = new Snapshot(QUERY_SET.queryHash(), rows);
         var tsv = snapshot.toTsv();
         assertEquals(snapshot, Snapshot.parseTsv(tsv));
         assertThrows(IllegalArgumentException.class, () -> Snapshot.parseTsv(tsv.substring(0, tsv.length() / 2)));
         assertThrows(IllegalArgumentException.class, () -> new AnswerRow("full", "B1", 5, EXACT, "B3",
-                AnswerComponent.Kind.EXTRACTIVE_BASELINE, List.of(), Outcome.ANSWERED, "", List.of()));
+                AnswerComponent.Kind.EXTRACTIVE_BASELINE, List.of(), Optional.of(false), Outcome.ANSWERED, "",
+                List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new AnswerRow("full", "B1", 5, EXACT, "B3",
+                AnswerComponent.Kind.EXTRACTIVE_BASELINE, List.of(), Optional.empty(), Outcome.ABSTAINED, "x",
+                List.of()), "a completed recall always records tieAtCutoff");
     }
 
     @Test
@@ -265,13 +279,17 @@ class AnswerMetricsTest {
     }
 
     private static AnswerRow answered(String queryId, List<String> evidence, ClaimRow... claims) {
-        return new AnswerRow("full", "B1", 5, queryId, "B3", AnswerComponent.Kind.EXTRACTIVE_BASELINE, evidence,
-                Outcome.ANSWERED, "", List.of(claims));
+        return new AnswerRow("full", "B1", 5, queryId, "B3", AnswerComponent.Kind.EXTRACTIVE_BASELINE, hits(evidence),
+                Optional.of(false), Outcome.ANSWERED, "", List.of(claims));
     }
 
     private static AnswerRow abstained(String queryId, List<String> evidence) {
-        return new AnswerRow("full", "B1", 5, queryId, "B3", AnswerComponent.Kind.EXTRACTIVE_BASELINE, evidence,
-                Outcome.ABSTAINED, "INSUFFICIENT_EVIDENCE: test", List.of());
+        return new AnswerRow("full", "B1", 5, queryId, "B3", AnswerComponent.Kind.EXTRACTIVE_BASELINE, hits(evidence),
+                Optional.of(false), Outcome.ABSTAINED, "INSUFFICIENT_EVIDENCE: test", List.of());
+    }
+
+    private static List<AnswerTrace.Hit> hits(List<String> chunkIds) {
+        return chunkIds.stream().map(chunkId -> new AnswerTrace.Hit(chunkId, 1.0)).toList();
     }
 
     private static ClaimRow claim(String text, CitedSpan... spans) {

@@ -19,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -158,23 +159,28 @@ final class HtmlKnowledgeQaExperiment {
         for (var root : roots) {
             for (var query : queries) {
                 for (var layer : AnswerTrace.LAYERS) {
-                    var recall = layer.equals("B1") ? root.evidence().direct(root.memory(), query.text())
-                            : root.evidence().neuron(root.adapter(), root.memory(), query.text());
+                    var recall = recall(root, layer, query, HtmlKnowledgeRecall.MAX_LIMIT);
+                    var lookahead = recall(root, layer, query, HtmlKnowledgeRecall.LOOKAHEAD_LIMIT);
                     for (var answerK : AnswerTrace.ANSWER_KS) {
                         for (var component : components) {
-                            rows.add(switch (recall) {
-                                case RecalledEvidence.Failed failed -> new AnswerRow(root.name(), layer, answerK,
-                                        query.queryId(), component.name(), component.kind(), List.of(),
-                                        Outcome.RECALL_FAILED, failed.reason(), List.of());
-                                case RecalledEvidence.Retrieved retrieved -> {
-                                    var evidence = retrieved.chunks().subList(0,
-                                            Math.min(answerK, retrieved.chunks().size()));
-                                    var timed = root.name().equals(HtmlKnowledgeAnswerPhase.FULL)
-                                            && layer.equals("B1") && answerK == HtmlKnowledgeRecall.MAX_LIMIT;
-                                    yield answer(root.name(), layer, answerK, query, component, evidence,
-                                            timed ? latency.get(component.name()) : null);
-                                }
-                            });
+                            if (recall instanceof RecalledEvidence.Retrieved retrieved
+                                    && lookahead instanceof RecalledEvidence.Retrieved ahead) {
+                                var evidence = retrieved.chunks().subList(0,
+                                        Math.min(answerK, retrieved.chunks().size()));
+                                var scores = (answerK < HtmlKnowledgeRecall.MAX_LIMIT ? retrieved : ahead).chunks()
+                                        .stream().map(EvidenceChunk::score).toList();
+                                var timed = root.name().equals(HtmlKnowledgeAnswerPhase.FULL)
+                                        && layer.equals("B1") && answerK == HtmlKnowledgeRecall.MAX_LIMIT;
+                                rows.add(answer(root.name(), layer, answerK, query, component, evidence,
+                                        tieAtCutoff(scores, answerK),
+                                        timed ? latency.get(component.name()) : null));
+                            } else {
+                                var reason = recall instanceof RecalledEvidence.Failed failed ? failed.reason()
+                                        : "lookahead: " + ((RecalledEvidence.Failed) lookahead).reason();
+                                rows.add(new AnswerRow(root.name(), layer, answerK, query.queryId(), component.name(),
+                                        component.kind(), List.of(), Optional.empty(), Outcome.RECALL_FAILED, reason,
+                                        List.of()));
+                            }
                         }
                     }
                 }
@@ -183,21 +189,31 @@ final class HtmlKnowledgeQaExperiment {
         return rows;
     }
 
+    /**
+     * One recall of {@code layer} at {@code limit}: the limit-5 list binds {@code E(q)}, and the limit-6 lookahead serves
+     * only {@code tieAtCutoff} at {@code answerK = 5}, never as evidence.
+     */
+    private RecalledEvidence.Recall recall(Root root, String layer, QueryText query, int limit) {
+        return layer.equals("B1") ? root.evidence().direct(root.memory(), query.text(), limit)
+                : root.evidence().neuron(root.adapter(), root.memory(), query.text(), limit);
+    }
+
     private AnswerRow answer(String root, String layer, int answerK, QueryText query, AnswerComponent component,
-            List<EvidenceChunk> evidence, List<Long> samples) {
+            List<EvidenceChunk> evidence, boolean tieAtCutoff, List<Long> samples) {
         var start = System.nanoTime();
         var answer = component.answer(query.text(), evidence);
         var elapsed = System.nanoTime() - start;
         if (samples != null) {
             samples.add(elapsed);
         }
-        var chunkIds = evidence.stream().map(EvidenceChunk::chunkId).toList();
+        var hits = evidence.stream().map(chunk -> new AnswerTrace.Hit(chunk.chunkId(), chunk.score())).toList();
+        var tie = Optional.of(tieAtCutoff);
         return switch (answer) {
             case Abstained abstained -> new AnswerRow(root, layer, answerK, query.queryId(), component.name(),
-                    component.kind(), chunkIds, Outcome.ABSTAINED, abstained.status() + ": " + abstained.reason(),
+                    component.kind(), hits, tie, Outcome.ABSTAINED, abstained.status() + ": " + abstained.reason(),
                     List.of());
             case Answered answered -> new AnswerRow(root, layer, answerK, query.queryId(), component.name(),
-                    component.kind(), chunkIds, Outcome.ANSWERED, "", answered.claims().stream()
+                    component.kind(), hits, tie, Outcome.ANSWERED, "", answered.claims().stream()
                     .map(claim -> new ClaimRow(claim.text(), claim.citations().stream()
                             .map(citation -> verify(claim.text(), citation, evidence)).toList()))
                     .toList());
@@ -223,6 +239,14 @@ final class HtmlKnowledgeQaExperiment {
     private AnswerComponent.Kind kind(String name) {
         return components.stream().filter(component -> component.name().equals(name)).findFirst().orElseThrow()
                 .kind();
+    }
+
+    /**
+     * The protocol's {@code tieAtCutoff}: the scores at ranks {@code k} and {@code k + 1} are bit-exactly equal, so the
+     * cutoff splits a tie group. The same rule as the scorer of judged recall, applied here without any gold label.
+     */
+    static boolean tieAtCutoff(List<Double> scores, int k) {
+        return scores.size() > k && HtmlKnowledgeRecall.sameScore(scores.get(k - 1), scores.get(k));
     }
 
     /** Returns the chunk id prefix of {@code documentId}: {@code doc:links} gives {@code chk:links#}. */

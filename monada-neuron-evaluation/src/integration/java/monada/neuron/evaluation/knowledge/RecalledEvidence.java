@@ -70,10 +70,15 @@ final class RecalledEvidence {
         this.manifest = Objects.requireNonNull(manifest, "manifest must not be null");
     }
 
-    /** B1 for {@code question}. */
+    /** B1 for {@code question} at limit 5. */
     Recall direct(MonadaMemory memory, String question) {
+        return direct(memory, question, HtmlKnowledgeRecall.MAX_LIMIT);
+    }
+
+    /** B1 for {@code question} at {@code limit}; the limit-6 lookahead serves only {@code tieAtCutoff}. */
+    Recall direct(MonadaMemory memory, String question, int limit) {
         try {
-            var results = memory.resonate(question).topK(HtmlKnowledgeRecall.MAX_LIMIT)
+            var results = memory.resonate(question).topK(limit)
                     .threshold(HtmlKnowledgeRecall.THRESHOLD).execute().results();
             var rejected = HtmlKnowledgeRecall.rejectStoreResults(results);
             return rejected.<Recall>map(reason -> new Failed("B1 " + reason)).orElseGet(() -> verified("B1", results));
@@ -82,17 +87,22 @@ final class RecalledEvidence {
         }
     }
 
-    /** B2 for {@code question}, with the content of the B2c control for the same atoms. */
+    /** B2 for {@code question} at limit 5, with the content of the B2c control for the same atoms. */
     Recall neuron(ResonanceMemoryPort adapter, MonadaMemory memory, String question) {
+        return neuron(adapter, memory, question, HtmlKnowledgeRecall.MAX_LIMIT);
+    }
+
+    /** B2 for {@code question} at {@code limit}, with the content of the B2c control for the same atoms. */
+    Recall neuron(ResonanceMemoryPort adapter, MonadaMemory memory, String question, int limit) {
         try {
             var signals = codec.querySignals(question);
-            var response = adapter.recall(new ResonanceMemoryRequest(signals, HtmlKnowledgeRecall.MAX_LIMIT));
+            var response = adapter.recall(new ResonanceMemoryRequest(signals, limit));
             if (response.status() != ResonanceMemoryStatus.COMPLETE) {
                 return new Failed("B2 answered " + response.status());
             }
             var perSignal = new ArrayList<List<ResonanceResult>>(signals.size());
             for (var signal : signals) {
-                var results = memory.resonate(codec.encode(signal)).topK(HtmlKnowledgeRecall.MAX_LIMIT)
+                var results = memory.resonate(codec.encode(signal)).topK(limit)
                         .threshold(HtmlKnowledgeRecall.THRESHOLD).execute().results();
                 var rejected = HtmlKnowledgeRecall.rejectStoreResults(results);
                 if (rejected.isPresent()) {
@@ -100,7 +110,7 @@ final class RecalledEvidence {
                 }
                 perSignal.add(results);
             }
-            var control = HtmlKnowledgeRecall.mergeCodecResults(perSignal, HtmlKnowledgeRecall.MAX_LIMIT);
+            var control = HtmlKnowledgeRecall.mergeCodecResults(perSignal, limit);
             var neuron = response.results();
             if (neuron.size() != control.size()) {
                 return new Failed("B2 returned " + neuron.size() + " results, B2c " + control.size());

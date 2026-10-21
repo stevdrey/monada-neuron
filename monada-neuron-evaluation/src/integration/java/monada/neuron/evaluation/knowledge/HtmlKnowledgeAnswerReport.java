@@ -100,7 +100,9 @@ final class HtmlKnowledgeAnswerReport {
                 + string(query.category().label()) + ", \"answerability\": " + string(query.answerability().name())
                 + ", \"component\": " + string(row.component()) + ", \"kind\": " + string(row.kind().name())
                 + ", \"required\": " + strings(query.required().stream().sorted().toList())
-                + ", \"evidence\": " + strings(row.evidence())
+                + ", \"relevant\": " + strings(query.relevant().stream().sorted().toList())
+                + ", \"evidence\": " + evidence(row.evidence())
+                + ", \"tieAtCutoff\": " + row.tieAtCutoff().map(String::valueOf).orElse("null")
                 + ", \"retrievalComplete\": " + answer.retrievalComplete()
                 + ", \"outcome\": " + string(row.outcome().name()) + ", \"detail\": " + string(row.detail())
                 + ", \"status\": " + answer.status().map(status -> string(status.name())).orElse("null")
@@ -119,6 +121,16 @@ final class HtmlKnowledgeAnswerReport {
                         .collect(Collectors.joining(", ")) + " }"
                 + ", \"mergedCitations\": " + answer.mergedCitations()
                 + ", \"missingJudgments\": " + strings(answer.missing()) + " }";
+    }
+
+    private static String evidence(List<AnswerTrace.Hit> hits) {
+        var json = new StringBuilder("[ ");
+        for (var rank = 1; rank <= hits.size(); rank++) {
+            var hit = hits.get(rank - 1);
+            json.append(rank > 1 ? ", " : "").append("{ \"rank\": ").append(rank).append(", \"chunkId\": ")
+                    .append(string(hit.chunkId())).append(", \"score\": ").append(number(hit.score())).append(" }");
+        }
+        return json.append(" ]").toString();
     }
 
     private String claimJson(ClaimVerdict claim) {
