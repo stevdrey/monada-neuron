@@ -232,8 +232,9 @@ over the curated `html-kq-v1` query set is measured against a lexical baseline
 ([`runHtmlKnowledgeRecall`](docs/benchmarks/html-knowledge-recall.md), issue #107). A bounded Neuron cycle is traced
 from query Signals through the recalled references to the evidence its later stages carry, with memory-off,
 removed-document and failure controls
-([`runHtmlKnowledgeEvidenceTrace`](docs/benchmarks/html-knowledge-evidence-trace.md), issue #108); grounded answers
-are still planned.
+([`runHtmlKnowledgeEvidenceTrace`](docs/benchmarks/html-knowledge-evidence-trace.md), issue #108). Cited extractive
+answers with abstention are scored at L4 against frozen human judgments, with an optional generator seam exercised only
+by a labelled test double ([`runHtmlKnowledgeAnswers`](docs/benchmarks/html-knowledge-answers.md), issue #109).
 
 **Module path.** A JPMS host writes `requires monada.neuron;`. The jar is an automatic module, so it declares no
 `requires jdk.incubator.vector` and the scalar fallback applies unless the host adds the module itself.

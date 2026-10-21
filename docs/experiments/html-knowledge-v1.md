@@ -6,7 +6,7 @@
 | :--- | :--- |
 | Protocol version | `html-knowledge-protocol-v1` |
 | Issue | [#104](https://github.com/stevdrey/monada-neuron/issues/104) (Experiment Knowledge 1/8) |
-| Implementation | Corpus contract delivered by #105 ([ingestion](../benchmarks/html-knowledge-ingestion.md)); ingestion readback, post-reopen (restart) and L2 attribution delivered by #106 ([persistence](../benchmarks/html-knowledge-persistence.md)); query set `html-kq-v1`, L1/L2 judged recall and baselines B0 to B2c delivered by #107 ([recall](../benchmarks/html-knowledge-recall.md)); L3 evidence use (`l3-evidence-v1`) delivered by #108 ([evidence trace](../benchmarks/html-knowledge-evidence-trace.md)); the rest of this document is the contract that issues #109 to #111 implement. |
+| Implementation | Corpus contract delivered by #105 ([ingestion](../benchmarks/html-knowledge-ingestion.md)); ingestion readback, post-reopen (restart) and L2 attribution delivered by #106 ([persistence](../benchmarks/html-knowledge-persistence.md)); query set `html-kq-v1`, L1/L2 judged recall and baselines B0 to B2c delivered by #107 ([recall](../benchmarks/html-knowledge-recall.md)); L3 evidence use (`l3-evidence-v1`) delivered by #108 ([evidence trace](../benchmarks/html-knowledge-evidence-trace.md)); L4 grounded answers (`l4-answer-v1`), baseline B3 and the generator seam delivered by #109 ([grounded answers](../benchmarks/html-knowledge-answers.md)); the rest of this document is the contract that issues #110 and #111 implement. |
 | Scope | Monada Neuron `monada-neuron-evaluation` optional `integration` / `integrationTest` source sets only |
 | Extensions | `l3-evidence-v1` (#108), `l4-answer-v1` (#109), `feedback-v1` (#110), `scaling-v1` (#111) |
 
@@ -467,7 +467,8 @@ L3 shows that evidence flows through the cycle. It is explicitly **not** a measu
 
 ## Grounded answer (L4, delivered by #109)
 
-Extension `l4-answer-v1`: minimum requirements; #109 may refine them in its own documentation.
+Extension `l4-answer-v1`: minimum requirements. #109 refines them in its own documentation
+([refinements of `l4-answer-v1`](../benchmarks/html-knowledge-answers.md#refinements-of-l4-answer-v1)).
 
 L4 scores an explicit, optional answer component, only over queries whose bound recall completed (see
 [Completed recalls only](#completed-recalls-only)). An answer is either an abstention or a non-empty list of
@@ -828,7 +829,7 @@ issue fixes the exact task name in its own documentation.
 | #106 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgePersistence` | persistence across separate JVMs, reopen and source-level readback through Neuron |
 | #107 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeRecall` | L1/L2 judged recall with B0/B1/B2/B2c over `html-kq-v1`, rerun in a reopen JVM and in a fresh-root replica JVM |
 | #108 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeEvidenceTrace` | L3 evidence use in a bounded cognitive cycle, with memory-empty, swapped, removed-document, tight-budget and failed-recall controls |
-| #109 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeAnswers` | L4 grounded answers with B3 and abstention |
+| #109 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeAnswers` | L4 grounded answers with B3, the in-sample B3c variant, abstention, a `TEST_DOUBLE` generator seam and frozen human judgments; `--ask` answers one question, unscored |
 | #110 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeFeedback` | [relevance feedback](#relevance-feedback-delivered-by-110) vs a no-feedback control |
 | #111 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeScaling` | L6 profile over the [scaling family](#scaling-family-delivered-by-111) |
 
@@ -889,3 +890,12 @@ source set, and do not change `./gradlew test` when it is absent.
   - the default trace key and memory-stage limit 5;
   - a reference resolver that trusts only chunks read back in the trace process;
   - the host decision, and the controls beyond the mandatory memory-empty contrast.
+- No version change (issue #109). No definition, formula, status or report field changes. `l4-answer-v1` is delivered
+  by `runHtmlKnowledgeAnswers` ([grounded answers](../benchmarks/html-knowledge-answers.md)), which fixes what the
+  extension left open:
+  - an exact quote of an eligible citation is `supported` by rule; other claims with an eligible citation need a human
+    verdict;
+  - the refutation `keyClaim` of a `FALSE_PREMISE` query is its first `keyClaim`;
+  - `conflictDisclosed` is `false` by rule when the eligible citations do not cover both chunks of the pair;
+  - the components B3, B3c (`in-sample (tuned)`) and a `TEST_DOUBLE` generator that is never judged;
+  - the human verdicts `html-l4-judgments-v1`, keyed by the exact answer and frozen by hash.
