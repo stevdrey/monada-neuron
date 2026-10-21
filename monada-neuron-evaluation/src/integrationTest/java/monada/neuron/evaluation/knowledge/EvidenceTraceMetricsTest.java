@@ -9,6 +9,7 @@ import monada.neuron.evaluation.knowledge.HtmlKnowledgeIngestion.Check;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -162,6 +163,44 @@ class EvidenceTraceMetricsTest {
         assertTrue(score(scores, Arm.MEMORY, "q:exact-term-02").scored(), "the other rows are still scored");
     }
 
+    @Test
+    void aRowThatBreaksItsFullCycleContractIsUnscored() {
+        var relevant = List.copyOf(query(ANSWERABLE).relevant());
+        var full = row(Arm.MEMORY, ANSWERABLE, relevant, relevant.size(), EvidenceDecision.INCOMPLETE, false);
+        var truncated = new Row(full.arm(), full.queryId(), full.inputQueryId(), full.inputSignals(),
+                full.requestMatchesCodec(), full.recordedStatus(), full.recorded(), full.memoryStatus(),
+                full.admitted(), List.of(), List.of(), List.of(), false, List.of("MEMORY_RECALL"),
+                "CONTEXT_BUDGET_EXHAUSTED", true, 3, EvidenceDecision.INCOMPLETE, full.contrast(),
+                full.recalledEqualsB2());
+        var scores = EvidenceTraceMetrics.score(QUERY_SET, CORPUS, snapshot(Map.of(key(Arm.MEMORY, ANSWERABLE),
+                truncated)));
+        var score = score(scores, Arm.MEMORY, ANSWERABLE);
+        assertFalse(score.scored(), "a recall that completed in a cycle that did not is not an evidence-use result");
+        assertTrue(score.unscoredReason().orElseThrow().startsWith("stages [MEMORY_RECALL]"),
+                score.unscoredReason().orElseThrow());
+        assertEquals(1, scores.aggregates().get(Arm.MEMORY).unscored());
+        var markdown = new HtmlKnowledgeEvidenceTraceReport(scores).toMarkdown();
+        assertTrue(markdown.contains("| " + ANSWERABLE + " | "), markdown);
+        assertTrue(markdown.contains("unscored (stages [MEMORY_RECALL]"), "the readable report marks it too");
+        assertTrue(new HtmlKnowledgeEvidenceTraceReport(scores).toJson()
+                .contains("\"unscored\": \"stages [MEMORY_RECALL]"), "and so does the JSON");
+    }
+
+    @Test
+    void aControlWhoseRowsAreUnscoredIsNotExercised() {
+        var overrides = new HashMap<String, Row>();
+        for (var query : QUERY_SET.queries()) {
+            var row = row(Arm.MEMORY_EMPTY, query.queryId(), List.of(), 0, EvidenceDecision.RECALL_FAILED, false);
+            overrides.put(key(Arm.MEMORY_EMPTY, query.queryId()), withInputAndStatus(row, query.queryId(), "FAILED"));
+        }
+        var removedTarget = "q:multi-evidence-02";
+        overrides.put(key(Arm.REMOVED, removedTarget), withInputAndStatus(row(Arm.REMOVED, removedTarget, List.of(),
+                0, EvidenceDecision.RECALL_FAILED, false), removedTarget, "FAILED"));
+        var checks = EvidenceTraceMetrics.score(QUERY_SET, CORPUS, snapshot(overrides)).checks();
+        assertEquals(List.of(false, false), checks.stream().map(Check::passed).toList());
+        checks.forEach(check -> assertTrue(check.detail().startsWith("not exercised"), check.detail()));
+    }
+
     private static Row withInputAndStatus(Row row, String inputQueryId, String recordedStatus) {
         return new Row(row.arm(), row.queryId(), inputQueryId, row.inputSignals(), row.requestMatchesCodec(),
                 recordedStatus, row.recorded(), row.memoryStatus(), row.admitted(), row.usedBySignal(),
@@ -211,7 +250,7 @@ class EvidenceTraceMetricsTest {
         if (!admitted.isEmpty()) {
             recorded.add(new Hit("chk:links#04", 0.1));
         }
-        return new Row(arm, queryId, input(arm, queryId), 1, true, arm.expectedRecordedStatus(), recorded,
+        return new Row(arm, queryId, input(arm, queryId), 1, true, arm.expectedRecordedStatusName(), recorded,
                 "COMPLETE", admitted, admitted, admitted,
                 admitted, ambiguous, List.of("MEMORY_RECALL", "REASONING", "EVALUATION"), "COMPLETED", false, 1,
                 decision, arm == Arm.MEMORY ? Optional.of(new Contrast(false, false, false, "none", 1, 1, false))

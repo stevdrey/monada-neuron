@@ -209,7 +209,8 @@ public final class HtmlKnowledgeEvidenceTraceRunner {
     }
 
     /**
-     * Scores and renders a parsed trace snapshot, adding the scorer's checks. A snapshot that parses but is not a
+     * Scores and renders a parsed trace snapshot, adding the passing check {@code trace.scored} and the scorer's
+     * checks. A snapshot that parses but is not a
      * complete trace of the query set (a missing, duplicate or foreign row, or a field on the wrong arm) is rejected
      * by the scorer; that becomes the failed check {@code trace.scored} and an empty result, so the run still writes
      * its report, with {@code trace: null}, and exits {@code 1}.
@@ -219,6 +220,11 @@ public final class HtmlKnowledgeEvidenceTraceRunner {
             var scores = EvidenceTraceMetrics.score(querySet, corpus, snapshot);
             var report = new HtmlKnowledgeEvidenceTraceReport(scores);
             var rendered = new HtmlKnowledgeRecallRunner.Rendered(report.toJson(), report.toMarkdown());
+            var rows = scores.byArm().values().stream().mapToInt(List::size).sum();
+            var unscored = scores.aggregates().values().stream()
+                    .mapToInt(EvidenceTraceMetrics.ArmAggregate::unscored).sum();
+            checks.add(new Check("trace.scored", true, "the scorer accepted the trace snapshot: " + rows + " rows, "
+                    + unscored + " unscored"));
             checks.addAll(scores.checks());
             return Optional.of(rendered);
         } catch (IllegalArgumentException e) {

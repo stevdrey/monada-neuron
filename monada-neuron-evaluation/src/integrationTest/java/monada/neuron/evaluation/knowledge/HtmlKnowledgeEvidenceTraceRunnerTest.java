@@ -114,8 +114,9 @@ class HtmlKnowledgeEvidenceTraceRunnerTest {
         for (var arm : EvidenceTrace.Arm.values()) {
             for (var query : querySet.queries()) {
                 rows.add(new EvidenceTrace.Row(arm, query.queryId(), EvidenceTraceMetricsTest.input(arm,
-                        query.queryId()), 1, true, arm.expectedRecordedStatus(), List.of(),
-                        "COMPLETE", List.of(), List.of(), List.of(), List.of(), false, List.of(), "COMPLETED", false, 1,
+                        query.queryId()), 1, true, arm.expectedRecordedStatusName(), List.of(),
+                        "COMPLETE", List.of(), List.of(), List.of(), List.of(), false,
+                        List.of("MEMORY_RECALL", "REASONING", "EVALUATION"), "COMPLETED", false, 1,
                         EvidenceDecision.UNSUPPORTED, arm == EvidenceTrace.Arm.MEMORY
                                 ? Optional.of(new EvidenceTrace.Contrast(false, false, false, "none", 1, 1, false))
                                 : Optional.empty(),
@@ -124,7 +125,11 @@ class HtmlKnowledgeEvidenceTraceRunnerTest {
         }
         var complete = new ArrayList<HtmlKnowledgeIngestion.Check>();
         assertTrue(runner.scoreTrace(new EvidenceTrace.Snapshot(querySet.queryHash(), rows), complete).isPresent());
-        assertTrue(complete.stream().noneMatch(check -> check.name().equals("trace.scored")));
+        var scored = complete.stream().filter(check -> check.name().equals("trace.scored")).toList();
+        assertEquals(1, scored.size(), "trace.scored is reported on success too");
+        assertTrue(scored.getFirst().passed());
+        assertTrue(scored.getFirst().detail().endsWith(querySet.queries().size() * EvidenceTrace.Arm.values().length
+                + " rows, 0 unscored"), scored.getFirst().detail());
 
         rows.remove(3);
         var checks = new ArrayList<HtmlKnowledgeIngestion.Check>();
@@ -151,6 +156,7 @@ class HtmlKnowledgeEvidenceTraceRunnerTest {
             names.add("trace." + check);
         }
         names.add("process.restart");
+        names.add("trace.scored");
         names.add("control.memoryOffNotSupported");
         names.add("control.removedRelevantNotSupported");
         return Set.copyOf(names);

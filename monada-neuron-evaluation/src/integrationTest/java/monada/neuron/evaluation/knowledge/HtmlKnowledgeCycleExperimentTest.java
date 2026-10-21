@@ -196,6 +196,16 @@ class HtmlKnowledgeCycleExperimentTest {
     }
 
     @Test
+    void everyArmDeclaresTheRecordedStatusItsRowsMustCarry() {
+        for (var row : observation.snapshot().rows()) {
+            assertTrue(row.arm().recordedStatusConforms(row.recordedStatus()), row.arm() + " " + row.queryId());
+        }
+        assertFalse(Arm.THROWING.recordedStatusConforms("COMPLETE"), "a throwing port must record no response");
+        assertFalse(Arm.UNAVAILABLE.recordedStatusConforms("COMPLETE"));
+        assertTrue(Arm.THROWING.recordedStatusConforms(EvidenceTrace.NO_STATUS));
+    }
+
+    @Test
     void replayComparesFailedRunsWithoutExceptionIdentity() {
         var experiment = new HtmlKnowledgeCycleExperiment();
         var injected = new IllegalStateException("injected");

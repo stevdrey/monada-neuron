@@ -114,7 +114,8 @@ final class HtmlKnowledgeEvidenceTraceReport {
                     .append(String.join(", ", score.row().admitted())).append(" | ")
                     .append(score.row().requestMatchesCodec()).append(", ")
                     .append(score.row().recalledEqualsB2().map(String::valueOf).orElse("n/a")).append(" | ")
-                    .append(flag(score)).append(" | ").append(score.row().decision()).append(" | ")
+                    .append(flag(score)).append(" | ").append(score.scored() ? score.row().decision().name()
+                            : unscored(score)).append(" | ")
                     .append(flag(scores.byArm().get(Arm.SWAPPED).get(index))).append(" | ")
                     .append(flag(scores.byArm().get(Arm.REMOVED).get(index))).append(" | ")
                     .append(score.row().contrast().orElseThrow().differs()).append(" |\n");
@@ -138,7 +139,9 @@ final class HtmlKnowledgeEvidenceTraceReport {
 
     private static String queryJson(QueryScore score) {
         Row row = score.row();
-        return "{ \"scored\": " + score.scored() + ", \"inputQueryId\": " + string(row.inputQueryId())
+        return "{ \"scored\": " + score.scored() + ", \"unscored\": "
+                + score.unscoredReason().map(HtmlKnowledgeRecallReport::string).orElse("null")
+                + ", \"inputQueryId\": " + string(row.inputQueryId())
                 + ", \"inputSignals\": " + row.inputSignals()
                 + ", \"requestMatchesCodec\": " + row.requestMatchesCodec() + ", \"recalledEqualsB2\": "
                 + row.recalledEqualsB2().map(String::valueOf).orElse("null") + ", \"recordedStatus\": "
@@ -182,8 +185,16 @@ final class HtmlKnowledgeEvidenceTraceReport {
         return count.count() + "/" + count.of();
     }
 
+    /** The relevant-used cell; an unscored row says so, so the readable report agrees with the JSON. */
     private static String flag(QueryScore score) {
+        if (!score.scored()) {
+            return unscored(score);
+        }
         return score.relevantEvidenceUsed().isPresent()
                 ? (score.relevantEvidenceUsed().getAsDouble() == 1.0 ? "yes" : "no") : "n/a";
+    }
+
+    private static String unscored(QueryScore score) {
+        return "unscored (" + score.unscoredReason().orElseThrow().replace("|", "/") + ")";
     }
 }

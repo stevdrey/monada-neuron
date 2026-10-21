@@ -1,5 +1,7 @@
 package monada.neuron.evaluation.knowledge;
 
+import monada.neuron.memory.ResonanceMemoryStatus;
+
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -16,6 +18,9 @@ import java.util.Optional;
  * {@link RecalledReferenceResolver}).
  */
 final class EvidenceTrace {
+
+    /** The recorded or memory status of a row that has no port response (or no memory result). */
+    static final String NO_STATUS = "none";
 
     /** Prefix of a reference that did not resolve to a verified chunk. */
     static final String UNRESOLVED_PREFIX = "?";
@@ -37,30 +42,31 @@ final class EvidenceTrace {
      */
     enum Arm {
         /** The production adapter over the full reopened root. */
-        MEMORY(true, "COMPLETE", true, true, false),
+        MEMORY(true, Optional.of(ResonanceMemoryStatus.COMPLETE), true, true, false),
         /** A port that answers {@code COMPLETE} with no results (memory disabled). */
-        MEMORY_EMPTY(false, "COMPLETE", true, false, false),
+        MEMORY_EMPTY(false, Optional.of(ResonanceMemoryStatus.COMPLETE), true, false, false),
         /** The full root, with each slot sent the text of another query. */
-        SWAPPED(true, "COMPLETE", true, false, true),
+        SWAPPED(true, Optional.of(ResonanceMemoryStatus.COMPLETE), true, false, true),
         /** The production adapter over a root imported without the removed document. */
-        REMOVED(true, "COMPLETE", true, false, false),
+        REMOVED(true, Optional.of(ResonanceMemoryStatus.COMPLETE), true, false, false),
         /**
          * The full root under a signal budget that admits at most one recalled result. The budget truncates
          * admission, not the port call, so the recall must still complete; the cycle ends before {@code EVALUATION}.
          */
-        TIGHT_BUDGET(true, "COMPLETE", false, false, false),
+        TIGHT_BUDGET(true, Optional.of(ResonanceMemoryStatus.COMPLETE), false, false, false),
         /** A closed adapter, which answers {@code UNAVAILABLE}. */
-        UNAVAILABLE(false, "UNAVAILABLE", true, false, false),
+        UNAVAILABLE(false, Optional.of(ResonanceMemoryStatus.UNAVAILABLE), true, false, false),
         /** A port that throws, which must fail the cycle at {@code MEMORY_RECALL}; it records no response. */
-        THROWING(false, "none", false, false, false);
+        THROWING(false, Optional.empty(), false, false, false);
 
         private final boolean recallsThroughAdapter;
-        private final String expectedRecordedStatus;
+        private final Optional<ResonanceMemoryStatus> expectedRecordedStatus;
         private final boolean expectsFullCycle;
         private final boolean hasContrast;
         private final boolean swapsInput;
 
-        Arm(boolean recallsThroughAdapter, String expectedRecordedStatus, boolean expectsFullCycle,
+        Arm(boolean recallsThroughAdapter, Optional<ResonanceMemoryStatus> expectedRecordedStatus,
+                boolean expectsFullCycle,
                 boolean hasContrast, boolean swapsInput) {
             this.recallsThroughAdapter = recallsThroughAdapter;
             this.expectedRecordedStatus = expectedRecordedStatus;
@@ -77,14 +83,24 @@ final class EvidenceTrace {
             return recallsThroughAdapter;
         }
 
-        /** The recorded port status a trace row of this arm must carry; {@code none} when no response is recorded. */
-        String expectedRecordedStatus() {
+        /** The port status a run of this arm must record; empty when no response may be recorded. */
+        Optional<ResonanceMemoryStatus> expectedRecordedStatus() {
             return expectedRecordedStatus;
+        }
+
+        /** The recorded status a conforming row of this arm carries: a status name, or {@link #NO_STATUS}. */
+        String expectedRecordedStatusName() {
+            return expectedRecordedStatus.map(Enum::name).orElse(NO_STATUS);
+        }
+
+        /** Whether a row's recorded status (a status name, or {@link #NO_STATUS}) is the one this arm requires. */
+        boolean recordedStatusConforms(String recordedStatus) {
+            return expectedRecordedStatusName().equals(recordedStatus);
         }
 
         /** Whether the port must answer {@code COMPLETE} in this arm. */
         boolean expectsCompleteRecall() {
-            return expectedRecordedStatus.equals("COMPLETE");
+            return expectedRecordedStatus.equals(Optional.of(ResonanceMemoryStatus.COMPLETE));
         }
 
         /**

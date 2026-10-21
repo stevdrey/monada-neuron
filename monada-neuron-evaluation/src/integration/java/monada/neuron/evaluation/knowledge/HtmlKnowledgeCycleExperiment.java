@@ -35,6 +35,7 @@ import monada.neuron.signal.Signal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -86,7 +87,7 @@ final class HtmlKnowledgeCycleExperiment {
     /** The fixed monad identity: every run starts from a fresh, value-equal monad. */
     static final UUID MONAD_ID = new UUID(0L, 108L);
 
-    private static final String NONE = "none";
+    private static final String NONE = EvidenceTrace.NO_STATUS;
 
     private final TokenPackingSignalCodec codec = new TokenPackingSignalCodec();
 
@@ -158,6 +159,7 @@ final class HtmlKnowledgeCycleExperiment {
         }
         var rows = new ArrayList<Row>();
         var failures = new LinkedHashMap<String, List<String>>();
+        var direct = new DirectRecalls();
         var emptyByText = new HashMap<String, Run>();
         var realByText = new HashMap<String, Run>();
         var empty = (ResonanceMemoryPort) request -> new ResonanceMemoryResponse(ResonanceMemoryStatus.COMPLETE,
@@ -170,14 +172,14 @@ final class HtmlKnowledgeCycleExperiment {
                     () -> execute(empty, query.text(), BUDGET), failures);
             realByText.put(query.queryId(), real);
             emptyByText.put(query.queryId(), memoryEmpty);
-            rows.add(row(Arm.MEMORY, query.queryId(), query.queryId(), real, full, memoryEmpty,
+            rows.add(row(direct, Arm.MEMORY, query.queryId(), query.queryId(), real, full, memoryEmpty,
                     Optional.of(contrast(real, memoryEmpty))));
             checkIntegrity(Arm.MEMORY, query.queryId(), real, failures);
             checkValueEquality(real, failures);
         }
         for (var query : queries) {
             var memoryEmpty = emptyByText.get(query.queryId());
-            rows.add(row(Arm.MEMORY_EMPTY, query.queryId(), query.queryId(), memoryEmpty, full, memoryEmpty,
+            rows.add(row(direct, Arm.MEMORY_EMPTY, query.queryId(), query.queryId(), memoryEmpty, full, memoryEmpty,
                     Optional.empty()));
             checkIntegrity(Arm.MEMORY_EMPTY, query.queryId(), memoryEmpty, failures);
         }
@@ -186,7 +188,7 @@ final class HtmlKnowledgeCycleExperiment {
             var input = queries.get(swapIndex(index, queries.size()));
             var run = executeTwice(Arm.SWAPPED, slot.queryId(), () -> execute(full.adapter(), input.text(), BUDGET),
                     failures);
-            rows.add(row(Arm.SWAPPED, slot.queryId(), input.queryId(), run, full, emptyByText.get(input.queryId()),
+            rows.add(row(direct, Arm.SWAPPED, slot.queryId(), input.queryId(), run, full, emptyByText.get(input.queryId()),
                     Optional.empty()));
             checkSwapped(run, realByText.get(input.queryId()), slot.queryId(), input.queryId(), failures);
             checkIntegrity(Arm.SWAPPED, slot.queryId(), run, failures);
@@ -194,14 +196,14 @@ final class HtmlKnowledgeCycleExperiment {
         for (var query : queries) {
             var run = executeTwice(Arm.REMOVED, query.queryId(),
                     () -> execute(removed.adapter(), query.text(), BUDGET), failures);
-            rows.add(row(Arm.REMOVED, query.queryId(), query.queryId(), run, removed,
+            rows.add(row(direct, Arm.REMOVED, query.queryId(), query.queryId(), run, removed,
                     emptyByText.get(query.queryId()), Optional.empty()));
             checkIntegrity(Arm.REMOVED, query.queryId(), run, failures);
         }
         for (var query : queries) {
             var run = executeTwice(Arm.TIGHT_BUDGET, query.queryId(),
                     () -> execute(full.adapter(), query.text(), tightBudget(query.text())), failures);
-            rows.add(row(Arm.TIGHT_BUDGET, query.queryId(), query.queryId(), run, full,
+            rows.add(row(direct, Arm.TIGHT_BUDGET, query.queryId(), query.queryId(), run, full,
                     emptyByText.get(query.queryId()), Optional.empty()));
             checkTight(run, realByText.get(query.queryId()), query.queryId(), failures);
             checkIntegrity(Arm.TIGHT_BUDGET, query.queryId(), run, failures);
@@ -209,7 +211,7 @@ final class HtmlKnowledgeCycleExperiment {
         for (var query : queries) {
             var run = executeTwice(Arm.UNAVAILABLE, query.queryId(), () -> execute(closed, query.text(), BUDGET),
                     failures);
-            rows.add(row(Arm.UNAVAILABLE, query.queryId(), query.queryId(), run, full,
+            rows.add(row(direct, Arm.UNAVAILABLE, query.queryId(), query.queryId(), run, full,
                     emptyByText.get(query.queryId()), Optional.empty()));
             checkIntegrity(Arm.UNAVAILABLE, query.queryId(), run, failures);
         }
@@ -218,7 +220,7 @@ final class HtmlKnowledgeCycleExperiment {
             var run = executeTwice(Arm.THROWING, query.queryId(), () -> execute(request -> {
                 throw injected;
             }, query.text(), BUDGET), failures);
-            rows.add(row(Arm.THROWING, query.queryId(), query.queryId(), run, full,
+            rows.add(row(direct, Arm.THROWING, query.queryId(), query.queryId(), run, full,
                     emptyByText.get(query.queryId()), Optional.empty()));
             checkThrowing(run, injected, query.queryId(), failures);
         }
@@ -316,8 +318,8 @@ final class HtmlKnowledgeCycleExperiment {
         return supported ? EvidenceDecision.SUPPORTED : EvidenceDecision.UNSUPPORTED;
     }
 
-    private Row row(Arm arm, String queryId, String inputQueryId, Run run, Root root, Run memoryEmpty,
-            Optional<Contrast> contrast) {
+    private Row row(DirectRecalls direct, Arm arm, String queryId, String inputQueryId, Run run, Root root,
+            Run memoryEmpty, Optional<Contrast> contrast) {
         var resolver = root.resolver();
         var request = run.calls().isEmpty() ? Optional.<ResonanceMemoryRequest>empty()
                 : Optional.of(run.calls().getFirst().request());
@@ -356,16 +358,28 @@ final class HtmlKnowledgeCycleExperiment {
                 run.result().map(result -> result.snapshot().signalBudgetExhausted())
                         .orElseGet(() -> run.failure().orElseThrow().snapshot().signalBudgetExhausted()),
                 run.result().map(result -> result.outputSignals().size()).orElse(0), decide(run, resolver), contrast,
-                arm.recallsThroughAdapter() ? Optional.of(equalsB2(run, root)) : Optional.empty());
+                arm.recallsThroughAdapter() ? Optional.of(direct.equalsB2(run, root)) : Optional.empty());
     }
 
     /**
-     * Whether the run recorded exactly one response and it equals a direct B2 recall of the same request (the codec
-     * Signals with the memory-stage limit) through the adapter of the same root.
+     * The direct B2 recalls of one {@link #run}: one {@code adapter.recall} per distinct root and request, so arms that
+     * send the same text to the same root ({@code SWAPPED}, {@code TIGHT_BUDGET} and {@code MEMORY}) share it. The
+     * response is always a direct adapter call, never a recorded one.
      */
-    private boolean equalsB2(Run run, Root root) {
-        var direct = root.adapter().recall(new ResonanceMemoryRequest(run.inputs(), MEMORY_LIMIT));
-        return run.calls().size() == 1 && run.calls().getFirst().response().equals(direct);
+    private static final class DirectRecalls {
+
+        private final Map<Root, Map<ResonanceMemoryRequest, ResonanceMemoryResponse>> byRoot = new IdentityHashMap<>();
+
+        /**
+         * Whether the run recorded exactly one response and it equals a direct B2 recall of the same request (the
+         * codec Signals with the memory-stage limit) through the adapter of the same root.
+         */
+        boolean equalsB2(Run run, Root root) {
+            var request = new ResonanceMemoryRequest(run.inputs(), MEMORY_LIMIT);
+            var response = byRoot.computeIfAbsent(root, _ -> new HashMap<>())
+                    .computeIfAbsent(request, root.adapter()::recall);
+            return run.calls().size() == 1 && run.calls().getFirst().response().equals(response);
+        }
     }
 
     /**
@@ -555,10 +569,10 @@ final class HtmlKnowledgeCycleExperiment {
     }
 
     private List<Check> checks(Snapshot snapshot, int queries, Map<String, List<String>> failures) {
-        snapshot.rows().stream().filter(row -> row.arm().expectsCompleteRecall()
-                && !row.recordedStatus().equals(ResonanceMemoryStatus.COMPLETE.name()))
-                .forEach(row -> fail(failures, "evidence.recallCompleted", row.arm() + " " + row.queryId() + " "
-                        + row.recordedStatus()));
+        snapshot.rows().stream().filter(row -> !row.arm().recordedStatusConforms(row.recordedStatus()))
+                .forEach(row -> fail(failures, "evidence.recallCompleted", row.arm() + " " + row.queryId()
+                        + " recorded " + row.recordedStatus() + ", its arm requires "
+                        + row.arm().expectedRecordedStatusName()));
         snapshot.rows().stream().filter(row -> !row.requestMatchesCodec())
                 .forEach(row -> fail(failures, "evidence.requestMatchesCodec", row.arm() + " " + row.queryId()));
         for (var arm : Arm.values()) {
@@ -586,8 +600,8 @@ final class HtmlKnowledgeCycleExperiment {
         snapshot.rows(Arm.REMOVED).stream().filter(row -> row.recorded().stream()
                 .anyMatch(hit -> hit.chunkId().startsWith("chk:" + removedSlug + "#")))
                 .forEach(row -> fail(failures, "control.removedExcludesDocument", row.queryId()));
-        snapshot.rows(Arm.UNAVAILABLE).stream().filter(row -> !row.recordedStatus().equals("UNAVAILABLE")
-                || row.decision() != EvidenceDecision.RECALL_FAILED || !row.attached().isEmpty())
+        snapshot.rows(Arm.UNAVAILABLE).stream().filter(row -> row.decision() != EvidenceDecision.RECALL_FAILED
+                || !row.attached().isEmpty())
                 .forEach(row -> fail(failures, "control.unavailableRecall", row.queryId() + " " + row.decision()));
 
         var names = List.of("evidence.recallCompleted", "evidence.requestMatchesCodec", "evidence.recalledEqualsB2",

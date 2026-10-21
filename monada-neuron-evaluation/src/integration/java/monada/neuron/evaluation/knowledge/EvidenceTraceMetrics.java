@@ -6,15 +6,16 @@ import monada.neuron.evaluation.knowledge.EvidenceTrace.Snapshot;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeIngestion.Check;
 import monada.neuron.evaluation.knowledge.JudgedQuery.Category;
 import monada.neuron.evaluation.knowledge.RecallMetrics.Aggregate;
+import monada.neuron.monad.CognitiveCycleTermination;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalDouble;
 
 /**
@@ -38,17 +39,23 @@ final class EvidenceTraceMetrics {
      *
      * @param query the judged query the slot is scored against
      * @param row the trace row
-     * @param scored whether the row's recorded port status is the one its arm requires; an unscored row (an
-     *     operational recall failure) has every value undefined and is excluded from every aggregate and population,
-     *     as the protocol's "completed recalls only" rule requires, without discarding the other rows
+     * @param unscoredReason why the row breaks its arm's contract (its recorded port status, or for an arm that
+     *     expects the full cycle its stage list or termination), empty for a scored row; an unscored row (an
+     *     operational failure) has every value undefined and is excluded from every aggregate and population, as the
+     *     protocol's "completed recalls only" rule requires, without discarding the other rows
      * @param admittedFraction admitted / recorded results
      * @param usedFraction used / admitted chunks
      * @param relevantEvidenceUsed whether a used chunk is relevant ({@code A} only)
      * @param memorySupportedRelevant {@code SUPPORTED} and a used chunk is relevant
      */
-    record QueryScore(JudgedQuery query, Row row, boolean scored, OptionalDouble admittedFraction,
+    record QueryScore(JudgedQuery query, Row row, Optional<String> unscoredReason, OptionalDouble admittedFraction,
             OptionalDouble usedFraction,
             OptionalDouble relevantEvidenceUsed, boolean memorySupportedRelevant) {
+
+        /** Whether the row conforms to its arm's contract and is therefore scored. */
+        boolean scored() {
+            return unscoredReason.isEmpty();
+        }
     }
 
     /** A count out of a population. */
@@ -105,7 +112,7 @@ final class EvidenceTraceMetrics {
      */
     static Scores score(HtmlKnowledgeQuerySet querySet, HtmlKnowledgeCorpus corpus, Snapshot snapshot) {
         Objects.requireNonNull(querySet, "querySet must not be null");
-        requireComplete(querySet, snapshot);
+        var rows = requireComplete(querySet, snapshot);
         var removedChunks = corpus.chunks().stream()
                 .filter(chunk -> chunk.documentId().equals(HtmlKnowledgeCycleExperiment.REMOVED_DOCUMENT))
                 .map(CorpusChunk::chunkId).toList();
@@ -114,9 +121,7 @@ final class EvidenceTraceMetrics {
         for (var arm : Arm.values()) {
             var scores = new ArrayList<QueryScore>();
             for (var query : querySet.queries()) {
-                var row = snapshot.row(arm, query.queryId()).orElseThrow(() -> new IllegalArgumentException(
-                        "arm " + arm + " has no row for " + query.queryId()));
-                scores.add(score(query, row));
+                scores.add(score(query, rows.get(key(arm, query.queryId()))));
             }
             byArm.put(arm, List.copyOf(scores));
             aggregates.put(arm, aggregate(scores));
@@ -127,17 +132,25 @@ final class EvidenceTraceMetrics {
         var contrastU = contrast(byArm.get(Arm.MEMORY), false);
 
         var checks = new ArrayList<Check>();
+        // A control holds only when it was exercised: an unscored row measured nothing, so it can never pass a control.
+        var memoryOffUnscored = unscored(byArm.get(Arm.MEMORY_EMPTY));
         var memoryOff = byArm.get(Arm.MEMORY_EMPTY).stream().filter(QueryScore::memorySupportedRelevant)
                 .map(score -> score.query().queryId()).toList();
-        checks.add(new Check("control.memoryOffNotSupported", memoryOff.isEmpty(), memoryOff.isEmpty()
-                ? "no memory-empty run is a memory-supported relevant result (" + querySet.queries().size() + " queries)"
-                : "memory-empty runs reported as memory-supported: " + memoryOff));
-        var removed = byArm.get(Arm.REMOVED).stream()
-                .filter(score -> removedTargets.contains(score.query().queryId()) && score.memorySupportedRelevant())
+        checks.add(new Check("control.memoryOffNotSupported", memoryOffUnscored.isEmpty() && memoryOff.isEmpty(),
+                !memoryOffUnscored.isEmpty() ? "not exercised: memory-empty rows unscored for " + memoryOffUnscored
+                        : memoryOff.isEmpty() ? "no memory-empty run is a memory-supported relevant result ("
+                                + querySet.queries().size() + " queries)"
+                                : "memory-empty runs reported as memory-supported: " + memoryOff));
+        var targetScores = byArm.get(Arm.REMOVED).stream()
+                .filter(score -> removedTargets.contains(score.query().queryId())).toList();
+        var removedUnscored = unscored(targetScores);
+        var removed = targetScores.stream().filter(QueryScore::memorySupportedRelevant)
                 .map(score -> score.query().queryId()).toList();
-        checks.add(new Check("control.removedRelevantNotSupported", !removedTargets.isEmpty() && removed.isEmpty(),
+        checks.add(new Check("control.removedRelevantNotSupported",
+                !removedTargets.isEmpty() && removedUnscored.isEmpty() && removed.isEmpty(),
                 removedTargets.isEmpty() ? "no query has all its relevant chunks in "
                         + HtmlKnowledgeCycleExperiment.REMOVED_DOCUMENT + "; the control is not exercised"
+                        : !removedUnscored.isEmpty() ? "not exercised: removed-root rows unscored for " + removedUnscored
                         : removed.isEmpty() ? "none of the " + removedTargets.size() + " queries whose relevant chunks"
                                 + " were all removed is a memory-supported relevant result: " + removedTargets
                                 : "reported as memory-supported after removal: " + removed));
@@ -153,9 +166,10 @@ final class EvidenceTraceMetrics {
      * through the adapter. A phase file can be syntactically complete and still violate this, so the check runs before
      * anything is scored.
      *
+     * @return the rows indexed by {@link #key}, one per arm and query
      * @throws IllegalArgumentException naming the first violation
      */
-    static void requireComplete(HtmlKnowledgeQuerySet querySet, Snapshot snapshot) {
+    static Map<String, Row> requireComplete(HtmlKnowledgeQuerySet querySet, Snapshot snapshot) {
         if (!snapshot.queryHash().equals(querySet.queryHash())) {
             throw new IllegalArgumentException("the snapshot answers queryHash " + snapshot.queryHash());
         }
@@ -164,9 +178,9 @@ final class EvidenceTraceMetrics {
         for (var index = 0; index < queries.size(); index++) {
             indexById.put(queries.get(index).queryId(), index);
         }
-        var seen = new HashSet<String>();
+        var seen = new HashMap<String, Row>();
         for (var row : snapshot.rows()) {
-            var key = row.arm() + " " + row.queryId();
+            var key = key(row.arm(), row.queryId());
             var index = indexById.get(row.queryId());
             if (index == null) {
                 throw new IllegalArgumentException("row " + key + " names a query outside the set");
@@ -178,7 +192,7 @@ final class EvidenceTraceMetrics {
                 throw new IllegalArgumentException("row " + key + " was sent the text of " + row.inputQueryId()
                         + ", but its arm prescribes " + input);
             }
-            if (!seen.add(key)) {
+            if (seen.putIfAbsent(key, row) != null) {
                 throw new IllegalArgumentException("duplicate row " + key);
             }
             if (row.contrast().isPresent() != row.arm().hasContrast()) {
@@ -195,11 +209,44 @@ final class EvidenceTraceMetrics {
             throw new IllegalArgumentException("the snapshot holds " + seen.size() + " of " + expected + " rows ("
                     + Arm.values().length + " arms x " + querySet.queries().size() + " queries)");
         }
+        return Map.copyOf(seen);
+    }
+
+    /** The index key of the row of {@code arm} for slot {@code queryId}. */
+    private static String key(Arm arm, String queryId) {
+        return arm + " " + queryId;
+    }
+
+    /**
+     * Why {@code row} breaks its arm's contract, if it does: a recorded port status other than the arm requires, or,
+     * for an arm that expects the full cycle, a stage list other than {@code MEMORY_RECALL, REASONING, EVALUATION} or
+     * a termination other than {@code COMPLETED}. Such a row is an operational failure, not a result.
+     */
+    static Optional<String> contractViolation(Row row) {
+        var arm = row.arm();
+        if (!arm.recordedStatusConforms(row.recordedStatus())) {
+            return Optional.of("recorded " + row.recordedStatus() + ", arm requires " + arm.expectedRecordedStatusName());
+        }
+        if (arm.expectsFullCycle()) {
+            var stages = HtmlKnowledgeCycleExperiment.STAGES.stream().map(Enum::name).toList();
+            if (!row.stages().equals(stages)) {
+                return Optional.of("stages " + row.stages() + ", arm requires " + stages);
+            }
+            if (!row.termination().equals(CognitiveCycleTermination.COMPLETED.name())) {
+                return Optional.of("terminated " + row.termination() + ", arm requires COMPLETED");
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static List<String> unscored(List<QueryScore> scores) {
+        return scores.stream().filter(score -> !score.scored()).map(score -> score.query().queryId()).toList();
     }
 
     private static QueryScore score(JudgedQuery query, Row row) {
-        if (!row.recordedStatus().equals(row.arm().expectedRecordedStatus())) {
-            return new QueryScore(query, row, false, OptionalDouble.empty(), OptionalDouble.empty(),
+        var violation = contractViolation(row);
+        if (violation.isPresent()) {
+            return new QueryScore(query, row, violation, OptionalDouble.empty(), OptionalDouble.empty(),
                     OptionalDouble.empty(), false);
         }
         var relevant = query.relevant();
@@ -212,7 +259,7 @@ final class EvidenceTraceMetrics {
                 : OptionalDouble.of(relevantUsed ? 1.0 : 0.0);
         var supported = query.answerable() && !row.traceAmbiguous() && relevantUsed
                 && row.decision() == EvidenceDecision.SUPPORTED;
-        return new QueryScore(query, row, true, admittedFraction, usedFraction, relevantEvidenceUsed, supported);
+        return new QueryScore(query, row, Optional.empty(), admittedFraction, usedFraction, relevantEvidenceUsed, supported);
     }
 
     private static ArmAggregate aggregate(List<QueryScore> all) {
