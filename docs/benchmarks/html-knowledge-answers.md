@@ -80,7 +80,10 @@ Outputs, under `build/reports/benchmarks/` of `monada-neuron-evaluation`:
   comes from the B2c control for the same atoms, as the protocol requires. B2 and B2c must agree reference by
   reference, with bit-exact scores. The B2c merge is the shared `HtmlKnowledgeRecall.mergeCodecResults`, not a copy.
 
-Every returned atom must map through the root's manifest, and its content must hash to the corpus `sha256`. Otherwise
+Each row records `E(q)` with every chunk's rank and score, and the protocol's `tieAtCutoff` at `answerK`: whether
+the scores at ranks `answerK` and `answerK + 1` are bit-exactly equal. At `answerK = 5` the rank-6 score comes from a
+separate limit-6 lookahead call, which never enters `E(q)`. Every returned atom must map through the root's
+manifest, and its content must hash to the corpus `sha256`. Otherwise
 the recall fails (`completed`) and that query and layer get no L4 row. Corpus text is never substituted. Evaluations
 bound to different layers, roots or `answerK` values are separate report rows.
 
@@ -113,7 +116,8 @@ result on `html-kq-v1` is `in-sample (tuned)`. No held-out query set exists yet.
 citations. #109 ships only the deterministic `TestDoubleAnswerGenerator`:
 - no model, provider, prompt or network;
 - its rows are labelled `TEST_DOUBLE`;
-- only its citation mechanics are reported (`CitationFidelity`).
+- only its citation mechanics are reported (`CitationFidelity`). Every gold-relative value, including
+  `CitationPrecision` and `CitationRecall`, stays undefined for it.
 
 A real local or remote model is future opt-in work under the protocol's fixture, cost and privacy rules.
 
@@ -177,7 +181,7 @@ Per root, layer, `answerK` and component:
 
 ## Results (2026-10-21)
 
-Measured on Neuron `e246b7b` (clean tree) and Store `fa77e52` (clean checkout), with Azul OpenJDK 27 on Linux, an AMD
+Measured on Neuron `cc9d192` (clean tree) and Store `1811666` (clean checkout), with Azul OpenJDK 27 on Linux, an AMD
 Ryzen 7 7730U and Store roots on `tmpfs`. Each run used one seed JVM and one answer JVM. Two full runs on that commit
 gave byte-identical `answers` payloads, with all 21 checks passing and no row unscored or unjudged.
 
@@ -196,9 +200,10 @@ the first chunk. A larger `answerK` changes only whether retrieval counts as com
 abstention into a wrong one: at `answerK = 1`, B3c on B1 has 11 evidence-miss and 8 wrong abstentions.
 
 The generator test double cites eligibly in every row (`CitationFidelity` 1.000). Its answers are not judged.
+`tieAtCutoff` is `false` in every row: no evidence set ends inside a tie group, as #107 found for B1 and B2.
 
 Answer latency, a diagnostic only, was measured as one answer over `E(q)` of B1 at `answerK = 5` on the full root, 32
-samples, with recall excluded. Medians: B3 35 µs, B3c 31 µs, test double 16 µs.
+samples, with recall excluded. Medians: B3 24 µs, B3c 22 µs, test double 14 µs.
 
 Observations, not tuned away:
 
@@ -252,6 +257,8 @@ extension leaves to #109:
   for all three such queries of `html-kq-v1`.
 - **Conflict disclosure.** `conflictDisclosed` is `false` by rule when the eligible citations do not cover both
   chunks of the pair.
+- **Retrieval in every row.** Each row keeps `E(q)` with ranks and scores and its `tieAtCutoff`, from a limit-6
+  lookahead at `answerK = 5`.
 - **Components and layers.** The components are B3, B3c (in-sample, tuned) and the `TEST_DOUBLE` generator.
   `TEST_DOUBLE` rows are never judged and get no status. Both `B1` and `B2` are evaluated at `answerK` 1, 3 and 5,
   on the full root and on the root without `doc:links`.
