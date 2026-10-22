@@ -21,6 +21,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeSet;
+import java.util.regex.Pattern;
 
 import static monada.neuron.evaluation.knowledge.HtmlKnowledgeRecallReport.aggregateJson;
 import static monada.neuron.evaluation.knowledge.HtmlKnowledgeRecallReport.format;
@@ -410,7 +411,7 @@ final class HtmlKnowledgeScalingReport {
         var names = new LinkedHashSet<String>();
         results.forEach(result -> result.rows().forEach(row -> names.add(name(row) + "|"
                 + Optional.ofNullable(row.diagnostics().get("k")).orElse("-"))));
-        results.forEach(result -> result.unavailable().keySet().forEach(label -> names.add(label + "|-")));
+        results.forEach(result -> result.unavailable().keySet().forEach(label -> names.add(rowKey(label))));
         for (var key : names) {
             var name = key.substring(0, key.indexOf('|'));
             var k = key.substring(key.indexOf('|') + 1);
@@ -455,6 +456,12 @@ final class HtmlKnowledgeScalingReport {
             return format(aggregate.noAnswerFalsePositiveRate());
         }
         return format(aggregate.answerable().get(metric).value());
+    }
+
+    /** Splits an unavailable row label such as {@code warm.b2.k5} into the table key {@code warm.b2|5}. */
+    static String rowKey(String label) {
+        var suffix = Pattern.compile("(.+)\\.k(\\d+)").matcher(label);
+        return suffix.matches() ? suffix.group(1) + "|" + suffix.group(2) : label + "|-";
     }
 
     private static String rowCell(PointResult result, String name, String k) {

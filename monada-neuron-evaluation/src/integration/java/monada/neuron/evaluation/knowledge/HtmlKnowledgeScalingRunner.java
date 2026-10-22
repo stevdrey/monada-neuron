@@ -288,7 +288,13 @@ public final class HtmlKnowledgeScalingRunner {
                 : String.join(", ", family.excludedFromCurve()));
         metadata.put("k", HtmlKnowledgeScaling.KS.stream().map(String::valueOf).collect(Collectors.joining(", ")));
         metadata.put("threshold", Double.toString(HtmlKnowledgeRecall.THRESHOLD));
-        metadata.put("codec", "token-packing v1 (TokenPackingSignalCodec), one Store call per distinct query token");
+        metadata.put("reopenMode", "fresh-handle (in-process: each phase reopens the point root through a new handle in"
+                + " this JVM; restart persistence is the evidence of #106 and #107)");
+        metadata.put("codec", TokenPackingSignalCodec.describe());
+        metadata.put("codec.scope", "L2 quality and B2 cost: a function of the query text only; reads no query id or gold"
+                + " label");
+        metadata.put("query.tuning", "none: B3 has no tuned parameter and the threshold is the Store default; the"
+                + " generator templates were reviewed for irrelevance, not tuned on results");
         metadata.put("cycle", "MEMORY_RECALL -> REASONING -> EVALUATION, memory-stage and reasoning limit k, budget "
                 + HtmlKnowledgeCycleExperiment.BUDGET + ", trace key " + HtmlKnowledgeCycleExperiment.TRACE_KEY);
         var answerer = new ExtractiveAnswerer(ExtractiveAnswerer.Rule.B3);
@@ -296,6 +302,10 @@ public final class HtmlKnowledgeScalingRunner {
         metadata.put("answer.evidenceLayers", "B1, B2 (answerK = k); timed rows bind B1");
         metadata.put("answer.judgments", "unavailable at scale points: html-l4-judgments-v1 is keyed to html-kc-v1"
                 + " answers; only mechanical counts are reported");
+        metadata.put("answer.keyClaimCounts", "unavailable (no matcher-only or final key-claim matching and no reviewer"
+                + " overrides at scale points; every answer row carries keyClaimEdges null)");
+        metadata.put("l3.traceKey", HtmlKnowledgeCycleExperiment.TRACE_KEY);
+        metadata.put("l3.memoryStageLimit", "k (1, 3, 5)");
         metadata.put("footprint.heapRetainedBytes", "unavailable (not measured: no heap-dump or retained-size"
                 + " probe in this harness)");
         for (var point : family.points()) {

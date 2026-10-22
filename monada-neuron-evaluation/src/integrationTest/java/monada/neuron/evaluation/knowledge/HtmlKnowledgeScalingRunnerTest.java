@@ -84,6 +84,12 @@ class HtmlKnowledgeScalingRunnerTest {
             assertTrue(metadata.containsKey(key), key);
         }
         assertEquals("scaling-v1", metadata.get("extensions"));
+        assertTrue(metadata.get("reopenMode").startsWith("fresh-handle"));
+        assertEquals(TokenPackingSignalCodec.describe(), metadata.get("codec"));
+        for (var key : List.of("codec.scope", "query.tuning", "answer.keyClaimCounts", "l3.traceKey",
+                "l3.memoryStageLimit")) {
+            assertTrue(metadata.containsKey(key), key);
+        }
         assertTrue(metadata.get("n25.perf.open.processCold").startsWith("unavailable"));
         assertTrue(metadata.get("footprint.heapRetainedBytes").startsWith("unavailable"));
         assertEquals("q:code-example-02, q:exact-term-03, q:exact-term-04, q:exact-term-05, q:false-premise-01",
@@ -131,6 +137,17 @@ class HtmlKnowledgeScalingRunnerTest {
         var json = degraded.json();
         assertTrue(json.contains("\"warm.b2.k5\": \"invalidated (a timed sample differs from the verified result"));
         assertTrue(json.contains("\"b2MinusB2cMedianNanosPerQuery\": null"));
+        // An invalidated row stays aligned with its row name and k in the Markdown table.
+        var markdown = degraded.markdown();
+        assertTrue(markdown.contains("| `warm.b2` | 5 | invalidated |"), markdown);
+        assertFalse(markdown.contains("`warm.b2.k5`"));
+    }
+
+    @Test
+    void unavailableRowLabelsSplitTheirK() {
+        assertEquals("warm.b2|5", HtmlKnowledgeScalingReport.rowKey("warm.b2.k5"));
+        assertEquals("warm.qa.b1+b3|3", HtmlKnowledgeScalingReport.rowKey("warm.qa.b1+b3.k3"));
+        assertEquals("open.firstRecall.b2|-", HtmlKnowledgeScalingReport.rowKey("open.firstRecall.b2"));
     }
 
     @Test
