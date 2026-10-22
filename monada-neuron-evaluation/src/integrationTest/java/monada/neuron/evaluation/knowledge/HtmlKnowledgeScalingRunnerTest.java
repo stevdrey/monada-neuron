@@ -137,6 +137,13 @@ class HtmlKnowledgeScalingRunnerTest {
         var json = degraded.json();
         assertTrue(json.contains("\"warm.b2.k5\": \"invalidated (a timed sample differs from the verified result"));
         assertTrue(json.contains("\"b2MinusB2cMedianNanosPerQuery\": null"));
+        // Unavailable rows render in sorted label order on every JVM.
+        var unavailable = degraded.scaling().orElseThrow().toJson();
+        var labels = List.of("\"open.firstRecall.b2\": ", "\"warm.b2.k1\": ", "\"warm.b2.k3\": ",
+                "\"warm.b2.k5\": ", "\"warm.cycle.k1\": ");
+        for (var i = 1; i < labels.size(); i++) {
+            assertTrue(unavailable.indexOf(labels.get(i - 1)) < unavailable.indexOf(labels.get(i)), labels.get(i));
+        }
         // An invalidated row stays aligned with its row name and k in the Markdown table.
         var markdown = degraded.markdown();
         assertTrue(markdown.contains("| `warm.b2` | 5 | invalidated |"), markdown);

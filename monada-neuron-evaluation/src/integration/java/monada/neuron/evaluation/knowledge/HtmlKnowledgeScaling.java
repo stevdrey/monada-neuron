@@ -36,6 +36,7 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -184,15 +185,15 @@ final class HtmlKnowledgeScaling {
         PointResult {
             checks = List.copyOf(checks);
             rows = List.copyOf(rows);
-            unavailable = Map.copyOf(unavailable);
-            quality = Map.copyOf(quality);
-            abstention = Map.copyOf(abstention);
+            unavailable = ordered(unavailable);
+            quality = ordered(quality);
+            abstention = ordered(abstention);
             queryScores = List.copyOf(queryScores);
-            answers = Map.copyOf(answers);
+            answers = ordered(answers);
             answerRows = List.copyOf(answerRows);
             traces = List.copyOf(traces);
-            overhead = Map.copyOf(overhead);
-            metadata = Map.copyOf(metadata);
+            overhead = ordered(overhead);
+            metadata = ordered(metadata);
         }
     }
 
@@ -217,6 +218,14 @@ final class HtmlKnowledgeScaling {
             attached = List.copyOf(attached);
             selected = List.copyOf(selected);
         }
+    }
+
+    /**
+     * Returns an unmodifiable copy that keeps {@code map}'s iteration order, so a report renders the same entries in
+     * the same order on every JVM ({@code Map.copyOf} does not guarantee an order).
+     */
+    private static <K, V> Map<K, V> ordered(Map<K, V> map) {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(map));
     }
 
     /**
@@ -311,6 +320,16 @@ final class HtmlKnowledgeScaling {
             }
             measured.add(row);
             return Optional.of(row);
+        }
+
+        /**
+         * Records a row that cannot be measured because its verified reference is itself unavailable: timing it could
+         * only reproduce a failed path, which must never be published.
+         */
+        void withhold(String name, Optional<Integer> k, String reason) {
+            var label = name + k.map(value -> ".k" + value).orElse("");
+            unavailable.put(label, "invalidated (no verified result to time against: " + reason + ")");
+            mismatches.add(label + ": " + reason);
         }
 
         private String scale(Optional<Integer> k) {
@@ -625,6 +644,12 @@ final class HtmlKnowledgeScaling {
 
     private void measureCycle(int k, List<QueryText> workload, Map<String, Run> verified, ResonanceMemoryPort timed,
             Rows rows) {
+        var failed = workload.stream().filter(query -> verified.get(query.queryId()).failure().isPresent())
+                .map(QueryText::queryId).toList();
+        if (!failed.isEmpty()) {
+            rows.withhold("warm.cycle", Optional.of(k), "the verified cycle failed for " + head(failed));
+            return;
+        }
         rows.measure("warm.cycle", Optional.of(k), sampling.warmups(), sampling.iterations(), workload.size(), null,
                 () -> {
                     var runs = new ArrayList<Run>(workload.size());
@@ -653,12 +678,24 @@ final class HtmlKnowledgeScaling {
             bound.add(chunks.orElse(List.of()));
             verified.add(chunks.map(set -> answerer.answer(query.text(), set)));
         }
+        var missing = new ArrayList<String>();
+        for (var i = 0; i < workload.size(); i++) {
+            if (verified.get(i).isEmpty()) {
+                missing.add(workload.get(i).queryId());
+            }
+        }
+        if (!missing.isEmpty()) {
+            // Without verified evidence the answer step would be skipped and the row would time less work.
+            var reason = "the verified B1 evidence recall failed for " + head(missing);
+            rows.withhold("warm.qa.b3", Optional.of(k), reason);
+            rows.withhold("warm.qa.b1+b3", Optional.of(k), reason);
+            return;
+        }
         rows.measure("warm.qa.b3", Optional.of(k), sampling.warmups(), sampling.iterations(), workload.size(), null,
                 () -> {
                     var answers = new ArrayList<Optional<GroundedAnswer>>(workload.size());
                     for (var i = 0; i < workload.size(); i++) {
-                        answers.add(verified.get(i).isEmpty() ? Optional.empty()
-                                : Optional.of(answerer.answer(workload.get(i).text(), bound.get(i))));
+                        answers.add(Optional.of(answerer.answer(workload.get(i).text(), bound.get(i))));
                     }
                     return answers;
                 }, answers -> firstDifference(workload, i -> answers.get(i).equals(verified.get(i))
