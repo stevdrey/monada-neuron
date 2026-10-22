@@ -138,10 +138,12 @@ All checks are semantic and are judged outside every timed window. Each name is 
 | `recall.*`, `fidelity.*`, `neuron.b2EqualsB2c` | the full #107 observation of the point's eligible queries: B0, B1, B2 and B2c with fidelity, prefix stability and B2 = B2c |
 | `cycle.traceIntegrity` | every verified cycle at every `k` completes with one port call and admits a prefix of the recorded response. It attaches only admitted references and admits exactly the verified B2 rows |
 | `answer.citationsEligible` | every B3 citation over B1 and B2 evidence at every `answerK` lies within `E(q)` and in bounds, and every evidence recall completed |
-| `perf.matchesVerified` | after the window, every timed sample, warm-ups included, equals the verified result: mapped chunks, order and bit-exact scores, equal cycle runs, equal answers. A mismatch or a throw fails the run and withholds the row: it is listed as `invalidated` (or `unavailable` after a throw) and is never published, so **no published row times a degraded path** |
+| `perf.matchesVerified` | after the window, every timed sample, warm-ups included, equals the verified result: mapped chunks, order and bit-exact scores, equal cycle runs, equal answers. A row is also withheld before timing when its verified reference is itself invalid: a failed ingestion, readback or recall check (for example B2 = B2c) withholds every recall-based row; a trace-integrity violation at `k` withholds `warm.cycle` at `k`; a failed evidence recall or an ineligible citation withholds the answer rows. A mismatch, a throw or an invalid reference fails the run and the row is listed as `invalidated` (or `unavailable` after a throw), never published, so **no published row times a degraded path** |
 
 `HtmlKnowledgeScalingRunnerTest` injects an empty port into the timed windows only. It requires exactly
-`perf.matchesVerified` to fail and the affected B2, cycle and first-recall rows to be withheld as invalidated.
+`perf.matchesVerified` to fail and the affected B2, cycle and first-recall rows to be withheld as invalidated. A second
+test gives the verified cycles an empty port and requires `cycle.traceIntegrity` to fail and `warm.cycle` to be
+withheld.
 
 ## Metrics
 

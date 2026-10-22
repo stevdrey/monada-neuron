@@ -76,8 +76,10 @@ import java.util.stream.Stream;
  * queries, the #108 trace integrity of every verified cycle and the mechanical citation check of #109. Every timed
  * sample, warm-up included, keeps its result, and after the window each one must equal the verified result (mapped
  * chunk ids, order and bit-exact scores; equal cycle runs; equal answers). A mismatch or a throw fails
- * {@code perf.matchesVerified} and the row is withheld (listed as invalidated or unavailable), so no published latency
- * ever describes a degraded path. Latency and allocation never decide a
+ * {@code perf.matchesVerified} and the row is withheld (listed as invalidated or unavailable). A row whose verified
+ * reference is itself semantically invalid (a failed baseline check, a trace-integrity violation at its {@code k}, a
+ * failed evidence recall or an ineligible citation) is withheld before timing, so no published latency ever describes
+ * a degraded path. Latency and allocation never decide a
  * verdict.
  */
 final class HtmlKnowledgeScaling {
@@ -240,6 +242,7 @@ final class HtmlKnowledgeScaling {
 
     private final Sampling sampling;
     private final UnaryOperator<ResonanceMemoryPort> timedPort;
+    private final UnaryOperator<ResonanceMemoryPort> verifiedCyclePort;
     private final EvaluationMetricsCollector collector = new EvaluationMetricsCollector();
     private final TokenPackingSignalCodec codec = new TokenPackingSignalCodec();
     private final HtmlKnowledgeCycleExperiment cycle = new HtmlKnowledgeCycleExperiment();
@@ -247,16 +250,20 @@ final class HtmlKnowledgeScaling {
     private final ExtractiveAnswerer answerer = new ExtractiveAnswerer(ExtractiveAnswerer.Rule.B3);
 
     HtmlKnowledgeScaling(Sampling sampling) {
-        this(sampling, UnaryOperator.identity());
+        this(sampling, UnaryOperator.identity(), UnaryOperator.identity());
     }
 
     /**
-     * Creates the profile; {@code timedPort} wraps the adapter used inside timed windows only, so a test can inject a
-     * degraded port and observe {@code perf.matchesVerified} fail. Verified results never go through it.
+     * Creates the profile with two test seams. {@code timedPort} wraps the adapter used inside timed windows only, so a
+     * test can inject a degraded port and observe {@code perf.matchesVerified} fail; verified results never go through
+     * it. {@code verifiedCyclePort} wraps the adapter of the verified cycles only, so a test can make a verified cycle
+     * semantically invalid and observe its timing row withheld.
      */
-    HtmlKnowledgeScaling(Sampling sampling, UnaryOperator<ResonanceMemoryPort> timedPort) {
+    HtmlKnowledgeScaling(Sampling sampling, UnaryOperator<ResonanceMemoryPort> timedPort,
+            UnaryOperator<ResonanceMemoryPort> verifiedCyclePort) {
         this.sampling = Objects.requireNonNull(sampling, "sampling must not be null");
         this.timedPort = Objects.requireNonNull(timedPort, "timedPort must not be null");
+        this.verifiedCyclePort = Objects.requireNonNull(verifiedCyclePort, "verifiedCyclePort must not be null");
     }
 
     /** Collects the rows, unavailable rows and mismatches of one point. */
@@ -323,8 +330,8 @@ final class HtmlKnowledgeScaling {
         }
 
         /**
-         * Records a row that cannot be measured because its verified reference is itself unavailable: timing it could
-         * only reproduce a failed path, which must never be published.
+         * Records a row that is not measured because its verified reference is unavailable or semantically invalid:
+         * timing it could only reproduce a failed path, which must never be published.
          */
         void withhold(String name, Optional<Integer> k, String reason) {
             var label = name + k.map(value -> ".k" + value).orElse("");
@@ -393,7 +400,17 @@ final class HtmlKnowledgeScaling {
         var memory = MonadaMemory.open(root);
         var config = recall.adapterConfig();
         var sample = HtmlKnowledgeRecall.firstWithToken(texts(family.curve())).orElseThrow();
-        measureFirstRecall(point, root, manifest, snapshot, sample, rows);
+        // Every recall row is timed against the verified snapshot, so the snapshot must itself be valid: a failed
+        // ingestion, readback or recall check (for example B2 = B2c) withholds every recall-based row.
+        var failedBaseline = checks.stream().filter(check -> !check.passed()).map(Check::name).toList();
+        var baseline = failedBaseline.isEmpty() ? Optional.<String>empty()
+                : Optional.of("the verified baseline failed " + head(failedBaseline));
+        if (baseline.isPresent()) {
+            rows.withhold("open.firstRecall.b1", Optional.empty(), baseline.get());
+            rows.withhold("open.firstRecall.b2", Optional.empty(), baseline.get());
+        } else {
+            measureFirstRecall(point, root, manifest, snapshot, sample, rows);
+        }
         metadata.put(prefix + "perf.open.processCold", PROCESS_COLD);
 
         var evidence = new RecalledEvidence(corpus, manifest);
@@ -418,11 +435,22 @@ final class HtmlKnowledgeScaling {
                 b1ById.put(queries.get(i).queryId(), b1Evidence.get(i));
             }
             for (var k : KS) {
-                measureRecall(point, k, workload, signals, memory, timed, manifest, snapshot, rows);
-                var verified = verifyCycles(point, k, queries, adapter, manifest, resolver, snapshot, cycleViolations,
-                        traces);
-                measureCycle(k, workload, verified, timed, rows);
-                measureAnswers(k, workload, b1ById, evidence, memory, rows);
+                var violationsBefore = cycleViolations.size();
+                var verified = verifyCycles(point, k, queries, verifiedCyclePort.apply(adapter), manifest, resolver,
+                        snapshot, cycleViolations, traces);
+                var cycleBlocker = baseline.or(() -> cycleViolations.size() == violationsBefore ? Optional.empty()
+                        : Optional.of("a verified cycle violated trace integrity: "
+                                + head(cycleViolations.subList(violationsBefore, cycleViolations.size()))));
+                if (baseline.isPresent()) {
+                    for (var name : List.of("warm.b1", "warm.b2c", "warm.b2", "warm.qa.b3", "warm.qa.b1+b3")) {
+                        rows.withhold(name, Optional.of(k), baseline.get());
+                    }
+                } else {
+                    measureRecall(point, k, workload, signals, memory, timed, manifest, snapshot, rows);
+                    measureAnswers(k, workload, b1ById, evidence, memory, rows);
+                }
+                cycleBlocker.ifPresentOrElse(reason -> rows.withhold("warm.cycle", Optional.of(k), reason),
+                        () -> measureCycle(k, workload, verified, timed, rows));
                 for (var layer : SCORED_LAYERS) {
                     var rowsAtK = answerRows(point.eligible(), layer == Layer.B1 ? b1Evidence : b2Evidence, layer, k);
                     answerRows.addAll(rowsAtK);
@@ -445,9 +473,10 @@ final class HtmlKnowledgeScaling {
                                 + " bounds, and every evidence recall completed with verified Store content"
                         : "ineligible citations at " + ineligible + "; failed evidence at " + failedEvidence));
         checks.add(new Check(prefix + "perf.matchesVerified", rows.mismatches.isEmpty(), rows.mismatches.isEmpty()
-                ? "every timed sample of all " + rows.measured.size() + " rows reproduced the verified result outside"
-                        + " the window, so no row timed a degraded path"
-                : rows.mismatches.size() + " rows timed a result that differs from the verified one or threw: "
+                ? "every timed sample of all " + rows.measured.size() + " rows reproduced a semantically valid verified"
+                        + " result outside the window, so no row timed a degraded path"
+                : rows.mismatches.size() + " rows were withheld (invalid verified reference, differing timed result or a"
+                        + " throw): "
                         + head(rows.mismatches)));
         metadata.put(prefix + "queries.eligible", Integer.toString(point.eligible().size()));
         metadata.put(prefix + "queries.removed", point.removed().isEmpty() ? "none"
@@ -644,12 +673,6 @@ final class HtmlKnowledgeScaling {
 
     private void measureCycle(int k, List<QueryText> workload, Map<String, Run> verified, ResonanceMemoryPort timed,
             Rows rows) {
-        var failed = workload.stream().filter(query -> verified.get(query.queryId()).failure().isPresent())
-                .map(QueryText::queryId).toList();
-        if (!failed.isEmpty()) {
-            rows.withhold("warm.cycle", Optional.of(k), "the verified cycle failed for " + head(failed));
-            return;
-        }
         rows.measure("warm.cycle", Optional.of(k), sampling.warmups(), sampling.iterations(), workload.size(), null,
                 () -> {
                     var runs = new ArrayList<Run>(workload.size());
@@ -684,9 +707,19 @@ final class HtmlKnowledgeScaling {
                 missing.add(workload.get(i).queryId());
             }
         }
-        if (!missing.isEmpty()) {
-            // Without verified evidence the answer step would be skipped and the row would time less work.
-            var reason = "the verified B1 evidence recall failed for " + head(missing);
+        var ineligible = new ArrayList<String>();
+        for (var i = 0; i < workload.size(); i++) {
+            var set = bound.get(i);
+            if (verified.get(i).orElse(null) instanceof Answered answered && answered.claims().stream().anyMatch(
+                    claim -> claim.citations().stream().anyMatch(citation -> !qa.verify(claim.text(), citation, set)
+                            .eligible()))) {
+                ineligible.add(workload.get(i).queryId());
+            }
+        }
+        if (!missing.isEmpty() || !ineligible.isEmpty()) {
+            // Without valid verified answers the row would time a failed or invalid path.
+            var reason = !missing.isEmpty() ? "the verified B1 evidence recall failed for " + head(missing)
+                    : "a verified answer cites outside E(q) for " + head(ineligible);
             rows.withhold("warm.qa.b3", Optional.of(k), reason);
             rows.withhold("warm.qa.b1+b3", Optional.of(k), reason);
             return;

@@ -123,7 +123,7 @@ class HtmlKnowledgeScalingRunnerTest {
                 request.maxResults(), List.of());
         var degraded = HtmlKnowledgeScalingRunner.run(HtmlKnowledgeScalingRunner.Options.parse(new String[] {
                 "--quick", "--sizes", "25", "--output-dir", degradedDirectory.resolve("out").toString()}),
-                port -> empty);
+                port -> empty, port -> port);
         var failed = degraded.report().checks().stream().filter(check -> !check.passed())
                 .map(EvaluationCheck::name).toList();
         assertEquals(List.of("n25.perf.matchesVerified"), failed);
@@ -148,6 +148,24 @@ class HtmlKnowledgeScalingRunnerTest {
         var markdown = degraded.markdown();
         assertTrue(markdown.contains("| `warm.b2` | 5 | invalidated |"), markdown);
         assertFalse(markdown.contains("`warm.b2.k5`"));
+    }
+
+    @Test
+    void anInvalidVerifiedCycleWithholdsItsTimingRow(@TempDir Path invalidDirectory) {
+        // The verified cycles see an empty port, so their admitted results differ from B2: trace integrity fails.
+        ResonanceMemoryPort empty = request -> new ResonanceMemoryResponse(ResonanceMemoryStatus.COMPLETE,
+                request.maxResults(), List.of());
+        var invalid = HtmlKnowledgeScalingRunner.run(HtmlKnowledgeScalingRunner.Options.parse(new String[] {
+                "--quick", "--sizes", "25", "--output-dir", invalidDirectory.resolve("out").toString()}),
+                port -> port, port -> empty);
+        var failed = invalid.report().checks().stream().filter(check -> !check.passed())
+                .map(EvaluationCheck::name).toList();
+        assertEquals(List.of("n25.cycle.traceIntegrity", "n25.perf.matchesVerified"), failed);
+        var names = invalid.report().evaluation().results().stream().map(row -> row.benchmarkName()).toList();
+        assertFalse(names.contains("scaling.warm.cycle"), "a cycle row timed against an invalid verified run");
+        assertTrue(names.contains("scaling.warm.b2"));
+        assertTrue(invalid.json().contains("\"warm.cycle.k5\": \"invalidated (no verified result to time against: a"
+                + " verified cycle violated trace integrity"));
     }
 
     @Test

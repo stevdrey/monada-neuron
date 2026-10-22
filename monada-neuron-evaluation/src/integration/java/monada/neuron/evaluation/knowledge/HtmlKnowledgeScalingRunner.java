@@ -197,11 +197,15 @@ public final class HtmlKnowledgeScalingRunner {
      * @throws CorpusValidationException when a corpus or the query set violates its contract
      */
     public static Outcome run(Options options) {
-        return run(options, UnaryOperator.identity());
+        return run(options, UnaryOperator.identity(), UnaryOperator.identity());
     }
 
-    /** {@link #run(Options)} with a decorator of the adapter used inside timed windows only (a test seam). */
-    static Outcome run(Options options, UnaryOperator<ResonanceMemoryPort> timedPort) {
+    /**
+     * {@link #run(Options)} with test seams: decorators of the adapter used inside timed windows only and of the adapter
+     * of the verified cycles only (see {@link HtmlKnowledgeScaling}).
+     */
+    static Outcome run(Options options, UnaryOperator<ResonanceMemoryPort> timedPort,
+            UnaryOperator<ResonanceMemoryPort> verifiedCyclePort) {
         Objects.requireNonNull(options, "options must not be null");
         HtmlKnowledgeIngestionRunner.prepareOutput(options.outputDir(), List.of(
                 options.outputDir().resolve(REPORT_JSON), options.outputDir().resolve(REPORT_MARKDOWN)));
@@ -211,7 +215,7 @@ public final class HtmlKnowledgeScalingRunner {
         var querySet = HtmlKnowledgeQuerySet.bundled(base);
         var family = HtmlKnowledgeScalingCorpus.of(base, querySet, options.sizes(), options.seed());
         var sampling = options.quick() ? Sampling.QUICK : Sampling.FULL;
-        var scaling = new HtmlKnowledgeScaling(sampling, timedPort);
+        var scaling = new HtmlKnowledgeScaling(sampling, timedPort, verifiedCyclePort);
 
         var checks = new ArrayList<Check>();
         var metadata = new TreeMap<String, String>();
@@ -245,7 +249,8 @@ public final class HtmlKnowledgeScalingRunner {
         var rows = results.stream().flatMap(result -> result.rows().stream()).toList();
         var evaluation = new EvaluationReport(Instant.now(), EnvironmentMetadata.current(),
                 new RunConfiguration(options.seed(), options.quick(), sampling.warmups(), sampling.iterations(),
-                        "warm rows: one operation per eligible query (operationsPerIteration = query count); ingestion:"
+                        "warm rows: one operation per query of the fixed curve cohort, the same queries at every point"
+                                + " (operationsPerIteration = cohort size); ingestion:"
                                 + " one operation per chunk; setup and first-recall rows: one operation, "
                                 + sampling.coldIterations() + " samples on fresh state; exploratory, never a verdict"),
                 rows, TITLE);
