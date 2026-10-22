@@ -138,7 +138,7 @@ All checks are semantic and are judged outside every timed window. Each name is 
 | `ingestion.*` | manifest complete, content fidelity, and readback with `topK(N)` (#105) |
 | `store.freshHandleReadback` | a freshly opened handle reads every chunk back and returns exactly the manifest's atoms. This is fresh-handle consistency, not persistence evidence |
 | `recall.*`, `fidelity.*`, `neuron.b2EqualsB2c` | the full #107 observation of the point's eligible queries: B0, B1, B2 and B2c with fidelity, prefix stability and B2 = B2c |
-| `cycle.traceIntegrity` | every verified cycle of every eligible query at every `k` replays identically (as in #108), runs `MEMORY_RECALL → REASONING → EVALUATION`, terminates `COMPLETED` with one port call and admits a prefix of the recorded response. It attaches only admitted references and admits exactly the verified B2 rows |
+| `cycle.traceIntegrity` | every verified cycle of every eligible query at every `k` passes #108's real-port checks: it replays identically, runs `MEMORY_RECALL → REASONING → EVALUATION`, terminates `COMPLETED` with one port call whose request equals the codec Signals at limit `k` and whose recall answers `COMPLETE` with resolvable references, never fails closed, admits a prefix of the recorded response, attaches only admitted references and admits exactly the verified B2 rows |
 | `answer.citationsEligible` | every B3 citation over B1 and B2 evidence at every `answerK` lies within `E(q)` and in bounds, and every evidence recall completed |
 | `perf.matchesVerified` | after the window, every timed sample, warm-ups included, equals the verified result: mapped chunks, order and bit-exact scores, equal cycle runs, equal answers. A row is also withheld before timing when its verified reference is itself invalid: a failed ingestion, readback or recall check (for example B2 = B2c) withholds every recall-based row; a trace-integrity violation at `k` withholds `warm.cycle` at `k`; a failed evidence recall or an ineligible citation withholds the answer rows. A mismatch, a throw or an invalid reference fails the run and the row is listed as `invalidated` (or `unavailable` after a throw), never published, so **no published row times a degraded path** |
 
@@ -166,7 +166,8 @@ withheld.
   `anyContradictedClaim`) need a human verdict.
 - **Text policy.** Generated chunks come from authored Apache-2.0 templates, so every point corpus is publishable and
   claim text is written; a redacted corpus would carry each claim's SHA-256 instead.
-- **Resources.** Per row: median and p95 per operation, throughput, allocated bytes per operation, and GC and RSS
+- **Resources.** Per row: the median and p95 of whole iterations, and those divided by the operations an iteration
+  batches (an amortized cost per query or chunk, not a percentile of single operations), throughput, allocated bytes per operation, and GC and RSS
   deltas. Per point: persisted atoms (distinct atoms of the fresh-handle readback), root bytes and files, and Store
   calls per B2 recall.
 
@@ -216,7 +217,11 @@ results, and only the two blank queries abstain. It does not change with N.
 The root grows by about 1 KB per chunk, and the file count stays constant. Store calls per B2 recall are averaged
 over the curve queries, so they are equal at every point.
 
-### Cost (exploratory; median per operation at k = 5, allocation per operation)
+### Cost (exploratory; amortized median per operation at k = 5, allocation per operation)
+
+A warm-row iteration times all 27 curve queries and an ingestion iteration all chunks, so each value is the
+iteration median divided by the operations: an amortized cost. A single slow query is diluted, not visible.
+
 
 | Row | N = 25 | N = 100 | N = 500 |
 | :--- | ---: | ---: | ---: |

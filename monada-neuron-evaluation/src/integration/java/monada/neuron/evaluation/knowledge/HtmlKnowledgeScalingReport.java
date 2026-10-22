@@ -382,8 +382,8 @@ final class HtmlKnowledgeScalingReport {
                 + ", \"measurementIterations\": " + row.iterations()
                 + ", \"medianNanos\": " + number(latency.medianNanos())
                 + ", \"p95Nanos\": " + number(latency.p95Nanos())
-                + ", \"medianNanosPerOperation\": " + number(latency.medianNanos() / operations)
-                + ", \"p95NanosPerOperation\": " + number(latency.p95Nanos() / operations)
+                + ", \"amortizedMedianNanosPerOperation\": " + number(latency.medianNanos() / operations)
+                + ", \"amortizedP95NanosPerOperation\": " + number(latency.p95Nanos() / operations)
                 + ", \"throughputOpsPerSec\": " + number(latency.throughputOpsPerSec())
                 + ", \"allocatedBytesPerOperation\": " + (row.allocation().source() == AllocationSource.THREAD_MX_BEAN
                         ? number(row.allocation().bytesPerOp()) : "null")
@@ -473,9 +473,11 @@ final class HtmlKnowledgeScalingReport {
             }
         }
 
-        md.append("\n## Latency per operation (median / p95) and allocation per operation\n\n"
-                + "An operation is one query for warm rows, one chunk for `ingest.remember` and one sample otherwise."
-                + " Exploratory, never a verdict.\n\n| row | k |");
+        md.append("\n## Amortized latency per operation (batch median / batch p95) and allocation per operation\n\n"
+                + "Each sample times one iteration, which batches its operations: one query of the curve cohort for"
+                + " warm rows, one chunk for `ingest.remember`, one sample otherwise. The values are the iteration"
+                + " median and p95 divided by the operations, an amortized cost, not the percentile of single"
+                + " operations. Exploratory, never a verdict.\n\n| row | k |");
         results.forEach(result -> md.append(" N=").append(result.point().size()).append(" |"));
         md.append("\n| :--- | ---: |");
         results.forEach(result -> md.append(" :--- |"));

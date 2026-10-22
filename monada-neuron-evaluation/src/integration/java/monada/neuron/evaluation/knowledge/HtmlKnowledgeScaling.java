@@ -24,6 +24,7 @@ import monada.neuron.evaluation.metrics.EvaluationMetricsCollector;
 import monada.neuron.memory.ResonanceMemoryPort;
 import monada.neuron.memory.ResonanceMemoryRequest;
 import monada.neuron.memory.ResonanceMemoryResponse;
+import monada.neuron.memory.ResonanceMemoryResult;
 import monada.neuron.memory.ResonanceMemoryStatus;
 import monada.neuron.monad.CognitiveCycleTermination;
 import monada.neuron.monad.CognitiveStageResult;
@@ -465,8 +466,10 @@ final class HtmlKnowledgeScaling {
         }
         checks.add(new Check(prefix + "cycle.traceIntegrity", cycleViolations.isEmpty(), cycleViolations.isEmpty()
                 ? "every verified cycle at every k replayed identically, ran MEMORY_RECALL -> REASONING -> EVALUATION"
-                        + " and terminated COMPLETED with one port call, admitted a prefix of the recorded response,"
-                        + " attached only admitted references, and admitted exactly the verified B2 rows"
+                        + " and terminated COMPLETED with one port call whose request equals the codec Signals at limit"
+                        + " k and whose recall answered COMPLETE with only resolvable references; it admitted a prefix"
+                        + " of the recorded response, attached only admitted references, never failed closed, and"
+                        + " admitted exactly the verified B2 rows"
                 : cycleViolations.size() + " violations: " + head(cycleViolations)));
         var ineligible = answers.entrySet().stream().filter(entry -> entry.getValue().ineligible() > 0)
                 .map(Map.Entry::getKey).toList();
@@ -675,6 +678,23 @@ final class HtmlKnowledgeScaling {
                 violations.add(where + "terminated " + termination + ", expected COMPLETED");
             }
             cycle.integrityViolations(run).forEach(violation -> violations.add(where + violation));
+            // #108's recallCompleted, requestMatchesCodec and referencesResolved for a real-port run.
+            if (!run.calls().isEmpty()) {
+                var call = run.calls().getFirst();
+                if (call.response().status() != ResonanceMemoryStatus.COMPLETE) {
+                    violations.add(where + "the recall answered " + call.response().status() + ", not COMPLETE");
+                }
+                if (!call.request().equals(new ResonanceMemoryRequest(run.inputs(), k))) {
+                    violations.add(where + "the memory request differs from the codec Signals at limit " + k);
+                }
+                call.response().results().stream().map(ResonanceMemoryResult::reference)
+                        .filter(reference -> !resolver.resolve(reference).resolved()).findFirst()
+                        .ifPresent(reference -> violations.add(where + "reference " + reference + " does not resolve"
+                                + " to a verified chunk"));
+            }
+            if (cycle.decide(run, resolver) == EvidenceDecision.FAILED_CLOSED) {
+                violations.add(where + "the host decision failed closed");
+            }
             var admitted = run.memory().map(memory -> memory.response().results()).orElse(List.of());
             var mapped = new ArrayList<Row>(admitted.size());
             for (var rank = 0; rank < admitted.size(); rank++) {
