@@ -5,6 +5,8 @@ import monada.neuron.evaluation.knowledge.GroundedAnswer.Abstained;
 import monada.neuron.evaluation.knowledge.GroundedAnswer.Answered;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.AnswerCounts;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.AnswerRow;
+import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.CycleTrace;
+import monada.neuron.evaluation.knowledge.JudgedQuery.Category;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.PointResult;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.Sampling;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScalingCorpus.Family;
@@ -176,6 +178,13 @@ final class HtmlKnowledgeScalingReport {
             json.append(first ? " " : ", ").append(string(outcome.name())).append(": ").append(totals[outcome.ordinal()]);
             first = false;
         }
+        json.append(" },\n            \"byCategory\": {");
+        first = true;
+        for (var category : Category.values()) {
+            json.append(first ? " " : ", ").append(string(category.label())).append(": ")
+                    .append(HtmlKnowledgeRecallReport.populationJson(k, aggregate.byCategory().get(category)));
+            first = false;
+        }
         return json.append(" } }").toString();
     }
 
@@ -200,8 +209,34 @@ final class HtmlKnowledgeScalingReport {
                     first = false;
                 }
             }
-            return json.append(" } }").toString();
+            json.append(" }, \"traces\": [");
+            first = true;
+            for (var trace : result.traces()) {
+                if (trace.queryId().equals(query.queryId())) {
+                    json.append(first ? " " : ", ").append(traceJson(trace));
+                    first = false;
+                }
+            }
+            return json.append(first ? "] }" : " ] }").toString();
         }).toList();
+    }
+
+    /** The L3 trace values of one verified cycle (#108's evidence path, without its control arms). */
+    private static String traceJson(CycleTrace trace) {
+        var json = new StringBuilder("{ \"k\": ").append(trace.k())
+                .append(", \"inputSignals\": ").append(trace.inputSignals())
+                .append(", \"portStatus\": ").append(string(trace.portStatus()))
+                .append(", \"admitted\": [");
+        for (var i = 0; i < trace.admitted().size(); i++) {
+            var row = trace.admitted().get(i);
+            json.append(i == 0 ? " " : ", ").append("{ \"rank\": ").append(row.rank()).append(", \"chunkId\": ")
+                    .append(string(row.chunkId())).append(", \"score\": ").append(number(row.score())).append(" }");
+        }
+        return json.append(trace.admitted().isEmpty() ? "]" : " ]")
+                .append(", \"attached\": ").append(strings(trace.attached()))
+                .append(", \"selected\": ").append(strings(trace.selected()))
+                .append(", \"decision\": ").append(string(trace.decision()))
+                .append(", \"termination\": ").append(string(trace.termination())).append(" }").toString();
     }
 
     /**

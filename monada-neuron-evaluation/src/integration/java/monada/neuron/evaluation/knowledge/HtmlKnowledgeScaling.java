@@ -18,12 +18,16 @@ import monada.neuron.evaluation.knowledge.HtmlKnowledgeScalingCorpus.Point;
 import monada.neuron.evaluation.knowledge.RecallMetrics.LayerAbstention;
 import monada.neuron.evaluation.knowledge.RecallMetrics.LayerAggregate;
 import monada.neuron.evaluation.knowledge.RecallMetrics.QueryScore;
+import monada.neuron.evaluation.EvaluationCognitiveStageResult;
 import monada.neuron.evaluation.metrics.BenchmarkRunResult;
 import monada.neuron.evaluation.metrics.EvaluationMetricsCollector;
 import monada.neuron.memory.ResonanceMemoryPort;
 import monada.neuron.memory.ResonanceMemoryRequest;
 import monada.neuron.memory.ResonanceMemoryResponse;
 import monada.neuron.memory.ResonanceMemoryStatus;
+import monada.neuron.reasoning.Evidence;
+import monada.neuron.reasoning.MemoryReferenceEvidence;
+import monada.neuron.reasoning.ReasoningCognitiveStageResult;
 import monada.neuron.resonance.adapter.ResonanceStoreMemoryAdapter;
 import monada.neuron.signal.Signal;
 
@@ -39,6 +43,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -165,6 +170,7 @@ final class HtmlKnowledgeScaling {
      * @param queryScores the per-query recall rows of the point population, B1 then B2, in query-set order
      * @param answers B3 counts by {@code layer/k} over the point population
      * @param answerRows the per-query B3 rows behind {@code answers}, by layer, {@code answerK} and query
+     * @param traces the L3 trace of every verified cycle of the point population, by {@code k} and query
      * @param footprint persisted-atom and on-disk figures
      * @param overhead the wrapper overhead per {@code k}: B2 minus B2c median nanoseconds per query, when both rows exist
      * @param storeCallsPerRecall mean Store calls one B2 recall makes (codec Signals per query)
@@ -172,7 +178,7 @@ final class HtmlKnowledgeScaling {
      */
     record PointResult(Point point, List<Check> checks, List<BenchmarkRunResult> rows, Map<String, String> unavailable,
             Map<String, LayerAggregate> quality, Map<String, LayerAbstention> abstention, List<QueryScore> queryScores,
-            Map<String, AnswerCounts> answers, List<AnswerRow> answerRows, Footprint footprint,
+            Map<String, AnswerCounts> answers, List<AnswerRow> answerRows, List<CycleTrace> traces, Footprint footprint,
             Map<Integer, Optional<Double>> overhead, double storeCallsPerRecall, Map<String, String> metadata) {
 
         PointResult {
@@ -184,8 +190,32 @@ final class HtmlKnowledgeScaling {
             queryScores = List.copyOf(queryScores);
             answers = Map.copyOf(answers);
             answerRows = List.copyOf(answerRows);
+            traces = List.copyOf(traces);
             overhead = Map.copyOf(overhead);
             metadata = Map.copyOf(metadata);
+        }
+    }
+
+    /**
+     * The L3 trace values of one verified cycle.
+     *
+     * @param queryId the query
+     * @param k the memory-stage and reasoning limit
+     * @param inputSignals the codec Signals sent as the memory request
+     * @param portStatus the status the port answered, or {@code none} without a call
+     * @param admitted the admitted results mapped to chunk ids, with their scores, in rank order
+     * @param attached the chunk ids of the memory references the reasoning stage attached, in order
+     * @param selected the chunk ids of the memory references the evaluation stage selected, in order
+     * @param decision the host decision of #108 ({@link EvidenceDecision})
+     * @param termination how the cycle ended
+     */
+    record CycleTrace(String queryId, int k, int inputSignals, String portStatus, List<Row> admitted,
+            List<String> attached, List<String> selected, String decision, String termination) {
+
+        CycleTrace {
+            admitted = List.copyOf(admitted);
+            attached = List.copyOf(attached);
+            selected = List.copyOf(selected);
         }
     }
 
@@ -348,21 +378,32 @@ final class HtmlKnowledgeScaling {
         metadata.put(prefix + "perf.open.processCold", PROCESS_COLD);
 
         var evidence = new RecalledEvidence(corpus, manifest);
+        var resolver = new RecalledReferenceResolver(corpus, manifest, Set.copyOf(sweep.unread()));
         var answers = new LinkedHashMap<String, AnswerCounts>();
         var answerRows = new ArrayList<AnswerRow>();
+        var traces = new ArrayList<CycleTrace>();
+        // Timed rows run over the fixed curve cohort, so every point times the same queries; quality, traces and
+        // answers also cover the point's own eligible queries and are labelled as such.
+        var workload = texts(family.curve());
         var overhead = new LinkedHashMap<Integer, Optional<Double>>();
         var cycleViolations = new ArrayList<String>();
         double storeCalls;
         try (var adapter = ResonanceStoreMemoryAdapter.open(root, config)) {
             var timed = timedPort.apply(adapter);
-            var signals = queries.stream().map(query -> codec.querySignals(query.text())).toList();
+            var signals = workload.stream().map(query -> codec.querySignals(query.text())).toList();
             storeCalls = signals.stream().mapToInt(List::size).average().orElse(0.0);
             var b1Evidence = queries.stream().map(query -> evidence.direct(memory, query.text())).toList();
             var b2Evidence = queries.stream().map(query -> evidence.neuron(adapter, memory, query.text())).toList();
+            var b1ById = new LinkedHashMap<String, RecalledEvidence.Recall>();
+            for (var i = 0; i < queries.size(); i++) {
+                b1ById.put(queries.get(i).queryId(), b1Evidence.get(i));
+            }
             for (var k : KS) {
-                measureRecall(point, k, queries, signals, memory, timed, manifest, snapshot, rows);
-                measureCycle(point, k, queries, adapter, timed, manifest, snapshot, rows, cycleViolations);
-                measureAnswers(point, k, queries, b1Evidence, evidence, memory, rows);
+                measureRecall(point, k, workload, signals, memory, timed, manifest, snapshot, rows);
+                var verified = verifyCycles(point, k, queries, adapter, manifest, resolver, snapshot, cycleViolations,
+                        traces);
+                measureCycle(k, workload, verified, timed, rows);
+                measureAnswers(k, workload, b1ById, evidence, memory, rows);
                 for (var layer : SCORED_LAYERS) {
                     var rowsAtK = answerRows(point.eligible(), layer == Layer.B1 ? b1Evidence : b2Evidence, layer, k);
                     answerRows.addAll(rowsAtK);
@@ -393,8 +434,11 @@ final class HtmlKnowledgeScaling {
         metadata.put(prefix + "queries.removed", point.removed().isEmpty() ? "none"
                 : String.join(", ", point.removed()));
         metadata.put(prefix + "perf.storeCallsPerB2Recall", String.format(Locale.ROOT, "%.2f", storeCalls));
+        metadata.put(prefix + "perf.workload", workload.size() + " curve queries in every timed warm row (the fixed"
+                + " cohort of the family); quality, traces and answers also cover the " + queries.size()
+                + " eligible queries of the point");
         return new PointResult(point, checks, rows.measured, rows.unavailable, quality, abstention, queryScores, answers,
-                answerRows, footprint, overhead, storeCalls, metadata);
+                answerRows, traces, footprint, overhead, storeCalls, metadata);
     }
 
     private void measureIngestion(Point point, Path directory, Rows rows, Map<String, String> metadata,
@@ -482,7 +526,7 @@ final class HtmlKnowledgeScaling {
             return all;
         }, all -> firstDifference(queries, i -> sameRows(atomRows(manifest, all.get(i)),
                 snapshot.rows(queries.get(i).queryId(), Layer.B1, k))),
-                "one MonadaMemory.resonate(text).topK(k).threshold(0.0) per eligible query on one warm handle",
+                "one MonadaMemory.resonate(text).topK(k).threshold(0.0) per curve query on one warm handle",
                 "mapped chunk ids and bit-exact scores equal the verified B1 rows");
         rows.measure("warm.b2c", Optional.of(k), sampling.warmups(), sampling.iterations(), size, null, () -> {
             var all = new ArrayList<List<ResonanceResult>>(size);
@@ -497,7 +541,7 @@ final class HtmlKnowledgeScaling {
             return all;
         }, all -> firstDifference(queries, i -> sameRows(atomRows(manifest, all.get(i)),
                 snapshot.rows(queries.get(i).queryId(), Layer.B2C, k))),
-                "the Store-side work of one B2 recall per eligible query: one resonate per codec Signal (Signals"
+                "the Store-side work of one B2 recall per curve query: one resonate per codec Signal (Signals"
                         + " built before the window, decoded to text inside it) plus the adapter's documented merge",
                 "mapped chunk ids and bit-exact scores equal the verified B2c rows");
         var requests = signals.stream().map(querySignals -> new ResonanceMemoryRequest(querySignals, k)).toList();
@@ -509,18 +553,23 @@ final class HtmlKnowledgeScaling {
             return all;
         }, all -> firstDifference(queries, i -> referenceRows(manifest, all.get(i),
                 snapshot.rows(queries.get(i).queryId(), Layer.B2, k))),
-                "one ResonanceStoreMemoryAdapter.recall per eligible query on one warm adapter; requests built"
+                "one ResonanceStoreMemoryAdapter.recall per curve query on one warm adapter; requests built"
                         + " before the window",
                 "status COMPLETE; mapped references and bit-exact scores equal the verified B2 rows");
     }
 
-    private void measureCycle(Point point, int k, List<QueryText> queries, ResonanceMemoryPort adapter,
-            ResonanceMemoryPort timed, IngestionManifest manifest, Snapshot snapshot, Rows rows,
-            List<String> violations) {
-        var verified = new ArrayList<Run>(queries.size());
+    /**
+     * Runs and checks the verified cycle of every eligible query at {@code k}, records its L3 trace and returns the
+     * verified runs by query id.
+     */
+    private Map<String, Run> verifyCycles(Point point, int k, List<QueryText> queries, ResonanceMemoryPort adapter,
+            IngestionManifest manifest, RecalledReferenceResolver resolver, Snapshot snapshot, List<String> violations,
+            List<CycleTrace> traces) {
+        var verified = new LinkedHashMap<String, Run>();
         for (var query : queries) {
             var run = cycle.execute(adapter, query.text(), HtmlKnowledgeCycleExperiment.BUDGET, k);
-            verified.add(run);
+            verified.put(query.queryId(), run);
+            traces.add(trace(query.queryId(), k, run, manifest, resolver));
             var where = "N=" + point.size() + " k=" + k + " " + query.queryId() + ": ";
             if (run.failure().isPresent()) {
                 violations.add(where + "the cycle failed: " + run.failure().get());
@@ -538,56 +587,108 @@ final class HtmlKnowledgeScaling {
             sameRows(mapped, snapshot.rows(query.queryId(), Layer.B2, k))
                     .ifPresent(difference -> violations.add(where + "admitted results differ from B2: " + difference));
         }
-        rows.measure("warm.cycle", Optional.of(k), sampling.warmups(), sampling.iterations(), queries.size(), null,
+        return verified;
+    }
+
+    private CycleTrace trace(String queryId, int k, Run run, IngestionManifest manifest,
+            RecalledReferenceResolver resolver) {
+        Function<String, String> chunk = reference -> manifest.chunkIdForReference(reference)
+                .orElse(HtmlKnowledgeRecall.UNMAPPED);
+        var memory = run.memory();
+        var admitted = new ArrayList<Row>();
+        memory.ifPresent(value -> {
+            var results = value.response().results();
+            for (var rank = 0; rank < results.size(); rank++) {
+                admitted.add(new Row(queryId, Layer.B2, k, rank + 1, chunk.apply(results.get(rank).reference()),
+                        results.get(rank).score()));
+            }
+        });
+        var attached = run.stageResults().stream().filter(ReasoningCognitiveStageResult.class::isInstance)
+                .map(ReasoningCognitiveStageResult.class::cast)
+                .flatMap(result -> result.hypotheses().hypotheses().stream())
+                .flatMap(hypothesis -> hypothesis.evidence().stream()).map(item -> evidenceLabel(item, chunk))
+                .toList();
+        var selected = run.stageResults().stream().filter(EvaluationCognitiveStageResult.class::isInstance)
+                .map(EvaluationCognitiveStageResult.class::cast)
+                .flatMap(result -> cycle.selectedEvidence(result).stream()).map(item -> evidenceLabel(item, chunk))
+                .toList();
+        var status = run.calls().isEmpty() ? "none" : run.calls().getFirst().response().status().name();
+        return new CycleTrace(queryId, k, run.inputs().size(), status, admitted, attached, selected,
+                cycle.decide(run, resolver).name(), cycle.termination(run));
+    }
+
+    private static String evidenceLabel(Evidence item, Function<String, String> chunk) {
+        return item instanceof MemoryReferenceEvidence reference
+                ? chunk.apply(reference.reference()) + " (" + reference.relation() + ")"
+                : item.getClass().getSimpleName();
+    }
+
+    private void measureCycle(int k, List<QueryText> workload, Map<String, Run> verified, ResonanceMemoryPort timed,
+            Rows rows) {
+        rows.measure("warm.cycle", Optional.of(k), sampling.warmups(), sampling.iterations(), workload.size(), null,
                 () -> {
-                    var runs = new ArrayList<Run>(queries.size());
-                    for (var query : queries) {
+                    var runs = new ArrayList<Run>(workload.size());
+                    for (var query : workload) {
                         runs.add(cycle.execute(timed, query.text(), HtmlKnowledgeCycleExperiment.BUDGET, k));
                     }
                     return runs;
-                }, runs -> firstDifference(queries, i -> HtmlKnowledgeCycleExperiment.sameRun(verified.get(i),
-                        runs.get(i)) ? Optional.empty() : Optional.of("the run differs from the verified run")),
-                "one fresh DeterministicCognitiveCycle MEMORY_RECALL -> REASONING -> EVALUATION per eligible query"
+                }, runs -> firstDifference(workload, i -> HtmlKnowledgeCycleExperiment.sameRun(
+                        verified.get(workload.get(i).queryId()), runs.get(i)) ? Optional.empty()
+                        : Optional.of("the run differs from the verified run")),
+                "one fresh DeterministicCognitiveCycle MEMORY_RECALL -> REASONING -> EVALUATION per curve query"
                         + " over the warm adapter, memory and reasoning limit k; codec Signals built inside",
                 "each run equals the verified run of the same query (HtmlKnowledgeCycleExperiment.sameRun)");
     }
 
-    private void measureAnswers(Point point, int k, List<QueryText> queries, List<RecalledEvidence.Recall> b1Evidence,
+    /** One timed recall-and-answer result: the recalled evidence and the answer over its cut. */
+    private record RecalledAnswer(RecalledEvidence.Recall recall, Optional<GroundedAnswer> answer) {
+    }
+
+    private void measureAnswers(int k, List<QueryText> workload, Map<String, RecalledEvidence.Recall> b1Evidence,
             RecalledEvidence evidence, MonadaMemory memory, Rows rows) {
-        var verified = new ArrayList<Optional<GroundedAnswer>>(queries.size());
-        var bound = new ArrayList<List<EvidenceChunk>>(queries.size());
-        for (var i = 0; i < queries.size(); i++) {
-            var chunks = evidenceAt(b1Evidence.get(i), k);
-            var text = queries.get(i).text();
+        var verified = new ArrayList<Optional<GroundedAnswer>>(workload.size());
+        var bound = new ArrayList<List<EvidenceChunk>>(workload.size());
+        for (var query : workload) {
+            var chunks = evidenceAt(b1Evidence.get(query.queryId()), k);
             bound.add(chunks.orElse(List.of()));
-            verified.add(chunks.map(set -> answerer.answer(text, set)));
+            verified.add(chunks.map(set -> answerer.answer(query.text(), set)));
         }
-        Function<List<Optional<GroundedAnswer>>, Optional<String>> same = answers -> firstDifference(queries,
-                i -> answers.get(i).equals(verified.get(i)) ? Optional.empty()
-                        : Optional.of("the answer differs from the verified answer"));
-        rows.measure("warm.qa.b3", Optional.of(k), sampling.warmups(), sampling.iterations(), queries.size(), null,
+        rows.measure("warm.qa.b3", Optional.of(k), sampling.warmups(), sampling.iterations(), workload.size(), null,
                 () -> {
-                    var answers = new ArrayList<Optional<GroundedAnswer>>(queries.size());
-                    for (var i = 0; i < queries.size(); i++) {
+                    var answers = new ArrayList<Optional<GroundedAnswer>>(workload.size());
+                    for (var i = 0; i < workload.size(); i++) {
                         answers.add(verified.get(i).isEmpty() ? Optional.empty()
-                                : Optional.of(answerer.answer(queries.get(i).text(), bound.get(i))));
+                                : Optional.of(answerer.answer(workload.get(i).text(), bound.get(i))));
                     }
                     return answers;
-                }, same,
-                "one B3 answer per eligible query over its verified B1 evidence E(q) at answerK k, recall excluded",
+                }, answers -> firstDifference(workload, i -> answers.get(i).equals(verified.get(i))
+                        ? Optional.empty() : Optional.of("the answer differs from the verified answer")),
+                "one B3 answer per curve query over its verified B1 evidence E(q) at answerK k, recall excluded",
                 "each answer equals the verified B3 answer");
-        rows.measure("warm.qa.b1+b3", Optional.of(k), sampling.warmups(), sampling.iterations(), queries.size(),
+        rows.measure("warm.qa.b1+b3", Optional.of(k), sampling.warmups(), sampling.iterations(), workload.size(),
                 null, () -> {
-                    var answers = new ArrayList<Optional<GroundedAnswer>>(queries.size());
-                    for (var query : queries) {
-                        answers.add(evidenceAt(evidence.direct(memory, query.text()), k)
-                                .map(set -> answerer.answer(query.text(), set)));
+                    var results = new ArrayList<RecalledAnswer>(workload.size());
+                    for (var query : workload) {
+                        var recall = evidence.direct(memory, query.text());
+                        results.add(new RecalledAnswer(recall,
+                                evidenceAt(recall, k).map(set -> answerer.answer(query.text(), set))));
                     }
-                    return answers;
-                }, same,
-                "per eligible query: the verified B1 evidence recall at limit 5 (Store call, manifest mapping and one"
+                    return results;
+                }, results -> firstDifference(workload, i -> {
+                    var expected = b1Evidence.get(workload.get(i).queryId());
+                    var actual = results.get(i);
+                    // The whole recalled list must match, not only the first chunk B3 reads, and a failed recall
+                    // never matches.
+                    if (!(actual.recall() instanceof RecalledEvidence.Retrieved) || !actual.recall().equals(expected)) {
+                        return Optional.of("the recalled evidence differs from the verified B1 evidence");
+                    }
+                    return actual.answer().equals(verified.get(i)) ? Optional.empty()
+                            : Optional.of("the answer differs from the verified answer");
+                }),
+                "per curve query: the verified B1 evidence recall at limit 5 (Store call, manifest mapping and one"
                         + " SHA-256 per returned chunk), cut to answerK k, plus one B3 answer",
-                "each answer equals the verified B3 answer");
+                "the whole recalled limit-5 list (chunk ids, ranks, scores and Store text) equals the verified B1"
+                        + " evidence, and the answer equals the verified B3 answer");
     }
 
     private List<AnswerRow> answerRows(List<JudgedQuery> queries, List<RecalledEvidence.Recall> recalls, Layer layer,

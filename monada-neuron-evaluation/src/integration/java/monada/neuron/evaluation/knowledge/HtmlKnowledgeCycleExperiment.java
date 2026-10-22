@@ -429,12 +429,12 @@ final class HtmlKnowledgeCycleExperiment {
                 .anyMatch(signal -> run.inputs().contains(signal) || withoutMemory.contains(signal));
     }
 
-    private String termination(Run run) {
+    String termination(Run run) {
         return run.result().map(result -> result.termination().name())
                 .orElseGet(() -> "FAILED:" + run.failure().orElseThrow().failedStage().name());
     }
 
-    private List<Evidence> selectedEvidence(EvaluationCognitiveStageResult result) {
+    List<Evidence> selectedEvidence(EvaluationCognitiveStageResult result) {
         var evaluated = result.evaluation().evaluated().hypotheses();
         return result.evaluation().selected().stream()
                 .flatMap(selected -> evaluated.stream().filter(hypothesis -> hypothesis.sequence()

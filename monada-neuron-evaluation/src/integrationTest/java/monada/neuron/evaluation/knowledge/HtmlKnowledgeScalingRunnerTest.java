@@ -66,6 +66,10 @@ class HtmlKnowledgeScalingRunnerTest {
             assertEquals("false", row.diagnostics().get("validationInWindow"));
             assertTrue(row.latency().medianNanos() > 0, row.benchmarkName());
         }
+        // Every timed warm row runs the same fixed curve cohort at every size.
+        rows.stream().filter(row -> row.benchmarkName().startsWith("scaling.warm."))
+                .forEach(row -> assertEquals("27", row.diagnostics().get("operationsPerIteration"),
+                        row.benchmarkName() + " " + row.workloadScale()));
         var ingest = rows.stream().filter(row -> row.benchmarkName().equals("scaling.ingest.remember")
                 && row.diagnostics().get("size").equals("100")).findFirst().orElseThrow();
         assertEquals("100", ingest.diagnostics().get("operationsPerIteration"));
@@ -94,6 +98,10 @@ class HtmlKnowledgeScalingRunnerTest {
         assertTrue(json.contains("\"tieAtCutoff\": "));
         assertTrue(json.contains("\"answerRows\": [\n        { \"queryId\": "));
         assertTrue(json.contains("\"exactQuote\": "));
+        assertTrue(json.contains("\"byCategory\": { \"exact-term\": { \"nA\": "));
+        assertTrue(json.contains("\"traces\": [ { \"k\": 1, \"inputSignals\": "));
+        assertTrue(json.contains("\"decision\": \"SUPPORTED\""));
+        assertTrue(metadata.get("n100.perf.workload").startsWith("27 curve queries"));
         assertTrue(json.contains("\"verdictSource\": \"" + HtmlKnowledgeScalingReport.UNJUDGED + "\""));
         assertFalse(json.contains("\"textSha256\""), "generated text is publishable, so claims carry their text");
         assertFalse(json.contains("NaN"));

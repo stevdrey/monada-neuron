@@ -55,7 +55,7 @@ Outputs, under `build/reports/benchmarks/` of `monada-neuron-evaluation`:
 
 | File | Content |
 | :--- | :--- |
-| `html-knowledge-scaling.json` | the single machine-readable report. It holds `allChecksPassed`, the checks and the provenance metadata. The scored payload `scaling` holds per point the corpus identity, removed queries, footprint, quality, B3 counts, one `queries` row per eligible query (labels, returned chunks with ranks and scores, outcome and `tieAtCutoff` per `k`, miss diagnostics), one `answerRows` entry per query, layer and `answerK` (evidence, status, claims with checked citations), normalized rows, `unavailable` and `invalidated` rows and wrapper overhead. `evaluation.results` holds every measured row with its full latency distribution, allocation, GC and RSS telemetry and sampling diagnostics |
+| `html-knowledge-scaling.json` | the single machine-readable report. It holds `allChecksPassed`, the checks and the provenance metadata. The scored payload `scaling` holds per point the corpus identity, removed queries, footprint, quality per layer, `k` and category, B3 counts, one `queries` row per eligible query (labels, returned chunks with ranks and scores, outcome and `tieAtCutoff` per `k`, miss diagnostics, and the L3 trace of its verified cycle at each `k`: admitted, attached and selected chunks, decision and termination), one `answerRows` entry per query, layer and `answerK` (evidence, status, claims with checked citations), normalized rows, `unavailable` and `invalidated` rows and wrapper overhead. `evaluation.results` holds every measured row with its full latency distribution, allocation, GC and RSS telemetry and sampling diagnostics |
 | `html-knowledge-scaling.md` | the same, readable, ending with the triage template |
 
 ## How a run works
@@ -112,9 +112,11 @@ nearest-rank `LatencyRow` values of #106 to #110.
 | `warm.b2` | `ResonanceStoreMemoryAdapter.recall` on one warm adapter; requests built before the window | one query |
 | `warm.cycle` | one fresh `MEMORY_RECALL → REASONING → EVALUATION` cycle over the warm adapter, memory and reasoning limit `k` | one query |
 | `warm.qa.b3` | one B3 answer over verified B1 evidence `E(q)` at `answerK = k`; recall excluded | one query |
-| `warm.qa.b1+b3` | verified B1 evidence recall (Store call, manifest mapping, one SHA-256 per chunk) plus the B3 answer | one query |
+| `warm.qa.b1+b3` | verified B1 evidence recall (Store call, manifest mapping, one SHA-256 per chunk) plus the B3 answer; the whole recalled list must equal the verified evidence, not only the answer | one query |
 
-Warm rows run at `k = 1, 3, 5` over every eligible query of the point.
+Warm rows run at `k = 1, 3, 5` over the fixed curve cohort, the same 27 queries at every point, so cross-size cost
+compares one workload. Quality, L3 traces and B3 counts also cover each point's own eligible queries, labelled as
+the point population.
 
 Two rows are reported as `unavailable`, never as zero, because nothing measures them:
 
@@ -144,7 +146,8 @@ All checks are semantic and are judged outside every timed window. Each name is 
 ## Metrics
 
 - **Quality.** The [#107 metrics](html-knowledge-recall.md#metrics) for B1 and B2 at each `k`, over the curve
-  population and the point population: Recall, MRR, `NoAnswerFalsePositiveRate`, outcomes and abstention.
+  population and the point population: Recall, MRR, `NoAnswerFalsePositiveRate`, outcomes and abstention, overall and
+  per query category.
 - **B3 answers.** Mechanical counts at each `answerK`: answered or abstained, split by a non-empty relevant set;
   answers citing a relevant chunk; and ineligible citations. Each answer row carries its claims and their checked
   citations. The human verdicts of `html-l4-judgments-v1` are keyed to `html-kc-v1` answers, so each row's
@@ -155,11 +158,11 @@ All checks are semantic and are judged outside every timed window. Each name is 
   deltas. Per point: persisted atoms (distinct atoms of the fresh-handle readback), root bytes and files, and Store
   calls per B2 recall.
 
-## Results (2026-10-21)
+## Results (2026-10-22)
 
-**Environment.** Full run on JDK 27 (G1, max heap 3.8 GB), AMD Ryzen 7 7730U, Neuron `8c2a483+dirty` (this
-change, uncommitted), Store checkout `a716c93`. The Store roots were on `tmpfs` (memory-backed), so I/O costs are a
-lower bound.
+**Environment.** Full run on JDK 27 (G1, max heap 3.8 GB), AMD Ryzen 7 7730U, Neuron `cbb9e6f+dirty` (this
+change, uncommitted), Store checkout `32cd3d8`. The Store roots were on `tmpfs` (memory-backed), so I/O costs are a
+lower bound. Every timed warm row ran the 27 curve queries at every point.
 
 **Dataset hashes.**
 
@@ -195,31 +198,37 @@ results, and only the two blank queries abstain. It does not change with N.
 | N | persisted atoms | root bytes | root files | Store calls per B2 recall |
 | ---: | ---: | ---: | ---: | ---: |
 | 25 | 25 | 27,916 | 5 | 10.63 |
-| 100 | 100 | 101,951 | 5 | 10.41 |
-| 500 | 500 | 491,138 | 5 | 10.41 |
+| 100 | 100 | 101,954 | 5 | 10.63 |
+| 500 | 500 | 491,135 | 5 | 10.63 |
 
-The root grows by about 1 KB per chunk, and the file count stays constant.
+The root grows by about 1 KB per chunk, and the file count stays constant. Store calls per B2 recall are averaged
+over the curve queries, so they are equal at every point.
 
 ### Cost (exploratory; median per operation at k = 5, allocation per operation)
 
 | Row | N = 25 | N = 100 | N = 500 |
 | :--- | ---: | ---: | ---: |
-| `setup.corpus` | 0.78 ms | 6.0 ms | 28 ms |
-| `ingest.remember` (per chunk) | 0.65 ms, 43 KiB | 0.71 ms, 34 KiB | 0.42 ms, 30 KiB |
-| `open.firstRecall.b1` | 2.8 ms | 6.3 ms | 7.5 ms |
-| `open.firstRecall.b2` | 3.2 ms | 6.5 ms | 26 ms |
-| `warm.b1` (per query) | 0.13 ms, 103 KiB | 0.51 ms, 246 KiB | 1.2 ms, 999 KiB |
-| `warm.b2c` (per query) | 0.96 ms, 910 KiB | 4.9 ms, 2.1 MiB | 8.7 ms, 8.6 MiB |
-| `warm.b2` (per query) | 0.82 ms, 917 KiB | 6.4 ms, 2.1 MiB | 8.6 ms, 8.6 MiB |
-| `warm.cycle` (per query) | 1.4 ms, 930 KiB | 3.6 ms, 2.1 MiB | 8.5 ms, 8.6 MiB |
-| `warm.qa.b3` (per query) | 21 µs, 9.8 KiB | 15 µs, 9.6 KiB | 6 µs, 9.4 KiB |
-| `warm.qa.b1+b3` (per query) | 0.21 ms, 117 KiB | 0.39 ms, 260 KiB | 0.95 ms, 1.0 MiB |
+| `setup.corpus` | 0.64 ms | 1.7 ms | 9.7 ms |
+| `ingest.remember` (per chunk) | 0.66 ms, 43 KiB | 0.22 ms, 34 KiB | 0.18 ms, 30 KiB |
+| `open.firstRecall.b1` | 4.2 ms, 422 KiB | 3.1 ms, 979 KiB | 2.6 ms, 3.7 MiB |
+| `open.firstRecall.b2` | 4.7 ms, 981 KiB | 3.6 ms, 2.4 MiB | 8.6 ms, 9.9 MiB |
+| `warm.b1` (per query) | 70 µs, 102 KiB | 0.22 ms, 240 KiB | 0.86 ms, 976 KiB |
+| `warm.b2c` (per query) | 0.65 ms, 905 KiB | 2.3 ms, 2.1 MiB | 8.7 ms, 8.7 MiB |
+| `warm.b2` (per query) | 0.64 ms, 911 KiB | 1.9 ms, 2.1 MiB | 8.3 ms, 8.7 MiB |
+| `warm.cycle` (per query) | 0.66 ms, 922 KiB | 2.0 ms, 2.1 MiB | 8.0 ms, 8.7 MiB |
+| `warm.qa.b3` (per query) | 8 µs, 9.8 KiB | 9 µs, 9.4 KiB | 7 µs, 9.3 KiB |
+| `warm.qa.b1+b3` (per query) | 87 µs, 116 KiB | 0.22 ms, 254 KiB | 0.86 ms, 989 KiB |
 
 **Neuron wrapper overhead.** `warm.b2 − warm.b2c` is within run-to-run noise at every point. It takes both signs,
-from −11.7 ms to +1.4 ms per query, and the largest magnitudes come from the first `k = 1` rows of a point, which ran
-right after untimed setup work. The full run's p95 reaches three times the median on some rows. This harness cannot
-resolve the adapter's own cost next to about ten Store calls. That cost is measured in isolation by the
+from −0.48 ms to +0.24 ms per query, at most about 6% of a B2 recall that makes about ten Store calls. This harness
+cannot resolve the adapter's own cost next to those calls. That cost is measured in isolation by the
 [#49 JMH benchmarks](resonance-store-adapter-overhead.md).
+
+**Ordering effects.** The first point and the first rows of a point carry JIT warm-up. Examples are the N = 25
+ingestion at 0.66 ms per chunk against 0.18 ms at N = 500, and the first-recall latencies, which do not grow with N
+although their allocation does. An earlier full run of this change measured each point's own eligible queries
+rather than the fixed cohort, and its p95 reached three times the median on some rows. Read latency trends only
+across the warm rows.
 
 **Allocation.** Allocation per operation is far more stable than latency: it repeats to within 1% across `k` and
 between the quick and full runs.
@@ -237,21 +246,21 @@ automatically.
      distractor that strongly matches one generic token can therefore outrank a chunk that matches the whole question.
    - Recommended: a Neuron experiment issue that compares merge rules or codecs over this family; see the
      [worked example](#worked-example-from-observation-to-a-scoped-issue).
-2. **Neuron codec/port, resource.** One B2 recall makes 10.4 Store calls on average, one per distinct token. So
-   `warm.b2c` and `warm.b2` cost about 6 to 12 times `warm.b1` and allocate about 9 times as much: 8.6 MiB per query
+2. **Neuron codec/port, resource.** One B2 recall makes 10.6 Store calls on average, one per distinct token. So
+   `warm.b2c` and `warm.b2` cost about 9 to 10 times `warm.b1` and allocate about 9 times as much: 8.7 MiB per query
    at N = 500. The wrapper itself is not measurably the cause (see above).
    - Recommended: a Neuron issue that adds Store calls per recall as an explicit diagnostic of the port and evaluates
      a bounded-fan-out codec. A Store-side batch API is a separate Store issue only if that experiment needs one.
 3. **Store ranking, resource.**
-   - Warm B1 latency and allocation per query grow about linearly with N: 103 KiB → 246 KiB → 999 KiB per query, about
-     2 KiB per stored atom at N = 500.
-   - The first recall on a new handle grows the same way.
+   - Warm B1 latency and allocation per query grow about linearly with N: 70 µs → 0.22 ms → 0.86 ms and
+     102 KiB → 240 KiB → 976 KiB per query, about 2 KiB per stored atom at N = 500.
+   - The first recall on a new handle allocates the same way (422 KiB → 979 KiB → 3.7 MiB).
    - This matches a full scan of all stored atoms per query and is expected at this scale.
    - Recommended: compare with the Store's own corpus-scaling benchmark before filing anything. Open a Store issue
      about per-query allocation only if that benchmark shows the same O(N) bytes per query. A rewrite of Store indexing
      is a non-goal here.
-4. **Experiment, measurement.** Latency ordering effects are large on this laptop. The first warm rows of a point and
-   the first point carry JIT and GC noise, and the wrapper overhead is unresolvable.
+4. **Experiment, measurement.** Ordering effects are visible on this laptop. The first point and the first-recall rows
+   carry JIT warm-up, and the wrapper overhead is unresolvable.
    - Recommended experiment change: per-point warm-up of all rows before measuring, or one forked JVM per point. Rely
      on allocation and on #49 for wrapper cost until then.
 
@@ -267,7 +276,7 @@ Observed:           curve population (27 queries), B2 Recall@5 0.539 / 0.284 / 0
 Expected:           B2 tracks B1 within the codec effect measured at html-kc-v1 (#107); N = 100 and N = 500
                     hold the same base chunks, so losses between them come from generated distractors only
 Reproduction:       ./gradlew :monada-neuron-evaluation:runHtmlKnowledgeScaling
-                    neuron.commit <sha>, store.checkoutCommit a716c93, corpus.base.hash 1934ef6f…,
+                    neuron.commit <sha>, store.checkoutCommit 32cd3d8, corpus.base.hash 1934ef6f…,
                     query.hash e91b0404…, generator html-kd-v1 seed 111
 Affected layer:     Neuron codec/port
 Severity:           quality (a metric moves along the curve; every semantic check passed)
