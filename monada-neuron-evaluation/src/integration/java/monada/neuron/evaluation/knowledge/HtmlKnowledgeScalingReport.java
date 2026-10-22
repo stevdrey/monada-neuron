@@ -346,7 +346,8 @@ final class HtmlKnowledgeScalingReport {
      * The protocol's five per-answer flags. A flag is {@code null} when it needs a human verdict or does not apply to
      * the query's category. {@code anyUnsupportedClaim} is {@code true} when a claim is unsupported by rule and
      * {@code false} when every claim is supported by rule; {@code conflictDisclosed} is {@code false} by the
-     * {@code l4-answer-v1} rule when the eligible citations do not cover both chunks of the conflicting pair.
+     * {@code l4-answer-v1} rule, for an answer or an abstention, when the eligible citations do not cover both chunks
+     * of the conflicting pair.
      */
     private static String flagsJson(AnswerRow row, Set<String> eligibleChunks, Set<String> conflictPair,
             List<Optional<Boolean>> support) {
@@ -355,7 +356,8 @@ final class HtmlKnowledgeScalingReport {
                 : support.stream().anyMatch(value -> value.isPresent() && !value.get()) ? "true"
                 : support.stream().allMatch(value -> value.isPresent() && value.get()) ? "false" : "null";
         var conflicting = row.query().category() == Category.CONFLICTING_SOURCE;
-        var conflictDisclosed = conflicting && answered && !eligibleChunks.containsAll(conflictPair) ? "false" : "null";
+        // An abstention cites nothing, so it cannot cover the pair either.
+        var conflictDisclosed = conflicting && !eligibleChunks.containsAll(conflictPair) ? "false" : "null";
         return "{ \"anyUnsupportedClaim\": " + anyUnsupported + ", \"anyContradictedClaim\": "
                 + (answered ? "null" : "false") + ", \"premiseAccepted\": null, \"premiseCorrected\": null,"
                 + " \"conflictDisclosed\": " + conflictDisclosed + " }";

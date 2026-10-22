@@ -25,6 +25,8 @@ import monada.neuron.memory.ResonanceMemoryPort;
 import monada.neuron.memory.ResonanceMemoryRequest;
 import monada.neuron.memory.ResonanceMemoryResponse;
 import monada.neuron.memory.ResonanceMemoryStatus;
+import monada.neuron.monad.CognitiveCycleTermination;
+import monada.neuron.monad.CognitiveStageResult;
 import monada.neuron.reasoning.Evidence;
 import monada.neuron.reasoning.MemoryReferenceEvidence;
 import monada.neuron.reasoning.ReasoningCognitiveStageResult;
@@ -462,8 +464,9 @@ final class HtmlKnowledgeScaling {
             }
         }
         checks.add(new Check(prefix + "cycle.traceIntegrity", cycleViolations.isEmpty(), cycleViolations.isEmpty()
-                ? "every verified cycle at every k completed with one port call, admitted a prefix of the recorded"
-                        + " response, attached only admitted references, and admitted exactly the verified B2 rows"
+                ? "every verified cycle at every k replayed identically, ran MEMORY_RECALL -> REASONING -> EVALUATION"
+                        + " and terminated COMPLETED with one port call, admitted a prefix of the recorded response,"
+                        + " attached only admitted references, and admitted exactly the verified B2 rows"
                 : cycleViolations.size() + " violations: " + head(cycleViolations)));
         var ineligible = answers.entrySet().stream().filter(entry -> entry.getValue().ineligible() > 0)
                 .map(Map.Entry::getKey).toList();
@@ -651,12 +654,25 @@ final class HtmlKnowledgeScaling {
         var verified = new LinkedHashMap<String, Run>();
         for (var query : queries) {
             var run = cycle.execute(adapter, query.text(), HtmlKnowledgeCycleExperiment.BUDGET, k);
+            var replay = cycle.execute(adapter, query.text(), HtmlKnowledgeCycleExperiment.BUDGET, k);
             verified.put(query.queryId(), run);
             traces.add(trace(query.queryId(), k, run, manifest, resolver));
             var where = "N=" + point.size() + " k=" + k + " " + query.queryId() + ": ";
             if (run.failure().isPresent()) {
                 violations.add(where + "the cycle failed: " + run.failure().get());
                 continue;
+            }
+            // The #108 checks of a real-port run: deterministic replay, the full stage list and normal completion.
+            if (!HtmlKnowledgeCycleExperiment.sameRun(run, replay)) {
+                violations.add(where + "a replay of the cycle differs (not deterministic)");
+            }
+            var stages = run.stageResults().stream().map(CognitiveStageResult::kind).toList();
+            if (!stages.equals(HtmlKnowledgeCycleExperiment.STAGES)) {
+                violations.add(where + "stages " + stages + ", expected " + HtmlKnowledgeCycleExperiment.STAGES);
+            }
+            var termination = cycle.termination(run);
+            if (!termination.equals(CognitiveCycleTermination.COMPLETED.name())) {
+                violations.add(where + "terminated " + termination + ", expected COMPLETED");
             }
             cycle.integrityViolations(run).forEach(violation -> violations.add(where + violation));
             var admitted = run.memory().map(memory -> memory.response().results()).orElse(List.of());
