@@ -1,15 +1,15 @@
 package monada.neuron.evaluation.knowledge;
 
-import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.Layer;
 import monada.neuron.evaluation.knowledge.GroundedAnswer.Abstained;
 import monada.neuron.evaluation.knowledge.GroundedAnswer.Answered;
+import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.Layer;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.AnswerCounts;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.AnswerRow;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.CycleTrace;
-import monada.neuron.evaluation.knowledge.JudgedQuery.Category;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.PointResult;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.Sampling;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScalingCorpus.Family;
+import monada.neuron.evaluation.knowledge.JudgedQuery.Category;
 import monada.neuron.evaluation.knowledge.RecallMetrics.LayerAggregate;
 import monada.neuron.evaluation.knowledge.RecallMetrics.Outcome;
 import monada.neuron.evaluation.metrics.AllocationMetrics.AllocationSource;
@@ -20,8 +20,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static monada.neuron.evaluation.knowledge.HtmlKnowledgeRecallReport.aggregateJson;
 import static monada.neuron.evaluation.knowledge.HtmlKnowledgeRecallReport.format;
@@ -68,6 +70,11 @@ final class HtmlKnowledgeScalingReport {
 
     /** Why no answer row carries a support verdict. */
     static final String UNJUDGED = "unjudged: html-l4-judgments-v1 is keyed to html-kc-v1 answers";
+
+    /** The judgment artifacts every answer row carries as {@code null}, with the reason. */
+    private static final String UNJUDGED_FIELDS = ", \"keyClaimEdges\": null, \"matcherMatching\": null,"
+            + " \"finalMatching\": null, \"reviewerVerdicts\": null, \"reviewerOverrides\": null,"
+            + " \"verdictSource\": " + string(UNJUDGED);
 
     private final Family family;
     private final List<PointResult> results;
@@ -135,7 +142,10 @@ final class HtmlKnowledgeScalingReport {
         json.append(String.join(",\n", answers)).append("\n      ],\n      \"queries\": [\n");
         json.append(String.join(",\n", queryRows(result))).append("\n      ],\n      \"answerRows\": [\n");
         var publishable = point.corpus().textPolicy() == HtmlKnowledgeCorpus.TextPolicy.PUBLISHABLE;
-        json.append(String.join(",\n", result.answerRows().stream().map(row -> answerRowJson(row, publishable))
+        var conflictPair = point.corpus().chunks().stream().filter(chunk -> chunk.conflict().isPresent())
+                .map(CorpusChunk::chunkId).collect(Collectors.toSet());
+        json.append(String.join(",\n", result.answerRows().stream()
+                .map(row -> answerRowJson(row, publishable, conflictPair))
                 .toList())).append("\n      ],\n      \"rows\": [\n");
         var rows = result.rows().stream().map(HtmlKnowledgeScalingReport::rowJson).toList();
         json.append(String.join(",\n", rows)).append("\n      ],\n      \"unavailable\": {");
@@ -245,7 +255,7 @@ final class HtmlKnowledgeScalingReport {
      * contradiction and key-claim edges are {@code null}: the human verdicts of {@code html-l4-judgments-v1} are keyed
      * to {@code html-kc-v1} answers. Claim text is written only for a publishable corpus, otherwise its SHA-256.
      */
-    private static String answerRowJson(AnswerRow row, boolean publishable) {
+    private static String answerRowJson(AnswerRow row, boolean publishable, Set<String> conflictPair) {
         var json = new StringBuilder("        { \"queryId\": ").append(string(row.query().queryId()))
                 .append(", \"evidenceLayer\": ").append(string(row.layer().label()))
                 .append(", \"answerK\": ").append(row.answerK())
@@ -259,8 +269,10 @@ final class HtmlKnowledgeScalingReport {
         json.append(row.evidence().isEmpty() ? "]" : " ]");
         if (row.answer().isEmpty()) {
             return json.append(", \"status\": \"RECALL_FAILED\", \"reason\": ")
-                    .append(string(row.failure().orElse(""))).append(", \"claims\": [] }").toString();
+                    .append(string(row.failure().orElse(""))).append(", \"claims\": [], \"flags\": null")
+                    .append(UNJUDGED_FIELDS).append(" }").toString();
         }
+        var eligibleChunks = new TreeSet<String>();
         switch (row.answer().get()) {
             case Abstained abstained -> json.append(", \"status\": \"ABSTAINED\", \"reason\": ")
                     .append(string(abstained.status() + ": " + abstained.reason())).append(", \"claims\": []");
@@ -273,22 +285,44 @@ final class HtmlKnowledgeScalingReport {
                                     : "\"textSha256\": " + string(CorpusDigests.sha256(claim.text())))
                             .append(", \"citations\": [");
                     var spans = row.citations().get(c);
+                    var anyEligible = false;
                     for (var i = 0; i < spans.size(); i++) {
                         var span = spans.get(i);
+                        anyEligible |= span.eligible();
+                        if (span.eligible()) {
+                            eligibleChunks.add(span.citation().chunkId());
+                        }
                         json.append(i == 0 ? " " : ", ").append("{ \"chunkId\": ")
                                 .append(string(span.citation().chunkId())).append(", \"start\": ")
                                 .append(span.citation().start()).append(", \"end\": ").append(span.citation().end())
                                 .append(", \"eligible\": ").append(span.eligible()).append(", \"exactQuote\": ")
                                 .append(span.exactQuote()).append(" }");
                     }
+                    // A claim without an eligible citation is unsupported by rule; every other verdict needs a human.
                     json.append(spans.isEmpty() ? "]" : " ]")
-                            .append(", \"supported\": null, \"contradicted\": null }");
+                            .append(anyEligible ? ", \"supported\": null, \"contradicted\": null, \"source\": "
+                                    + string("unjudged") : ", \"supported\": false, \"contradicted\": null,"
+                                    + " \"source\": " + string("rule: no eligible citation"))
+                            .append(" }");
                 }
                 json.append(answered.claims().isEmpty() ? "]" : " ]");
             }
         }
-        return json.append(", \"keyClaimEdges\": null, \"verdictSource\": ")
-                .append(string(UNJUDGED)).append(" }").toString();
+        return json.append(", \"flags\": ").append(flagsJson(row, eligibleChunks, conflictPair))
+                .append(UNJUDGED_FIELDS).append(" }").toString();
+    }
+
+    /**
+     * The protocol's five per-answer flags. Each is {@code null} when it needs a human verdict or does not apply to
+     * the query's category; {@code conflictDisclosed} is {@code false} by the {@code l4-answer-v1} rule when the
+     * eligible citations do not cover both chunks of the conflicting pair.
+     */
+    private static String flagsJson(AnswerRow row, Set<String> eligibleChunks, Set<String> conflictPair) {
+        var conflicting = row.query().category() == Category.CONFLICTING_SOURCE;
+        var conflictDisclosed = conflicting && row.answer().orElseThrow() instanceof Answered
+                && !eligibleChunks.containsAll(conflictPair) ? "false" : "null";
+        return "{ \"anyUnsupportedClaim\": null, \"anyContradictedClaim\": null, \"premiseAccepted\": null,"
+                + " \"premiseCorrected\": null, \"conflictDisclosed\": " + conflictDisclosed + " }";
     }
 
     private static String answerJson(Layer layer, int k, AnswerCounts counts) {

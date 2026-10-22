@@ -52,12 +52,12 @@ class HtmlKnowledgeScalingRunnerTest {
     @Test
     void everyPhaseIsARowWithItsSamplingAndCounts() {
         var rows = outcome.report().evaluation().results();
-        var phases = Set.of("setup.corpus", "ingest.remember", "open.firstRecall.b1", "open.firstRecall.b2",
-                "warm.b1", "warm.b2c", "warm.b2", "warm.cycle", "warm.qa.b3", "warm.qa.b1+b3");
+        var phases = Set.of("setup.corpus", "ingest.remember", "open.b1", "open.b2", "firstRecall.b1",
+                "firstRecall.b2", "warm.b1", "warm.b2c", "warm.b2", "warm.cycle", "warm.qa.b3", "warm.qa.b1+b3");
         assertEquals(phases, rows.stream().map(row -> row.benchmarkName().substring("scaling.".length()))
                 .collect(Collectors.toSet()));
-        // Per point: 4 unparameterized rows and 6 rows at each of the 3 values of k.
-        assertEquals(2 * (4 + 6 * 3), rows.size());
+        // Per point: 6 unparameterized rows and 6 rows at each of the 3 values of k.
+        assertEquals(2 * (6 + 6 * 3), rows.size());
         for (var row : rows) {
             for (var field : List.of("size", "warmupIterations", "measurementIterations", "operationsPerIteration",
                     "measurementMethod", "validationInWindow", "gcTelemetryScope", "timed", "validation")) {
@@ -104,6 +104,10 @@ class HtmlKnowledgeScalingRunnerTest {
         assertTrue(json.contains("\"tieAtCutoff\": "));
         assertTrue(json.contains("\"answerRows\": [\n        { \"queryId\": "));
         assertTrue(json.contains("\"exactQuote\": "));
+        assertTrue(json.contains("\"flags\": { \"anyUnsupportedClaim\": null"));
+        assertTrue(json.contains("\"source\": \"unjudged\""));
+        assertTrue(json.contains("\"matcherMatching\": null, \"finalMatching\": null, \"reviewerVerdicts\": null,"
+                + " \"reviewerOverrides\": null"));
         assertTrue(json.contains("\"byCategory\": { \"exact-term\": { \"nA\": "));
         assertTrue(json.contains("\"traces\": [ { \"k\": 1, \"inputSignals\": "));
         assertTrue(json.contains("\"decision\": \"SUPPORTED\""));
@@ -132,14 +136,15 @@ class HtmlKnowledgeScalingRunnerTest {
         var names = degraded.report().evaluation().results().stream().map(row -> row.benchmarkName()).toList();
         assertFalse(names.contains("scaling.warm.b2"));
         assertFalse(names.contains("scaling.warm.cycle"));
-        assertFalse(names.contains("scaling.open.firstRecall.b2"));
+        assertFalse(names.contains("scaling.firstRecall.b2"));
+        assertTrue(names.contains("scaling.open.b2"), "the adapter open never goes through the timed port");
         assertTrue(names.contains("scaling.warm.b1"));
         var json = degraded.json();
         assertTrue(json.contains("\"warm.b2.k5\": \"invalidated (a timed sample differs from the verified result"));
         assertTrue(json.contains("\"b2MinusB2cMedianNanosPerQuery\": null"));
         // Unavailable rows render in sorted label order on every JVM.
         var unavailable = degraded.scaling().orElseThrow().toJson();
-        var labels = List.of("\"open.firstRecall.b2\": ", "\"warm.b2.k1\": ", "\"warm.b2.k3\": ",
+        var labels = List.of("\"firstRecall.b2\": ", "\"warm.b2.k1\": ", "\"warm.b2.k3\": ",
                 "\"warm.b2.k5\": ", "\"warm.cycle.k1\": ");
         for (var i = 1; i < labels.size(); i++) {
             assertTrue(unavailable.indexOf(labels.get(i - 1)) < unavailable.indexOf(labels.get(i)), labels.get(i));
@@ -172,7 +177,7 @@ class HtmlKnowledgeScalingRunnerTest {
     void unavailableRowLabelsSplitTheirK() {
         assertEquals("warm.b2|5", HtmlKnowledgeScalingReport.rowKey("warm.b2.k5"));
         assertEquals("warm.qa.b1+b3|3", HtmlKnowledgeScalingReport.rowKey("warm.qa.b1+b3.k3"));
-        assertEquals("open.firstRecall.b2|-", HtmlKnowledgeScalingReport.rowKey("open.firstRecall.b2"));
+        assertEquals("firstRecall.b2|-", HtmlKnowledgeScalingReport.rowKey("firstRecall.b2"));
     }
 
     @Test

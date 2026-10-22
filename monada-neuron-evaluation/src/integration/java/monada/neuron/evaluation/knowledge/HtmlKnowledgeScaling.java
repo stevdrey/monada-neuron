@@ -60,8 +60,9 @@ import java.util.stream.Stream;
  *   <li>{@code setup.corpus}: building and validating the point corpus (setup, timed separately);</li>
  *   <li>{@code ingest.remember}: {@code MonadaMemory.open} plus one {@code remember} per chunk into a fresh scratch
  *       root per sample;</li>
- *   <li>{@code open.firstRecall.b1} and {@code open.firstRecall.b2}: a freshly opened handle and its first recall, in
- *       this already warm JVM (the protocol's "cold"); process-cold is not measured;</li>
+ *   <li>{@code open.b1} and {@code open.b2}: reopening the root as a fresh {@code MonadaMemory} or adapter, and
+ *       {@code firstRecall.b1} and {@code firstRecall.b2}: the first call on a fresh handle opened in untimed setup,
+ *       both in this already warm JVM (the protocol's "cold"); process-cold is not measured;</li>
  *   <li>{@code warm.b1}: warm direct {@code MonadaMemory.resonate} at each {@code k};</li>
  *   <li>{@code warm.b2c} and {@code warm.b2}: the Store-side work the adapter must do (one Store call per codec Signal
  *       plus the documented merge) and warm {@code ResonanceStoreMemoryAdapter.recall}; their difference is the
@@ -406,8 +407,9 @@ final class HtmlKnowledgeScaling {
         var baseline = failedBaseline.isEmpty() ? Optional.<String>empty()
                 : Optional.of("the verified baseline failed " + head(failedBaseline));
         if (baseline.isPresent()) {
-            rows.withhold("open.firstRecall.b1", Optional.empty(), baseline.get());
-            rows.withhold("open.firstRecall.b2", Optional.empty(), baseline.get());
+            for (var name : List.of("open.b1", "open.b2", "firstRecall.b1", "firstRecall.b2")) {
+                rows.withhold(name, Optional.empty(), baseline.get());
+            }
         } else {
             measureFirstRecall(point, root, manifest, snapshot, sample, rows);
         }
@@ -538,27 +540,60 @@ final class HtmlKnowledgeScaling {
         return Optional.empty();
     }
 
+    /**
+     * Measures reopen and first recall as separate rows: {@code open.*} times creating a fresh handle on the root, and
+     * {@code firstRecall.*} times the first call on a fresh handle opened in untimed per-iteration setup. Every open is
+     * validated after the window by recalling the sample on the opened handle.
+     */
     private void measureFirstRecall(Point point, Path root, IngestionManifest manifest, Snapshot snapshot,
             QueryText sample, Rows rows) {
         var limit = HtmlKnowledgeRecall.MAX_LIMIT;
-        var cold = "on a handle opened inside the window, in this already warm JVM, for " + sample.queryId()
-                + " at limit " + limit;
-        rows.measure("open.firstRecall.b1", Optional.empty(), 0, sampling.coldIterations(), 1, null,
-                () -> MonadaMemory.open(root).resonate(sample.text()).topK(limit)
-                        .threshold(HtmlKnowledgeRecall.THRESHOLD).execute().results(),
-                results -> sameRows(atomRows(manifest, results), snapshot.rows(sample.queryId(), Layer.B1, limit)),
-                "MonadaMemory.open plus its first resonate " + cold,
-                "mapped chunk ids and bit-exact scores equal the verified B1 rows");
+        var b1Rows = snapshot.rows(sample.queryId(), Layer.B1, limit);
+        var b2Rows = snapshot.rows(sample.queryId(), Layer.B2, limit);
         var request = new ResonanceMemoryRequest(codec.querySignals(sample.text()), limit);
         var config = new HtmlKnowledgeRecall(point.corpus()).adapterConfig();
-        rows.measure("open.firstRecall.b2", Optional.empty(), 0, sampling.coldIterations(), 1, null, () -> {
-            try (var adapter = ResonanceStoreMemoryAdapter.open(root, config)) {
-                return timedPort.apply(adapter).recall(request);
+        var cold = "in this already warm JVM, for " + sample.queryId() + " at limit " + limit;
+
+        rows.measure("open.b1", Optional.empty(), 0, sampling.coldIterations(), 1, null, () -> MonadaMemory.open(root),
+                memory -> sameRows(atomRows(manifest, memory.resonate(sample.text()).topK(limit)
+                        .threshold(HtmlKnowledgeRecall.THRESHOLD).execute().results()), b1Rows),
+                "MonadaMemory.open on the point root, a fresh handle per sample, " + cold,
+                "the opened handle's recall of the sample, made after the window, equals the verified B1 rows");
+        rows.measure("open.b2", Optional.empty(), 0, sampling.coldIterations(), 1, null,
+                () -> ResonanceStoreMemoryAdapter.open(root, config), adapter -> {
+                    try (adapter) {
+                        return referenceRows(manifest, adapter.recall(request), b2Rows);
+                    }
+                }, "ResonanceStoreMemoryAdapter.open on the point root, a fresh adapter per sample, " + cold,
+                "the opened adapter's recall of the sample, made after the window, equals the verified B2 rows");
+
+        var memory = new MonadaMemory[1];
+        rows.measure("firstRecall.b1", Optional.empty(), 0, sampling.coldIterations(), 1,
+                () -> memory[0] = MonadaMemory.open(root),
+                () -> memory[0].resonate(sample.text()).topK(limit).threshold(HtmlKnowledgeRecall.THRESHOLD).execute()
+                        .results(),
+                results -> sameRows(atomRows(manifest, results), b1Rows),
+                "the first resonate on a handle opened in untimed setup, " + cold,
+                "mapped chunk ids and bit-exact scores equal the verified B1 rows");
+        var adapter = new ResonanceStoreMemoryAdapter[1];
+        Runnable freshAdapter = () -> {
+            if (adapter[0] != null) {
+                adapter[0].close();
             }
-        }, response -> referenceRows(manifest, response, snapshot.rows(sample.queryId(), Layer.B2, limit)),
-                "ResonanceStoreMemoryAdapter.open plus its first recall " + cold
-                        + "; the request is built before the window",
-                "status COMPLETE; mapped references and bit-exact scores equal the verified B2 rows");
+            adapter[0] = ResonanceStoreMemoryAdapter.open(root, config);
+        };
+        try {
+            rows.measure("firstRecall.b2", Optional.empty(), 0, sampling.coldIterations(), 1, freshAdapter,
+                    () -> timedPort.apply(adapter[0]).recall(request),
+                    response -> referenceRows(manifest, response, b2Rows),
+                    "the first recall on an adapter opened in untimed setup, " + cold
+                            + "; the request is built before the window",
+                    "status COMPLETE; mapped references and bit-exact scores equal the verified B2 rows");
+        } finally {
+            if (adapter[0] != null) {
+                adapter[0].close();
+            }
+        }
     }
 
     private void measureRecall(Point point, int k, List<QueryText> queries, List<List<Signal>> signals,
