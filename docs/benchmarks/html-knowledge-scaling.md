@@ -43,7 +43,7 @@ Options:
 | Option | Meaning |
 | :--- | :--- |
 | `--quick` | 1 warm-up and 3 measured iterations per warm row, 2 samples per setup, ingestion and first-recall row (full: 3 + 10 and 5, plus one ingestion warm-up). Every size point still runs |
-| `--sizes 25,100,500` | an ascending subset of the protocol's points |
+| `--sizes 25,100,500` | an ascending subset of the protocol's points; the curve population is still fixed by all three points |
 | `--seed <n>` | generator seed, default `111` |
 | `--output-dir <dir>` | default `build/reports/benchmarks` |
 | `--store-root <dir>` | keep the point roots (`scale-<N>/root`) there instead of a deleted temporary directory; it must be absent or empty |
@@ -55,7 +55,7 @@ Outputs, under `build/reports/benchmarks/` of `monada-neuron-evaluation`:
 
 | File | Content |
 | :--- | :--- |
-| `html-knowledge-scaling.json` | the single machine-readable report. It holds `allChecksPassed`, the checks and the provenance metadata. The scored payload `scaling` holds per point the corpus identity, removed queries, footprint, quality, B3 counts, normalized rows, `unavailable` rows and wrapper overhead. `evaluation.results` holds every measured row with its full latency distribution, allocation, GC and RSS telemetry and sampling diagnostics |
+| `html-knowledge-scaling.json` | the single machine-readable report. It holds `allChecksPassed`, the checks and the provenance metadata. The scored payload `scaling` holds per point the corpus identity, removed queries, footprint, quality, B3 counts, one `queries` row per eligible query (labels, returned chunks with ranks and scores, outcome and `tieAtCutoff` per `k`, miss diagnostics), one `answerRows` entry per query, layer and `answerK` (evidence, status, claims with checked citations), normalized rows, `unavailable` and `invalidated` rows and wrapper overhead. `evaluation.results` holds every measured row with its full latency distribution, allocation, GC and RSS telemetry and sampling diagnostics |
 | `html-knowledge-scaling.md` | the same, readable, ending with the triage template |
 
 ## How a run works
@@ -73,7 +73,9 @@ Each size point is its own frozen corpus `html-kc-v1-scale-<N>` with its own `co
 
 At N = 25, the conflicting-source pair is present. The `lists` chunks after `#01` and all `scripts-and-embedding`
 chunks are absent, so the five queries that need them are removed before any check or score. The **curve population**
-is the 27 queries eligible at every point. Every curve below uses it, so only the corpus size changes along the curve.
+is the 27 queries eligible at every protocol point. It is derived from all three points even when `--sizes` measures
+a subset, so a point scores the same curve queries in every run. Every curve below uses it, so only the corpus size
+changes along the curve.
 The per-point population is reported separately and is not comparable across points.
 
 **Generator `html-kd-v1`:**
@@ -134,18 +136,21 @@ All checks are semantic and are judged outside every timed window. Each name is 
 | `recall.*`, `fidelity.*`, `neuron.b2EqualsB2c` | the full #107 observation of the point's eligible queries: B0, B1, B2 and B2c with fidelity, prefix stability and B2 = B2c |
 | `cycle.traceIntegrity` | every verified cycle at every `k` completes with one port call and admits a prefix of the recorded response. It attaches only admitted references and admits exactly the verified B2 rows |
 | `answer.citationsEligible` | every B3 citation over B1 and B2 evidence at every `answerK` lies within `E(q)` and in bounds, and every evidence recall completed |
-| `perf.matchesVerified` | after the window, every timed sample, warm-ups included, equals the verified result: mapped chunks, order and bit-exact scores, equal cycle runs, equal answers. A mismatch or a throw fails the run, so **no row ever times a degraded path** |
+| `perf.matchesVerified` | after the window, every timed sample, warm-ups included, equals the verified result: mapped chunks, order and bit-exact scores, equal cycle runs, equal answers. A mismatch or a throw fails the run and withholds the row: it is listed as `invalidated` (or `unavailable` after a throw) and is never published, so **no published row times a degraded path** |
 
-`HtmlKnowledgeScalingRunnerTest` injects an empty port into the timed windows only and requires exactly
-`perf.matchesVerified` to fail.
+`HtmlKnowledgeScalingRunnerTest` injects an empty port into the timed windows only. It requires exactly
+`perf.matchesVerified` to fail and the affected B2, cycle and first-recall rows to be withheld as invalidated.
 
 ## Metrics
 
 - **Quality.** The [#107 metrics](html-knowledge-recall.md#metrics) for B1 and B2 at each `k`, over the curve
   population and the point population: Recall, MRR, `NoAnswerFalsePositiveRate`, outcomes and abstention.
 - **B3 answers.** Mechanical counts at each `answerK`: answered or abstained, split by a non-empty relevant set;
-  answers citing a relevant chunk; and ineligible citations. The human verdicts of `html-l4-judgments-v1` are keyed to
-  `html-kc-v1` answers, so support and contradiction are not scored at scale points.
+  answers citing a relevant chunk; and ineligible citations. Each answer row carries its claims and their checked
+  citations. The human verdicts of `html-l4-judgments-v1` are keyed to `html-kc-v1` answers, so each row's
+  `supported`, `contradicted` and `keyClaimEdges` are `null` with `verdictSource` stating why.
+- **Text policy.** Generated chunks come from authored Apache-2.0 templates, so every point corpus is publishable and
+  claim text is written; a redacted corpus would carry each claim's SHA-256 instead.
 - **Resources.** Per row: median and p95 per operation, throughput, allocated bytes per operation, and GC and RSS
   deltas. Per point: persisted atoms (distinct atoms of the fresh-handle readback), root bytes and files, and Store
   calls per B2 recall.

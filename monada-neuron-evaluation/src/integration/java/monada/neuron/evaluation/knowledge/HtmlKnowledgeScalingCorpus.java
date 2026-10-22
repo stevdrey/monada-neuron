@@ -14,8 +14,9 @@ import java.util.stream.Collectors;
  *
  * <p>The query workload is {@code html-kq-v1}, unchanged, whose labels were validated once against the full base corpus.
  * A query whose relevant set names a chunk missing at a point is removed from that point before any point-local check
- * or scoring and listed by id. The <em>curve population</em> is the queries eligible at every point of the family, so
- * only the corpus size changes along the curve.
+ * or scoring and listed by id. The <em>curve population</em> is the queries eligible at every protocol size point,
+ * whichever subset a run measures, so only the corpus size changes along the curve and a point scores the same curve
+ * queries in every run.
  */
 final class HtmlKnowledgeScalingCorpus {
 
@@ -57,8 +58,8 @@ final class HtmlKnowledgeScalingCorpus {
      * @param querySet the unchanged query set, validated against {@code base}
      * @param seed the generator seed
      * @param points the points, in ascending size
-     * @param curve the queries eligible at every point, in query-set order
-     * @param excludedFromCurve the ids of the queries removed at any point, in query-set order
+     * @param curve the queries eligible at every protocol size point, in query-set order
+     * @param excludedFromCurve the ids of the queries removed at any protocol size point, in query-set order
      */
     record Family(HtmlKnowledgeCorpus base, HtmlKnowledgeQuerySet querySet, long seed, List<Point> points,
             List<JudgedQuery> curve, List<String> excludedFromCurve) {
@@ -84,10 +85,12 @@ final class HtmlKnowledgeScalingCorpus {
         for (var size : sizes) {
             points.add(point(base, querySet, size, seed));
         }
+        // The curve population is fixed by every protocol size point, not by the requested subset, so a subset run
+        // scores each point over the same queries as a full run.
         var excluded = new LinkedHashSet<String>();
-        querySet.queries().stream().map(JudgedQuery::queryId)
-                .filter(id -> points.stream().anyMatch(point -> point.removed().contains(id)))
-                .forEach(excluded::add);
+        for (var size : SIZES) {
+            excluded.addAll(removed(base, querySet, size));
+        }
         var curve = querySet.queries().stream().filter(query -> !excluded.contains(query.queryId())).toList();
         return new Family(base, querySet, seed, points, curve, List.copyOf(excluded));
     }
@@ -95,18 +98,22 @@ final class HtmlKnowledgeScalingCorpus {
     /** Builds one point. */
     static Point point(HtmlKnowledgeCorpus base, HtmlKnowledgeQuerySet querySet, int size, long seed) {
         var corpus = corpus(base, size, seed);
-        var present = corpus.chunks().stream().map(CorpusChunk::chunkId).collect(Collectors.toSet());
-        var eligible = new ArrayList<JudgedQuery>();
-        var removed = new ArrayList<String>();
-        for (var query : querySet.queries()) {
-            if (present.containsAll(query.relevant())) {
-                eligible.add(query);
-            } else {
-                removed.add(query.queryId());
-            }
-        }
+        var removed = removed(base, querySet, size);
+        var eligible = querySet.queries().stream().filter(query -> !removed.contains(query.queryId())).toList();
         var baseChunks = Math.min(size, base.chunks().size());
         return new Point(size, corpus, baseChunks, size - baseChunks, eligible, removed);
+    }
+
+    /**
+     * Returns the ids of the queries removed at size {@code size}, in query-set order: those whose relevant set names a
+     * base chunk outside the point's base prefix. Relevant chunks are always base chunks (generated distractors are
+     * irrelevant by construction), so this needs no generated corpus.
+     */
+    static List<String> removed(HtmlKnowledgeCorpus base, HtmlKnowledgeQuerySet querySet, int size) {
+        var present = base.chunks().subList(0, Math.min(size, base.chunks().size())).stream()
+                .map(CorpusChunk::chunkId).collect(Collectors.toSet());
+        return querySet.queries().stream().filter(query -> !present.containsAll(query.relevant()))
+                .map(JudgedQuery::queryId).toList();
     }
 
     /**

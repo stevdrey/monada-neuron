@@ -1,7 +1,10 @@
 package monada.neuron.evaluation.knowledge;
 
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.Layer;
+import monada.neuron.evaluation.knowledge.GroundedAnswer.Abstained;
+import monada.neuron.evaluation.knowledge.GroundedAnswer.Answered;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.AnswerCounts;
+import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.AnswerRow;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.PointResult;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.Sampling;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScalingCorpus.Family;
@@ -15,6 +18,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.TreeSet;
 
 import static monada.neuron.evaluation.knowledge.HtmlKnowledgeRecallReport.aggregateJson;
 import static monada.neuron.evaluation.knowledge.HtmlKnowledgeRecallReport.format;
@@ -58,6 +62,9 @@ final class HtmlKnowledgeScalingReport {
             Recommendation:     <experiment change, or bug with the narrowest reproduction>
             ```
             """;
+
+    /** Why no answer row carries a support verdict. */
+    static final String UNJUDGED = "unjudged: html-l4-judgments-v1 is keyed to html-kc-v1 answers";
 
     private final Family family;
     private final List<PointResult> results;
@@ -122,7 +129,11 @@ final class HtmlKnowledgeScalingReport {
         json.append("      },\n      \"answers\": [\n");
         var answers = HtmlKnowledgeScaling.SCORED_LAYERS.stream().flatMap(layer -> HtmlKnowledgeScaling.KS.stream()
                 .map(k -> answerJson(layer, k, result.answers().get(layer.label() + "/" + k)))).toList();
-        json.append(String.join(",\n", answers)).append("\n      ],\n      \"rows\": [\n");
+        json.append(String.join(",\n", answers)).append("\n      ],\n      \"queries\": [\n");
+        json.append(String.join(",\n", queryRows(result))).append("\n      ],\n      \"answerRows\": [\n");
+        var publishable = point.corpus().textPolicy() == HtmlKnowledgeCorpus.TextPolicy.PUBLISHABLE;
+        json.append(String.join(",\n", result.answerRows().stream().map(row -> answerRowJson(row, publishable))
+                .toList())).append("\n      ],\n      \"rows\": [\n");
         var rows = result.rows().stream().map(HtmlKnowledgeScalingReport::rowJson).toList();
         json.append(String.join(",\n", rows)).append("\n      ],\n      \"unavailable\": {");
         var first = true;
@@ -166,6 +177,82 @@ final class HtmlKnowledgeScalingReport {
             first = false;
         }
         return json.append(" } }").toString();
+    }
+
+    /**
+     * The protocol's per-query row for the point population: labels, then each scored layer's returned chunks with
+     * ranks and scores, outcome and {@code tieAtCutoff} per {@code k}, and miss diagnostics (#107's rendering).
+     */
+    private List<String> queryRows(PointResult result) {
+        return result.point().eligible().stream().map(query -> {
+            var json = new StringBuilder("        { \"queryId\": ").append(string(query.queryId()))
+                    .append(", \"category\": ").append(string(query.category().label()))
+                    .append(", \"answerability\": ").append(string(query.answerability().name()))
+                    .append(", \"inCurve\": ").append(family.curve().contains(query))
+                    .append(", \"required\": ").append(strings(new TreeSet<>(query.required())))
+                    .append(", \"supporting\": ").append(strings(new TreeSet<>(query.supporting())))
+                    .append(", \"layers\": {");
+            var first = true;
+            for (var score : result.queryScores()) {
+                if (score.query().equals(query)) {
+                    json.append(first ? " " : ", ").append(string(score.layer().label())).append(": ")
+                            .append(HtmlKnowledgeRecallReport.queryLayerJson(score));
+                    first = false;
+                }
+            }
+            return json.append(" } }").toString();
+        }).toList();
+    }
+
+    /**
+     * One B3 answer row: its evidence, status and every claim with its citations and their mechanical check. Support,
+     * contradiction and key-claim edges are {@code null}: the human verdicts of {@code html-l4-judgments-v1} are keyed
+     * to {@code html-kc-v1} answers. Claim text is written only for a publishable corpus, otherwise its SHA-256.
+     */
+    private static String answerRowJson(AnswerRow row, boolean publishable) {
+        var json = new StringBuilder("        { \"queryId\": ").append(string(row.query().queryId()))
+                .append(", \"evidenceLayer\": ").append(string(row.layer().label()))
+                .append(", \"answerK\": ").append(row.answerK())
+                .append(", \"evidence\": [");
+        for (var i = 0; i < row.evidence().size(); i++) {
+            var chunk = row.evidence().get(i);
+            json.append(i == 0 ? " " : ", ").append("{ \"rank\": ").append(chunk.rank()).append(", \"chunkId\": ")
+                    .append(string(chunk.chunkId())).append(", \"score\": ").append(number(chunk.score()))
+                    .append(" }");
+        }
+        json.append(row.evidence().isEmpty() ? "]" : " ]");
+        if (row.answer().isEmpty()) {
+            return json.append(", \"status\": \"RECALL_FAILED\", \"reason\": ")
+                    .append(string(row.failure().orElse(""))).append(", \"claims\": [] }").toString();
+        }
+        switch (row.answer().get()) {
+            case Abstained abstained -> json.append(", \"status\": \"ABSTAINED\", \"reason\": ")
+                    .append(string(abstained.status() + ": " + abstained.reason())).append(", \"claims\": []");
+            case Answered answered -> {
+                json.append(", \"status\": \"ANSWERED\", \"reason\": null, \"claims\": [");
+                for (var c = 0; c < answered.claims().size(); c++) {
+                    var claim = answered.claims().get(c);
+                    json.append(c == 0 ? " " : ", ").append("{ ")
+                            .append(publishable ? "\"text\": " + string(claim.text())
+                                    : "\"textSha256\": " + string(CorpusDigests.sha256(claim.text())))
+                            .append(", \"citations\": [");
+                    var spans = row.citations().get(c);
+                    for (var i = 0; i < spans.size(); i++) {
+                        var span = spans.get(i);
+                        json.append(i == 0 ? " " : ", ").append("{ \"chunkId\": ")
+                                .append(string(span.citation().chunkId())).append(", \"start\": ")
+                                .append(span.citation().start()).append(", \"end\": ").append(span.citation().end())
+                                .append(", \"eligible\": ").append(span.eligible()).append(", \"exactQuote\": ")
+                                .append(span.exactQuote()).append(" }");
+                    }
+                    json.append(spans.isEmpty() ? "]" : " ]")
+                            .append(", \"supported\": null, \"contradicted\": null }");
+                }
+                json.append(answered.claims().isEmpty() ? "]" : " ]");
+            }
+        }
+        return json.append(", \"keyClaimEdges\": null, \"verdictSource\": ")
+                .append(string(UNJUDGED)).append(" }").toString();
     }
 
     private static String answerJson(Layer layer, int k, AnswerCounts counts) {
@@ -242,6 +329,21 @@ final class HtmlKnowledgeScalingReport {
             }
         }
 
+        md.append("\n## Per-query outcomes at k = 5 (curve population)\n\nB1 / B2 outcome per point; `tie` marks a score"
+                + " tie at the cutoff. Returned chunks, ranks and scores are in the JSON `queries` rows.\n\n| query |");
+        results.forEach(result -> md.append(" N=").append(result.point().size()).append(" |"));
+        md.append("\n| :--- |");
+        results.forEach(result -> md.append(" :--- |"));
+        md.append('\n');
+        for (var query : family.curve()) {
+            md.append("| `").append(query.queryId()).append("` |");
+            for (var result : results) {
+                md.append(' ').append(outcomeCell(result, query, Layer.B1)).append(" / ")
+                        .append(outcomeCell(result, query, Layer.B2)).append(" |");
+            }
+            md.append('\n');
+        }
+
         md.append("\n## B3 answers over the point population\n\nCounts `answeredA/abstainedA/answeredU/abstainedU`,"
                 + " answered answerable queries citing a relevant chunk, and ineligible citations.\n\n"
                 + "| evidence | answerK |");
@@ -301,6 +403,14 @@ final class HtmlKnowledgeScalingReport {
         return md.append('\n').append(TRIAGE_TEMPLATE).toString();
     }
 
+    private static String outcomeCell(PointResult result, JudgedQuery query, Layer layer) {
+        return result.queryScores().stream().filter(score -> score.layer() == layer && score.query().equals(query))
+                .findFirst().map(score -> score.completed()
+                        ? score.byK().get(5).outcome().name() + (score.byK().get(5).tieAtCutoff() ? " (tie)" : "")
+                        : "FAILED")
+                .orElse("n/a");
+    }
+
     private static String cell(PointResult result, String population, Layer layer, int k, String metric) {
         var aggregate = result.quality().get(population + "/" + layer.label() + "/" + k);
         if (metric.equals("HIT")) {
@@ -317,7 +427,7 @@ final class HtmlKnowledgeScalingReport {
                 && Optional.ofNullable(candidate.diagnostics().get("k")).orElse("-").equals(k)).findFirst();
         if (row.isEmpty()) {
             var reason = result.unavailable().get(k.equals("-") ? name : name + ".k" + k);
-            return reason == null ? "n/a" : "unavailable";
+            return reason == null ? "n/a" : reason.startsWith("invalidated") ? "invalidated" : "unavailable";
         }
         var operations = operations(row.get());
         var allocation = row.get().allocation().source() == AllocationSource.THREAD_MX_BEAN

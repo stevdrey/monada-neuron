@@ -57,6 +57,10 @@ class HtmlKnowledgeScalingCorpusTest {
         assertEquals(List.of(), family.points().get(2).removed());
         assertEquals(expected, family.excludedFromCurve());
         assertEquals(small.eligible(), family.curve());
+        // A subset run without N = 25 keeps the same curve population.
+        var subset = HtmlKnowledgeScalingCorpus.of(BASE, QUERIES, List.of(100, 500), SEED);
+        assertEquals(expected, subset.excludedFromCurve());
+        assertEquals(family.curve(), subset.curve());
     }
 
     @Test

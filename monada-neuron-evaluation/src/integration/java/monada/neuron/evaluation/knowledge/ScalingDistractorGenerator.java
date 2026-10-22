@@ -118,7 +118,7 @@ final class ScalingDistractorGenerator {
 
     /** Returns the source label of every chunk generated with {@code seed}. */
     static String source(long seed) {
-        return "generated:" + VERSION + ":" + seed;
+        return HtmlKnowledgeCorpus.GENERATED_SOURCE_PREFIX + VERSION + ":" + seed;
     }
 
     /** Returns the document id of distractor {@code ordinal} (1-based). */

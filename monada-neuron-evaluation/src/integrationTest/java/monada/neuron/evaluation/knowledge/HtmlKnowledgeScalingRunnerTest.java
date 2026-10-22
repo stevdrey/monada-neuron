@@ -89,6 +89,13 @@ class HtmlKnowledgeScalingRunnerTest {
         assertTrue(json.contains("\"scaling\": {"));
         assertTrue(json.contains("\"heapRetainedBytes\": null"));
         assertTrue(json.contains("\"b2MinusB2cMedianNanosPerQuery\": "));
+        assertTrue(json.contains("\"queries\": [\n        { \"queryId\": "));
+        assertTrue(json.contains("\"missDiagnostics\": "));
+        assertTrue(json.contains("\"tieAtCutoff\": "));
+        assertTrue(json.contains("\"answerRows\": [\n        { \"queryId\": "));
+        assertTrue(json.contains("\"exactQuote\": "));
+        assertTrue(json.contains("\"verdictSource\": \"" + HtmlKnowledgeScalingReport.UNJUDGED + "\""));
+        assertFalse(json.contains("\"textSha256\""), "generated text is publishable, so claims carry their text");
         assertFalse(json.contains("NaN"));
         assertTrue(outcome.markdown().contains("## Follow-up triage template"));
         assertEquals(Set.of("html-knowledge-scaling.json", "html-knowledge-scaling.md"),
@@ -107,6 +114,15 @@ class HtmlKnowledgeScalingRunnerTest {
                 .map(EvaluationCheck::name).toList();
         assertEquals(List.of("n25.perf.matchesVerified"), failed);
         assertFalse(degraded.report().allPassed());
+        // Rows that timed the degraded port are withheld and named as invalidated; untouched rows remain.
+        var names = degraded.report().evaluation().results().stream().map(row -> row.benchmarkName()).toList();
+        assertFalse(names.contains("scaling.warm.b2"));
+        assertFalse(names.contains("scaling.warm.cycle"));
+        assertFalse(names.contains("scaling.open.firstRecall.b2"));
+        assertTrue(names.contains("scaling.warm.b1"));
+        var json = degraded.json();
+        assertTrue(json.contains("\"warm.b2.k5\": \"invalidated (a timed sample differs from the verified result"));
+        assertTrue(json.contains("\"b2MinusB2cMedianNanosPerQuery\": null"));
     }
 
     @Test
@@ -115,6 +131,8 @@ class HtmlKnowledgeScalingRunnerTest {
                 () -> HtmlKnowledgeScalingRunner.Options.parse(new String[] {"--sizes", "25,50"}));
         assertThrows(IllegalArgumentException.class,
                 () -> HtmlKnowledgeScalingRunner.Options.parse(new String[] {"--sizes", "100,25"}));
+        assertThrows(IllegalArgumentException.class,
+                () -> HtmlKnowledgeScalingRunner.Options.parse(new String[] {"--sizes", "4294967321"}));
         assertThrows(IllegalArgumentException.class,
                 () -> HtmlKnowledgeScalingRunner.Options.parse(new String[] {"--seed", "x"}));
         assertThrows(IllegalArgumentException.class,

@@ -107,8 +107,7 @@ public final class HtmlKnowledgeScalingRunner {
         }
 
         private static List<Integer> sizes(String value) {
-            var sizes = Arrays.stream(value.split(",", -1)).map(String::strip)
-                    .map(size -> (int) number(size, "--sizes")).toList();
+            var sizes = Arrays.stream(value.split(",", -1)).map(String::strip).map(Options::size).toList();
             for (var i = 0; i < sizes.size(); i++) {
                 if (!HtmlKnowledgeScalingCorpus.SIZES.contains(sizes.get(i))
                         || i > 0 && sizes.get(i) <= sizes.get(i - 1)) {
@@ -117,6 +116,15 @@ public final class HtmlKnowledgeScalingRunner {
                 }
             }
             return sizes;
+        }
+
+        /** Parses one size as an {@code int}, so an out-of-range value is rejected instead of narrowed. */
+        private static int size(String value) {
+            try {
+                return Integer.parseInt(value);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("--sizes requires integers, was '" + value + "'");
+            }
         }
 
         private static long number(String value, String option) {

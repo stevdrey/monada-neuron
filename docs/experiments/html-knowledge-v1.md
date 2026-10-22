@@ -927,4 +927,8 @@ source set, and do not change `./gradlew test` when it is absent.
     unavailable, and restart persistence stays the evidence of #106 and #107;
   - the cycle runs with memory-stage and reasoning limit `k` at every `k`; L4 at scale reports mechanical B3 counts
     only, because `html-l4-judgments-v1` is keyed to `html-kc-v1` answers;
-  - the Neuron wrapper overhead is reported as `B2` minus the `B2c` Store-side work, never as `B2` minus `B1`.
+  - the Neuron wrapper overhead is reported as `B2` minus the `B2c` Store-side work, never as `B2` minus `B1`;
+  - the curve population is fixed by all three size points, even when a run measures a subset;
+  - a row with any timed sample that differs from the verified result is withheld as invalidated, never published;
+  - a corpus whose documents are authored or generated (`generated:<generatorVersion>:<seed>`) from authored
+    Apache-2.0 templates is publishable, so scaling reports carry claim text in their per-query answer rows.

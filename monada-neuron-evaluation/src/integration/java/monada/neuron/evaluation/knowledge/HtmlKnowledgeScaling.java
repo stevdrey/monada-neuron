@@ -4,6 +4,7 @@ import com.monada.api.MonadaMemory;
 import com.monada.core.KnowledgeAtom;
 import com.monada.core.ResonanceResult;
 import monada.neuron.evaluation.knowledge.AnswerComponent.EvidenceChunk;
+import monada.neuron.evaluation.knowledge.AnswerTrace.CitedSpan;
 import monada.neuron.evaluation.knowledge.GroundedAnswer.Abstained;
 import monada.neuron.evaluation.knowledge.GroundedAnswer.Answered;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeCycleExperiment.Run;
@@ -69,7 +70,8 @@ import java.util.stream.Stream;
  * queries, the #108 trace integrity of every verified cycle and the mechanical citation check of #109. Every timed
  * sample, warm-up included, keeps its result, and after the window each one must equal the verified result (mapped
  * chunk ids, order and bit-exact scores; equal cycle runs; equal answers). A mismatch or a throw fails
- * {@code perf.matchesVerified}, so no latency ever describes a degraded path. Latency and allocation never decide a
+ * {@code perf.matchesVerified} and the row is withheld (listed as invalidated or unavailable), so no published latency
+ * ever describes a degraded path. Latency and allocation never decide a
  * verdict.
  */
 final class HtmlKnowledgeScaling {
@@ -132,6 +134,26 @@ final class HtmlKnowledgeScaling {
     }
 
     /**
+     * One B3 answer of the point population, the claim-level artifact behind {@link AnswerCounts}.
+     *
+     * @param query the judged query
+     * @param layer the evidence layer
+     * @param answerK the evidence cut
+     * @param evidence {@code E(q)}, empty when the recall failed
+     * @param answer the answer, empty when the recall failed
+     * @param citations the mechanical check of every citation, per claim in claim order
+     * @param failure why the evidence recall failed, when it did
+     */
+    record AnswerRow(JudgedQuery query, Layer layer, int answerK, List<EvidenceChunk> evidence,
+            Optional<GroundedAnswer> answer, List<List<CitedSpan>> citations, Optional<String> failure) {
+
+        AnswerRow {
+            evidence = List.copyOf(evidence);
+            citations = citations.stream().map(List::copyOf).toList();
+        }
+    }
+
+    /**
      * Everything measured and scored at one point.
      *
      * @param point the point
@@ -140,16 +162,18 @@ final class HtmlKnowledgeScaling {
      * @param unavailable rows that could not be measured, with the reason
      * @param quality recall aggregates by {@code population/layer/k}
      * @param abstention set-level abstention by {@code population/layer}
+     * @param queryScores the per-query recall rows of the point population, B1 then B2, in query-set order
      * @param answers B3 counts by {@code layer/k} over the point population
+     * @param answerRows the per-query B3 rows behind {@code answers}, by layer, {@code answerK} and query
      * @param footprint persisted-atom and on-disk figures
      * @param overhead the wrapper overhead per {@code k}: B2 minus B2c median nanoseconds per query, when both rows exist
      * @param storeCallsPerRecall mean Store calls one B2 recall makes (codec Signals per query)
      * @param metadata further descriptive values, prefixed {@code n<N>.}
      */
     record PointResult(Point point, List<Check> checks, List<BenchmarkRunResult> rows, Map<String, String> unavailable,
-            Map<String, LayerAggregate> quality, Map<String, LayerAbstention> abstention,
-            Map<String, AnswerCounts> answers, Footprint footprint, Map<Integer, Optional<Double>> overhead,
-            double storeCallsPerRecall, Map<String, String> metadata) {
+            Map<String, LayerAggregate> quality, Map<String, LayerAbstention> abstention, List<QueryScore> queryScores,
+            Map<String, AnswerCounts> answers, List<AnswerRow> answerRows, Footprint footprint,
+            Map<Integer, Optional<Double>> overhead, double storeCallsPerRecall, Map<String, String> metadata) {
 
         PointResult {
             checks = List.copyOf(checks);
@@ -157,7 +181,9 @@ final class HtmlKnowledgeScaling {
             unavailable = Map.copyOf(unavailable);
             quality = Map.copyOf(quality);
             abstention = Map.copyOf(abstention);
+            queryScores = List.copyOf(queryScores);
             answers = Map.copyOf(answers);
+            answerRows = List.copyOf(answerRows);
             overhead = Map.copyOf(overhead);
             metadata = Map.copyOf(metadata);
         }
@@ -208,7 +234,8 @@ final class HtmlKnowledgeScaling {
 
         /**
          * Measures {@code workload}, keeping every result, then validates each one after the window: {@code check}
-         * returns why a result differs from the verified one, or empty.
+         * returns why a result differs from the verified one, or empty. The row is published only when every result
+         * matches; otherwise it is recorded as invalidated, with the first difference.
          */
         <T> Optional<BenchmarkRunResult> measure(String name, Optional<Integer> k, int warmups, int iterations,
                 int operations, Runnable setup, Supplier<T> workload, Function<T, Optional<String>> check,
@@ -244,8 +271,12 @@ final class HtmlKnowledgeScaling {
             for (var i = 0; i < results.size(); i++) {
                 var difference = check.apply(results.get(i));
                 if (difference.isPresent()) {
-                    mismatches.add(label + " sample " + (i + 1) + ": " + difference.get());
-                    break;
+                    // A row that timed a degraded path is never published, only named as invalidated.
+                    var detail = label + " sample " + (i + 1) + ": " + difference.get();
+                    mismatches.add(detail);
+                    unavailable.put(label, "invalidated (a timed sample differs from the verified result: " + detail
+                            + ")");
+                    return Optional.empty();
                 }
             }
             measured.add(row);
@@ -308,7 +339,7 @@ final class HtmlKnowledgeScaling {
         var quality = new LinkedHashMap<String, LayerAggregate>();
         var abstention = new LinkedHashMap<String, LayerAbstention>();
         score(family.curve(), CURVE, snapshot, quality, abstention);
-        score(point.eligible(), POINT, snapshot, quality, abstention);
+        var queryScores = score(point.eligible(), POINT, snapshot, quality, abstention);
 
         var memory = MonadaMemory.open(root);
         var config = recall.adapterConfig();
@@ -318,6 +349,7 @@ final class HtmlKnowledgeScaling {
 
         var evidence = new RecalledEvidence(corpus, manifest);
         var answers = new LinkedHashMap<String, AnswerCounts>();
+        var answerRows = new ArrayList<AnswerRow>();
         var overhead = new LinkedHashMap<Integer, Optional<Double>>();
         var cycleViolations = new ArrayList<String>();
         double storeCalls;
@@ -331,8 +363,11 @@ final class HtmlKnowledgeScaling {
                 measureRecall(point, k, queries, signals, memory, timed, manifest, snapshot, rows);
                 measureCycle(point, k, queries, adapter, timed, manifest, snapshot, rows, cycleViolations);
                 measureAnswers(point, k, queries, b1Evidence, evidence, memory, rows);
-                answers.put(Layer.B1.label() + "/" + k, counts(point.eligible(), b1Evidence, k));
-                answers.put(Layer.B2.label() + "/" + k, counts(point.eligible(), b2Evidence, k));
+                for (var layer : SCORED_LAYERS) {
+                    var rowsAtK = answerRows(point.eligible(), layer == Layer.B1 ? b1Evidence : b2Evidence, layer, k);
+                    answerRows.addAll(rowsAtK);
+                    answers.put(layer.label() + "/" + k, counts(rowsAtK));
+                }
                 overhead.put(k, overhead(rows, k));
             }
         }
@@ -358,8 +393,8 @@ final class HtmlKnowledgeScaling {
         metadata.put(prefix + "queries.removed", point.removed().isEmpty() ? "none"
                 : String.join(", ", point.removed()));
         metadata.put(prefix + "perf.storeCallsPerB2Recall", String.format(Locale.ROOT, "%.2f", storeCalls));
-        return new PointResult(point, checks, rows.measured, rows.unavailable, quality, abstention, answers, footprint,
-                overhead, storeCalls, metadata);
+        return new PointResult(point, checks, rows.measured, rows.unavailable, quality, abstention, queryScores, answers,
+                answerRows, footprint, overhead, storeCalls, metadata);
     }
 
     private void measureIngestion(Point point, Path directory, Rows rows, Map<String, String> metadata,
@@ -555,44 +590,54 @@ final class HtmlKnowledgeScaling {
                 "each answer equals the verified B3 answer");
     }
 
-    private AnswerCounts counts(List<JudgedQuery> queries, List<RecalledEvidence.Recall> recalls, int k) {
-        int answeredA = 0, abstainedA = 0, answeredU = 0, abstainedU = 0, citesRelevant = 0, citations = 0;
-        int ineligible = 0, exact = 0, failed = 0;
+    private List<AnswerRow> answerRows(List<JudgedQuery> queries, List<RecalledEvidence.Recall> recalls, Layer layer,
+            int k) {
+        var rows = new ArrayList<AnswerRow>(queries.size());
         for (var i = 0; i < queries.size(); i++) {
             var query = queries.get(i);
             var chunks = evidenceAt(recalls.get(i), k);
             if (chunks.isEmpty()) {
+                var reason = recalls.get(i) instanceof RecalledEvidence.Failed failed ? failed.reason() : "no evidence";
+                rows.add(new AnswerRow(query, layer, k, List.of(), Optional.empty(), List.of(), Optional.of(reason)));
+                continue;
+            }
+            var answer = answerer.answer(query.text(), chunks.get());
+            var citations = answer instanceof Answered answered ? answered.claims().stream()
+                    .map(claim -> claim.citations().stream()
+                            .map(citation -> qa.verify(claim.text(), citation, chunks.get())).toList())
+                    .toList() : List.<List<CitedSpan>>of();
+            rows.add(new AnswerRow(query, layer, k, chunks.get(), Optional.of(answer), citations, Optional.empty()));
+        }
+        return rows;
+    }
+
+    private static AnswerCounts counts(List<AnswerRow> rows) {
+        int answeredA = 0, abstainedA = 0, answeredU = 0, abstainedU = 0, citesRelevant = 0, citations = 0;
+        int ineligible = 0, exact = 0, failed = 0;
+        for (var row : rows) {
+            if (row.answer().isEmpty()) {
                 failed++;
                 continue;
             }
-            var answerable = !query.relevant().isEmpty();
-            switch (answerer.answer(query.text(), chunks.get())) {
-                case Abstained _ -> {
-                    if (answerable) {
-                        abstainedA++;
-                    } else {
-                        abstainedU++;
-                    }
-                }
-                case Answered answered -> {
-                    if (answerable) {
-                        answeredA++;
-                    } else {
-                        answeredU++;
-                    }
-                    var relevant = false;
-                    for (var claim : answered.claims()) {
-                        for (var citation : claim.citations()) {
-                            var span = qa.verify(claim.text(), citation, chunks.get());
-                            citations++;
-                            ineligible += span.eligible() ? 0 : 1;
-                            exact += span.exactQuote() ? 1 : 0;
-                            relevant |= span.eligible() && query.relevant().contains(citation.chunkId());
-                        }
-                    }
-                    citesRelevant += answerable && relevant ? 1 : 0;
+            var relevantSet = row.query().relevant();
+            var answerable = !relevantSet.isEmpty();
+            if (row.answer().get() instanceof Abstained) {
+                abstainedA += answerable ? 1 : 0;
+                abstainedU += answerable ? 0 : 1;
+                continue;
+            }
+            answeredA += answerable ? 1 : 0;
+            answeredU += answerable ? 0 : 1;
+            var relevant = false;
+            for (var claim : row.citations()) {
+                for (var span : claim) {
+                    citations++;
+                    ineligible += span.eligible() ? 0 : 1;
+                    exact += span.exactQuote() ? 1 : 0;
+                    relevant |= span.eligible() && relevantSet.contains(span.citation().chunkId());
                 }
             }
+            citesRelevant += answerable && relevant ? 1 : 0;
         }
         return new AnswerCounts(answeredA, abstainedA, answeredU, abstainedU, citesRelevant, citations, ineligible,
                 exact, failed);
@@ -619,8 +664,10 @@ final class HtmlKnowledgeScaling {
                 && Integer.toString(k).equals(row.diagnostics().get("k"))).findFirst();
     }
 
-    private static void score(List<JudgedQuery> population, String name, Snapshot snapshot,
+    /** Scores {@code population} into {@code quality} and {@code abstention} and returns its per-query rows. */
+    private static List<QueryScore> score(List<JudgedQuery> population, String name, Snapshot snapshot,
             Map<String, LayerAggregate> quality, Map<String, LayerAbstention> abstention) {
+        var all = new ArrayList<QueryScore>();
         for (var layer : SCORED_LAYERS) {
             var scores = new ArrayList<QueryScore>(population.size());
             for (var query : population) {
@@ -632,7 +679,9 @@ final class HtmlKnowledgeScaling {
                 quality.put(name + "/" + layer.label() + "/" + k, RecallMetrics.aggregate(layer, k, scores));
             }
             abstention.put(name + "/" + layer.label(), RecallMetrics.abstention(layer, scores));
+            all.addAll(scores);
         }
+        return all;
     }
 
     private static List<Row> atomRows(IngestionManifest manifest, List<ResonanceResult> results) {
