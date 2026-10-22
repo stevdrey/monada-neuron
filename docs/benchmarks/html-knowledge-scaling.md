@@ -156,8 +156,13 @@ withheld.
   answers citing a relevant chunk; and ineligible citations. Each answer row carries its claims and their checked
   citations. The human verdicts of `html-l4-judgments-v1` are keyed to `html-kc-v1` answers, so each row's
   `supported`, `contradicted`, flags, key-claim edges, matchings and reviewer fields are `null` with `verdictSource`
-  stating why, except the protocol's deterministic rules: a claim without an eligible citation is `supported: false`,
+  stating why, except the protocol's deterministic rules: an eligible exact quote is `supported: true` (every B3
+  claim is one), a claim without an eligible citation is `supported: false`, `anyUnsupportedClaim` follows from those,
   and `conflictDisclosed` is `false` when the eligible citations do not cover both chunks of the conflicting pair.
+  Each row's `outcome` is the component's shape (`ANSWERED`, `ABSTAINED`, `RECALL_FAILED`) and `status` the protocol's
+  primary status: abstentions are classified mechanically (`CORRECT_ABSTENTION`, `EVIDENCE_MISS_ABSTENTION`,
+  `WRONG_ABSTENTION`), and answered rows are `null` because their first conditions (`premiseAccepted`,
+  `anyContradictedClaim`) need a human verdict.
 - **Text policy.** Generated chunks come from authored Apache-2.0 templates, so every point corpus is publishable and
   claim text is written; a redacted corpus would carry each claim's SHA-256 instead.
 - **Resources.** Per row: median and p95 per operation, throughput, allocated bytes per operation, and GC and RSS

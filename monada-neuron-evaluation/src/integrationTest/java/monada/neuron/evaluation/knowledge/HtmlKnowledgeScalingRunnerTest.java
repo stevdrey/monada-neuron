@@ -104,8 +104,14 @@ class HtmlKnowledgeScalingRunnerTest {
         assertTrue(json.contains("\"tieAtCutoff\": "));
         assertTrue(json.contains("\"answerRows\": [\n        { \"queryId\": "));
         assertTrue(json.contains("\"exactQuote\": "));
-        assertTrue(json.contains("\"flags\": { \"anyUnsupportedClaim\": null"));
-        assertTrue(json.contains("\"source\": \"unjudged\""));
+        assertTrue(json.contains("\"flags\": { \"anyUnsupportedClaim\": false, \"anyContradictedClaim\": null"));
+        // B3 quotes verbatim, so its claims are supported by the exact-quote rule; abstentions get a protocol status.
+        assertTrue(json.contains("\"supported\": true, \"contradicted\": null, \"source\": \"rule: eligible exact"
+                + " quote\""));
+        assertTrue(json.contains("\"outcome\": \"ABSTAINED\", \"status\": \"CORRECT_ABSTENTION\""));
+        assertTrue(json.contains("\"outcome\": \"ANSWERED\", \"status\": null"));
+        assertFalse(json.contains("\"status\": \"ANSWERED\""));
+        assertFalse(json.contains("\"status\": \"ABSTAINED\""));
         assertTrue(json.contains("\"matcherMatching\": null, \"finalMatching\": null, \"reviewerVerdicts\": null,"
                 + " \"reviewerOverrides\": null"));
         assertTrue(json.contains("\"byCategory\": { \"exact-term\": { \"nA\": "));
