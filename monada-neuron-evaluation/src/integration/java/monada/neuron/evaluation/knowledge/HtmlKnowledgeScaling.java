@@ -31,6 +31,7 @@ import monada.neuron.monad.CognitiveStageResult;
 import monada.neuron.reasoning.Evidence;
 import monada.neuron.reasoning.MemoryReferenceEvidence;
 import monada.neuron.reasoning.ReasoningCognitiveStageResult;
+import monada.neuron.resonance.adapter.OpaqueReference;
 import monada.neuron.resonance.adapter.ResonanceStoreMemoryAdapter;
 import monada.neuron.signal.Signal;
 
@@ -376,7 +377,7 @@ final class HtmlKnowledgeScaling {
         imported.checks().forEach(check -> checks.add(prefixed(prefix, check)));
         var manifest = imported.manifest();
 
-        measureIngestion(point, directory, rows, metadata, prefix);
+        measureIngestion(point, directory, rows, metadata, prefix, ingestion, imported.checks());
 
         var sweep = ingestion.readbackSweep(MonadaMemory.open(root), manifest);
         var atomIds = manifest.entries().stream().map(IngestionManifest.Entry::atomId).collect(Collectors.toSet());
@@ -497,16 +498,27 @@ final class HtmlKnowledgeScaling {
                 answerRows, traces, footprint, overhead, storeCalls, metadata);
     }
 
-    private void measureIngestion(Point point, Path directory, Rows rows, Map<String, String> metadata,
-            String prefix) {
+    /** One timed scratch import: its root and the atoms {@code remember} returned. */
+    private record ScratchImport(Path root, List<KnowledgeAtom> atoms) {
+    }
+
+    /**
+     * Measures ingestion into fresh scratch roots. Each sample's root is kept until the window ends, then read back in
+     * full like the root under test, so a sample that returned the right atoms but did not persist them invalidates the
+     * row. The row is withheld when the root under test already failed its ingestion checks.
+     */
+    private void measureIngestion(Point point, Path directory, Rows rows, Map<String, String> metadata, String prefix,
+            HtmlKnowledgeIngestion ingestion, List<Check> importChecks) {
         var corpus = point.corpus();
+        var failedImport = importChecks.stream().filter(check -> !check.passed()).map(Check::name).toList();
+        if (!failedImport.isEmpty()) {
+            rows.withhold("ingest.remember", Optional.empty(), "the root under test failed " + head(failedImport));
+            return;
+        }
         var scratch = new ArrayList<Path>();
         var leftovers = new ArrayList<String>();
-        var counter = new int[1];
         Runnable freshRoot = () -> {
-            scratch.forEach(path -> HtmlKnowledgeIngestionRunner.deleteTreeQuietly(path).ifPresent(leftovers::add));
-            scratch.clear();
-            var next = directory.resolve("scratch-" + ++counter[0]);
+            var next = directory.resolve("scratch-" + (scratch.size() + 1));
             try {
                 Files.createDirectories(next);
             } catch (IOException e) {
@@ -514,19 +526,36 @@ final class HtmlKnowledgeScaling {
             }
             scratch.add(next);
         };
-        rows.measure("ingest.remember", Optional.empty(), sampling.ingestWarmups(), sampling.coldIterations(),
-                corpus.chunks().size(), freshRoot, () -> {
-                    var memory = MonadaMemory.open(scratch.getFirst());
-                    var atoms = new ArrayList<KnowledgeAtom>(corpus.chunks().size());
-                    for (var chunk : corpus.chunks()) {
-                        atoms.add(memory.remember(chunk.text()));
-                    }
-                    return atoms;
-                }, atoms -> faithfulImport(corpus, atoms),
-                "MonadaMemory.open on a fresh empty scratch root plus one remember per chunk in chunkId order;"
-                        + " operations are chunks, so throughput is chunks per second",
-                "one distinct atom per chunk whose content hashes to the chunk sha256");
-        scratch.forEach(path -> HtmlKnowledgeIngestionRunner.deleteTreeQuietly(path).ifPresent(leftovers::add));
+        var opaqueReference = new OpaqueReference();
+        try {
+            rows.measure("ingest.remember", Optional.empty(), sampling.ingestWarmups(), sampling.coldIterations(),
+                    corpus.chunks().size(), freshRoot, () -> {
+                        var root = scratch.getLast();
+                        var memory = MonadaMemory.open(root);
+                        var atoms = new ArrayList<KnowledgeAtom>(corpus.chunks().size());
+                        for (var chunk : corpus.chunks()) {
+                            atoms.add(memory.remember(chunk.text()));
+                        }
+                        return new ScratchImport(root, atoms);
+                    }, imported -> faithfulImport(corpus, imported.atoms()).or(() -> {
+                        var entries = new ArrayList<IngestionManifest.Entry>(imported.atoms().size());
+                        for (var i = 0; i < imported.atoms().size(); i++) {
+                            var atomId = imported.atoms().get(i).id();
+                            entries.add(new IngestionManifest.Entry(corpus.chunks().get(i).chunkId(), atomId,
+                                    opaqueReference.of(atomId)));
+                        }
+                        var unread = ingestion.readback(MonadaMemory.open(imported.root()),
+                                new IngestionManifest(corpus.version(), corpus.corpusHash(), entries));
+                        return unread.isEmpty() ? Optional.empty()
+                                : Optional.of("the scratch root did not read back " + head(unread));
+                    }),
+                    "MonadaMemory.open on a fresh empty scratch root plus one remember per chunk in chunkId order;"
+                            + " operations are chunks, so throughput is chunks per second",
+                    "one distinct atom per chunk whose content hashes to the chunk sha256, and a full readback of the"
+                            + " sample's scratch root through a fresh handle after the window");
+        } finally {
+            scratch.forEach(path -> HtmlKnowledgeIngestionRunner.deleteTreeQuietly(path).ifPresent(leftovers::add));
+        }
         metadata.put(prefix + "perf.ingest.scratchLeftovers", leftovers.isEmpty() ? "none" : String.join("; ",
                 leftovers));
     }
