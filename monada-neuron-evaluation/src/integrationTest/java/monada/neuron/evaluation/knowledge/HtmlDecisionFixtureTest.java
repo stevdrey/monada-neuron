@@ -1,0 +1,135 @@
+package monada.neuron.evaluation.knowledge;
+
+import monada.neuron.evaluation.knowledge.HtmlDecisionCases.Constraint;
+import monada.neuron.evaluation.knowledge.HtmlDecisionGold.Expected;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * The html-decision-v1 fixture and the html-kd-v1 supplement (Issue #112): pinned hashes, untouched html-kc-v1, and
+ * every corruption rejected at load. A changed hash needs a new fixture version, never an edited constant.
+ */
+class HtmlDecisionFixtureTest {
+
+    private static final String HTML_KC_V1_HASH = "1934ef6f127d37788bcb76e6a8e2c8cde7008e0ad9d0062277f65aa4861739a3";
+    private static final String COMBINED_HASH = "5df0fbc303eab91950e98fa8c4e654ae7e03f6c2a661ff7a3f91013f2566dfb3";
+    private static final String CASE_HASH = "888e0c77e981d8dc0e37e7b60cbf257385cbec016897874b9de4e04ed84692bb";
+
+    private static final HtmlKnowledgeCorpus CORPUS = HtmlKnowledgeCorpus.bundledWithDecisionSupplement();
+    private static final HtmlDecisionCases CASES = HtmlDecisionCases.bundled();
+    private static final String CASES_TEXT = HtmlDecisionCases.read("/html-decision-v1/cases.tsv");
+    private static final String GOLD_TEXT = HtmlDecisionCases.read("/html-decision-v1/gold.tsv");
+
+    @Test
+    void theSupplementLeavesHtmlKcV1Untouched() {
+        assertEquals(HTML_KC_V1_HASH, HtmlKnowledgeCorpus.bundled().corpusHash());
+        assertEquals(33, HtmlKnowledgeCorpus.bundled().chunks().size());
+        var supplement = HtmlKnowledgeCorpus.bundledDecisionSupplement();
+        assertEquals(HtmlKnowledgeCorpus.DECISION_SUPPLEMENT_VERSION, supplement.version());
+        assertEquals(4, supplement.chunks().size());
+        assertEquals(HtmlKnowledgeCorpus.TextPolicy.PUBLISHABLE, supplement.textPolicy());
+        assertEquals(HtmlKnowledgeCorpus.DECISION_CORPUS_VERSION, CORPUS.version());
+        assertEquals(37, CORPUS.chunks().size());
+        assertEquals(COMBINED_HASH, CORPUS.corpusHash());
+    }
+
+    @Test
+    void combiningACorpusWithItselfIsRejected() {
+        var corpus = HtmlKnowledgeCorpus.bundledDecisionSupplement();
+        assertThrows(CorpusValidationException.class, () -> HtmlKnowledgeCorpus.combine("twice",
+                CorpusBounds.AUTHORED, List.of(HtmlKnowledgeCorpus.bundled(), corpus, corpus)));
+    }
+
+    @Test
+    void theCaseSetIsPinnedAndHasContrastivePairsOfOneVariedConstraint() {
+        assertEquals(CASE_HASH, CASES.caseHash());
+        assertEquals(17, CASES.cases().size());
+        assertEquals(12, CASES.pairs().size());
+        for (var pair : CASES.pairs()) {
+            var first = CASES.byId(pair.first());
+            var second = CASES.byId(pair.second());
+            var varied = first.family().constraints().stream()
+                    .filter(constraint -> first.value(constraint) != second.value(constraint)).toList();
+            assertEquals(List.of(pair.varied()), varied, pair.pairId());
+        }
+        assertTrue(CASES.cases().stream().allMatch(value -> HtmlTokens.distinct(value.query()).size()
+                <= TokenPackingSignalCodec.MAX_QUERY_TOKENS));
+    }
+
+    @Test
+    void everyFamilyHasAContrastAndAnAbstentionOrConditionalGold() {
+        var gold = HtmlDecisionGold.bundled(CASES, CORPUS);
+        for (var family : HtmlDecisionCases.Family.values()) {
+            var expected = CASES.cases().stream().filter(value -> value.family() == family)
+                    .map(value -> gold.of(value.caseId()).expected()).distinct().toList();
+            assertTrue(expected.contains(Expected.DECIDE), family + " " + expected);
+            assertTrue(expected.contains(Expected.ABSTAIN) || expected.contains(Expected.CONDITIONAL),
+                    family + " " + expected);
+        }
+        var differing = CASES.pairs().stream().filter(pair -> !DecisionMetrics.goldSignature(gold.of(pair.first()))
+                .equals(DecisionMetrics.goldSignature(gold.of(pair.second())))).count();
+        assertTrue(differing >= 4, "at least four pairs need different or conditional gold outcomes");
+    }
+
+    @Test
+    void theGoldHashIsFrozen() {
+        assertEquals(HtmlDecisionRunner.FROZEN_GOLD_HASH, HtmlDecisionGold.bundled(CASES, CORPUS).hash());
+    }
+
+    @Test
+    void aPairThatDiffersInNoOrTwoConstraintsIsRejected() {
+        var none = CASES_TEXT.replace("separateDocument=unknown|integrateWithPage=yes",
+                "separateDocument=no|integrateWithPage=yes");
+        assertRejected(() -> HtmlDecisionCases.parse("test", none, "test"), "exactly one constraint");
+        var two = CASES_TEXT.replace("separateDocument=unknown|integrateWithPage=yes",
+                "separateDocument=unknown|integrateWithPage=no");
+        assertRejected(() -> HtmlDecisionCases.parse("test", two, "test"), "exactly one constraint");
+    }
+
+    @Test
+    void aMissingConstraintOrUnknownCandidateIsRejected() {
+        assertRejected(() -> HtmlDecisionCases.parse("test", CASES_TEXT.replace("\torderMatters=yes\t",
+                "\t-\t"), "test"), "constraints must be exactly");
+        assertRejected(() -> HtmlDecisionCases.parse("test", CASES_TEXT.replace("\tol|ul", "\tol|table"), "test"),
+                "not a list choice");
+        assertRejected(() -> HtmlDecisionCases.parse("test", CASES_TEXT.replace("orderMatters=yes",
+                "orderMatters=maybe"), "test"), "yes, no or unknown");
+        assertEquals(Constraint.ORDER_MATTERS, CASES.byId("case:list-install-01").family().constraints().getFirst());
+    }
+
+    @Test
+    void aCorruptedGoldSpanIsRejected() {
+        var corrupted = GOLD_TEXT.replace("chk:lists-and-text-semantics#00 35 ",
+                "chk:lists-and-text-semantics#00 36 ");
+        assertTrue(!corrupted.equals(GOLD_TEXT));
+        assertRejected(() -> HtmlDecisionGold.parse(corrupted, "test", CASES, CORPUS), "span digest");
+        var fabricated = GOLD_TEXT.replace("chk:lists-and-text-semantics#00 35 ",
+                "chk:lists-and-text-semantics#99 35 ");
+        assertRejected(() -> HtmlDecisionGold.parse(fabricated, "test", CASES, CORPUS), "not a chunk");
+    }
+
+    @Test
+    void aMissingOrOrphanOrInconsistentGoldLabelIsRejected() {
+        var lines = GOLD_TEXT.lines().toList();
+        var withoutNav = String.join("\n", lines.stream().filter(line -> !line.startsWith("case:list-nav-01\t"))
+                .toList());
+        assertRejected(() -> HtmlDecisionGold.parse(withoutNav, "test", CASES, CORPUS), "without a gold label");
+        var orphan = GOLD_TEXT.replace("case:list-nav-01\t", "case:list-orphan-01\t");
+        assertRejected(() -> HtmlDecisionGold.parse(orphan, "test", CASES, CORPUS), "unknown case");
+        var overlapping = GOLD_TEXT.replace("case:list-nav-01\tDECIDE\tul\tol", "case:list-nav-01\tDECIDE\tul\tul");
+        assertRejected(() -> HtmlDecisionGold.parse(overlapping, "test", CASES, CORPUS), "disjoint");
+        var nonCandidate = GOLD_TEXT.replace("case:list-nav-01\tDECIDE\tul\tol", "case:list-nav-01\tDECIDE\tdiv\tol");
+        assertRejected(() -> HtmlDecisionGold.parse(nonCandidate, "test", CASES, CORPUS), "candidate");
+    }
+
+    private static void assertRejected(Executable load, String fragment) {
+        var message = assertThrows(CorpusValidationException.class, load).getMessage();
+        assertTrue(message.contains(fragment), message);
+    }
+}

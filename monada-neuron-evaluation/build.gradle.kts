@@ -235,6 +235,19 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
         args(quotedBenchmarkArgs())
     }
 
+    // HTML design decisions (Issue #112, docs/benchmarks/html-decision.md). Opt-in: imports html-kc-v1 with the
+    // html-kd-v1 supplement into a temporary Store, runs html-decision-v1 through the Store-only, Neuron and host-rule
+    // arms and scores them against the frozen gold labels. -PbenchmarkArgs='--generator test-double' adds arm C.
+    tasks.register<JavaExec>("runHtmlDecisionBenchmark") {
+        group = "benchmark"
+        description = "Benchmarks evidence-grounded HTML design decisions under explicit constraints (Issue #112)"
+        classpath = integration.runtimeClasspath
+        mainClass.set("monada.neuron.evaluation.knowledge.HtmlDecisionRunner")
+        systemProperty("monada.neuron.version", project.version.toString())
+        systemProperty("monada.resonance.store.dir", rootProject.file("../monada-resonance-store").absolutePath)
+        args(quotedBenchmarkArgs())
+    }
+
     // Adapter-boundary JMH (Issue #49). Lives with the integration source set because it needs the
     // optional adapter; the generic `jmh` task only sees `main`.
     tasks.register<JavaExec>("jmhResonanceStoreAdapter") {

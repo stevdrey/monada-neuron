@@ -32,6 +32,12 @@ public record CorpusBounds(
      */
     public static final CorpusBounds SCALING = new CorpusBounds(25, 500, 1024, 8, 512, 32 * 1024, true);
 
+    /**
+     * Bounds of the authored decision supplement {@code html-kd-v1} (Issue #112): one document of at most 8 chunks,
+     * with the authored per-chunk limit and no conflict pair of its own.
+     */
+    public static final CorpusBounds DECISION_SUPPLEMENT = new CorpusBounds(1, 8, 1024, 8, 1, 32 * 1024, false);
+
     /** Chunk ids carry a two-digit ordinal ({@code 00} to {@code 99}), so a document holds at most 100 chunks. */
     public static final int MAX_ORDINALS = 100;
 

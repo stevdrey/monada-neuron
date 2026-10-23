@@ -1,0 +1,7 @@
+# html-kd-v1 chunk labels. Spans are [start, end) code points into the normalized document; sha256 covers the UTF-8 chunk text.
+# Must equal canonical chunking (CorpusChunker); regenerate together with any text change and bump the corpus version.
+chunkId	documentId	topic	section	start	end	sha256	conflictPair	conflictRole
+chk:script-loading-and-permissions#00	doc:script-loading-and-permissions	scripts	Module scripts	0	512	8aa3d4467344363e357a0761d7f3c98a202653ebd7a1624438bb22e34cbfa4a3	-	-
+chk:script-loading-and-permissions#01	doc:script-loading-and-permissions	scripts	Defer and async on inline scripts	514	933	1d3ac39c32b4d23511fb062f1329a8cdd454046c98231cf6052d507defc00c3d	-	-
+chk:script-loading-and-permissions#02	doc:script-loading-and-permissions	embedding	Permissions for an embedded document	935	1449	952ecd30795c4ad562eba68e014ec0e6381ab63106cf9c85cd65be38b9a6d087	-	-
+chk:script-loading-and-permissions#03	doc:script-loading-and-permissions	embedding	Showing content from another page	1451	1946	8dc9659cc9dfca2cccef1d804bd2e9a207a6c59d82b889e37949f8c6b6f389f5	-	-

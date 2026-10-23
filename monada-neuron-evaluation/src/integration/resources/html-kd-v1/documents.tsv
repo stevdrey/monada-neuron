@@ -1,0 +1,3 @@
+# html-kd-v1 documents: the decision supplement of html-kc-v1 (Issue #112), originally authored for Monada Neuron (Apache-2.0). References cite sources by URL only; no text is copied.
+documentId	file	source	license	attribution	references	documentSha256
+doc:script-loading-and-permissions	script-loading-and-permissions.md	authored-fixture	Apache-2.0	Monada Neuron contributors	https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/script https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy https://html.spec.whatwg.org/multipage/scripting.html	19e62b6452ba01bfed23ff63ad9c5ea621675cf73e6948a798b1a911682bdd92
