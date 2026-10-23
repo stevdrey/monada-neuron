@@ -238,7 +238,9 @@ by a labelled test double ([`runHtmlKnowledgeAnswers`](docs/benchmarks/html-know
 query-scoped relevance feedback is compared with a no-feedback control on calibration, held-out and surface-variant
 queries, through the Store and through Neuron, across a restart
 ([`runHtmlKnowledgeFeedback`](docs/benchmarks/html-knowledge-feedback.md), issue #110); this is retrieval-rank feedback
-inside the Store, not cognitive or worker-route adaptation.
+inside the Store, not cognitive or worker-route adaptation. The whole pipeline is profiled phase by phase over a
+scaling family of 25, 100 and 500 chunks, with semantic validity checked outside every timed window and a manual
+follow-up triage template ([`runHtmlKnowledgeScaling`](docs/benchmarks/html-knowledge-scaling.md), issue #111).
 
 **Module path.** A JPMS host writes `requires monada.neuron;`. The jar is an automatic module, so it declares no
 `requires jdk.incubator.vector` and the scalar fallback applies unless the host adds the module itself.

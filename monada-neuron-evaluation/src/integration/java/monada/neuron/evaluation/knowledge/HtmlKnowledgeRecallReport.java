@@ -315,7 +315,8 @@ final class HtmlKnowledgeRecallReport {
                 .map(score -> score.layer().label()).toList();
     }
 
-    private static String populationJson(int k, PopulationAggregate population) {
+    /** Renders one population's aggregates at {@code k}; the scaling report (Issue #111) renders categories with it. */
+    static String populationJson(int k, PopulationAggregate population) {
         var json = new StringBuilder("{ \"nA\": ").append(population.scoredA())
                 .append(", \"nU\": ").append(population.scoredU());
         for (var metric : population.answerable().entrySet()) {

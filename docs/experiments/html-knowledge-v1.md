@@ -835,7 +835,7 @@ issue fixes the exact task name in its own documentation.
 | #108 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeEvidenceTrace` | L3 evidence use in a bounded cognitive cycle, with memory-empty, swapped, removed-document, tight-budget and failed-recall controls |
 | #109 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeAnswers` | L4 grounded answers with B3, the in-sample B3c variant, abstention, a `TEST_DOUBLE` generator seam and frozen human judgments; `--ask` answers one question, unscored |
 | #110 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeFeedback` | [relevance feedback](#relevance-feedback-delivered-by-110) vs a no-feedback control: one control and three key-strategy treatment roots, seed, feedback and restarted reopen JVMs, a feedback-disabled reference |
-| #111 | planned | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeScaling` | L6 profile over the [scaling family](#scaling-family-delivered-by-111) |
+| #111 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeScaling` | L6 profile over the [scaling family](#scaling-family-delivered-by-111): every phase a separate row, semantic validity checked outside every timed window |
 
 All planned tasks require the sibling `../monada-resonance-store` checkout, like the existing integration
 source set, and do not change `./gradlew test` when it is absent.
@@ -915,3 +915,24 @@ source set, and do not change `./gradlew test` when it is absent.
   - a feedback-disabled reopen of each treatment root, which must reproduce the control bit for bit;
   - prefix stability of treatment arms after events is a diagnostic, because the Store's feedback-aware candidate
     pool depends on the requested limit.
+- No version change (issue #111). No definition, formula, label rule or report field changes. `scaling-v1` is delivered
+  by `runHtmlKnowledgeScaling` ([scaling profile](../benchmarks/html-knowledge-scaling.md)), which fixes what the
+  extension left open:
+  - the generator `html-kd-v1` (default seed 111): authored templates on web topics no `html-kq-v1` query asks about,
+    one single-chunk document per distractor, prefix-stable across sizes;
+  - the point bounds `CorpusBounds.SCALING` (25 to 500 chunks, at most 512 documents, the authored per-chunk and
+    per-document limits); `B` is 33, so `html-kc-v1-scale-25` holds no distractor and removes five queries from the
+    curve;
+  - in-process measurement: "cold" is a freshly opened handle in a warm JVM, process-cold rows are reported as
+    unavailable, and restart persistence stays the evidence of #106 and #107;
+  - the generator `html-kd-v1` draws from `java.util.Random`, whose algorithm Java SE specifies, so a generator version
+    and seed name the same chunks on every JDK;
+  - the cycle runs with memory-stage and reasoning limit `k` at every `k`; L4 rows at scale are scored and rendered by
+    the #109 scorer with `html-l4-judgments-v1`, which covers only answers identical to `html-kc-v1` answers, so other
+    verdicts are reported missing and judgment completeness is not a check;
+  - the Neuron wrapper overhead is reported as `B2` minus the `B2c` Store-side work, never as `B2` minus `B1`;
+  - the curve population is fixed by all three size points, even when a run measures a subset, and every timed warm
+    row runs that cohort, so cross-size cost compares one workload;
+  - a row with any timed sample that differs from the verified result is withheld as invalidated, never published;
+  - a corpus whose documents are authored or generated (`generated:<generatorVersion>:<seed>`) from authored
+    Apache-2.0 templates is publishable, so scaling reports carry claim text in their per-query answer rows.

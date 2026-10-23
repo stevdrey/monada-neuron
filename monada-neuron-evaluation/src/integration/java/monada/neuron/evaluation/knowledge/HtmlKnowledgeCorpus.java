@@ -53,6 +53,9 @@ public final class HtmlKnowledgeCorpus {
     /** License of originally authored documents. */
     public static final String AUTHORED_LICENSE = "Apache-2.0";
 
+    /** Source prefix of chunks generated from authored templates (the scaling family of Issue #111). */
+    public static final String GENERATED_SOURCE_PREFIX = "generated:";
+
     private static final String RESOURCE_ROOT = "/" + VERSION + "/";
     private static final int MAX_TABLE_BYTES = 64 * 1024;
     private static final Pattern DOCUMENT_ID = Pattern.compile("doc:([a-z0-9]+(?:-[a-z0-9]+)*)");
@@ -104,8 +107,9 @@ public final class HtmlKnowledgeCorpus {
 
     /**
      * Validates already chunked documents and builds a corpus, as an external source does. The text policy follows
-     * from provenance, never from the caller: only a corpus whose every document is {@value #AUTHORED_SOURCE} under
-     * {@value #AUTHORED_LICENSE} is {@link TextPolicy#PUBLISHABLE}.
+     * from provenance, never from the caller: only a corpus whose every document is {@value #AUTHORED_SOURCE} or
+     * generated from authored templates ({@value #GENERATED_SOURCE_PREFIX}...) under {@value #AUTHORED_LICENSE} is
+     * {@link TextPolicy#PUBLISHABLE}.
      *
      * @throws CorpusValidationException when any corpus invariant is violated
      */
@@ -121,7 +125,9 @@ public final class HtmlKnowledgeCorpus {
     private static HtmlKnowledgeCorpus checkedOf(String version, CorpusBounds bounds, List<CorpusDocument> documents,
             List<CorpusChunk> chunks) {
         validateChunks(version, bounds, List.copyOf(documents), List.copyOf(chunks));
-        var publishable = documents.stream().allMatch(document -> document.source().equals(AUTHORED_SOURCE)
+        // Generated distractors (Issue #111) come from authored Apache-2.0 templates, so they are publishable too.
+        var publishable = documents.stream().allMatch(document -> (document.source().equals(AUTHORED_SOURCE)
+                || document.source().startsWith(GENERATED_SOURCE_PREFIX))
                 && document.license().equals(AUTHORED_LICENSE));
         var textPolicy = publishable ? TextPolicy.PUBLISHABLE : TextPolicy.REDACTED;
         return new HtmlKnowledgeCorpus(version, bounds, textPolicy, documents, chunks);

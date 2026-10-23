@@ -275,7 +275,8 @@ final class RecallMetrics {
         return (int) new LinkedHashSet<>(retK).stream().filter(relevant::contains).count();
     }
 
-    private static LayerAggregate aggregate(Layer layer, int k, List<QueryScore> scores) {
+    /** Aggregates one layer's query scores at {@code k}; the scaling profile (Issue #111) aggregates a population. */
+    static LayerAggregate aggregate(Layer layer, int k, List<QueryScore> scores) {
         var whole = population(k, scores);
         var outcomes = new EnumMap<Category, Map<Outcome, Integer>>(Category.class);
         var byCategory = new EnumMap<Category, PopulationAggregate>(Category.class);
@@ -312,7 +313,7 @@ final class RecallMetrics {
                 answerable.size(), unanswerable.size());
     }
 
-    private static LayerAbstention abstention(Layer layer, List<QueryScore> scores) {
+    static LayerAbstention abstention(Layer layer, List<QueryScore> scores) {
         var scored = scores.stream().filter(QueryScore::completed).toList();
         var empty = scored.stream().filter(score -> score.returned().orElseThrow().isEmpty()).toList();
         var unanswerable = (int) scored.stream().filter(score -> score.query().relevant().isEmpty()).count();

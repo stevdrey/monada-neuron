@@ -96,7 +96,6 @@ public final class HtmlKnowledgeIngestion {
         }
         var ingestNanos = System.nanoTime() - start;
 
-        var entries = new ArrayList<IngestionManifest.Entry>(atoms.size());
         var chunkByAtom = new HashMap<String, String>();
         var mismatched = new ArrayList<String>();
         for (var i = 0; i < atoms.size(); i++) {
@@ -110,9 +109,9 @@ public final class HtmlKnowledgeIngestion {
             if (!CorpusDigests.sha256(atom.content()).equals(chunk.sha256())) {
                 mismatched.add(chunk.chunkId());
             }
-            entries.add(new IngestionManifest.Entry(chunk.chunkId(), atom.id(), opaqueReference.of(atom.id())));
         }
-        var manifest = new IngestionManifest(corpus.version(), corpus.corpusHash(), entries);
+        var manifest = manifest(atoms);
+        var entries = manifest.entries();
 
         var readbackStart = System.nanoTime();
         var unread = readback(memory, manifest);
@@ -130,6 +129,21 @@ public final class HtmlKnowledgeIngestion {
                                 + count + ").threshold(" + READBACK_THRESHOLD + ")"
                         : "readback failed for " + unread));
         return new Result(root, manifest, checks, ingestNanos, readbackNanos);
+    }
+
+    /**
+     * Returns the manifest of an import whose {@code atoms} were returned by {@code remember} for the corpus chunks, in
+     * {@code chunkId} order: {@code chunkId -> atomId -> opaque reference}. The scaling profile (Issue #111) validates
+     * its timed scratch imports with the same mapping.
+     */
+    IngestionManifest manifest(List<KnowledgeAtom> atoms) {
+        var entries = new ArrayList<IngestionManifest.Entry>(atoms.size());
+        for (var i = 0; i < atoms.size(); i++) {
+            var atomId = atoms.get(i).id();
+            entries.add(new IngestionManifest.Entry(corpus.chunks().get(i).chunkId(), atomId,
+                    opaqueReference.of(atomId)));
+        }
+        return new IngestionManifest(corpus.version(), corpus.corpusHash(), entries);
     }
 
     /**

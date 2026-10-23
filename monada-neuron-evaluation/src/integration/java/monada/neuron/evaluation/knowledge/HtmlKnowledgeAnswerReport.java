@@ -91,7 +91,8 @@ final class HtmlKnowledgeAnswerReport {
                 + ", \"reviewerOverrides\": " + aggregate.overrides() + " }";
     }
 
-    private String answerJson(ScoredAnswer answer) {
+    /** Renders one scored answer row; the scaling profile (Issue #111) renders its B3 rows with it. */
+    String answerJson(ScoredAnswer answer) {
         var row = answer.row();
         var query = answer.query();
         return "{ \"root\": " + string(row.root()) + ", \"layer\": " + string(row.layer()) + ", \"answerK\": "
