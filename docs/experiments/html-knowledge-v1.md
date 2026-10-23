@@ -960,3 +960,10 @@ source set, and do not change `./gradlew test` when it is absent.
     rationale and exact spans) are separate files; only the scorer reads the gold, and its hash is frozen.
   - Decisions come from an evaluation-only host rule baseline, printed in every report, never from Neuron; the
     raw-Store arm with the same rules is the matched reference for the Neuron arm.
+  - **Deviation from the boundary above:** the acceptable-option sets are not *independently* curated. They were
+    drafted by the author of the rule baseline before any system output was inspected and are reviewed by the
+    reviewer of record. Every `decision-v1` report states this; an independent re-labelling (a new gold version) is
+    follow-up work, and no result of `decision-v1` may be presented as independently judged.
+  - Choice, rationale and citation validity are scored separately: a correct choice counts as grounded only when
+    every claim quotes an eligible span exactly and a citation overlaps a gold span; the host's reason text is a
+    per-rule template and is not judged.

@@ -43,8 +43,13 @@ final class HtmlDecisionReport {
                     + " the sentence.",
             "A+R is the matched reference for B+R: same rules, same cases, raw Store evidence. Only a difference"
                     + " between them can be attributed to the Neuron path, and only for these 17 cases.",
-            "The gold labels were drafted by Claude and reviewed by the reviewer of record; they are not independent"
-                    + " of the person who wrote the rules. The gold file is frozen by its hash.",
+            "Protocol deviation: the acceptable-option sets are not independently curated. They were drafted by the"
+                    + " author of the rules (Claude) before any system output was inspected and reviewed by the"
+                    + " reviewer of record; an independent re-labelling is follow-up work. The gold file is frozen by"
+                    + " its hash.",
+            "Choice and rationale are judged separately: a decision is 'grounded' only when every claim quotes an"
+                    + " eligible span exactly and a citation overlaps a gold span. The host reason text is a fixed"
+                    + " per-rule template and is reported, not judged.",
             "Arm C runs only when a generator is configured; no model, provider or network is used by default, and a"
                     + " TEST_DOUBLE is never scored for decision quality.",
             "The corpus is small and authored (html-kc-v1 with the html-kd-v1 supplement); results do not transfer to"
@@ -93,7 +98,8 @@ final class HtmlDecisionReport {
 
     private String aggregateJson(ArmAggregate aggregate) {
         return "{ \"arm\": " + string(aggregate.arm().label()) + ", \"rows\": " + aggregate.rows() + ", \"judged\": "
-                + aggregate.judged() + ", \"correct\": " + aggregate.correct() + ", \"verdicts\": { "
+                + aggregate.judged() + ", \"correct\": " + aggregate.correct() + ", \"correctGrounded\": "
+                + aggregate.correctGrounded() + ", \"verdicts\": { "
                 + aggregate.verdicts().entrySet().stream().map(entry -> string(entry.getKey().name()) + ": "
                         + entry.getValue()).collect(Collectors.joining(", ")) + " }, \"metrics\": { "
                 + aggregate.metrics().entrySet().stream().map(entry -> string(entry.getKey()) + ": "
@@ -217,22 +223,24 @@ final class HtmlDecisionReport {
         }
 
         md.append("\n### Results per arm\n\n");
-        md.append("| Arm | Judged | Correct | Evidence-miss abstentions | Wrong abstentions | Wrong choice |"
-                + " Overconfident | Hedged/incomplete | Contradictions | No-evidence certainty | Unrequested"
+        md.append("| Arm | Judged | Correct | Correct, grounded rationale | Evidence-miss abstentions |"
+                + " Wrong abstentions | Wrong choice |"
+                + " Overconfident | Hedged/incomplete/overbroad | Contradictions | No-evidence certainty | Unrequested"
                 + " permission | Citation fidelity | Unsupported claims | Pairs consistent |\n");
-        md.append("| :--- |").append(" ---: |".repeat(13)).append('\n');
+        md.append("| :--- |").append(" ---: |".repeat(14)).append('\n');
         for (var aggregate : scores.aggregates()) {
             if (aggregate.arm() == Arm.STORE || aggregate.arm() == Arm.GENERATOR) {
                 continue;
             }
             var v = aggregate.verdicts();
             md.append("| ").append(aggregate.arm().label()).append(" | ").append(aggregate.judged()).append(" | ")
-                    .append(aggregate.correct()).append(" | ")
+                    .append(aggregate.correct()).append(" | ").append(aggregate.correctGrounded()).append(" | ")
                     .append(count(v, Verdict.EVIDENCE_MISS_ABSTENTION)).append(" | ")
                     .append(count(v, Verdict.WRONG_ABSTENTION)).append(" | ")
                     .append(count(v, Verdict.WRONG_CHOICE, Verdict.UNLISTED_CHOICE)).append(" | ")
                     .append(count(v, Verdict.OVERCONFIDENT)).append(" | ")
-                    .append(count(v, Verdict.HEDGED, Verdict.INCOMPLETE_CONDITIONAL)).append(" | ")
+                    .append(count(v, Verdict.HEDGED, Verdict.INCOMPLETE_CONDITIONAL, Verdict.OVERBROAD_CONDITIONAL))
+                    .append(" | ")
                     .append(aggregate.flagged().get("contradiction")).append(" | ")
                     .append(aggregate.flagged().get("noEvidenceCertainty")).append(" | ")
                     .append(aggregate.flagged().get("unrequestedPermission")).append(" | ")

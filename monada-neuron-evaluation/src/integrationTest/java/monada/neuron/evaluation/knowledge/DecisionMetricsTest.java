@@ -108,6 +108,35 @@ class DecisionMetricsTest {
     }
 
     @Test
+    void onlyTheExactRequestedGrantSatisfiesARequestedPermission() {
+        var claim = quote(DIV_IFRAME);
+        var exact = score("case:embed-video-01", new Decided("iframe", List.of(), List.of(), List.of(),
+                List.of(DecisionRecommendation.REQUESTED_FEATURES_ONLY), "host", List.of(claim), "fake"), DIV_IFRAME);
+        assertFalse(exact.flags().get("unrequestedPermission"));
+        assertFalse(exact.flags().get("missingPermission"));
+        var overbroad = score("case:embed-video-01", new Decided("iframe", List.of(), List.of(), List.of(),
+                List.of("allow=everything"), "host", List.of(claim), "fake"), DIV_IFRAME);
+        assertTrue(overbroad.flags().get("unrequestedPermission"));
+        assertTrue(overbroad.flags().get("missingPermission"));
+        assertFalse(overbroad.flags().get("constraintsSatisfied"));
+        var extra = score("case:embed-video-01", new Decided("iframe", List.of(), List.of(), List.of(),
+                List.of(DecisionRecommendation.REQUESTED_FEATURES_ONLY, "allow=geolocation"), "host", List.of(claim),
+                "fake"), DIV_IFRAME);
+        assertTrue(extra.flags().get("unrequestedPermission"));
+    }
+
+    @Test
+    void aCorrectChoiceWithAnUngroundedRationaleIsNotCountedAsGrounded() {
+        var offTopic = quote(DEFER);
+        var scored = score("case:list-install-01", new Decided("ol", List.of(), List.of(), List.of(), List.of(),
+                "host", List.of(offTopic), "fake"), DEFER);
+        assertEquals(Verdict.CORRECT_DECISION, scored.verdict(), "the choice alone is still correct");
+        assertFalse(scored.flags().get("rationaleGrounded"));
+        assertTrue(score("case:list-install-01", decided("ol", List.of(LISTS)), LISTS).flags()
+                .get("rationaleGrounded"));
+    }
+
+    @Test
     void certaintyWithoutEvidenceOnAnAmbiguousCaseIsOverconfident() {
         var recommendation = new Decided("ul", List.of(), List.of(), List.of(), List.of(), "host", List.of(), "fake");
         var scored = DecisionMetrics.score(row("case:list-ambiguous-01", recommendation, List.of()),
@@ -135,6 +164,11 @@ class DecisionMetricsTest {
                 List.of(claim), "fake");
         assertEquals(Verdict.INCOMPLETE_CONDITIONAL, score("case:embed-help-01", partial,
                 "chk:script-loading-and-permissions#03").verdict());
+        var module = quote("chk:script-loading-and-permissions#01");
+        var overbroad = new Conditional(List.of(new Option("module", "module-compatible", "s"),
+                new Option("external", "hosting-changes", "s")), List.of(), List.of(), List.of(module), "fake");
+        assertEquals(Verdict.OVERBROAD_CONDITIONAL, score("case:script-defer-inline-01", overbroad,
+                "chk:script-loading-and-permissions#01").verdict());
         var hedged = new Conditional(List.of(new Option("ol", "x", "s")), List.of(), List.of(), List.of(quote(LISTS)),
                 "fake");
         assertEquals(Verdict.HEDGED, score("case:list-install-01", hedged, LISTS).verdict());
@@ -190,7 +224,8 @@ class DecisionMetricsTest {
                 .filter(candidate -> HtmlTokens.distinct(candidate.text()).containsAll(List.of("ol", "ul", "order"))
                         || HtmlTokens.distinct(candidate.text()).containsAll(List.of("iframe", "embeds"))
                         || HtmlTokens.distinct(candidate.text()).containsAll(List.of("defer", "external", "parsed"))
-                        || HtmlTokens.distinct(candidate.text()).containsAll(List.of("iframe", "isolated")))
+                        || HtmlTokens.distinct(candidate.text()).containsAll(List.of("iframe", "isolated"))
+                        || HtmlTokens.distinct(candidate.text()).containsAll(List.of("inline", "classic", "ignored")))
                 .findFirst().orElseThrow();
         return new Claim(segment.text(), List.of(new Citation(chunkId, segment.start(), segment.end())));
     }

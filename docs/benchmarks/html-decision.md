@@ -114,8 +114,10 @@ without function words, capped at the codec's 32 tokens. It is a fixed function 
 | C | optional: the generator over the B+R evidence; free text, citations scored only |
 
 The whole matrix runs twice and must be identical. Store recall, the Neuron cycle and the selector step are then
-measured separately (2 warm-ups, 5 iterations of all 17 cases each), and every timed result is compared with the
-verified pass after the window.
+measured separately (2 warm-ups, 5 iterations of all 17 cases each). A step is timed only when the verified pass
+passed every check and every verified reference row of the step completed. Every timed result must equal the verified
+one in full (Store hits with scores; the whole Neuron trace with admitted and selected chunks; the whole
+recommendation, over inputs recomputed and required to equal the verified rows' evidence), or the row is withheld.
 
 ### Host rules (`host-rules-v1`)
 
@@ -151,9 +153,12 @@ Per row: a verdict (`CORRECT_DECISION`, `CORRECT_CONDITIONAL`, `CORRECT_ABSTENTI
 the arm saw none of the gold chunks, `WRONG_ABSTENTION`, `WRONG_CHOICE`, `UNLISTED_CHOICE`, `OVERCONFIDENT`, `HEDGED`,
 `INCOMPLETE_CONDITIONAL`, `NOT_SCORED`); the ratios `evidenceCoverage`, `citationFidelity`, `citationGoldOverlap`,
 `unsupportedClaimRate` and `exclusionsCited`; and the flags `candidateValid`, `constraintsSatisfied`, `contradiction`
-(an ineligible choice named, or an acceptable one excluded), `noEvidenceCertainty`, `unrequestedPermission` and
-`missingPermission`. A conditional answer is judged on the `choice@assumption` options it states, never on a single
-"best tag". Per pair and arm: whether the observed outcome changes exactly when the gold outcome does.
+(an ineligible choice named, or an acceptable one excluded), `noEvidenceCertainty`, `unrequestedPermission` (any grant other than exactly the expected one) and
+`missingPermission`, and `rationaleGrounded`, judged apart from the choice: every claim quotes an eligible span exactly
+and a citation overlaps a gold span (an abstention is grounded when it asks a clarifying question or names missing
+evidence). A conditional answer must state exactly the gold `choice@assumption` options, no fewer
+(`INCOMPLETE_CONDITIONAL`) and no more (`OVERBROAD_CONDITIONAL`), never a single "best tag". The only recognized grant
+is `allow=requested-features-only`. Per pair and arm: whether the observed outcome changes exactly when the gold outcome does.
 
 Negative tests build rows with fabricated citations, altered quotes, `defer` on inline code, an excluded acceptable
 choice, an unrequested `allow`, certainty without evidence and a constant answer across a pair, and check that each is
@@ -162,16 +167,17 @@ flagged; a constraint-ignoring selector run over the real Store scores 0 of 12 c
 ## Results (2026-10-22)
 
 JDK 27, AMD Ryzen 7 7730U, default heap, temporary Store root; two runs, identical `semanticDigest`
-`1424cf7e…`; every check passed.
+`34ae83bc…`; every check passed.
 
-| Arm | Correct | Evidence-miss abstentions | Wrong abstentions | Wrong choice | Overconfident | Contradictions | Unrequested permissions | Citation fidelity | Pairs consistent |
-| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| A+R | 14/17 | 2 | 1 | 0 | 0 | 0 | 0 | 1.000 | 12/12 |
-| B+R | 9/17 | 7 | 1 | 0 | 0 | 0 | 0 | 1.000 | 7/12 |
-| R0 | 2/17 | 15 | 0 | 0 | 0 | 0 | 0 | n/a | 0/12 |
+| Arm | Correct | Correct, grounded rationale | Evidence-miss abstentions | Wrong abstentions | Wrong choice | Overconfident | Contradictions | Unrequested permissions | Citation fidelity | Pairs consistent |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| A+R | 14/17 | 14 | 2 | 1 | 0 | 0 | 0 | 0 | 1.000 | 12/12 |
+| B+R | 9/17 | 9 | 7 | 1 | 0 | 0 | 0 | 0 | 1.000 | 7/12 |
+| R0 | 2/17 | 2 | 15 | 0 | 0 | 0 | 0 | 0 | n/a | 0/12 |
 
 - **Retrieval decides the outcome.** The rules made no wrong, overconfident or contradicting choice in any arm, granted
-  no unrequested permission and cited only exact spans of evidence they saw. Every failure is an abstention because a
+  no unrequested permission and cited only exact spans of evidence they saw; every correct row also has a grounded
+  rationale (its citations overlap the gold spans). Every failure is an abstention because a
   required fact was not retrieved.
 - **The Neuron path loses evidence the Store returns.** With the same rules, B+R is correct on 9 cases and A+R on 14.
   Every Neuron cycle decided `SUPPORTED` and selected all five admitted chunks, so the loss is in recall, not in
@@ -189,8 +195,8 @@ Latency and thread allocation per case (median of 5 iterations; GC and RSS delta
 
 | Step | Median per case | Allocated per case |
 | :--- | ---: | ---: |
-| Store recall (`RecalledEvidence.direct`, k = 5) | 0.22 ms | 153 KB |
-| Neuron cycle (`execute` + `decide`, k = 5) | 2.45 ms | 2.47 MB |
+| Store recall (`RecalledEvidence.direct`, k = 5) | 0.28 ms | 154 KB |
+| Neuron cycle (`execute` + `decide`, k = 5) | 3.14 ms | 2.47 MB |
 | Host rule step (evaluation-only) | 0.08 ms | 71 KB |
 
 The Neuron cycle sends one Store query per query token (up to 32), which accounts for most of its time and allocation.
@@ -202,8 +208,11 @@ The Neuron cycle sends one Store query per query token (up to 32), which account
   the cases can mirror them.
 - Cue matching is lexical, not understanding.
 - Only A+R versus B+R isolates the Neuron path, and only for these 17 cases; no intelligence gain is claimed.
-- The gold labels were drafted by the author of the rules and reviewed by the reviewer of record; they are not fully
-  independent.
+- **Protocol deviation.** The protocol asks for independently curated acceptable-option sets. These were drafted by
+  the author of the rules, before any system output was inspected, and reviewed by the reviewer of record; they are
+  not independent of the rules. An independent re-labelling is follow-up work and would be a new gold version.
+- The host reason text is a fixed template per rule and is not judged; the rationale is judged only through its cited
+  evidence (`rationaleGrounded`).
 - The corpus is small and authored; results do not transfer to other corpora. Multi-turn context is out of scope
   (Issue #113).
 - Arm C is exercised only with a test double; no model result exists.

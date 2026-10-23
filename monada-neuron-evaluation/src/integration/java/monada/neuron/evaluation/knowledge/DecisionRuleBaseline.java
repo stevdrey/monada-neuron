@@ -193,7 +193,8 @@ final class DecisionRuleBaseline implements DecisionSelector {
                     "iframe", List.of(), "the content is a separate, isolated document, which iframe embeds; allow"
                             + " lists exactly the requested features", List.of(IFRAME, ALLOW), List.of(),
                     List.of(new Excludes("div", "div only groups elements of the current document and cannot hold"
-                            + " another document", Optional.of(DIV))), List.of("allow=requested-features-only")),
+                            + " another document", Optional.of(DIV))),
+                    List.of(DecisionRecommendation.REQUESTED_FEATURES_ONLY)),
             decided("L1", Family.LIST, Map.of(ORDER_MATTERS, YES), "ol", List.of(),
                     "the order of the items matters, which ol expresses", List.of(ORDER), List.of(),
                     List.of(new Excludes("ul", "ul is for items whose order does not matter", Optional.of(ORDER))),

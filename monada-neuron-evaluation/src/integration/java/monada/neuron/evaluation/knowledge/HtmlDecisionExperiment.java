@@ -25,6 +25,7 @@ import monada.neuron.memory.ResonanceMemoryPort;
 import monada.neuron.reasoning.MemoryReferenceEvidence;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -33,6 +34,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 
 /**
  * The decision benchmark (Issue #112, extension {@value #EXTENSION}): every case of {@code html-decision-v1} goes
@@ -67,6 +69,9 @@ final class HtmlDecisionExperiment {
     static final int PERF_WARMUPS = 2;
     static final int PERF_ITERATIONS = 5;
 
+    /** The separately measured steps, in measurement order. */
+    static final List<String> STEPS = List.of("store.recall", "neuron.cycle", "selector.decide");
+
     /**
      * One reopened Store root.
      *
@@ -100,7 +105,7 @@ final class HtmlDecisionExperiment {
         Observation {
             rows = List.copyOf(rows);
             checks = List.copyOf(checks);
-            metadata = Map.copyOf(metadata);
+            metadata = Collections.unmodifiableMap(new TreeMap<>(metadata));
             perf = List.copyOf(perf);
         }
     }
@@ -110,10 +115,22 @@ final class HtmlDecisionExperiment {
     private final HtmlKnowledgeCycleExperiment cycle = new HtmlKnowledgeCycleExperiment();
     private final HtmlKnowledgeQaExperiment citations = new HtmlKnowledgeQaExperiment(List.of());
     private final EvaluationMetricsCollector collector = new EvaluationMetricsCollector();
+    private final UnaryOperator<ResonanceMemoryPort> timedPort;
 
     HtmlDecisionExperiment(DecisionSelector selector, Optional<GroundedAnswerGenerator> generator) {
+        this(selector, generator, UnaryOperator.identity());
+    }
+
+    /**
+     * Creates the experiment with a test seam: {@code timedPort} wraps the memory port of the timed Neuron passes
+     * only, so a test can make a timed pass admit different evidence and observe its row withheld. Verified rows never
+     * use it.
+     */
+    HtmlDecisionExperiment(DecisionSelector selector, Optional<GroundedAnswerGenerator> generator,
+            UnaryOperator<ResonanceMemoryPort> timedPort) {
         this.selector = Objects.requireNonNull(selector, "selector must not be null");
         this.generator = Objects.requireNonNull(generator, "generator must not be null");
+        this.timedPort = Objects.requireNonNull(timedPort, "timedPort must not be null");
     }
 
     DecisionSelector selector() {
@@ -213,16 +230,11 @@ final class HtmlDecisionExperiment {
     }
 
     private NeuronPath neuron(Root root, String query) {
-        var run = cycle.execute(root.adapter(), query, HtmlKnowledgeCycleExperiment.BUDGET, K);
-        var decision = cycle.decide(run, root.resolver());
-        var admitted = run.memory().map(memory -> memory.response().results().stream()
-                .map(result -> chunkOf(root, result.reference())).toList()).orElse(List.of());
-        var selected = run.stageResults().stream().filter(EvaluationCognitiveStageResult.class::isInstance)
-                .map(EvaluationCognitiveStageResult.class::cast)
-                .flatMap(result -> cycle.selectedEvidence(result).stream())
-                .filter(MemoryReferenceEvidence.class::isInstance).map(MemoryReferenceEvidence.class::cast)
-                .map(reference -> chunkOf(root, reference.reference())).distinct().toList();
-        var trace = Optional.of(new NeuronTrace(run.inputs().size(), decision, admitted, selected));
+        var neuronTrace = cycle(root, root.adapter(), query);
+        var decision = neuronTrace.decision();
+        var admitted = neuronTrace.admitted();
+        var selected = neuronTrace.selected();
+        var trace = Optional.of(neuronTrace);
         if (decision == EvidenceDecision.RECALL_FAILED || decision == EvidenceDecision.INCOMPLETE
                 || decision == EvidenceDecision.FAILED_CLOSED) {
             return new NeuronPath(trace, Optional.empty(), "Neuron cycle decision " + decision);
@@ -244,6 +256,20 @@ final class HtmlDecisionExperiment {
                         .filter(chunk -> selected.contains(chunk.chunkId())).toList()), "-");
             }
         };
+    }
+
+    /** Runs one Neuron cycle over {@code port} and returns its full trace: signals, decision, admitted and selected. */
+    private NeuronTrace cycle(Root root, ResonanceMemoryPort port, String query) {
+        var run = cycle.execute(port, query, HtmlKnowledgeCycleExperiment.BUDGET, K);
+        var decision = cycle.decide(run, root.resolver());
+        var admitted = run.memory().map(memory -> memory.response().results().stream()
+                .map(result -> chunkOf(root, result.reference())).toList()).orElse(List.of());
+        var selected = run.stageResults().stream().filter(EvaluationCognitiveStageResult.class::isInstance)
+                .map(EvaluationCognitiveStageResult.class::cast)
+                .flatMap(result -> cycle.selectedEvidence(result).stream())
+                .filter(MemoryReferenceEvidence.class::isInstance).map(MemoryReferenceEvidence.class::cast)
+                .map(reference -> chunkOf(root, reference.reference())).distinct().toList();
+        return new NeuronTrace(run.inputs().size(), decision, admitted, selected);
     }
 
     private String chunkOf(Root root, String reference) {
@@ -302,24 +328,30 @@ final class HtmlDecisionExperiment {
     }
 
     /**
-     * Measures the three steps separately over all cases per iteration and validates every timed result against the
-     * verified rows after the window. A row whose results differ is withheld and fails {@code perf.matchesVerified}.
+     * Measures the three steps separately over all cases per iteration. A step is timed only when the verified pass
+     * passed every check and every verified reference row of that step completed; every warm-up and measured result
+     * must then equal the verified one in full (Store hits with scores; the whole Neuron trace with admitted and
+     * selected chunks; the whole recommendation), or the row is withheld and {@code perf.matchesVerified} fails.
      */
     private List<BenchmarkRunResult> measure(Root root, List<DecisionCase> cases, List<Row> verified,
             List<Check> checks, Map<String, String> metadata) {
-        var expectedStore = verified.stream().filter(row -> row.arm() == Arm.STORE).map(Row::evidence).toList();
-        var expectedNeuron = verified.stream().filter(row -> row.arm() == Arm.NEURON_RULES)
-                .map(row -> row.neuron().map(NeuronTrace::decision)).toList();
-        var neuronRows = verified.stream().filter(row -> row.arm() == Arm.NEURON_RULES).toList();
-        var expectedSelector = neuronRows.stream().map(Row::recommendation).toList();
-        var selectorInputs = new ArrayList<List<EvidenceChunk>>();
-        for (var decisionCase : cases) {
-            selectorInputs.add(neuron(root, decisionCase.query()).usable().orElse(List.of()));
-        }
-        var mismatches = new ArrayList<String>();
         var perf = new ArrayList<BenchmarkRunResult>();
-        measured("store.recall", cases, "RecalledEvidence.direct(memory, query, " + K + ") per case, with mapping and"
-                + " sha256 fidelity", mismatches, perf, metadata, () -> {
+        var failedChecks = checks.stream().filter(check -> !check.passed()).map(Check::name).toList();
+        if (!failedChecks.isEmpty()) {
+            for (var name : STEPS) {
+                metadata.put("perf." + name, "withheld (the verified pass failed " + failedChecks + ")");
+            }
+            checks.add(new Check("perf.matchesVerified", true, "no timed row was measured: the verified pass failed "
+                    + failedChecks));
+            return perf;
+        }
+        var storeRows = verified.stream().filter(row -> row.arm() == Arm.STORE).toList();
+        var neuronRows = verified.stream().filter(row -> row.arm() == Arm.NEURON_RULES).toList();
+        var mismatches = new ArrayList<String>();
+
+        var storeReady = storeRows.stream().allMatch(row -> row.outcome() == Outcome.RETRIEVED);
+        measured(STEPS.get(0), storeReady, cases, "RecalledEvidence.direct(memory, query, " + K + ") per case, with"
+                + " mapping and sha256 fidelity", mismatches, perf, metadata, () -> {
                     var out = new ArrayList<Object>();
                     for (var decisionCase : cases) {
                         out.add(switch (root.evidence().direct(root.memory(), decisionCase.query(), K)) {
@@ -328,33 +360,51 @@ final class HtmlDecisionExperiment {
                         });
                     }
                     return out;
-                }, expectedStore);
-        measured("neuron.cycle", cases, "HtmlKnowledgeCycleExperiment.execute + decide per case (memory port,"
-                + " reasoning and evaluation stages)", mismatches, perf, metadata, () -> {
+                }, storeRows.stream().map(Row::evidence).toList());
+
+        var neuronReady = neuronRows.stream().allMatch(row -> row.neuron().isPresent()
+                && row.outcome() != Outcome.RECALL_FAILED);
+        var port = timedPort.apply(root.adapter());
+        measured(STEPS.get(1), neuronReady, cases, "HtmlKnowledgeCycleExperiment.execute + decide per case (memory"
+                + " port, reasoning and evaluation stages), compared by its full trace", mismatches, perf, metadata,
+                () -> {
                     var out = new ArrayList<Object>();
                     for (var decisionCase : cases) {
-                        var run = cycle.execute(root.adapter(), decisionCase.query(),
-                                HtmlKnowledgeCycleExperiment.BUDGET, K);
-                        out.add(Optional.of(cycle.decide(run, root.resolver())));
+                        out.add(cycle(root, port, decisionCase.query()));
                     }
                     return out;
-                }, expectedNeuron);
-        measured("selector.decide", cases, selector.name() + ".decide over the precomputed B+R evidence per case"
-                + " (evaluation-only decision step)", mismatches, perf, metadata, () -> {
+                }, neuronRows.stream().map(row -> row.neuron().orElse(null)).toList());
+
+        var inputs = new ArrayList<List<EvidenceChunk>>();
+        var inputsMatch = neuronReady;
+        for (var index = 0; index < cases.size() && inputsMatch; index++) {
+            var usable = neuron(root, cases.get(index).query()).usable();
+            inputsMatch = usable.isPresent() && hits(usable.get()).equals(neuronRows.get(index).evidence());
+            usable.ifPresent(inputs::add);
+        }
+        var selectorReady = inputsMatch && neuronRows.stream().allMatch(row -> row.recommendation().isPresent());
+        measured(STEPS.get(2), selectorReady, cases, selector.name() + ".decide over the B+R evidence per case,"
+                + " recomputed and required to equal the verified rows' evidence (evaluation-only decision step)",
+                mismatches, perf, metadata, () -> {
                     var out = new ArrayList<Object>();
                     for (var index = 0; index < cases.size(); index++) {
-                        out.add(Optional.of(selector.decide(cases.get(index), selectorInputs.get(index))));
+                        out.add(selector.decide(cases.get(index), inputs.get(index)));
                     }
                     return out;
-                }, expectedSelector);
+                }, neuronRows.stream().map(row -> row.recommendation().orElse(null)).toList());
         checks.add(new Check("perf.matchesVerified", mismatches.isEmpty(), mismatches.isEmpty()
-                ? "every timed result equals the verified pass" : "timed results differ: " + mismatches));
+                ? "every timed result equals the verified pass in full" : "timed rows withheld: " + mismatches));
         return perf;
     }
 
-    private void measured(String name, List<DecisionCase> cases, String timed, List<String> mismatches,
-            List<BenchmarkRunResult> perf, Map<String, String> metadata, Supplier<List<Object>> workload,
-            List<?> expected) {
+    private void measured(String name, boolean referenceReady, List<DecisionCase> cases, String timed,
+            List<String> mismatches, List<BenchmarkRunResult> perf, Map<String, String> metadata,
+            Supplier<List<Object>> workload, List<?> expected) {
+        if (!referenceReady) {
+            mismatches.add(name + ": a verified reference row did not complete");
+            metadata.put("perf." + name, "withheld (a verified reference row did not complete)");
+            return;
+        }
         var results = new ArrayList<List<Object>>();
         var diagnostics = new TreeMap<String, String>();
         diagnostics.put("timed", timed);

@@ -16,6 +16,12 @@ sealed interface DecisionRecommendation {
     /** Most claims one recommendation may carry. */
     int MAX_CLAIMS = 8;
 
+    /**
+     * The one permission grant the benchmark recognizes: an {@code allow} listing exactly the features the requirement
+     * asks for. A selector that grants anything else grants an unrequested permission.
+     */
+    String REQUESTED_FEATURES_ONLY = "allow=requested-features-only";
+
     /** Returns the rule or component that produced the recommendation. */
     String ruleId();
 

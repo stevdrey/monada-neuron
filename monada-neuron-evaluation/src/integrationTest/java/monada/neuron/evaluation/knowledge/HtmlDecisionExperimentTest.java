@@ -8,6 +8,8 @@ import monada.neuron.evaluation.knowledge.DecisionTrace.Arm;
 import monada.neuron.evaluation.knowledge.DecisionTrace.Outcome;
 import monada.neuron.evaluation.knowledge.HtmlDecisionCases.DecisionCase;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeIngestion.Check;
+import monada.neuron.memory.ResonanceMemoryPort;
+import monada.neuron.memory.ResonanceMemoryResponse;
 import monada.neuron.resonance.adapter.ResonanceStoreMemoryAdapter;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -19,6 +21,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.UnaryOperator;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -132,6 +135,57 @@ class HtmlDecisionExperimentTest {
         assertEquals(0, neuron.pairsConsistent(), "a constant answer never reverses");
         assertEquals(CASES.cases().size(), neuron.flagged().get("noEvidenceCertainty"));
         assertTrue(neuron.verdicts().getOrDefault(Verdict.OVERCONFIDENT, 0) > 0);
+    }
+
+    @Test
+    void aTimedNeuronPassThatAdmitsDifferentEvidenceIsWithheld() {
+        UnaryOperator<ResonanceMemoryPort> dropLast = port -> request -> {
+            var response = port.recall(request);
+            var results = response.results();
+            return new ResonanceMemoryResponse(response.status(), response.resultLimit(), results.isEmpty() ? results
+                    : results.subList(0, results.size() - 1));
+        };
+        var degraded = new HtmlDecisionExperiment(new DecisionRuleBaseline(), Optional.empty(), dropLast)
+                .run(root, CASES.cases());
+        var perf = degraded.checks().stream().filter(check -> check.name().equals("perf.matchesVerified"))
+                .findFirst().orElseThrow();
+        assertFalse(perf.passed(), perf.detail());
+        assertTrue(degraded.metadata().get("perf.neuron.cycle").startsWith("invalidated"));
+        assertTrue(degraded.metadata().containsKey("perf.store.recall.medianNanosPerCase"));
+        assertEquals(List.of("decision.store.recall", "decision.selector.decide"), degraded.perf().stream()
+                .map(row -> row.benchmarkName()).toList());
+    }
+
+    @Test
+    void noStepIsTimedWhenTheVerifiedPassFails() {
+        var guessing = new DecisionSelector() {
+            @Override
+            public String name() {
+                return "guess";
+            }
+
+            @Override
+            public String description() {
+                return "TEST_DOUBLE: decides the first candidate even without evidence";
+            }
+
+            @Override
+            public Kind kind() {
+                return Kind.TEST_DOUBLE;
+            }
+
+            @Override
+            public DecisionRecommendation decide(DecisionCase decisionCase, List<EvidenceChunk> evidence) {
+                return new DecisionRecommendation.Decided(decisionCase.candidates().getFirst(), List.of(), List.of(),
+                        List.of(), List.of(), "guess", List.of(), "guess");
+            }
+        };
+        var failed = new HtmlDecisionExperiment(guessing, Optional.empty()).run(root, CASES.cases());
+        assertTrue(failed.checks().stream().anyMatch(check -> check.name().equals("control.emptyEvidenceAbstains")
+                && !check.passed()));
+        assertEquals(List.of(), failed.perf());
+        HtmlDecisionExperiment.STEPS.forEach(step -> assertTrue(failed.metadata().get("perf." + step)
+                .startsWith("withheld"), step));
     }
 
     @Test

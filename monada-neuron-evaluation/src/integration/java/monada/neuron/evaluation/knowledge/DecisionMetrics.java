@@ -63,6 +63,8 @@ final class DecisionMetrics {
         HEDGED,
         /** A conditional answer missing a gold option or its assumption. */
         INCOMPLETE_CONDITIONAL,
+        /** A conditional answer stating every gold option plus an option the gold does not list. */
+        OVERBROAD_CONDITIONAL,
         /** Not judged: the row failed or is free text. */
         NOT_SCORED
     }
@@ -77,7 +79,7 @@ final class DecisionMetrics {
 
     /** The flags, in report order. */
     static final List<String> FLAGS = List.of("candidateValid", "constraintsSatisfied", "contradiction",
-            "noEvidenceCertainty", "unrequestedPermission", "missingPermission");
+            "noEvidenceCertainty", "unrequestedPermission", "missingPermission", "rationaleGrounded");
 
     /**
      * One scored row.
@@ -132,8 +134,9 @@ final class DecisionMetrics {
      * @param pairsConsistent consistent pairs
      * @param pairsScored judged pairs
      */
-    record ArmAggregate(Arm arm, int rows, Map<Verdict, Integer> verdicts, int correct, int judged,
-            Map<String, OptionalDouble> metrics, Map<String, Integer> flagged, int pairsConsistent, int pairsScored) {
+    record ArmAggregate(Arm arm, int rows, Map<Verdict, Integer> verdicts, int correct, int correctGrounded,
+            int judged, Map<String, OptionalDouble> metrics, Map<String, Integer> flagged, int pairsConsistent,
+            int pairsScored) {
     }
 
     /**
@@ -223,6 +226,8 @@ final class DecisionMetrics {
             var armPairs = pairs.stream().filter(pair -> pair.arm() == arm).toList();
             aggregates.add(new ArmAggregate(arm, armRows.size(), verdicts,
                     (int) armRows.stream().filter(value -> CORRECT.contains(value.verdict())).count(),
+                    (int) armRows.stream().filter(value -> CORRECT.contains(value.verdict())
+                            && value.flags().getOrDefault("rationaleGrounded", false)).count(),
                     (int) armRows.stream().filter(value -> value.verdict() != Verdict.NOT_SCORED).count(), metrics,
                     flagged, (int) armPairs.stream().filter(PairScore::consistent).count(),
                     (int) armPairs.stream().filter(PairScore::scored).count()));
@@ -270,19 +275,20 @@ final class DecisionMetrics {
         var ineligible = named.stream().filter(gold.ineligible()::contains).toList();
         ineligible.forEach(choice -> diagnostics.add("named ineligible choice " + choice));
         var permissions = recommendation instanceof Decided decided ? decided.permissions() : List.<String>of();
-        var unrequested = gold.permissions() == Permissions.NONE && !permissions.isEmpty();
-        var missing = gold.permissions() == Permissions.REQUESTED && recommendation instanceof Decided
-                && permissions.isEmpty();
+        var expectedGrant = expectedGrant(gold.permissions());
+        var extraGrants = permissions.stream().filter(grant -> !expectedGrant.contains(grant)).toList();
+        var unrequested = !extraGrants.isEmpty();
+        var missing = recommendation instanceof Decided && !permissions.containsAll(expectedGrant);
         flags.put("unrequestedPermission", unrequested);
         flags.put("missingPermission", missing);
         if (unrequested) {
-            diagnostics.add("granted unrequested permissions " + permissions);
+            diagnostics.add("granted permissions beyond " + expectedGrant + ": " + extraGrants);
         }
         if (missing) {
-            diagnostics.add("granted none of the requested permissions");
+            diagnostics.add("did not grant the expected " + expectedGrant);
         }
         flags.put("constraintsSatisfied", ineligible.isEmpty() && !unrequested && !missing);
-        var rejectsAcceptable = gold.expected() == Expected.DECIDE && exclusions.stream()
+        var rejectsAcceptable = exclusions.stream()
                 .anyMatch(exclusion -> gold.acceptable().contains(exclusion.choice()));
         if (rejectsAcceptable) {
             diagnostics.add("excluded an acceptable choice");
@@ -295,8 +301,33 @@ final class DecisionMetrics {
             diagnostics.add("answered without any eligible citation");
         }
 
+        var grounded = rationaleGrounded(row, recommendation, gold);
+        flags.put("rationaleGrounded", grounded);
+        if (!grounded) {
+            diagnostics.add(recommendation instanceof Abstained
+                    ? "abstained without a clarifying question"
+                    : "rationale not grounded: a claim lacks an exact eligible quote, or no citation overlaps a gold"
+                            + " span");
+        }
         var verdict = verdict(recommendation, gold, goldChunks.stream().noneMatch(seen::contains), diagnostics);
         return new Scored(row, gold, verdict, metrics, flags, diagnostics);
+    }
+
+    /**
+     * Judges the rationale apart from the choice. A decision or conditional answer is grounded when it has at least
+     * one claim, every claim quotes an eligible span exactly, and at least one citation overlaps a gold span, so the
+     * stated evidence is the evidence the gold rationale rests on. An abstention is grounded when it asks a clarifying
+     * question or names missing evidence. The host-authored reason text is a fixed per-rule template and is reported,
+     * not judged.
+     */
+    static boolean rationaleGrounded(Row row, DecisionRecommendation recommendation, Gold gold) {
+        if (recommendation instanceof Abstained abstained) {
+            return !abstained.clarifyingQuestion().equals("-")
+                    || abstained.reason().startsWith("insufficient evidence");
+        }
+        return !row.claims().isEmpty()
+                && row.claims().stream().allMatch(claim -> claim.citations().stream().anyMatch(CitedSpan::exactQuote))
+                && row.citations().stream().anyMatch(span -> overlapsGold(span, gold));
     }
 
     private static Verdict verdict(DecisionRecommendation recommendation, Gold gold, boolean evidenceMissed,
@@ -346,8 +377,25 @@ final class DecisionMetrics {
                     diagnostics.add("missing conditional options " + missingOptions);
                     yield Verdict.INCOMPLETE_CONDITIONAL;
                 }
+                var goldOptions = gold.options().stream().map(HtmlDecisionGold.Option::render).toList();
+                var extraOptions = stated.stream().filter(option -> !goldOptions.contains(option)).toList();
+                if (!extraOptions.isEmpty()) {
+                    diagnostics.add("conditional options the gold does not list " + extraOptions);
+                    yield Verdict.OVERBROAD_CONDITIONAL;
+                }
                 yield Verdict.CORRECT_CONDITIONAL;
             }
+        };
+    }
+
+    /**
+     * The exact grant a {@link Permissions} expectation allows: nothing, or exactly
+     * {@link DecisionRecommendation#REQUESTED_FEATURES_ONLY}. Any other grant, however close, is unrequested.
+     */
+    static List<String> expectedGrant(Permissions permissions) {
+        return switch (permissions) {
+            case NONE -> List.of();
+            case REQUESTED -> List.of(DecisionRecommendation.REQUESTED_FEATURES_ONLY);
         };
     }
 
