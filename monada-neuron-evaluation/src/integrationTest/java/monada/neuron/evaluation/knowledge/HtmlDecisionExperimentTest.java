@@ -262,7 +262,7 @@ class HtmlDecisionExperimentTest {
             try (var input = HtmlDecisionExperiment.class.getResourceAsStream(type + ".class")) {
                 var bytes = new String(input.readAllBytes(), StandardCharsets.ISO_8859_1);
                 for (var gold : List.of("HtmlDecisionGold", "DecisionMetrics", "HtmlKnowledgeQuerySet",
-                        "JudgedQuery", "AnswerJudgments")) {
+                        "JudgedQuery", "AnswerJudgments", "HtmlDecisionAdjudication")) {
                     assertFalse(bytes.contains(gold), type + " references " + gold);
                 }
             }

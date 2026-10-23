@@ -1,11 +1,16 @@
 package monada.neuron.evaluation.knowledge;
 
 import monada.neuron.evaluation.knowledge.HtmlDecisionCases.Constraint;
+import monada.neuron.evaluation.knowledge.HtmlDecisionCases.Family;
 import monada.neuron.evaluation.knowledge.HtmlDecisionGold.Expected;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 
+import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -88,6 +93,25 @@ class HtmlDecisionFixtureTest {
         // only because the case states that the site's own files are allowed.
         csp.forEach(value -> assertTrue(value.requirement().contains("script-src is 'self'"), value.caseId()));
         assertTrue(Constraint.RESTRICTIVE_CSP.question().contains("('self')"));
+    }
+
+    @Test
+    void theActiveGoldIsTheFrozenAdjudicatedRevisionAndItsCoverageIsPinned() {
+        var authored = HtmlDecisionGold.bundled(CASES, CORPUS);
+        var adjudication = HtmlDecisionAdjudication.bundled(CASES, authored, CORPUS).orElseThrow();
+        var revision = HtmlDecisionGold.bundledRevision(CASES, CORPUS).orElseThrow();
+        assertEquals(HtmlDecisionRunner.FROZEN_ADJUDICATION_HASH, adjudication.hash());
+        assertEquals(HtmlDecisionRunner.FROZEN_GOLD_REVISION_HASH, revision.hash());
+        assertEquals(adjudication.revisedTable(), revision.cells());
+        // Under v2 the embed family lost its ABSTAIN and CONDITIONAL cases (#152); restoring them needs new cases.
+        var outcomes = new EnumMap<Family, Set<Expected>>(Family.class);
+        CASES.cases().forEach(value -> outcomes.computeIfAbsent(value.family(),
+                ignored -> EnumSet.noneOf(Expected.class)).add(revision.of(value.caseId()).expected()));
+        assertEquals(Map.of(Family.EMBED, Set.of(Expected.DECIDE), Family.LIST, Set.of(Expected.DECIDE,
+                Expected.ABSTAIN), Family.SCRIPT, Set.of(Expected.DECIDE, Expected.CONDITIONAL)), outcomes);
+        var changing = CASES.pairs().stream().filter(pair -> !DecisionMetrics.goldSignature(revision.of(pair.first()))
+                .equals(DecisionMetrics.goldSignature(revision.of(pair.second())))).count();
+        assertEquals(9, changing, "pairs whose v2 gold changes");
     }
 
     @Test

@@ -246,8 +246,8 @@ base-versus-distractor ladder ([`runHtmlKnowledgeRecallDiagnosis`](docs/benchmar
 issue #135). Context-dependent HTML design choices (`div`/`iframe`, `ol`/`ul`, inline or external `script` with
 `defer`, modules and CSP) are benchmarked over contrastive cases, with Store retrieval, Neuron evidence use and an
 explicitly printed, evaluation-only host rule baseline reported separately
-([`runHtmlDecisionBenchmark`](docs/benchmarks/html-decision.md), issue #112); this benchmark is preliminary until
-its gold labels are independently adjudicated (issue #152).
+([`runHtmlDecisionBenchmark`](docs/benchmarks/html-decision.md), issue #112), scored against gold labels
+independently adjudicated by a model from another vendor (issue #152).
 
 **Module path.** A JPMS host writes `requires monada.neuron;`. The jar is an automatic module, so it declares no
 `requires jdk.incubator.vector` and the scalar fallback applies unless the host adds the module itself.

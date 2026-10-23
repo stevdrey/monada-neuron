@@ -31,8 +31,12 @@ import static monada.neuron.evaluation.knowledge.HtmlKnowledgeRecallReport.strin
  */
 final class HtmlDecisionReport {
 
-    /** What this benchmark does not show over {@code cases}; rendered in both formats. */
-    static List<String> limits(HtmlDecisionCases cases) {
+    /**
+     * What this benchmark does not show over {@code cases} with {@code gold}; rendered in both formats. Without an
+     * adjudication the labels are preliminary; with one, the limit states who adjudicated them and what stays open.
+     */
+    static List<String> limits(HtmlDecisionCases cases, HtmlDecisionGold gold,
+            Optional<HtmlDecisionAdjudication> adjudication) {
         return List.of(
             "The decisions come from " + DecisionRuleBaseline.VERSION + ", deterministic host rules written by hand for"
                     + " this benchmark. Neuron did not infer them, and a correct decision is not evidence of a learned"
@@ -45,10 +49,10 @@ final class HtmlDecisionReport {
             "A+R is the matched reference for B+R: same rules, same cases, raw Store evidence. Only a difference"
                     + " between them can be attributed to the Neuron path, and only for these " + cases.cases().size()
                     + " cases.",
-            "PRELIMINARY: the gold labels are not independently adjudicated. They were drafted by the author of the"
-                    + " rules (Claude) before any system output was inspected and reviewed by the reviewer of record;"
-                    + " independent adjudication is issue #152. No result here is independent validation. The gold"
-                    + " file is frozen by its hash.",
+            adjudication.map(value -> goldLimit(gold, value)).orElse("PRELIMINARY: the gold labels are not"
+                    + " independently adjudicated. They were drafted by the author of the rules (Claude) before any"
+                    + " system output was inspected and reviewed by the reviewer of record; independent adjudication"
+                    + " is issue #152. No result here is independent validation. The gold file is frozen by its hash."),
             "Choice and rationale are judged separately: a decision is 'grounded' only when every claim quotes an"
                     + " eligible span exactly and a citation overlaps a gold span. The host reason text is a fixed"
                     + " per-rule template and is reported, not judged.",
@@ -58,24 +62,44 @@ final class HtmlDecisionReport {
                     + " other corpora, and no accuracy threshold gates CI.");
     }
 
+    private static String goldLimit(HtmlDecisionGold gold, HtmlDecisionAdjudication adjudication) {
+        if (!adjudication.missing().isEmpty() || !adjudication.dependentReviewers().isEmpty()) {
+            return "NOT INDEPENDENTLY ADJUDICATED: the adjudication of gold " + gold.version() + " by "
+                    + String.join(", ", adjudication.reviewers()) + " leaves " + adjudication.missing().size()
+                    + " items without a verdict and has " + adjudication.dependentReviewers().size()
+                    + " reviewers who wrote " + DecisionRuleBaseline.VERSION + " or drafted a label "
+                    + adjudication.dependentReviewers() + ". No result here is independent validation.";
+        }
+        return "Gold " + gold.version() + ": every item of every label was adjudicated (" + adjudication.agreements()
+                + " agree, " + adjudication.changes() + " change) by " + String.join(", ", adjudication.reviewers())
+                + ", who did not write " + DecisionRuleBaseline.VERSION + " or draft the labels, from the cases and"
+                + " the corpus, without the rules or any system output; " + HtmlDecisionAdjudication.VERSION
+                + " and the gold are frozen by their hashes. Independence is by authorship: the labels were drafted"
+                + " by the rule author and the adjudicator judged that draft. Results are comparable only within"
+                + " one gold version.";
+    }
+
     private final Scores scores;
     private final HtmlDecisionCases cases;
     private final HtmlDecisionGold gold;
+    private final Optional<HtmlDecisionAdjudication> adjudication;
     private final DecisionSelector selector;
     private final Optional<GroundedAnswerGenerator> generator;
 
-    HtmlDecisionReport(Scores scores, HtmlDecisionCases cases, HtmlDecisionGold gold, DecisionSelector selector,
+    HtmlDecisionReport(Scores scores, HtmlDecisionCases cases, HtmlDecisionGold gold,
+            Optional<HtmlDecisionAdjudication> adjudication, DecisionSelector selector,
             Optional<GroundedAnswerGenerator> generator) {
         this.scores = Objects.requireNonNull(scores, "scores must not be null");
         this.cases = Objects.requireNonNull(cases, "cases must not be null");
         this.gold = Objects.requireNonNull(gold, "gold must not be null");
+        this.adjudication = Objects.requireNonNull(adjudication, "adjudication must not be null");
         this.selector = Objects.requireNonNull(selector, "selector must not be null");
         this.generator = Objects.requireNonNull(generator, "generator must not be null");
     }
 
     String toJson() {
         var json = new StringBuilder("{ \"extension\": ").append(string(HtmlDecisionExperiment.EXTENSION));
-        json.append(", \"limits\": ").append(strings(limits(cases)));
+        json.append(", \"limits\": ").append(strings(limits(cases, gold, adjudication)));
         json.append(", \"layers\": { \"knowledgeRetrieval\": ").append(string(Arm.STORE.description()))
                 .append(", \"neuronEvidenceUse\": ").append(string(Arm.NEURON_RULES.description()))
                 .append(", \"hostRules\": ").append(string(selector.kind() + " " + selector.name() + ": "
@@ -88,8 +112,12 @@ final class HtmlDecisionReport {
         json.append(", \"cases\": { \"version\": ").append(string(cases.version())).append(", \"hash\": ")
                 .append(string(cases.caseHash())).append(", \"count\": ").append(cases.cases().size())
                 .append(", \"pairs\": ").append(cases.pairs().size()).append(" }");
-        json.append(", \"gold\": { \"version\": ").append(string(HtmlDecisionGold.VERSION)).append(", \"hash\": ")
+        json.append(", \"gold\": { \"version\": ").append(string(gold.version())).append(", \"hash\": ")
                 .append(string(gold.hash())).append(" }");
+        json.append(", \"adjudication\": ").append(adjudication.map(value -> "{ \"version\": "
+                + string(HtmlDecisionAdjudication.VERSION) + ", \"hash\": " + string(value.hash())
+                + ", \"reviewers\": " + strings(List.copyOf(value.reviewers())) + ", \"agree\": "
+                + value.agreements() + ", \"change\": " + value.changes() + " }").orElse("null"));
         json.append(", \"aggregates\": [ ").append(scores.aggregates().stream().map(this::aggregateJson)
                 .collect(Collectors.joining(", "))).append(" ]");
         json.append(", \"pairs\": [ ").append(scores.pairs().stream().map(this::pairJson)
@@ -194,8 +222,11 @@ final class HtmlDecisionReport {
         var md = new StringBuilder("## HTML design decisions (" + HtmlDecisionExperiment.EXTENSION + ")\n\n");
         md.append("Cases `").append(cases.version()).append("` (").append(cases.cases().size()).append(" cases, ")
                 .append(cases.pairs().size()).append(" contrastive pairs, hash `").append(cases.caseHash())
-                .append("`); gold `").append(HtmlDecisionGold.VERSION).append("` (hash `").append(gold.hash())
-                .append("`).\n\n");
+                .append("`); gold `").append(gold.version()).append("` (hash `").append(gold.hash())
+                .append("`); ").append(adjudication.map(value -> "adjudicated by " + String.join(", ",
+                        value.reviewers()) + " (" + value.agreements() + " agree, " + value.changes()
+                        + " change, hash `" + value.hash() + "`)").orElse("not independently adjudicated"))
+                .append(".\n\n");
 
         md.append("### Knowledge retrieval (arm A, Store only)\n\n").append(Arm.STORE.description()).append(".\n\n");
         md.append("| Case | Store top-").append(HtmlDecisionExperiment.K).append(" | Gold chunks retrieved |\n")
@@ -293,7 +324,7 @@ final class HtmlDecisionReport {
         }
 
         md.append("\n### Limits\n\n");
-        limits(cases).forEach(limit -> md.append("- ").append(limit).append('\n'));
+        limits(cases, gold, adjudication).forEach(limit -> md.append("- ").append(limit).append('\n'));
         return md.toString();
     }
 

@@ -366,15 +366,23 @@ public final class HtmlKnowledgeQuerySet {
             throw new CorpusValidationException(where, "evidence span [" + span.start() + ", " + span.end()
                     + ") is out of bounds for " + span.chunkId() + " of " + length + " code points");
         }
-        var substring = text.substring(text.offsetByCodePoints(0, span.start()),
-                text.offsetByCodePoints(0, span.end()));
-        if (!CorpusDigests.sha256(substring).equals(span.sha256())) {
+        if (!CorpusDigests.sha256(spanText(text, span)).equals(span.sha256())) {
             throw new CorpusValidationException(where, "evidence span digest does not match " + span.chunkId()
                     + " [" + span.start() + ", " + span.end() + ")");
         }
     }
 
-    private static final Comparator<EvidenceSpan> SPAN_ORDER = Comparator.comparing(EvidenceSpan::chunkId)
+    /**
+     * Returns the text of {@code span} in {@code chunkText}; offsets are code points, as everywhere in the evidence
+     * contract. The span must lie inside the text.
+     */
+    static String spanText(String chunkText, EvidenceSpan span) {
+        return chunkText.substring(chunkText.offsetByCodePoints(0, span.start()),
+                chunkText.offsetByCodePoints(0, span.end()));
+    }
+
+    /** The canonical order of evidence spans: by chunk, then start, then end. */
+    static final Comparator<EvidenceSpan> SPAN_ORDER = Comparator.comparing(EvidenceSpan::chunkId)
             .thenComparingInt(EvidenceSpan::start)
             .thenComparingInt(EvidenceSpan::end);
 
