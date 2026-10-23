@@ -224,7 +224,8 @@ final class DecisionRuleBaseline implements DecisionSelector {
                             new Excludes("external+defer", "no file can be added", Optional.empty()))),
             decided("S4", Family.SCRIPT, Map.of(MODULE_CODE, NO, RUN_AFTER_PARSE, NO, RESTRICTIVE_CSP, YES,
                             EXTERNAL_FILE_ALLOWED, YES), "external", List.of(),
-                    "a script-src without 'unsafe-inline' blocks inline code while allowed external scripts run",
+                    "a script-src that allows the site's own files ('self') but not 'unsafe-inline' blocks inline code"
+                            + " while those external scripts run",
                     List.of(CSP_BLOCKS), List.of(), List.of(new Excludes("inline", "the policy blocks inline code",
                             Optional.of(CSP_BLOCKS))), List.of()),
             conditional("S5", Family.SCRIPT, Map.of(MODULE_CODE, NO, RUN_AFTER_PARSE, NO, RESTRICTIVE_CSP, YES,

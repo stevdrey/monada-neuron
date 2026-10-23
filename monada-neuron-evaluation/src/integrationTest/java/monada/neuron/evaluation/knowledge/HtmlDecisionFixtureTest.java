@@ -19,7 +19,7 @@ class HtmlDecisionFixtureTest {
 
     private static final String HTML_KC_V1_HASH = "1934ef6f127d37788bcb76e6a8e2c8cde7008e0ad9d0062277f65aa4861739a3";
     private static final String COMBINED_HASH = "5df0fbc303eab91950e98fa8c4e654ae7e03f6c2a661ff7a3f91013f2566dfb3";
-    private static final String CASE_HASH = "888e0c77e981d8dc0e37e7b60cbf257385cbec016897874b9de4e04ed84692bb";
+    private static final String CASE_HASH = "ed860dc6b45eeda02874050010af4497e2441b2ec7b58331532079d76e25703c";
 
     private static final HtmlKnowledgeCorpus CORPUS = HtmlKnowledgeCorpus.bundledWithDecisionSupplement();
     private static final HtmlDecisionCases CASES = HtmlDecisionCases.bundled();
@@ -75,6 +75,19 @@ class HtmlDecisionFixtureTest {
         var differing = CASES.pairs().stream().filter(pair -> !DecisionMetrics.goldSignature(gold.of(pair.first()))
                 .equals(DecisionMetrics.goldSignature(gold.of(pair.second())))).count();
         assertTrue(differing >= 4, "at least four pairs need different or conditional gold outcomes");
+    }
+
+    @Test
+    void everyRestrictiveCspCaseStatesThatItsOwnScriptFilesAreAllowed() {
+        var csp = CASES.cases().stream()
+                .filter(value -> value.family() == HtmlDecisionCases.Family.SCRIPT
+                        && value.value(Constraint.RESTRICTIVE_CSP) == HtmlDecisionCases.Tri.YES).toList();
+        assertEquals(List.of("case:script-csp-01", "case:script-csp-inline-01"),
+                csp.stream().map(HtmlDecisionCases.DecisionCase::caseId).toList());
+        // A script-src without 'unsafe-inline' may also block external sources ('none'); the external choice follows
+        // only because the case states that the site's own files are allowed.
+        csp.forEach(value -> assertTrue(value.requirement().contains("script-src is 'self'"), value.caseId()));
+        assertTrue(Constraint.RESTRICTIVE_CSP.question().contains("('self')"));
     }
 
     @Test

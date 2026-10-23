@@ -84,8 +84,9 @@ The run imports both as one validated corpus `html-kc-v1-with-kd-v1` (37 chunks,
   (abstain);
 - **script** (inline, external, inline with nonce, inline or external with `defer`, module; `moduleCode`,
   `externalFileAllowed`, `runAfterParse`, `restrictiveCsp`, `reusedAcrossPages`): one-page snippet (inline or
-  external both acceptable), shared code, a CSP without `'unsafe-inline'` with and without the ability to add a file
-  (the latter conditional on a nonce or hash), run-after-parse with and without a file (`defer` on inline code is
+  external both acceptable), shared code, a CSP whose `script-src` is `'self'` (own-origin files allowed, no
+  `'unsafe-inline'`) with and without the ability to add a file (the latter conditional on a nonce or hash),
+  run-after-parse with and without a file (`defer` on inline code is
   ineligible; the latter is conditional on the code working as a module), and module code (no `defer` needed).
 
 Every pair holds two cases of one family with equal candidates that differ in exactly one constraint; the loader rejects
@@ -96,7 +97,7 @@ anything else. In 12 of 12 pairs the gold outcome changes.
 answer, the expected permission grant, a human-written rationale and exact supporting spans
 (`chunkId start end sha256`, validated against the corpus). The labels were drafted by Claude
 (`draftedBy=claude-opus-5-5`) and are reviewed by the reviewer of record (`stevdrey`); the file is frozen by its hash
-`a1db13ba…`.
+`5506175c…`.
 
 ### Query
 
@@ -168,7 +169,7 @@ flagged; a constraint-ignoring selector run over the real Store scores 0 of 12 c
 ## Results (2026-10-22)
 
 JDK 27, AMD Ryzen 7 7730U, default heap, temporary Store root; two runs, identical `semanticDigest`
-`d6b0b6f7…`; every check passed.
+`d75b99c5…`; every check passed.
 
 | Arm | Correct | Correct, grounded rationale | Evidence-miss abstentions | Wrong abstentions | Wrong choice | Overconfident | Contradictions | Unrequested permissions | Citation fidelity | Pairs consistent |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -196,9 +197,9 @@ Latency and thread allocation per case (median of 5 iterations; GC and RSS delta
 
 | Step | Median per case | Allocated per case |
 | :--- | ---: | ---: |
-| Store recall (`RecalledEvidence.direct`, k = 5) | 0.30 ms | 154 KB |
-| Neuron cycle (`execute` + `decide`, k = 5) | 3.07 ms | 2.47 MB |
-| Host rule step (evaluation-only) | 0.08 ms | 71 KB |
+| Store recall (`RecalledEvidence.direct`, k = 5) | 0.33 ms | 155 KB |
+| Neuron cycle (`execute` + `decide`, k = 5) | 3.78 ms | 2.55 MB |
+| Host rule step (evaluation-only) | 0.10 ms | 71 KB |
 
 The Neuron cycle sends one Store query per query token (up to 32), which accounts for most of its time and allocation.
 

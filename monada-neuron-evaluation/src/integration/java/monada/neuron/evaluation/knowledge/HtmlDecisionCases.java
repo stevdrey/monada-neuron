@@ -112,7 +112,8 @@ final class HtmlDecisionCases {
         EXTERNAL_FILE_ALLOWED(Family.SCRIPT, "externalFileAllowed", "Can the code be put in its own file?"),
         RUN_AFTER_PARSE(Family.SCRIPT, "runAfterParse", "Must the code run only after the document is parsed?"),
         RESTRICTIVE_CSP(Family.SCRIPT, "restrictiveCsp",
-                "Does a Content Security Policy without 'unsafe-inline' apply?"),
+                "Does a Content Security Policy apply whose script-src allows the page's own script files"
+                        + " ('self') but not 'unsafe-inline'?"),
         REUSED_ACROSS_PAGES(Family.SCRIPT, "reusedAcrossPages", "Is the same code used by several pages?");
 
         private final Family family;

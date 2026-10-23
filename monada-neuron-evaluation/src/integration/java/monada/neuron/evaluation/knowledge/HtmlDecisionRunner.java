@@ -48,7 +48,7 @@ public final class HtmlDecisionRunner {
     public static final String TITLE = "Monada Neuron HTML Design Decision Report";
 
     /** SHA-256 of the frozen, reviewed {@code html-decision-v1} gold file. */
-    static final String FROZEN_GOLD_HASH = "a1db13ba8e98831ead4fcb9cc90c5be7f0369d93856090b34ddd6d61e5b79b39";
+    static final String FROZEN_GOLD_HASH = "5506175cde52efcfbec6e4590ab470f1f728edf96e5844552b3f35315de87440";
 
     static final String REPORT_JSON = "html-decision.json";
     static final String REPORT_MARKDOWN = "html-decision.md";
