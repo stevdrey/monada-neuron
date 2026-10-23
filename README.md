@@ -243,7 +243,11 @@ scaling family of 25, 100 and 500 chunks, with semantic validity checked outside
 follow-up triage template ([`runHtmlKnowledgeScaling`](docs/benchmarks/html-knowledge-scaling.md), issue #111). A research-only
 diagnosis attributes each relevant chunk B2 loses to per-token candidate retrieval or to the merge, over a controlled
 base-versus-distractor ladder ([`runHtmlKnowledgeRecallDiagnosis`](docs/benchmarks/html-knowledge-recall-diagnosis.md),
-issue #135).
+issue #135). Context-dependent HTML design choices (`div`/`iframe`, `ol`/`ul`, inline or external `script` with
+`defer`, modules and CSP) are benchmarked over contrastive cases, with Store retrieval, Neuron evidence use and an
+explicitly printed, evaluation-only host rule baseline reported separately
+([`runHtmlDecisionBenchmark`](docs/benchmarks/html-decision.md), issue #112); this benchmark is preliminary until
+its gold labels are independently adjudicated (issue #152).
 
 **Module path.** A JPMS host writes `requires monada.neuron;`. The jar is an automatic module, so it declares no
 `requires jdk.incubator.vector` and the scalar fallback applies unless the host adds the module itself.

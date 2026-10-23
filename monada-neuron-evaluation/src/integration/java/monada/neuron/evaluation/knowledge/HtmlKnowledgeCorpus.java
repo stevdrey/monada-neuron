@@ -56,7 +56,15 @@ public final class HtmlKnowledgeCorpus {
     /** Source prefix of chunks generated from authored templates (the scaling family of Issue #111). */
     public static final String GENERATED_SOURCE_PREFIX = "generated:";
 
-    private static final String RESOURCE_ROOT = "/" + VERSION + "/";
+    /**
+     * Version of the authored decision supplement (Issue #112): documents the decision benchmark needs that
+     * {@value #VERSION} lacks, loaded beside it so {@value #VERSION} and every result pinned to it stay unchanged.
+     */
+    public static final String DECISION_SUPPLEMENT_VERSION = "html-kd-v1";
+
+    /** Version of {@value #VERSION} combined with {@value #DECISION_SUPPLEMENT_VERSION}. */
+    public static final String DECISION_CORPUS_VERSION = VERSION + "-with-kd-v1";
+
     private static final int MAX_TABLE_BYTES = 64 * 1024;
     private static final Pattern DOCUMENT_ID = Pattern.compile("doc:([a-z0-9]+(?:-[a-z0-9]+)*)");
     private static final Pattern CHUNK_ID = Pattern.compile("chk:([a-z0-9]+(?:-[a-z0-9]+)*)#(\\d{2})");
@@ -96,12 +104,43 @@ public final class HtmlKnowledgeCorpus {
 
     /** Loads and validates the authored corpus bundled on the integration classpath. */
     public static HtmlKnowledgeCorpus bundled() {
-        return load(new ClasspathFiles(), CorpusBounds.AUTHORED);
+        return load(new ClasspathFiles(VERSION), VERSION, CorpusBounds.AUTHORED);
+    }
+
+    /** Loads and validates the authored decision supplement {@value #DECISION_SUPPLEMENT_VERSION} on its own. */
+    static HtmlKnowledgeCorpus bundledDecisionSupplement() {
+        return load(new ClasspathFiles(DECISION_SUPPLEMENT_VERSION), DECISION_SUPPLEMENT_VERSION,
+                CorpusBounds.DECISION_SUPPLEMENT);
+    }
+
+    /**
+     * Returns {@value #VERSION} with the decision supplement as one corpus {@value #DECISION_CORPUS_VERSION} under the
+     * authored bounds: the corpus the decision benchmark (Issue #112) imports.
+     */
+    static HtmlKnowledgeCorpus bundledWithDecisionSupplement() {
+        return combine(DECISION_CORPUS_VERSION, CorpusBounds.AUTHORED, List.of(bundled(),
+                bundledDecisionSupplement()));
+    }
+
+    /**
+     * Combines already validated corpora into one corpus {@code version}: their documents and chunks, validated again
+     * as one corpus against {@code bounds}, so a repeated document or chunk id, or a broken conflict pair, is rejected.
+     *
+     * @throws CorpusValidationException when the combination violates a corpus invariant
+     */
+    static HtmlKnowledgeCorpus combine(String version, CorpusBounds bounds, List<HtmlKnowledgeCorpus> parts) {
+        var documents = new ArrayList<CorpusDocument>();
+        var chunks = new ArrayList<CorpusChunk>();
+        for (var part : parts) {
+            documents.addAll(part.documents());
+            chunks.addAll(part.chunks());
+        }
+        return of(version, bounds, documents, chunks);
     }
 
     /** Loads and validates an authored-format corpus directory with the authored bounds. */
     public static HtmlKnowledgeCorpus load(Path directory) {
-        return load(new DirectoryFiles(Objects.requireNonNull(directory, "directory must not be null")),
+        return load(new DirectoryFiles(Objects.requireNonNull(directory, "directory must not be null")), VERSION,
                 CorpusBounds.AUTHORED);
     }
 
@@ -195,7 +234,7 @@ public final class HtmlKnowledgeCorpus {
         return sb.toString();
     }
 
-    private static HtmlKnowledgeCorpus load(CorpusFiles files, CorpusBounds bounds) {
+    private static HtmlKnowledgeCorpus load(CorpusFiles files, String version, CorpusBounds bounds) {
         var normalizer = new CorpusNormalizer();
         var chunker = new CorpusChunker(bounds.maxChunkBytes());
         var documentRows = table(files, "documents.tsv", DOCUMENTS_HEADER);
@@ -227,7 +266,7 @@ public final class HtmlKnowledgeCorpus {
                     row.required(4, "attribution"), references, row.required(6, "documentSha256"), text));
         }
 
-        validateDocuments(VERSION, bounds, documents);
+        validateDocuments(version, bounds, documents);
 
         var rowsByDocument = new LinkedHashMap<String, List<Row>>();
         documents.forEach(document -> rowsByDocument.put(document.documentId(), new ArrayList<>()));
@@ -252,7 +291,7 @@ public final class HtmlKnowledgeCorpus {
                 chunks.add(declaredChunk(document, spans.get(i), rows.get(i), i));
             }
         }
-        return checkedOf(VERSION, bounds, documents, chunks);
+        return checkedOf(version, bounds, documents, chunks);
     }
 
     private static CorpusChunk declaredChunk(CorpusDocument document, CorpusChunker.Span span, Row row, int ordinal) {
@@ -467,7 +506,23 @@ public final class HtmlKnowledgeCorpus {
 
     private static List<Row> table(CorpusFiles files, String name, String header) {
         var normalizer = new CorpusNormalizer();
-        var text = normalizer.normalize(files.read(name, MAX_TABLE_BYTES), name);
+        return rows(normalizer.normalize(files.read(name, MAX_TABLE_BYTES), name), header, name);
+    }
+
+    /**
+     * Reads the bundled, bounded fixture table {@code /<directory>/<name>} as normalized text; shared by the decision
+     * fixtures (Issue #112) so every bundled table has one read and size rule.
+     */
+    static String bundledTable(String directory, String name) {
+        return new CorpusNormalizer().normalize(new ClasspathFiles(directory).read(name, MAX_TABLE_BYTES),
+                "/" + directory + "/" + name);
+    }
+
+    /**
+     * Splits a normalized table into its data rows after its exact {@code header}; empty and {@code #} lines are
+     * skipped and every row must have the header's column count. Each row names its {@code origin:line}.
+     */
+    static List<Row> rows(String text, String header, String name) {
         var lines = text.split("\n", -1);
         var rows = new ArrayList<Row>();
         var columns = header.split("\t", -1).length;
@@ -497,8 +552,8 @@ public final class HtmlKnowledgeCorpus {
         return rows;
     }
 
-    /** One data row of a corpus table with its {@code file:line} origin. */
-    private record Row(String origin, List<String> cells) {
+    /** One data row of a corpus or fixture table with its {@code file:line} origin. */
+    record Row(String origin, List<String> cells) {
 
         String required(int column, String name) {
             var value = cells.get(column).strip();
@@ -511,6 +566,19 @@ public final class HtmlKnowledgeCorpus {
         Optional<String> optional(int column) {
             var value = cells.get(column).strip();
             return value.isEmpty() || value.equals(ABSENT) ? Optional.empty() : Optional.of(value);
+        }
+
+        /** Returns a {@code |}-separated list; {@code -} is the empty list, and an empty or repeated item fails. */
+        List<String> list(int column) {
+            var value = cells.get(column).strip();
+            if (value.equals(ABSENT)) {
+                return List.of();
+            }
+            var items = List.of(value.split(Pattern.quote("|"), -1));
+            if (items.stream().anyMatch(String::isBlank) || new HashSet<>(items).size() != items.size()) {
+                throw reject("column " + (column + 1) + " has an empty or repeated list item");
+            }
+            return items;
         }
 
         int integer(int column, String name) {
@@ -543,13 +611,15 @@ public final class HtmlKnowledgeCorpus {
         return bytes;
     }
 
-    private static final class ClasspathFiles implements CorpusFiles {
+    /** Reads the bundled corpus resource directory {@code /<version>/}. */
+    private record ClasspathFiles(String version) implements CorpusFiles {
 
         @Override
         public byte[] read(String name, int maxBytes) {
-            try (var input = HtmlKnowledgeCorpus.class.getResourceAsStream(RESOURCE_ROOT + name)) {
+            var resource = "/" + version + "/" + name;
+            try (var input = HtmlKnowledgeCorpus.class.getResourceAsStream(resource)) {
                 if (input == null) {
-                    throw new CorpusValidationException(RESOURCE_ROOT + name, "bundled corpus file is missing");
+                    throw new CorpusValidationException(resource, "bundled corpus file is missing");
                 }
                 return readBounded(input, name, maxBytes);
             } catch (IOException e) {
