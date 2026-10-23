@@ -45,10 +45,10 @@ final class HtmlDecisionReport {
             "A+R is the matched reference for B+R: same rules, same cases, raw Store evidence. Only a difference"
                     + " between them can be attributed to the Neuron path, and only for these " + cases.cases().size()
                     + " cases.",
-            "Protocol deviation: the acceptable-option sets are not independently curated. They were drafted by the"
-                    + " author of the rules (Claude) before any system output was inspected and reviewed by the"
-                    + " reviewer of record; an independent re-labelling is follow-up work. The gold file is frozen by"
-                    + " its hash.",
+            "PRELIMINARY: the gold labels are not independently adjudicated. They were drafted by the author of the"
+                    + " rules (Claude) before any system output was inspected and reviewed by the reviewer of record;"
+                    + " independent adjudication is issue #152. No result here is independent validation. The gold"
+                    + " file is frozen by its hash.",
             "Choice and rationale are judged separately: a decision is 'grounded' only when every claim quotes an"
                     + " eligible span exactly and a citation overlaps a gold span. The host reason text is a fixed"
                     + " per-rule template and is reported, not judged.",

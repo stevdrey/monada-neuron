@@ -1,4 +1,8 @@
-# HTML Design Decisions (`decision-v1`)
+# HTML Design Decisions (`decision-v1`, preliminary)
+
+> **Preliminary benchmark.** The gold labels are not independently adjudicated: the author of the host rules drafted
+> them, and the reviewer of record reviewed them. Independent case-by-case adjudication is
+> [#152](https://github.com/stevdrey/monada-neuron/issues/152). Until then, no result on this page is independent validation.
 
 ## Question
 
@@ -169,7 +173,7 @@ flagged; a constraint-ignoring selector run over the real Store scores 0 of 12 c
 ## Results (2026-10-22)
 
 JDK 27, AMD Ryzen 7 7730U, default heap, temporary Store root; two runs, identical `semanticDigest`
-`d75b99c5…`; every check passed.
+`81a41842…`; every check passed.
 
 | Arm | Correct | Correct, grounded rationale | Evidence-miss abstentions | Wrong abstentions | Wrong choice | Overconfident | Contradictions | Unrequested permissions | Citation fidelity | Pairs consistent |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -210,9 +214,10 @@ The Neuron cycle sends one Store query per query token (up to 32), which account
   the cases can mirror them.
 - Cue matching is lexical, not understanding.
 - Only A+R versus B+R isolates the Neuron path, and only for these 17 cases; no intelligence gain is claimed.
-- **Protocol deviation.** The protocol asks for independently curated acceptable-option sets. These were drafted by
+- **Preliminary scope.** The protocol asks for independently curated acceptable-option sets. These were drafted by
   the author of the rules, before any system output was inspected, and reviewed by the reviewer of record; they are
-  not independent of the rules. An independent re-labelling is follow-up work and would be a new gold version.
+  not independent of the rules. Independent adjudication, as a new gold version, is
+  [#152](https://github.com/stevdrey/monada-neuron/issues/152).
 - The host reason text is a fixed template per rule and is not judged; the rationale is judged only through its cited
   evidence (`rationaleGrounded`).
 - The corpus is small and authored; results do not transfer to other corpora. Multi-turn context is out of scope
