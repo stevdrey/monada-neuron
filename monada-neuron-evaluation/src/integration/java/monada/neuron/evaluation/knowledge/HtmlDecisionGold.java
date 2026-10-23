@@ -4,7 +4,6 @@ import monada.neuron.evaluation.knowledge.JudgedQuery.EvidenceSpan;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -190,6 +189,12 @@ final class HtmlDecisionGold {
         return cells;
     }
 
+    /** Returns the stripped cells of the row of {@code caseId}, in file column order. */
+    List<String> cellsOf(String caseId) {
+        return cells.stream().filter(row -> row.getFirst().equals(caseId)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("no gold label for " + caseId));
+    }
+
     /** Returns everyone who drafted a label of this file. */
     Set<String> drafters() {
         return Set.copyOf(byCase.values().stream().map(Gold::draftedBy).toList());
@@ -278,11 +283,9 @@ final class HtmlDecisionGold {
         if (gold.evidence().isEmpty()) {
             throw row.reject("every gold label needs at least one supporting span");
         }
-        var order = Comparator.comparing(EvidenceSpan::chunkId).thenComparingInt(EvidenceSpan::start)
-                .thenComparingInt(EvidenceSpan::end);
         EvidenceSpan previous = null;
         for (var span : gold.evidence()) {
-            if (previous != null && order.compare(previous, span) >= 0) {
+            if (previous != null && HtmlKnowledgeQuerySet.SPAN_ORDER.compare(previous, span) >= 0) {
                 throw row.reject("spans must be sorted by (chunkId, start, end) without repeats");
             }
             previous = span;

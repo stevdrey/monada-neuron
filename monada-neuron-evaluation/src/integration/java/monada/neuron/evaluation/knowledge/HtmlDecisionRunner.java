@@ -345,7 +345,7 @@ public final class HtmlDecisionRunner {
         metadata.put("gold.hash", gold.hash());
         metadata.put("gold.origin", gold.origin());
         metadata.put("adjudication.version", adjudication.isPresent() ? HtmlDecisionAdjudication.VERSION
-                : "none (pending, issue #152)");
+                : "none (missing: the independent adjudication of issue #152 is required)");
         adjudication.ifPresent(value -> {
             metadata.put("adjudication.hash", value.hash());
             metadata.put("adjudication.reviewers", String.join(", ", value.reviewers()));

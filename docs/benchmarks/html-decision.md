@@ -114,7 +114,9 @@ answer, the expected permission grant, a human-written rationale and exact suppo
 it is not the rule author and drafted no label, which the runner checks. It saw only the worksheet that
 `./gradlew :monada-neuron-evaluation:htmlDecisionAdjudicationWorksheet` writes (requirement, typed constraints,
 candidates, the current label, the text of its spans and every corpus chunk), not the rules, their reasons or any
-system output; the file records the SHA-256 of that worksheet and of the template. A changed span is written as an
+system output; the file records the SHA-256 of that worksheet and of the template, which match the generator as of
+commit `0967b14`. The generator was corrected afterwards (list values in file order instead of sorted, `|` escaped in
+table cells), so a worksheet generated now has a different hash; the content the reviewer judged is unchanged. A changed span is written as an
 exact quote and resolved mechanically to offsets and digest. `gold-v2.tsv` is rebuilt from `gold.tsv` and the
 adjudication, its header comments are the changelog (one line per change with its reason), and the runner checks that
 it holds exactly the adjudicated labels. The rules were not changed or tuned to the new labels.
@@ -189,7 +191,7 @@ The rules never read a case id, the requirement text, a gold label, the corpus o
 | `gold.hashFrozen` | the active gold file (`gold-v2.tsv` when it exists, else `gold.tsv`) differs from its frozen hash |
 | `adjudication.hashFrozen` | `adjudication.tsv` differs from its frozen hash |
 | `adjudication.complete` | a case and item has no verdict |
-| `adjudication.independent` | a reviewer is the rule author or drafted a label |
+| `adjudication.independent` | a reviewer names the rule author or a label drafter in any spelling (compared lowercase, letters and digits only, by containment) |
 | `gold.matchesAdjudication` | `gold-v2.tsv` is missing although a label changed, exists although none changed, or differs from `gold.tsv` with the changes applied |
 
 Fixture corruption (a changed span or digest, a missing or orphan gold label, overlapping acceptable and ineligible

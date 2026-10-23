@@ -960,15 +960,11 @@ source set, and do not change `./gradlew test` when it is absent.
     rationale and exact spans) are separate files; only the scorer reads the gold, and its hash is frozen.
   - Decisions come from an evaluation-only host rule baseline, printed in every report, never from Neuron; the
     raw-Store arm with the same rules is the matched reference for the Neuron arm.
-  - Independent adjudication ([#152](https://github.com/stevdrey/monada-neuron/issues/152)): the authored labels
-    `html-decision-v1-gold` were drafted by the author of the rule baseline before any system output was inspected.
-    Every item of every label was then judged (`agree` or `change`, with a reason) by a reviewer who did not write
-    the rules or draft a label and saw neither the rules nor any system output; the verdicts are the frozen
-    `html-decision-v1-adjudication`, and the labels with every change applied are the new gold version
-    `html-decision-v1-gold-v2`, which reports use. Results are comparable only within one gold version; the earlier
-    `html-decision-v1-gold` results remain preliminary. The reviewer is one model from another vendor
-    (`gpt-6.1-sol`), not a human expert or a panel, and it judged the rule author's draft rather than labelling from
-    scratch; the benchmark page states these limits.
+  - **Preliminary scope (deviation from the boundary above):** the acceptable-option sets are not *independently*
+    curated. They were drafted by the author of the rule baseline before any system output was inspected and are
+    reviewed by the reviewer of record. `decision-v1` is therefore a preliminary benchmark: every report says so, no
+    result may be presented as independent validation, and the independent adjudication (a new gold version) is
+    [#152](https://github.com/stevdrey/monada-neuron/issues/152).
   - Errata before merge: the two CSP cases now state that `script-src` is `'self'` (own-origin script files allowed,
     no `'unsafe-inline'`), because a policy that only omits `'unsafe-inline'` may also block external sources
     (`'none'`), so the external choice did not follow from the stated constraints. The `restrictiveCsp` constraint,
@@ -977,3 +973,15 @@ source set, and do not change `./gradlew test` when it is absent.
   - Choice, rationale and citation validity are scored separately: a correct choice counts as grounded only when
     every claim quotes an eligible span exactly and a citation overlaps a gold span; the host's reason text is a
     per-rule template and is not judged.
+- No version change (issue #152). No definition, formula, label rule or report field is removed, and the extension
+  stays `decision-v1`. This closes the preliminary-scope deviation recorded for #112:
+  - The authored labels `html-decision-v1-gold` were adjudicated item by item (`agree` or `change`, with a reason)
+    by a reviewer who did not write the rule baseline or draft a label and saw neither the rules nor any system
+    output. The verdicts are the frozen `html-decision-v1-adjudication`; the labels with every change applied are
+    the new gold version `html-decision-v1-gold-v2`, which reports now use. The runner checks the adjudication's
+    hash, completeness and reviewer independence and that the revision holds exactly the adjudicated labels.
+  - Results are comparable only within one gold version; the results against `html-decision-v1-gold` remain
+    preliminary and are kept as superseded.
+  - What remains open: the reviewer is one model from another vendor (`gpt-6.1-sol`), not a human expert or a
+    panel; it judged the rule author's draft rather than labelling from scratch; and the case set was written by
+    the same author as the rules. See [HTML design decisions](../benchmarks/html-decision.md#limits).

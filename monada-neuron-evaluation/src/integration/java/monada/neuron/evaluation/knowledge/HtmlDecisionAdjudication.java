@@ -2,10 +2,10 @@ package monada.neuron.evaluation.knowledge;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -25,7 +25,8 @@ import java.util.stream.Collectors;
  *
  * <p>A malformed row, an unknown case or item, a repeated row, a no-op change or a revision that breaks a gold
  * invariant throws {@link CorpusValidationException}. A missing row or a reviewer who is not independent is reported
- * through {@link #missing()} and {@link #dependentReviewers()}, which the runner turns into failing checks. Only the
+ * through {@link #missing()} and {@link #dependentReviewers()}, which the runner turns into failing checks; a reviewer
+ * is dependent when its identifier {@linkplain #names names} the rule author or a drafter in any spelling. Only the
  * runner and the worksheet read this class; no selector, experiment or trace type references it.
  */
 final class HtmlDecisionAdjudication {
@@ -69,6 +70,11 @@ final class HtmlDecisionAdjudication {
 
         String label() {
             return label;
+        }
+
+        /** Returns the {@code gold.tsv} column of this item. */
+        int column() {
+            return column;
         }
 
         /** Returns whether {@code -} is a valid changed value: the empty list. */
@@ -149,7 +155,7 @@ final class HtmlDecisionAdjudication {
                 if (item == Item.EVIDENCE_SPANS) {
                     proposed = resolveSpans(row, proposed, corpus);
                 }
-                if (proposed.equals(cellOf(gold, caseId, item))) {
+                if (sameValue(item, proposed, gold.cellsOf(caseId).get(item.column))) {
                     throw row.reject("a change must differ from the current " + item.label());
                 }
             }
@@ -168,7 +174,8 @@ final class HtmlDecisionAdjudication {
         }
         var excluded = new TreeSet<>(gold.drafters());
         excluded.add(RULE_AUTHOR);
-        var dependent = verdicts.stream().map(Verdict::reviewer).filter(excluded::contains)
+        var dependent = verdicts.stream().map(Verdict::reviewer)
+                .filter(reviewer -> excluded.stream().anyMatch(id -> names(reviewer, id)))
                 .collect(Collectors.toCollection(TreeSet::new));
         var revised = revise(gold, byCase);
         if (verdicts.stream().anyMatch(Verdict::change)) {
@@ -254,9 +261,34 @@ final class HtmlDecisionAdjudication {
                         .map(Item::label).toList()));
     }
 
-    private static String cellOf(HtmlDecisionGold gold, String caseId, Item item) {
-        return gold.cells().stream().filter(cells -> cells.getFirst().equals(caseId)).findFirst().orElseThrow()
-                .get(item.column);
+    /**
+     * Returns whether {@code proposed} says the same as {@code current}: lists compare as sets, so a reordered list is
+     * no change. Spans are compared after resolution, which sorts them like the gold.
+     */
+    private static boolean sameValue(Item item, String proposed, String current) {
+        if (!item.isList()) {
+            return proposed.equals(current);
+        }
+        return Set.copyOf(items(proposed)).equals(Set.copyOf(items(current)));
+    }
+
+    private static List<String> items(String list) {
+        return list.equals(ABSENT) ? List.of() : List.of(list.split("\\|", -1));
+    }
+
+    /**
+     * Returns whether {@code reviewer} names the identity {@code id}: both are compared lowercase with every character
+     * other than a letter or digit removed, and the reviewer names it when it contains it. So
+     * {@code Claude-Opus-5.5} or {@code claude-opus-5-5 via a proxy} still name {@code claude-opus-5-5}.
+     */
+    static boolean names(String reviewer, String id) {
+        var key = identityKey(id);
+        return !key.isEmpty() && identityKey(reviewer).contains(key);
+    }
+
+    private static String identityKey(String name) {
+        return name.toLowerCase(Locale.ROOT).codePoints().filter(Character::isLetterOrDigit)
+                .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append).toString();
     }
 
     private static List<List<String>> revise(HtmlDecisionGold gold, Map<String, Map<Item, Verdict>> byCase) {
@@ -311,8 +343,7 @@ final class HtmlDecisionAdjudication {
             spans.add(new JudgedQuery.EvidenceSpan(chunkId, start, start + quote.codePointCount(0, quote.length()),
                     CorpusDigests.sha256(quote)));
         }
-        spans.sort(Comparator.comparing(JudgedQuery.EvidenceSpan::chunkId)
-                .thenComparingInt(JudgedQuery.EvidenceSpan::start).thenComparingInt(JudgedQuery.EvidenceSpan::end));
+        spans.sort(HtmlKnowledgeQuerySet.SPAN_ORDER);
         return spans.stream().map(span -> span.chunkId() + " " + span.start() + " " + span.end() + " "
                 + span.sha256()).collect(Collectors.joining("|"));
     }

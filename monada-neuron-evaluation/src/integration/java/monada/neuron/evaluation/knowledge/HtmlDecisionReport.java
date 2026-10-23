@@ -63,6 +63,13 @@ final class HtmlDecisionReport {
     }
 
     private static String goldLimit(HtmlDecisionGold gold, HtmlDecisionAdjudication adjudication) {
+        if (!adjudication.missing().isEmpty() || !adjudication.dependentReviewers().isEmpty()) {
+            return "NOT INDEPENDENTLY ADJUDICATED: the adjudication of gold " + gold.version() + " by "
+                    + String.join(", ", adjudication.reviewers()) + " leaves " + adjudication.missing().size()
+                    + " items without a verdict and has " + adjudication.dependentReviewers().size()
+                    + " reviewers who wrote " + DecisionRuleBaseline.VERSION + " or drafted a label "
+                    + adjudication.dependentReviewers() + ". No result here is independent validation.";
+        }
         return "Gold " + gold.version() + ": every item of every label was adjudicated (" + adjudication.agreements()
                 + " agree, " + adjudication.changes() + " change) by " + String.join(", ", adjudication.reviewers())
                 + ", who did not write " + DecisionRuleBaseline.VERSION + " or draft the labels, from the cases and"

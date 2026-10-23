@@ -2,8 +2,6 @@ package monada.neuron.evaluation.knowledge;
 
 import monada.neuron.evaluation.knowledge.HtmlDecisionAdjudication.Item;
 import monada.neuron.evaluation.knowledge.HtmlDecisionGold.Gold;
-import monada.neuron.evaluation.knowledge.HtmlDecisionGold.Option;
-import monada.neuron.evaluation.knowledge.JudgedQuery.EvidenceSpan;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -48,25 +46,32 @@ public final class HtmlDecisionAdjudicationWorksheet {
             System.exit(2);
             return;
         }
-        Map<String, String> files;
+        List<Path> written;
         try {
-            files = files();
-            HtmlKnowledgeIngestionRunner.prepareOutput(outputDir, files.keySet().stream().map(outputDir::resolve)
-                    .toList());
+            written = write(outputDir, files());
         } catch (IngestionInputException | CorpusValidationException e) {
             System.err.println("Adjudication input rejected: " + e.getMessage());
             System.exit(2);
             return;
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to write the adjudication hand-off", e);
         }
         System.out.println("Adjudication hand-off saved to:");
+        written.forEach(path -> System.out.println("  " + path.toAbsolutePath()));
+    }
+
+    /**
+     * Writes {@code files} into {@code outputDir}. Every output name, {@code gold-v2.tsv} included, is reserved and
+     * removed first, so a revision left by an earlier run never survives a run that writes none.
+     */
+    static List<Path> write(Path outputDir, Map<String, String> files) throws IOException {
+        HtmlKnowledgeIngestionRunner.prepareOutput(outputDir, List.of(outputDir.resolve(WORKSHEET),
+                outputDir.resolve(TEMPLATE), outputDir.resolve(REVISION)));
+        var written = new ArrayList<Path>();
         for (var file : files.entrySet()) {
-            try {
-                var path = HtmlKnowledgeIngestionRunner.writeFile(outputDir.resolve(file.getKey()), file.getValue());
-                System.out.println("  " + path.toAbsolutePath());
-            } catch (IOException e) {
-                throw new UncheckedIOException("Failed to write " + file.getKey(), e);
-            }
+            written.add(HtmlKnowledgeIngestionRunner.writeFile(outputDir.resolve(file.getKey()), file.getValue()));
         }
+        return written;
     }
 
     static Path outputDir(String[] args) {
@@ -102,6 +107,7 @@ public final class HtmlDecisionAdjudicationWorksheet {
             md.append("\n### `").append(decisionCase.caseId()).append("` (family `")
                     .append(decisionCase.family().label()).append("`)\n\n");
             md.append("Requirement: ").append(decisionCase.requirement()).append("\n\n");
+            var cells = gold.cellsOf(decisionCase.caseId());
             md.append("Candidates: ").append(code(decisionCase.candidates())).append("\n\n");
             md.append("Stated constraints:\n\n");
             for (var constraint : decisionCase.family().constraints()) {
@@ -112,12 +118,14 @@ public final class HtmlDecisionAdjudicationWorksheet {
             md.append("\nCurrent label:\n\n");
             md.append("| item | current value |\n| :--- | :--- |\n");
             for (var item : Item.values()) {
-                md.append("| `").append(item.label()).append("` | ").append(value(label, item)).append(" |\n");
+                md.append("| `").append(item.label()).append("` | ").append(cell(value(label, item, cells)))
+                        .append(" |\n");
             }
             md.append("\nCited spans:\n\n");
             for (var span : label.evidence()) {
                 md.append("- `").append(span.chunkId()).append("` [").append(span.start()).append(", ")
-                        .append(span.end()).append("): \"").append(quote(corpus, span)).append("\"\n");
+                        .append(span.end()).append("): \"").append(HtmlKnowledgeQuerySet.spanText(
+                                corpus.chunk(span.chunkId()).orElseThrow().text(), span)).append("\"\n");
             }
         }
         md.append("\n## Corpus `").append(corpus.version()).append("`\n\n");
@@ -177,12 +185,11 @@ public final class HtmlDecisionAdjudicationWorksheet {
                 """.formatted(String.join(", ", drafters), cases.cases().size());
     }
 
-    private static String value(Gold label, Item item) {
+    /** Returns the current value of {@code item}; lists exactly as written in {@code gold.tsv}, in file order. */
+    private static String value(Gold label, Item item, List<String> cells) {
         return switch (item) {
             case EXPECTED -> "`" + label.expected() + "`";
-            case ACCEPTABLE -> code(new ArrayList<>(new TreeSet<>(label.acceptable())));
-            case INELIGIBLE -> code(new ArrayList<>(new TreeSet<>(label.ineligible())));
-            case ASSUMPTIONS -> code(label.options().stream().map(Option::render).toList());
+            case ACCEPTABLE, INELIGIBLE, ASSUMPTIONS -> "`" + cells.get(item.column()) + "`";
             case PERMISSIONS -> "`" + label.permissions().label() + "`";
             case RATIONALE -> label.rationale();
             case EVIDENCE_SPANS -> label.evidence().size() + " span(s), listed below";
@@ -193,8 +200,8 @@ public final class HtmlDecisionAdjudicationWorksheet {
         return values.isEmpty() ? "`-`" : "`" + String.join("|", values) + "`";
     }
 
-    private static String quote(HtmlKnowledgeCorpus corpus, EvidenceSpan span) {
-        var text = corpus.chunk(span.chunkId()).orElseThrow().text();
-        return text.substring(text.offsetByCodePoints(0, span.start()), text.offsetByCodePoints(0, span.end()));
+    /** Escapes {@code |} so a value never splits its Markdown table row (also inside a code span, per GFM). */
+    private static String cell(String value) {
+        return value.replace("|", "\\|");
     }
 }

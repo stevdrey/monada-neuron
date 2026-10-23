@@ -7,9 +7,15 @@ import monada.neuron.evaluation.knowledge.HtmlKnowledgeIngestion.Check;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgePersistenceRunner.Options;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -111,6 +117,50 @@ class HtmlDecisionAdjudicationTest {
     }
 
     @Test
+    void aReorderedListIsNoChange() {
+        assertRejected(() -> parse(replace(allAgree(), "case:script-snippet-01", Item.ACCEPTABLE,
+                "change\texternal|inline\tsame set")), "must differ");
+        assertRejected(() -> parse(replace(allAgree(), "case:embed-help-01", Item.ASSUMPTIONS,
+                "change\tiframe@isolation-preferred|div@integration-preferred\tsame options")), "must differ");
+        assertEquals(1, parse(replace(allAgree(), "case:script-snippet-01", Item.ACCEPTABLE,
+                "change\tinline\tonly inline")).changes(), "a smaller set is a real change");
+    }
+
+    @Test
+    void anySpellingOfTheRuleAuthorIsNotIndependent() {
+        for (var reviewer : List.of("Claude-Opus-5-5", "claude-opus-5.5", "CLAUDE OPUS 5 5",
+                "claude-opus-5-5 via a proxy")) {
+            assertTrue(HtmlDecisionAdjudication.names(reviewer, HtmlDecisionAdjudication.RULE_AUTHOR), reviewer);
+            assertEquals(Set.of(reviewer), parse(allAgree().replace("\t" + REVIEWER + "\n", "\t" + reviewer + "\n"))
+                    .dependentReviewers(), reviewer);
+        }
+        for (var reviewer : List.of(REVIEWER, "gpt-6.1-sol", "claude-sonnet-5-5")) {
+            assertFalse(HtmlDecisionAdjudication.names(reviewer, HtmlDecisionAdjudication.RULE_AUTHOR), reviewer);
+        }
+        assertFalse(HtmlDecisionAdjudication.names("anyone", "--"), "an id without letters or digits names no one");
+    }
+
+    @Test
+    void theReportClaimsIndependenceOnlyForACompleteIndependentAdjudication() {
+        var independent = HtmlDecisionReport.limits(CASES, GOLD, Optional.of(parse(allAgree())));
+        assertTrue(independent.stream().anyMatch(limit -> limit.contains("every item of every label was"
+                + " adjudicated")), independent.toString());
+        var dependent = parse(allAgree().replace("\t" + REVIEWER + "\n", "\t"
+                + HtmlDecisionAdjudication.RULE_AUTHOR + "\n"));
+        var incomplete = parse(String.join("\n", allAgree().lines().filter(line -> !line.startsWith(NAV + "\t"))
+                .toList()));
+        for (var adjudication : List.of(dependent, incomplete)) {
+            var limits = HtmlDecisionReport.limits(CASES, GOLD, Optional.of(adjudication));
+            assertTrue(limits.stream().anyMatch(limit -> limit.startsWith("NOT INDEPENDENTLY ADJUDICATED")),
+                    limits.toString());
+            assertTrue(limits.stream().noneMatch(limit -> limit.contains("every item of every label")),
+                    limits.toString());
+        }
+        assertTrue(HtmlDecisionReport.limits(CASES, GOLD, Optional.empty()).stream()
+                .anyMatch(limit -> limit.startsWith("PRELIMINARY")));
+    }
+
+    @Test
     void missingRowsAndDependentReviewersAreReportedNotHidden() {
         var text = allAgree();
         var withoutNav = String.join("\n", text.lines().filter(line -> !line.startsWith(NAV + "\t")).toList());
@@ -165,8 +215,21 @@ class HtmlDecisionAdjudicationTest {
         CORPUS.chunks().forEach(chunk -> assertTrue(worksheet.contains("### `" + chunk.chunkId() + "`"),
                 chunk.chunkId()));
         assertTrue(worksheet.contains(HtmlDecisionAdjudication.RULE_AUTHOR));
+        assertTrue(worksheet.contains("| `acceptable` | `inline\\|external` |"), "file order, escaped");
+        worksheet.lines().filter(line -> line.startsWith("| `")).forEach(line -> assertEquals(3,
+                line.replace("\\|", "").chars().filter(c -> c == '|').count(), line));
         DecisionRuleBaseline.RULES.forEach(rule -> assertFalse(worksheet.contains(rule.render()), rule.id()));
         assertFalse(worksheet.contains(DecisionRuleBaseline.VERSION));
+    }
+
+    @Test
+    void theWorksheetOutputNeverKeepsAStaleRevision(@TempDir Path directory) throws IOException {
+        var stale = directory.resolve(HtmlDecisionAdjudicationWorksheet.REVISION);
+        Files.writeString(stale, "stale revision\n");
+        var written = HtmlDecisionAdjudicationWorksheet.write(directory, Map.of(
+                HtmlDecisionAdjudicationWorksheet.WORKSHEET, "w\n", HtmlDecisionAdjudicationWorksheet.TEMPLATE, "t\n"));
+        assertEquals(2, written.size());
+        assertFalse(Files.exists(stale));
     }
 
     private static HtmlDecisionAdjudication parse(String text) {
