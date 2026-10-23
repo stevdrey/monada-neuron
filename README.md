@@ -335,7 +335,10 @@ mandatory validator and a policy-specific verifier (issue #76) and a host-config
 `TrustedRoutingProfile` (issue #78, [ADR 0027](docs/adr/0027-trusted-routing-decision-verification.md)), and the
 provenance-preserving `RoutingOutcome` / `RoutingObservation` with the quality-gated `OutcomeEvaluator` (`monada.neuron.routing.outcome`, issue #63), and the neutral translation of bounded Resonance Store experience exports into `RoutingObservation` (`monada-neuron-resonance-adapter`, issue #64), and the separate `RoutingFeedback` with executed-route credit assignment and caller-owned applied-revision rules (`monada.neuron.routing.feedback`, issue #65, [ADR 0029](docs/adr/0029-routing-feedback-credit-assignment.md)),
 are implemented, as is the bounded caller-owned adaptive routing state of issue #66 (`monada.neuron.routing.adaptation`) with the `RoutingStateCheckpoint`, ledger digest and ledger compaction of issue #89, and the offline temporal replay evaluation of issue #67 exists in the evaluation module only ([forge-routing-evaluation.md](docs/benchmarks/forge-routing-evaluation.md)), and issue #68 verifies the published API and the embedded host loop with classpath and JPMS consumers ([ADR 0032](docs/adr/0032-published-module-names-and-adapter-publication.md)), all additive and opt-in, while the other routing types it names are proposals, and the Monada Resonance Store execution-memory capabilities it depends on (Store issues #94 to #101) are implemented on the Store's `main`. A routing decision is advice. Forge keeps authorization, execution and evidence judgment, and Monada Resonance Store
-keeps persistent experience.
+keeps persistent experience. How a host opts into that advice one phase at a time, which of its values are trusted
+configuration or untrusted observation, and how stale metadata is handled is stated in the
+[Forge Integration Readiness Contract v1](docs/specs/forge-integration-readiness-v1.md)
+(`forge-integration-readiness/1`, Neuron issue #94, [ADR 0033](docs/adr/0033-phase-gated-host-adoption-boundary.md)).
 
 ## Design Principles
 

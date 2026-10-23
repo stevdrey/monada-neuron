@@ -514,7 +514,11 @@ are proposals, and the Store capabilities it depends on (Store issues #94 to #10
 on the Store's `main`, #102 is informational) are available; the Neuron side of that integration is delivered by #64 and
 #66, its evaluation by #67, and the published consumer loop by #68 (automatic module names `monada.neuron` and `monada.neuron.resonance.adapter`, a published adapter, and classpath plus JPMS consumers of an embedded host loop; [ADR 0032](adr/0032-published-module-names-and-adapter-publication.md)). Opt-in `RoutingStateCheckpoint`s, the
 `routing-ledger-digest/1` ledger digest and explicit ledger compaction are implemented by #89
-([ADR 0031](adr/0031-routing-state-checkpoint-and-ledger-compaction.md)).
+([ADR 0031](adr/0031-routing-state-checkpoint-and-ledger-compaction.md)). The
+[Forge Integration Readiness Contract v1](specs/forge-integration-readiness-v1.md) (`forge-integration-readiness/1`,
+issue #94, [ADR 0033](adr/0033-phase-gated-host-adoption-boundary.md)) states how a host adopts this extension one phase at
+a time: a metadata only transformation boundary from reviewed task metadata to `TaskFeatures` and `RoutingRequest`, host
+vocabulary readiness outcomes, host owned staleness, cold state before the Store, and its own versioning rule.
 
 ```text
 Forge (host)
