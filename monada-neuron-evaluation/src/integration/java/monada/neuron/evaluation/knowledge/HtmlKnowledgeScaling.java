@@ -1083,11 +1083,13 @@ final class HtmlKnowledgeScaling {
         return queries.stream().map(query -> new QueryText(query.queryId(), query.text())).toList();
     }
 
-    private static Check prefixed(String prefix, Check check) {
+    /** Returns {@code check} with {@code prefix} before its name. */
+    static Check prefixed(String prefix, Check check) {
         return new Check(prefix + check.name(), check.passed(), check.detail());
     }
 
-    private static String head(List<String> values) {
+    /** Joins the first five {@code values} for a check detail, marking any omitted rest. */
+    static String head(List<String> values) {
         return String.join("; ", values.subList(0, Math.min(5, values.size()))) + (values.size() > 5 ? "; ..." : "");
     }
 }

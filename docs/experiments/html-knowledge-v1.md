@@ -936,3 +936,12 @@ source set, and do not change `./gradlew test` when it is absent.
   - a row with any timed sample that differs from the verified result is withheld as invalidated, never published;
   - a corpus whose documents are authored or generated (`generated:<generatorVersion>:<seed>`) from authored
     Apache-2.0 templates is publishable, so scaling reports carry claim text in their per-query answer rows.
+- No version change (issue #135). No definition, formula, label rule or report field changes, and no new extension.
+  `runHtmlKnowledgeRecallDiagnosis` ([B2 recall diagnosis](../benchmarks/html-knowledge-recall-diagnosis.md)) is a
+  research-only diagnostic over `html-knowledge-protocol-v1` and the `scaling-v1` family:
+  - it adds the ladder point `html-kc-v1-scale-33` (the complete base, no distractor) so base growth and distractor
+    growth are studied separately, and scores the fixed #111 curve cohort at every point;
+  - it captures every per-Signal Store hit labels-free, replays the production merge bit-exactly, and replays
+    alternative merge rules and an expanded per-token pool offline, all labelled research-only and in-sample;
+  - gold labels are read only by its scorer, after the capture; B2 = B2c remains the integrity check of the unchanged
+    production path.
