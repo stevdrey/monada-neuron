@@ -225,6 +225,16 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
         args(quotedBenchmarkArgs())
     }
 
+    tasks.register<JavaExec>("runHtmlKnowledgeRecallDiagnosis") {
+        group = "benchmark"
+        description = "Diagnoses where B2 loses relevant evidence over a controlled corpus ladder, research-only (Issue #135)"
+        classpath = integration.runtimeClasspath
+        mainClass.set("monada.neuron.evaluation.knowledge.HtmlKnowledgeRecallDiagnosisRunner")
+        systemProperty("monada.neuron.version", project.version.toString())
+        systemProperty("monada.resonance.store.dir", rootProject.file("../monada-resonance-store").absolutePath)
+        args(quotedBenchmarkArgs())
+    }
+
     // Adapter-boundary JMH (Issue #49). Lives with the integration source set because it needs the
     // optional adapter; the generic `jmh` task only sees `main`.
     tasks.register<JavaExec>("jmhResonanceStoreAdapter") {
