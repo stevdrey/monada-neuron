@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
-import java.util.SplittableRandom;
+import java.util.Random;
 
 /**
  * The versioned distractor generator of the scaling family (Issue #111, extension {@code scaling-v1}): expands a fixed
@@ -19,7 +19,8 @@ import java.util.SplittableRandom;
  * {@link #VERSION}.
  *
  * <p>Distractor {@code i} (1-based) draws a topic and three of that topic's sentences from one
- * {@link SplittableRandom} stream seeded with {@code seed}, in order, so {@code generate(m, seed)} is a prefix of
+ * {@link Random} seeded with {@code seed}, in order (its 48-bit linear congruential algorithm is specified by Java SE,
+ * so the same seed yields the same chunks on every JDK), so {@code generate(m, seed)} is a prefix of
  * {@code generate(n, seed)} for {@code m <= n}: a smaller point's distractors are a subset of a larger point's. The
  * heading carries the ordinal, so every text is unique. Cost: {@code O(count)} time and output size.
  */
@@ -135,7 +136,7 @@ final class ScalingDistractorGenerator {
         if (count < 0 || count > MAX_COUNT) {
             throw new IllegalArgumentException("count must be 0.." + MAX_COUNT + ", was " + count);
         }
-        var random = new SplittableRandom(seed);
+        var random = new Random(seed);
         var source = source(seed);
         var distractors = new ArrayList<Distractor>(count);
         for (var ordinal = 1; ordinal <= count; ordinal++) {

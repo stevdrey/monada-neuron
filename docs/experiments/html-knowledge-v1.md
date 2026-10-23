@@ -925,8 +925,11 @@ source set, and do not change `./gradlew test` when it is absent.
     curve;
   - in-process measurement: "cold" is a freshly opened handle in a warm JVM, process-cold rows are reported as
     unavailable, and restart persistence stays the evidence of #106 and #107;
-  - the cycle runs with memory-stage and reasoning limit `k` at every `k`; L4 at scale reports mechanical B3 counts
-    only, because `html-l4-judgments-v1` is keyed to `html-kc-v1` answers;
+  - the generator `html-kd-v1` draws from `java.util.Random`, whose algorithm Java SE specifies, so a generator version
+    and seed name the same chunks on every JDK;
+  - the cycle runs with memory-stage and reasoning limit `k` at every `k`; L4 rows at scale are scored and rendered by
+    the #109 scorer with `html-l4-judgments-v1`, which covers only answers identical to `html-kc-v1` answers, so other
+    verdicts are reported missing and judgment completeness is not a check;
   - the Neuron wrapper overhead is reported as `B2` minus the `B2c` Store-side work, never as `B2` minus `B1`;
   - the curve population is fixed by all three size points, even when a run measures a subset, and every timed warm
     row runs that cohort, so cross-size cost compares one workload;

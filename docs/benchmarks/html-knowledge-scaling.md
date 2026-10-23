@@ -55,7 +55,7 @@ Outputs, under `build/reports/benchmarks/` of `monada-neuron-evaluation`:
 
 | File | Content |
 | :--- | :--- |
-| `html-knowledge-scaling.json` | the single machine-readable report. It holds `allChecksPassed`, the checks and the provenance metadata. The scored payload `scaling` holds per point the corpus identity, removed queries, footprint, quality per layer, `k` and category, B3 counts, one `queries` row per eligible query (labels, returned chunks with ranks and scores, outcome and `tieAtCutoff` per `k`, miss diagnostics, and the L3 trace of its verified cycle at each `k`: admitted, attached and selected chunks, decision and termination), one `answerRows` entry per query, layer and `answerK` (evidence, status, claims with checked citations, the five flags and every judgment artifact, `null` where no human verdict exists), normalized rows, `unavailable` and `invalidated` rows and wrapper overhead. `evaluation.results` holds every measured row with its full latency distribution, allocation, GC and RSS telemetry and sampling diagnostics |
+| `html-knowledge-scaling.json` | the single machine-readable report. It holds `allChecksPassed`, the checks and the provenance metadata. The scored payload `scaling` holds per point the corpus identity, removed queries, footprint, quality per layer, `k` and category, B3 counts, one `queries` row per eligible query (labels, returned chunks with ranks and scores, outcome and `tieAtCutoff` per `k`, miss diagnostics, and the L3 trace of its verified cycle at each `k`: admitted, attached and selected chunks, decision and termination), one `answerRows` entry per query, layer and `answerK` in #109's answer-row format (evidence, outcome, status, flags, claims with checked citations and verdicts, edges, matchings and missing judgments), the point's `judgments` (version, hash, missing count), normalized rows, `unavailable` and `invalidated` rows and wrapper overhead. `evaluation.results` holds every measured row with its full latency distribution, allocation, GC and RSS telemetry and sampling diagnostics |
 | `html-knowledge-scaling.md` | the same, readable, ending with the triage template |
 
 ## How a run works
@@ -87,7 +87,8 @@ The per-point population is reported separately and is not comparable across poi
 - **Chunks.** Each distractor is its own single-chunk document `doc:synthetic-<nnnn>`, with source
   `generated:html-kd-v1:<seed>` and license `Apache-2.0`. It goes through the same normalization, hashing, chunking and
   bounds as authored text.
-- **Sampling.** Three sentences of one topic are drawn from one `SplittableRandom` stream, so a smaller point's
+- **Sampling.** Three sentences of one topic are drawn from one `java.util.Random` seeded with the seed, whose
+  algorithm Java SE specifies (so the chunks are the same on every JDK), and a smaller point's
   distractors are a prefix of a larger point's.
 - **Bounds.** `CorpusBounds.SCALING` allows 25 to 500 chunks, at most 512 documents, and the authored per-chunk and
   per-document limits.
@@ -153,17 +154,13 @@ withheld.
   population and the point population: Recall, MRR, `NoAnswerFalsePositiveRate`, outcomes and abstention, overall and
   per query category.
 - **B3 answers.** Mechanical counts at each `answerK`: answered or abstained, split by a non-empty relevant set;
-  answers citing a relevant chunk; and ineligible citations. Each answer row carries its claims and their checked
-  citations. The human verdicts of `html-l4-judgments-v1` are keyed to `html-kc-v1` answers, so each row's
-  `supported`, `contradicted`, flags, key-claim edges, matchings and reviewer fields are `null` with `verdictSource`
-  stating why, except the protocol's deterministic rules: an eligible exact quote is `supported: true` (every B3
-  claim is one), a claim without an eligible citation is `supported: false`, `anyUnsupportedClaim` follows from those,
-  and `conflictDisclosed` is `false` when the eligible citations do not cover both chunks of the conflicting pair,
-  which includes every abstention on a conflicting-source query.
-  Each row's `outcome` is the component's shape (`ANSWERED`, `ABSTAINED`, `RECALL_FAILED`) and `status` the protocol's
-  primary status: abstentions are classified mechanically (`CORRECT_ABSTENTION`, `EVIDENCE_MISS_ABSTENTION`,
-  `WRONG_ABSTENTION`), and answered rows are `null` because their first conditions (`premiseAccepted`,
-  `anyContradictedClaim`) need a human verdict.
+  answers citing a relevant chunk; and ineligible citations. Every answer row is built as a #109 `AnswerRow` and
+  scored and rendered by #109's own `AnswerMetrics` and `HtmlKnowledgeAnswerReport`, so its schema and rules (claim
+  verdicts with their source, flags, candidate edges, matcher-only and final matchings, primary status, missing
+  judgments) are exactly those of [grounded answers](html-knowledge-answers.md). The frozen `html-l4-judgments-v1`
+  verdicts apply where an answer is identical to an `html-kc-v1` answer; every other human verdict is listed as
+  missing and its status is `null`. Missing verdicts are expected at scale points, so judgment completeness is
+  reported in metadata, not as a check.
 - **Text policy.** Generated chunks come from authored Apache-2.0 templates, so every point corpus is publishable and
   claim text is written; a redacted corpus would carry each claim's SHA-256 instead.
 - **Resources.** Per row: the median and p95 of whole iterations, and those divided by the operations an iteration
@@ -173,14 +170,15 @@ withheld.
 
 ## Results (2026-10-22)
 
-**Environment.** Full run on JDK 27 (G1, max heap 3.8 GB), AMD Ryzen 7 7730U, Neuron `8ca0013+dirty` (this
-change, uncommitted), Store checkout `3dd6012`. The Store roots were on `tmpfs` (memory-backed), so I/O costs are a
-lower bound. Every timed warm row ran the 27 curve queries at every point.
+**Environment.** Full run on JDK 27 (G1, max heap 3.8 GB), AMD Ryzen 7 7730U, Store checkout `d2cacd9`. The code
+was the final code of this change before its commit (`c5c6cce+dirty`): the generator on `java.util.Random`, L4 rows
+through the #109 scorer, and the amortized `*PerOperation` field names. The Store roots were on `tmpfs`
+(memory-backed), so I/O costs are a lower bound. Every timed warm row ran the 27 curve queries at every point.
 
 **Dataset hashes.**
 
 - Base `corpusHash 1934ef6f…`, `queryHash e91b0404…`.
-- Point hashes: `526d273a…` (N = 25), `2bc130bf…` (N = 100), `b35200e2…` (N = 500).
+- Point hashes: `526d273a…` (N = 25), `d01e53eb…` (N = 100), `bd37bc18…` (N = 500).
 
 `allChecksPassed: true` (37 checks).
 
@@ -188,10 +186,10 @@ lower bound. Every timed warm row ran the 27 curve queries at every point.
 
 | Layer | Metric | N = 25 | N = 100 | N = 500 |
 | :--- | :--- | ---: | ---: | ---: |
-| B1 | Recall@1 / @3 / @5 | 0.412 / 0.657 / 0.735 | 0.412 / 0.578 / 0.706 | 0.412 / 0.578 / 0.627 |
-| B1 | HIT@5 | 12 / 17 | 12 / 17 | 10 / 17 |
-| B2 | Recall@1 / @3 / @5 | 0.225 / 0.343 / 0.539 | 0.176 / 0.255 / 0.284 | 0.176 / 0.176 / 0.235 |
-| B2 | HIT@5 | 7 / 17 | 4 / 17 | 3 / 17 |
+| B1 | Recall@1 / @3 / @5 | 0.412 / 0.657 / 0.735 | 0.412 / 0.578 / 0.706 | 0.412 / 0.549 / 0.647 |
+| B1 | HIT@5 | 12 / 17 | 12 / 17 | 11 / 17 |
+| B2 | Recall@1 / @3 / @5 | 0.225 / 0.343 / 0.539 | 0.176 / 0.196 / 0.284 | 0.176 / 0.176 / 0.176 |
+| B2 | HIT@5 | 7 / 17 | 3 / 17 | 3 / 17 |
 | B1, B2 | NoAnswerFalsePositiveRate@k | 0.800 | 0.800 | 0.800 |
 
 The no-answer false-positive rate is the expected effect of threshold `0.0`: every query with a token returns
@@ -200,9 +198,12 @@ results, and only the two blank queries abstain. It does not change with N.
 ### B3 answers (point population)
 
 - **Over B1 evidence.** B3 answers every answerable query at every N and abstains on the two blank queries. The
-  answers that cite a relevant chunk are 8 of 17 (N = 25), 12 of 22 (N = 100) and 10 of 22 (N = 500).
+  answers that cite a relevant chunk are 8 of 17 (N = 25), 11 of 22 (N = 100) and 10 of 22 (N = 500).
 - **Over B2 evidence.** The same counts are 5, 3 and 3, and B3 abstains on 2 answerable queries at N ≥ 100.
-- **Citations.** No citation is ineligible at any point.
+- **Citations.** No citation is ineligible at any point, and every B3 claim is an exact quote, so it is supported by
+  rule.
+- **Human verdicts.** 13, 38 and 48 verdicts are missing at N = 25, 100 and 500: those answers differ from every
+  `html-kc-v1` answer, so their contradiction, flag and key-claim verdicts (and status) are open.
 - **`answerK`.** The counts are identical across `answerK` because B3 reads only the first evidence chunk; this is
   documented behaviour of [B3](html-knowledge-answers.md), not a defect.
 
@@ -211,8 +212,8 @@ results, and only the two blank queries abstain. It does not change with N.
 | N | persisted atoms | root bytes | root files | Store calls per B2 recall |
 | ---: | ---: | ---: | ---: | ---: |
 | 25 | 25 | 27,916 | 5 | 10.63 |
-| 100 | 100 | 101,954 | 5 | 10.63 |
-| 500 | 500 | 491,135 | 5 | 10.63 |
+| 100 | 100 | 102,018 | 5 | 10.63 |
+| 500 | 500 | 490,851 | 5 | 10.63 |
 
 The root grows by about 1 KB per chunk, and the file count stays constant. Store calls per B2 recall are averaged
 over the curve queries, so they are equal at every point.
@@ -220,37 +221,37 @@ over the curve queries, so they are equal at every point.
 ### Cost (exploratory; amortized median per operation at k = 5, allocation per operation)
 
 A warm-row iteration times all 27 curve queries and an ingestion iteration all chunks, so each value is the
-iteration median divided by the operations: an amortized cost. A single slow query is diluted, not visible.
-
+iteration median divided by the operations: an amortized cost (`amortizedMedianNanosPerOperation` in the JSON). A
+single slow query is diluted, not visible.
 
 | Row | N = 25 | N = 100 | N = 500 |
 | :--- | ---: | ---: | ---: |
-| `setup.corpus` | 0.94 ms | 3.8 ms | 15 ms |
-| `ingest.remember` (per chunk) | 0.67 ms, 43 KiB | 0.36 ms, 34 KiB | 0.20 ms, 30 KiB |
-| `open.b1` | 1.3 ms, 163 KiB | 0.69 ms, 185 KiB | 0.46 ms, 307 KiB |
-| `open.b2` | 0.75 ms, 60 KiB | 0.37 ms, 83 KiB | 0.30 ms, 205 KiB |
-| `firstRecall.b1` | 0.61 ms, 258 KiB | 1.1 ms, 793 KiB | 1.6 ms, 3.4 MiB |
-| `firstRecall.b2` | 1.7 ms, 918 KiB | 2.6 ms, 2.3 MiB | 7.8 ms, 9.7 MiB |
-| `warm.b1` (per query) | 0.11 ms, 102 KiB | 0.21 ms, 240 KiB | 0.90 ms, 976 KiB |
-| `warm.b2c` (per query) | 0.97 ms, 905 KiB | 4.0 ms, 2.1 MiB | 8.4 ms, 8.7 MiB |
-| `warm.b2` (per query) | 0.96 ms, 911 KiB | 3.2 ms, 2.1 MiB | 8.7 ms, 8.7 MiB |
-| `warm.cycle` (per query) | 1.1 ms, 923 KiB | 2.9 ms, 2.1 MiB | 8.7 ms, 8.7 MiB |
-| `warm.qa.b3` (per query) | 17 µs, 9.8 KiB | 10 µs, 9.4 KiB | 6 µs, 9.3 KiB |
-| `warm.qa.b1+b3` (per query) | 0.14 ms, 116 KiB | 0.34 ms, 254 KiB | 0.91 ms, 989 KiB |
+| `setup.corpus` | 1.7 ms | 2.8 ms | 9.3 ms |
+| `ingest.remember` (per chunk) | 1.1 ms, 43 KiB | 0.23 ms, 34 KiB | 0.17 ms, 30 KiB |
+| `open.b1` | 2.1 ms, 163 KiB | 0.51 ms, 185 KiB | 0.49 ms, 307 KiB |
+| `open.b2` | 0.85 ms, 61 KiB | 0.23 ms, 82 KiB | 0.26 ms, 205 KiB |
+| `firstRecall.b1` | 1.0 ms, 258 KiB | 0.64 ms, 793 KiB | 1.9 ms, 3.4 MiB |
+| `firstRecall.b2` | 3.0 ms, 917 KiB | 2.0 ms, 2.3 MiB | 8.7 ms, 9.6 MiB |
+| `warm.b1` (per query) | 69 µs, 102 KiB | 0.19 ms, 241 KiB | 0.90 ms, 976 KiB |
+| `warm.b2c` (per query) | 0.65 ms, 905 KiB | 1.7 ms, 2.1 MiB | 8.2 ms, 8.7 MiB |
+| `warm.b2` (per query) | 0.66 ms, 912 KiB | 1.8 ms, 2.1 MiB | 8.2 ms, 8.7 MiB |
+| `warm.cycle` (per query) | 0.66 ms, 923 KiB | 1.8 ms, 2.1 MiB | 8.5 ms, 8.7 MiB |
+| `warm.qa.b3` (per query) | 10 µs, 9.8 KiB | 7 µs, 9.3 KiB | 6 µs, 9.2 KiB |
+| `warm.qa.b1+b3` (per query) | 92 µs, 116 KiB | 0.20 ms, 254 KiB | 0.89 ms, 989 KiB |
 
-**Reopen versus first recall.** Opening a handle is cheap and does not grow with N: 0.3 to 1.3 ms, falling as the
-JVM warms. The cost that grows with N is the first call on the fresh handle, in both latency and allocation.
+**Reopen versus first recall.** Opening a handle is cheap and does not grow with N: 0.2 to 2.1 ms, falling as the
+JVM warms. The cost that grows with N is the first call on the fresh handle, clearly in allocation and, past the
+N = 25 warm-up, in latency.
 
-**Neuron wrapper overhead.** `warm.b2 − warm.b2c` is within run-to-run noise at every point. It takes both signs,
-from −0.81 ms to +2.09 ms per query; the large magnitudes all come from N = 100, the noisiest point of this run,
-and at N = 25 and N = 500 the difference stays within about 0.3 ms of a B2 recall that makes about ten Store calls. This harness
-cannot resolve the adapter's own cost next to those calls. That cost is measured in isolation by the
+**Neuron wrapper overhead.** `warm.b2 − warm.b2c` is within run-to-run noise at every point: it takes both signs,
+from −0.25 ms to +0.10 ms per query, next to a B2 recall of 0.7 to 8.2 ms that makes about ten Store calls. This
+harness cannot resolve the adapter's own cost next to those calls. That cost is measured in isolation by the
 [#49 JMH benchmarks](resonance-store-adapter-overhead.md).
 
 **Ordering effects.** The first point and the first rows of a point carry JIT warm-up. Examples are the N = 25
-ingestion at 0.67 ms per chunk against 0.20 ms at N = 500, and the opens, which get faster as the run proceeds. One
-intermediate full run of this change, taken while the machine was busy, had several N = 25 rows three to five times
-slower than this one, with the same allocation. Read latency trends only across the warm rows, and prefer allocation.
+ingestion at 1.1 ms per chunk against 0.17 ms at N = 500, and the opens, which get faster as the run proceeds.
+Intermediate full runs of this change, taken while the machine was busy, had several N = 25 rows three to five times
+slower, with the same allocation. Read latency trends only across the warm rows, and prefer allocation.
 
 **Allocation.** Allocation per operation is far more stable than latency: it repeats to within 1% across `k` and
 between the quick and full runs.
@@ -261,7 +262,7 @@ Each finding states what was observed and the narrowest next step. None is a spe
 automatically.
 
 1. **Neuron codec/port, quality.** As distractors are added, B2 loses relevant evidence faster than B1. On the curve
-   population, B2 Recall@5 is 0.539 → 0.284 → 0.235 and HIT@5 is 7 → 4 → 3, while B1 is 0.735 → 0.706 → 0.627.
+   population, B2 Recall@5 is 0.539 → 0.284 → 0.176 and HIT@5 is 7 → 3 → 3, while B1 is 0.735 → 0.706 → 0.647.
    - N = 100 and N = 500 hold the same 33 base chunks, so every relevant chunk lost between them was displaced by a
      generated distractor.
    - The token-packing codec sends one Store query per distinct token and keeps the best candidate per atom. A
@@ -269,15 +270,15 @@ automatically.
    - Recommended: a Neuron experiment issue that compares merge rules or codecs over this family; see the
      [worked example](#worked-example-from-observation-to-a-scoped-issue).
 2. **Neuron codec/port, resource.** One B2 recall makes 10.6 Store calls on average, one per distinct token. So
-   `warm.b2c` and `warm.b2` cost about 9 to 15 times `warm.b1` and allocate about 9 times as much: 8.7 MiB per query
+   `warm.b2c` and `warm.b2` cost about 9 to 10 times `warm.b1` and allocate about 9 times as much: 8.7 MiB per query
    at N = 500. The wrapper itself is not measurably the cause (see above).
    - Recommended: a Neuron issue that adds Store calls per recall as an explicit diagnostic of the port and evaluates
      a bounded-fan-out codec. A Store-side batch API is a separate Store issue only if that experiment needs one.
 3. **Store ranking, resource.**
-   - Warm B1 latency and allocation per query grow about linearly with N: 0.11 ms → 0.21 ms → 0.90 ms and
-     102 KiB → 240 KiB → 976 KiB per query, about 2 KiB per stored atom at N = 500.
-   - The first recall on a fresh handle grows the same way (0.61 → 1.1 → 1.6 ms, 258 KiB → 793 KiB → 3.4 MiB),
-     while the open itself stays below 1.3 ms and 310 KiB.
+   - Warm B1 latency and allocation per query grow about linearly with N: 69 µs → 0.19 ms → 0.90 ms and
+     102 KiB → 241 KiB → 976 KiB per query, about 2 KiB per stored atom at N = 500.
+   - The first recall on a fresh handle allocates the same way (258 KiB → 793 KiB → 3.4 MiB), while the open itself
+     stays below 2.1 ms and 310 KiB.
    - This matches a full scan of all stored atoms per query and is expected at this scale.
    - Recommended: compare with the Store's own corpus-scaling benchmark before filing anything. Open a Store issue
      about per-query allocation only if that benchmark shows the same O(N) bytes per query. A rewrite of Store indexing
@@ -294,12 +295,12 @@ Finding 1, written with the template:
 ```text
 Title:              [monada-neuron] B2 token-packing recall loses relevant evidence to lexical distractors as
                     the corpus grows
-Observed:           curve population (27 queries), B2 Recall@5 0.539 / 0.284 / 0.235 and HIT@5 7 / 4 / 3 at
-                    N = 25 / 100 / 500; B1 0.735 / 0.706 / 0.627 on the same queries and roots
+Observed:           curve population (27 queries), B2 Recall@5 0.539 / 0.284 / 0.176 and HIT@5 7 / 3 / 3 at
+                    N = 25 / 100 / 500; B1 0.735 / 0.706 / 0.647 on the same queries and roots
 Expected:           B2 tracks B1 within the codec effect measured at html-kc-v1 (#107); N = 100 and N = 500
                     hold the same base chunks, so losses between them come from generated distractors only
 Reproduction:       ./gradlew :monada-neuron-evaluation:runHtmlKnowledgeScaling
-                    neuron.commit <sha>, store.checkoutCommit 3dd6012, corpus.base.hash 1934ef6f…,
+                    neuron.commit <sha>, store.checkoutCommit d2cacd9, corpus.base.hash 1934ef6f…,
                     query.hash e91b0404…, generator html-kd-v1 seed 111
 Affected layer:     Neuron codec/port
 Severity:           quality (a metric moves along the curve; every semantic check passed)

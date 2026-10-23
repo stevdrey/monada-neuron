@@ -4,7 +4,6 @@ import com.monada.api.MonadaMemory;
 import com.monada.core.KnowledgeAtom;
 import com.monada.core.ResonanceResult;
 import monada.neuron.evaluation.knowledge.AnswerComponent.EvidenceChunk;
-import monada.neuron.evaluation.knowledge.AnswerTrace.CitedSpan;
 import monada.neuron.evaluation.knowledge.GroundedAnswer.Abstained;
 import monada.neuron.evaluation.knowledge.GroundedAnswer.Answered;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeCycleExperiment.Run;
@@ -31,7 +30,6 @@ import monada.neuron.monad.CognitiveStageResult;
 import monada.neuron.reasoning.Evidence;
 import monada.neuron.reasoning.MemoryReferenceEvidence;
 import monada.neuron.reasoning.ReasoningCognitiveStageResult;
-import monada.neuron.resonance.adapter.OpaqueReference;
 import monada.neuron.resonance.adapter.ResonanceStoreMemoryAdapter;
 import monada.neuron.signal.Signal;
 
@@ -147,26 +145,6 @@ final class HtmlKnowledgeScaling {
     }
 
     /**
-     * One B3 answer of the point population, the claim-level artifact behind {@link AnswerCounts}.
-     *
-     * @param query the judged query
-     * @param layer the evidence layer
-     * @param answerK the evidence cut
-     * @param evidence {@code E(q)}, empty when the recall failed
-     * @param answer the answer, empty when the recall failed
-     * @param citations the mechanical check of every citation, per claim in claim order
-     * @param failure why the evidence recall failed, when it did
-     */
-    record AnswerRow(JudgedQuery query, Layer layer, int answerK, List<EvidenceChunk> evidence,
-            Optional<GroundedAnswer> answer, List<List<CitedSpan>> citations, Optional<String> failure) {
-
-        AnswerRow {
-            evidence = List.copyOf(evidence);
-            citations = citations.stream().map(List::copyOf).toList();
-        }
-    }
-
-    /**
      * Everything measured and scored at one point.
      *
      * @param point the point
@@ -177,7 +155,9 @@ final class HtmlKnowledgeScaling {
      * @param abstention set-level abstention by {@code population/layer}
      * @param queryScores the per-query recall rows of the point population, B1 then B2, in query-set order
      * @param answers B3 counts by {@code layer/k} over the point population
-     * @param answerRows the per-query B3 rows behind {@code answers}, by layer, {@code answerK} and query
+     * @param answerScores the B3 rows behind {@code answers}, scored by #109's {@link AnswerMetrics} with the frozen
+     *     {@code html-l4-judgments-v1} verdicts (an answer identical to an {@code html-kc-v1} answer reuses its verdicts;
+     *     every other verdict is reported missing)
      * @param traces the L3 trace of every verified cycle of the point population, by {@code k} and query
      * @param footprint persisted-atom and on-disk figures
      * @param overhead the wrapper overhead per {@code k}: B2 minus B2c median nanoseconds per query, when both rows exist
@@ -186,7 +166,8 @@ final class HtmlKnowledgeScaling {
      */
     record PointResult(Point point, List<Check> checks, List<BenchmarkRunResult> rows, Map<String, String> unavailable,
             Map<String, LayerAggregate> quality, Map<String, LayerAbstention> abstention, List<QueryScore> queryScores,
-            Map<String, AnswerCounts> answers, List<AnswerRow> answerRows, List<CycleTrace> traces, Footprint footprint,
+            Map<String, AnswerCounts> answers, AnswerMetrics.Scores answerScores, List<CycleTrace> traces,
+            Footprint footprint,
             Map<Integer, Optional<Double>> overhead, double storeCallsPerRecall, Map<String, String> metadata) {
 
         PointResult {
@@ -197,7 +178,7 @@ final class HtmlKnowledgeScaling {
             abstention = ordered(abstention);
             queryScores = List.copyOf(queryScores);
             answers = ordered(answers);
-            answerRows = List.copyOf(answerRows);
+            Objects.requireNonNull(answerScores, "answerScores must not be null");
             traces = List.copyOf(traces);
             overhead = ordered(overhead);
             metadata = ordered(metadata);
@@ -407,9 +388,7 @@ final class HtmlKnowledgeScaling {
         var sample = HtmlKnowledgeRecall.firstWithToken(texts(family.curve())).orElseThrow();
         // Every recall row is timed against the verified snapshot, so the snapshot must itself be valid: a failed
         // ingestion, readback or recall check (for example B2 = B2c) withholds every recall-based row.
-        var failedBaseline = checks.stream().filter(check -> !check.passed()).map(Check::name).toList();
-        var baseline = failedBaseline.isEmpty() ? Optional.<String>empty()
-                : Optional.of("the verified baseline failed " + head(failedBaseline));
+        var baseline = baselineBlocker(checks);
         if (baseline.isPresent()) {
             for (var name : List.of("open.b1", "open.b2", "firstRecall.b1", "firstRecall.b2")) {
                 rows.withhold(name, Optional.empty(), baseline.get());
@@ -422,7 +401,7 @@ final class HtmlKnowledgeScaling {
         var evidence = new RecalledEvidence(corpus, manifest);
         var resolver = new RecalledReferenceResolver(corpus, manifest, Set.copyOf(sweep.unread()));
         var answers = new LinkedHashMap<String, AnswerCounts>();
-        var answerRows = new ArrayList<AnswerRow>();
+        var answerRows = new ArrayList<AnswerTrace.AnswerRow>();
         var traces = new ArrayList<CycleTrace>();
         // Timed rows run over the fixed curve cohort, so every point times the same queries; quality, traces and
         // answers also cover the point's own eligible queries and are labelled as such.
@@ -458,13 +437,26 @@ final class HtmlKnowledgeScaling {
                 cycleBlocker.ifPresentOrElse(reason -> rows.withhold("warm.cycle", Optional.of(k), reason),
                         () -> measureCycle(k, workload, verified, timed, rows));
                 for (var layer : SCORED_LAYERS) {
-                    var rowsAtK = answerRows(point.eligible(), layer == Layer.B1 ? b1Evidence : b2Evidence, layer, k);
-                    answerRows.addAll(rowsAtK);
-                    answers.put(layer.label() + "/" + k, counts(rowsAtK));
+                    answerRows.addAll(answerRows(point, queries, layer == Layer.B1 ? b1Evidence : b2Evidence, layer, k,
+                            snapshot));
                 }
                 overhead.put(k, overhead(rows, k));
             }
         }
+        // #109's scorer gives every row its claim verdicts, flags, edges, matchings and primary status. At a scale point
+        // most answers have no frozen human verdict, so judgment completeness is reported, never a check.
+        var answerScores = AnswerMetrics.score(family.querySet(),
+                new AnswerTrace.Snapshot(family.querySet().queryHash(), answerRows), AnswerJudgments.bundled());
+        for (var layer : SCORED_LAYERS) {
+            for (var k : KS) {
+                answers.put(layer.label() + "/" + k, counts(answerScores.answers().stream()
+                        .filter(answer -> answer.row().layer().equals(layer.label()) && answer.row().answerK() == k)
+                        .toList()));
+            }
+        }
+        metadata.put(prefix + "answer.judgments", AnswerJudgments.VERSION + " " + answerScores.judgmentsHash()
+                + "; " + answerScores.missing().size() + " verdicts missing (expected at scale points: only answers"
+                + " identical to html-kc-v1 answers have frozen verdicts)");
         checks.add(new Check(prefix + "cycle.traceIntegrity", cycleViolations.isEmpty(), cycleViolations.isEmpty()
                 ? "every verified cycle at every k replayed identically, ran MEMORY_RECALL -> REASONING -> EVALUATION"
                         + " and terminated COMPLETED with one port call whose request equals the codec Signals at limit"
@@ -495,11 +487,33 @@ final class HtmlKnowledgeScaling {
                 + " cohort of the family); quality, traces and answers also cover the " + queries.size()
                 + " eligible queries of the point");
         return new PointResult(point, checks, rows.measured, rows.unavailable, quality, abstention, queryScores, answers,
-                answerRows, traces, footprint, overhead, storeCalls, metadata);
+                answerScores, traces, footprint, overhead, storeCalls, metadata);
+    }
+
+    /**
+     * Why rows timed against the verified baseline must be withheld: the names of its failed checks, or empty when
+     * every check passed.
+     */
+    static Optional<String> baselineBlocker(List<Check> checks) {
+        var failed = checks.stream().filter(check -> !check.passed()).map(Check::name).toList();
+        return failed.isEmpty() ? Optional.empty() : Optional.of("the verified baseline failed " + head(failed));
     }
 
     /** One timed scratch import: its root and the atoms {@code remember} returned. */
-    private record ScratchImport(Path root, List<KnowledgeAtom> atoms) {
+    record ScratchImport(Path root, List<KnowledgeAtom> atoms) {
+    }
+
+    /**
+     * Why a timed scratch import differs from a faithful one, or empty: the returned atoms must be faithful, and the
+     * root, read back in full through a fresh handle after the window, must hold every chunk.
+     */
+    static Optional<String> scratchMismatch(HtmlKnowledgeIngestion ingestion, HtmlKnowledgeCorpus corpus,
+            ScratchImport imported) {
+        return faithfulImport(corpus, imported.atoms()).or(() -> {
+            var unread = ingestion.readback(MonadaMemory.open(imported.root()), ingestion.manifest(imported.atoms()));
+            return unread.isEmpty() ? Optional.empty()
+                    : Optional.of("the scratch root did not read back " + head(unread));
+        });
     }
 
     /**
@@ -510,9 +524,9 @@ final class HtmlKnowledgeScaling {
     private void measureIngestion(Point point, Path directory, Rows rows, Map<String, String> metadata, String prefix,
             HtmlKnowledgeIngestion ingestion, List<Check> importChecks) {
         var corpus = point.corpus();
-        var failedImport = importChecks.stream().filter(check -> !check.passed()).map(Check::name).toList();
-        if (!failedImport.isEmpty()) {
-            rows.withhold("ingest.remember", Optional.empty(), "the root under test failed " + head(failedImport));
+        var blocker = baselineBlocker(importChecks);
+        if (blocker.isPresent()) {
+            rows.withhold("ingest.remember", Optional.empty(), blocker.get());
             return;
         }
         var scratch = new ArrayList<Path>();
@@ -526,7 +540,6 @@ final class HtmlKnowledgeScaling {
             }
             scratch.add(next);
         };
-        var opaqueReference = new OpaqueReference();
         try {
             rows.measure("ingest.remember", Optional.empty(), sampling.ingestWarmups(), sampling.coldIterations(),
                     corpus.chunks().size(), freshRoot, () -> {
@@ -537,18 +550,7 @@ final class HtmlKnowledgeScaling {
                             atoms.add(memory.remember(chunk.text()));
                         }
                         return new ScratchImport(root, atoms);
-                    }, imported -> faithfulImport(corpus, imported.atoms()).or(() -> {
-                        var entries = new ArrayList<IngestionManifest.Entry>(imported.atoms().size());
-                        for (var i = 0; i < imported.atoms().size(); i++) {
-                            var atomId = imported.atoms().get(i).id();
-                            entries.add(new IngestionManifest.Entry(corpus.chunks().get(i).chunkId(), atomId,
-                                    opaqueReference.of(atomId)));
-                        }
-                        var unread = ingestion.readback(MonadaMemory.open(imported.root()),
-                                new IngestionManifest(corpus.version(), corpus.corpusHash(), entries));
-                        return unread.isEmpty() ? Optional.empty()
-                                : Optional.of("the scratch root did not read back " + head(unread));
-                    }),
+                    }, imported -> scratchMismatch(ingestion, corpus, imported),
                     "MonadaMemory.open on a fresh empty scratch root plus one remember per chunk in chunkId order;"
                             + " operations are chunks, so throughput is chunks per second",
                     "one distinct atom per chunk whose content hashes to the chunk sha256, and a full readback of the"
@@ -560,7 +562,7 @@ final class HtmlKnowledgeScaling {
                 leftovers));
     }
 
-    private static Optional<String> faithfulImport(HtmlKnowledgeCorpus corpus, List<KnowledgeAtom> atoms) {
+    static Optional<String> faithfulImport(HtmlKnowledgeCorpus corpus, List<KnowledgeAtom> atoms) {
         if (atoms.size() != corpus.chunks().size()) {
             return Optional.of(atoms.size() + " atoms for " + corpus.chunks().size() + " chunks");
         }
@@ -801,27 +803,11 @@ final class HtmlKnowledgeScaling {
             bound.add(chunks.orElse(List.of()));
             verified.add(chunks.map(set -> answerer.answer(query.text(), set)));
         }
-        var missing = new ArrayList<String>();
-        for (var i = 0; i < workload.size(); i++) {
-            if (verified.get(i).isEmpty()) {
-                missing.add(workload.get(i).queryId());
-            }
-        }
-        var ineligible = new ArrayList<String>();
-        for (var i = 0; i < workload.size(); i++) {
-            var set = bound.get(i);
-            if (verified.get(i).orElse(null) instanceof Answered answered && answered.claims().stream().anyMatch(
-                    claim -> claim.citations().stream().anyMatch(citation -> !qa.verify(claim.text(), citation, set)
-                            .eligible()))) {
-                ineligible.add(workload.get(i).queryId());
-            }
-        }
-        if (!missing.isEmpty() || !ineligible.isEmpty()) {
+        var blocker = answerBlocker(workload, verified, bound);
+        if (blocker.isPresent()) {
             // Without valid verified answers the row would time a failed or invalid path.
-            var reason = !missing.isEmpty() ? "the verified B1 evidence recall failed for " + head(missing)
-                    : "a verified answer cites outside E(q) for " + head(ineligible);
-            rows.withhold("warm.qa.b3", Optional.of(k), reason);
-            rows.withhold("warm.qa.b1+b3", Optional.of(k), reason);
+            rows.withhold("warm.qa.b3", Optional.of(k), blocker.get());
+            rows.withhold("warm.qa.b1+b3", Optional.of(k), blocker.get());
             return;
         }
         rows.measure("warm.qa.b3", Optional.of(k), sampling.warmups(), sampling.iterations(), workload.size(), null,
@@ -861,38 +847,81 @@ final class HtmlKnowledgeScaling {
                         + " evidence, and the answer equals the verified B3 answer");
     }
 
-    private List<AnswerRow> answerRows(List<JudgedQuery> queries, List<RecalledEvidence.Recall> recalls, Layer layer,
-            int k) {
-        var rows = new ArrayList<AnswerRow>(queries.size());
+    /**
+     * Why the answer rows must be withheld, or empty: every verified answer must exist (its B1 evidence recall
+     * completed) and cite only inside its {@code E(q)}.
+     */
+    Optional<String> answerBlocker(List<QueryText> workload, List<Optional<GroundedAnswer>> verified,
+            List<List<EvidenceChunk>> bound) {
+        var missing = new ArrayList<String>();
+        var ineligible = new ArrayList<String>();
+        for (var i = 0; i < workload.size(); i++) {
+            var set = bound.get(i);
+            if (verified.get(i).isEmpty()) {
+                missing.add(workload.get(i).queryId());
+            } else if (verified.get(i).get() instanceof Answered answered && answered.claims().stream().anyMatch(
+                    claim -> claim.citations().stream().anyMatch(citation -> !qa.verify(claim.text(), citation, set)
+                            .eligible()))) {
+                ineligible.add(workload.get(i).queryId());
+            }
+        }
+        if (!missing.isEmpty()) {
+            return Optional.of("the verified B1 evidence recall failed for " + head(missing));
+        }
+        return ineligible.isEmpty() ? Optional.empty()
+                : Optional.of("a verified answer cites outside E(q) for " + head(ineligible));
+    }
+
+    /**
+     * Builds the #109 answer rows of one layer at {@code answerK = k} over the point population: {@code E(q)} is the
+     * verified limit-5 evidence cut to {@code k}, and {@code tieAtCutoff} is read from the verified recall snapshot
+     * (the limit-6 lookahead at {@code k = 5}), so no Store call is repeated.
+     */
+    private List<AnswerTrace.AnswerRow> answerRows(Point point, List<QueryText> queries,
+            List<RecalledEvidence.Recall> recalls, Layer layer, int k, Snapshot snapshot) {
+        var root = "N=" + point.size();
+        var rows = new ArrayList<AnswerTrace.AnswerRow>(queries.size());
         for (var i = 0; i < queries.size(); i++) {
             var query = queries.get(i);
             var chunks = evidenceAt(recalls.get(i), k);
             if (chunks.isEmpty()) {
                 var reason = recalls.get(i) instanceof RecalledEvidence.Failed failed ? failed.reason() : "no evidence";
-                rows.add(new AnswerRow(query, layer, k, List.of(), Optional.empty(), List.of(), Optional.of(reason)));
+                rows.add(new AnswerTrace.AnswerRow(root, layer.label(), k, query.queryId(), answerer.name(),
+                        answerer.kind(), List.of(), Optional.empty(), AnswerTrace.Outcome.RECALL_FAILED, reason,
+                        List.of()));
                 continue;
             }
-            var answer = answerer.answer(query.text(), chunks.get());
-            var citations = answer instanceof Answered answered ? answered.claims().stream()
-                    .map(claim -> claim.citations().stream()
-                            .map(citation -> qa.verify(claim.text(), citation, chunks.get())).toList())
-                    .toList() : List.<List<CitedSpan>>of();
-            rows.add(new AnswerRow(query, layer, k, chunks.get(), Optional.of(answer), citations, Optional.empty()));
+            var hits = chunks.get().stream().map(chunk -> new AnswerTrace.Hit(chunk.chunkId(), chunk.score())).toList();
+            var limit = k < HtmlKnowledgeRecall.MAX_LIMIT ? HtmlKnowledgeRecall.MAX_LIMIT
+                    : HtmlKnowledgeRecall.LOOKAHEAD_LIMIT;
+            var scores = snapshot.rows(query.queryId(), layer, limit).stream().map(Row::score).toList();
+            var tie = Optional.of(HtmlKnowledgeRecall.tieAtCutoff(scores, k));
+            rows.add(switch (answerer.answer(query.text(), chunks.get())) {
+                case Abstained abstained -> new AnswerTrace.AnswerRow(root, layer.label(), k, query.queryId(),
+                        answerer.name(), answerer.kind(), hits, tie, AnswerTrace.Outcome.ABSTAINED,
+                        abstained.status() + ": " + abstained.reason(), List.of());
+                case Answered answered -> new AnswerTrace.AnswerRow(root, layer.label(), k, query.queryId(),
+                        answerer.name(), answerer.kind(), hits, tie, AnswerTrace.Outcome.ANSWERED, "",
+                        answered.claims().stream().map(claim -> new AnswerTrace.ClaimRow(claim.text(),
+                                claim.citations().stream().map(citation -> qa.verify(claim.text(), citation,
+                                        chunks.get())).toList())).toList());
+            });
         }
         return rows;
     }
 
-    private static AnswerCounts counts(List<AnswerRow> rows) {
+    private static AnswerCounts counts(List<AnswerMetrics.ScoredAnswer> answers) {
         int answeredA = 0, abstainedA = 0, answeredU = 0, abstainedU = 0, citesRelevant = 0, citations = 0;
         int ineligible = 0, exact = 0, failed = 0;
-        for (var row : rows) {
-            if (row.answer().isEmpty()) {
+        for (var answer : answers) {
+            var row = answer.row();
+            if (row.outcome() == AnswerTrace.Outcome.RECALL_FAILED) {
                 failed++;
                 continue;
             }
-            var relevantSet = row.query().relevant();
+            var relevantSet = answer.query().relevant();
             var answerable = !relevantSet.isEmpty();
-            if (row.answer().get() instanceof Abstained) {
+            if (row.outcome() == AnswerTrace.Outcome.ABSTAINED) {
                 abstainedA += answerable ? 1 : 0;
                 abstainedU += answerable ? 0 : 1;
                 continue;
@@ -900,13 +929,11 @@ final class HtmlKnowledgeScaling {
             answeredA += answerable ? 1 : 0;
             answeredU += answerable ? 0 : 1;
             var relevant = false;
-            for (var claim : row.citations()) {
-                for (var span : claim) {
-                    citations++;
-                    ineligible += span.eligible() ? 0 : 1;
-                    exact += span.exactQuote() ? 1 : 0;
-                    relevant |= span.eligible() && relevantSet.contains(span.citation().chunkId());
-                }
+            for (var span : row.citations()) {
+                citations++;
+                ineligible += span.eligible() ? 0 : 1;
+                exact += span.exactQuote() ? 1 : 0;
+                relevant |= span.eligible() && relevantSet.contains(span.citation().chunkId());
             }
             citesRelevant += answerable && relevant ? 1 : 0;
         }

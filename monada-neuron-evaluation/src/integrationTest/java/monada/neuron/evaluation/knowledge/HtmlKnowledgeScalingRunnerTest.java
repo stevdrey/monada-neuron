@@ -102,24 +102,20 @@ class HtmlKnowledgeScalingRunnerTest {
         assertTrue(json.contains("\"queries\": [\n        { \"queryId\": "));
         assertTrue(json.contains("\"missDiagnostics\": "));
         assertTrue(json.contains("\"tieAtCutoff\": "));
-        assertTrue(json.contains("\"answerRows\": [\n        { \"queryId\": "));
-        assertTrue(json.contains("\"exactQuote\": "));
-        assertTrue(json.contains("\"flags\": { \"anyUnsupportedClaim\": false, \"anyContradictedClaim\": null"));
-        // B3 quotes verbatim, so its claims are supported by the exact-quote rule; abstentions get a protocol status.
-        assertTrue(json.contains("\"supported\": true, \"contradicted\": null, \"source\": \"rule: eligible exact"
-                + " quote\""));
-        assertTrue(json.contains("\"outcome\": \"ABSTAINED\", \"status\": \"CORRECT_ABSTENTION\""));
-        assertTrue(json.contains("\"outcome\": \"ANSWERED\", \"status\": null"));
-        assertFalse(json.contains("\"status\": \"ANSWERED\""));
-        assertFalse(json.contains("\"status\": \"ABSTAINED\""));
-        assertTrue(json.contains("\"matcherMatching\": null, \"finalMatching\": null, \"reviewerVerdicts\": null,"
-                + " \"reviewerOverrides\": null"));
+        // Answer rows are scored and rendered by #109's AnswerMetrics and HtmlKnowledgeAnswerReport.
+        assertTrue(json.contains("\"answerRows\": [\n        { \"root\": \"N=25\", \"layer\": \"B1\""));
+        assertTrue(json.contains("\"judgments\": { \"version\": \"html-l4-judgments-v1\""));
+        assertTrue(json.contains("\"outcome\": \"ABSTAINED\""));
+        assertTrue(json.contains("\"status\": \"CORRECT_ABSTENTION\""));
+        assertTrue(json.contains("\"supported\": { \"value\": true, \"source\": \"exact-quote"));
+        assertTrue(json.contains("\"exactQuote\": true"));
+        assertTrue(json.contains("\"matcherMatching\": "));
+        assertTrue(json.contains("\"missingJudgments\": "));
+        assertTrue(metadata.get("n25.answer.judgments").startsWith("html-l4-judgments-v1 "));
         assertTrue(json.contains("\"byCategory\": { \"exact-term\": { \"nA\": "));
         assertTrue(json.contains("\"traces\": [ { \"k\": 1, \"inputSignals\": "));
         assertTrue(json.contains("\"decision\": \"SUPPORTED\""));
         assertTrue(metadata.get("n100.perf.workload").startsWith("27 curve queries"));
-        assertTrue(json.contains("\"verdictSource\": \"" + HtmlKnowledgeScalingReport.UNJUDGED + "\""));
-        assertFalse(json.contains("\"textSha256\""), "generated text is publishable, so claims carry their text");
         assertFalse(json.contains("NaN"));
         assertTrue(outcome.markdown().contains("## Follow-up triage template"));
         assertEquals(Set.of("html-knowledge-scaling.json", "html-knowledge-scaling.md"),

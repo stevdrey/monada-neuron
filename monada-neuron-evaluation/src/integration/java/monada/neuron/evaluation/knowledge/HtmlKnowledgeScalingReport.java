@@ -1,11 +1,7 @@
 package monada.neuron.evaluation.knowledge;
 
-import monada.neuron.evaluation.knowledge.AnswerComponent.EvidenceChunk;
-import monada.neuron.evaluation.knowledge.GroundedAnswer.Abstained;
-import monada.neuron.evaluation.knowledge.GroundedAnswer.Answered;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.Layer;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.AnswerCounts;
-import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.AnswerRow;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.CycleTrace;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.PointResult;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeScaling.Sampling;
@@ -16,13 +12,11 @@ import monada.neuron.evaluation.knowledge.RecallMetrics.Outcome;
 import monada.neuron.evaluation.metrics.AllocationMetrics.AllocationSource;
 import monada.neuron.evaluation.metrics.BenchmarkRunResult;
 
-import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -70,13 +64,8 @@ final class HtmlKnowledgeScalingReport {
             ```
             """;
 
-    /** Why no answer row carries a support verdict. */
-    static final String UNJUDGED = "unjudged: html-l4-judgments-v1 is keyed to html-kc-v1 answers";
-
-    /** The judgment artifacts every answer row carries as {@code null}, with the reason. */
-    private static final String UNJUDGED_FIELDS = ", \"keyClaimEdges\": null, \"matcherMatching\": null,"
-            + " \"finalMatching\": null, \"reviewerVerdicts\": null, \"reviewerOverrides\": null,"
-            + " \"verdictSource\": " + string(UNJUDGED);
+    /** The component whose rows the report renders. */
+    private static final AnswerComponent ANSWERER = new ExtractiveAnswerer(ExtractiveAnswerer.Rule.B3);
 
     private final Family family;
     private final List<PointResult> results;
@@ -142,13 +131,15 @@ final class HtmlKnowledgeScalingReport {
         var answers = HtmlKnowledgeScaling.SCORED_LAYERS.stream().flatMap(layer -> HtmlKnowledgeScaling.KS.stream()
                 .map(k -> answerJson(layer, k, result.answers().get(layer.label() + "/" + k)))).toList();
         json.append(String.join(",\n", answers)).append("\n      ],\n      \"queries\": [\n");
-        json.append(String.join(",\n", queryRows(result))).append("\n      ],\n      \"answerRows\": [\n");
-        var publishable = point.corpus().textPolicy() == HtmlKnowledgeCorpus.TextPolicy.PUBLISHABLE;
-        var conflictPair = point.corpus().chunks().stream().filter(chunk -> chunk.conflict().isPresent())
-                .map(CorpusChunk::chunkId).collect(Collectors.toSet());
-        json.append(String.join(",\n", result.answerRows().stream()
-                .map(row -> answerRowJson(row, publishable, conflictPair))
-                .toList())).append("\n      ],\n      \"rows\": [\n");
+        json.append(String.join(",\n", queryRows(result))).append("\n      ],\n");
+        var scores = result.answerScores();
+        var renderer = new HtmlKnowledgeAnswerReport(scores, point.corpus(), List.of(ANSWERER));
+        json.append("      \"judgments\": { \"version\": ").append(string(AnswerJudgments.VERSION))
+                .append(", \"hash\": ").append(string(scores.judgmentsHash()))
+                .append(", \"missing\": ").append(scores.missing().size()).append(" },\n");
+        json.append("      \"answerRows\": [\n").append(scores.answers().stream()
+                .map(answer -> "        " + renderer.answerJson(answer)).collect(Collectors.joining(",\n")))
+                .append("\n      ],\n      \"rows\": [\n");
         var rows = result.rows().stream().map(HtmlKnowledgeScalingReport::rowJson).toList();
         json.append(String.join(",\n", rows)).append("\n      ],\n      \"unavailable\": {");
         var first = true;
@@ -250,117 +241,6 @@ final class HtmlKnowledgeScalingReport {
                 .append(", \"selected\": ").append(strings(trace.selected()))
                 .append(", \"decision\": ").append(string(trace.decision()))
                 .append(", \"termination\": ").append(string(trace.termination())).append(" }").toString();
-    }
-
-    /**
-     * One B3 answer row: its evidence, status and every claim with its citations and their mechanical check. Support,
-     * contradiction and key-claim edges are {@code null}: the human verdicts of {@code html-l4-judgments-v1} are keyed
-     * to {@code html-kc-v1} answers. Claim text is written only for a publishable corpus, otherwise its SHA-256.
-     */
-    private static String answerRowJson(AnswerRow row, boolean publishable, Set<String> conflictPair) {
-        var json = new StringBuilder("        { \"queryId\": ").append(string(row.query().queryId()))
-                .append(", \"evidenceLayer\": ").append(string(row.layer().label()))
-                .append(", \"answerK\": ").append(row.answerK())
-                .append(", \"evidence\": [");
-        for (var i = 0; i < row.evidence().size(); i++) {
-            var chunk = row.evidence().get(i);
-            json.append(i == 0 ? " " : ", ").append("{ \"rank\": ").append(chunk.rank()).append(", \"chunkId\": ")
-                    .append(string(chunk.chunkId())).append(", \"score\": ").append(number(chunk.score()))
-                    .append(" }");
-        }
-        json.append(row.evidence().isEmpty() ? "]" : " ]");
-        if (row.answer().isEmpty()) {
-            return json.append(", \"outcome\": \"RECALL_FAILED\", \"status\": null, \"reason\": ")
-                    .append(string(row.failure().orElse(""))).append(", \"claims\": [], \"flags\": null")
-                    .append(UNJUDGED_FIELDS).append(" }").toString();
-        }
-        var eligibleChunks = new TreeSet<String>();
-        // Per-claim support by the l4-answer-v1 rules: true for an eligible exact quote, false without any eligible
-        // citation, otherwise unknown until a human judges it.
-        var support = new ArrayList<Optional<Boolean>>();
-        switch (row.answer().get()) {
-            case Abstained abstained -> json.append(", \"outcome\": \"ABSTAINED\", \"status\": ")
-                    .append(string(abstentionStatus(row))).append(", \"reason\": ")
-                    .append(string(abstained.status() + ": " + abstained.reason())).append(", \"claims\": []");
-            case Answered answered -> {
-                // Every answered status depends first on premiseAccepted and anyContradictedClaim, which need a human.
-                json.append(", \"outcome\": \"ANSWERED\", \"status\": null, \"reason\": null, \"claims\": [");
-                for (var c = 0; c < answered.claims().size(); c++) {
-                    var claim = answered.claims().get(c);
-                    json.append(c == 0 ? " " : ", ").append("{ ")
-                            .append(publishable ? "\"text\": " + string(claim.text())
-                                    : "\"textSha256\": " + string(CorpusDigests.sha256(claim.text())))
-                            .append(", \"citations\": [");
-                    var spans = row.citations().get(c);
-                    var anyEligible = false;
-                    var exact = false;
-                    for (var i = 0; i < spans.size(); i++) {
-                        var span = spans.get(i);
-                        anyEligible |= span.eligible();
-                        exact |= span.eligible() && span.exactQuote();
-                        if (span.eligible()) {
-                            eligibleChunks.add(span.citation().chunkId());
-                        }
-                        json.append(i == 0 ? " " : ", ").append("{ \"chunkId\": ")
-                                .append(string(span.citation().chunkId())).append(", \"start\": ")
-                                .append(span.citation().start()).append(", \"end\": ").append(span.citation().end())
-                                .append(", \"eligible\": ").append(span.eligible()).append(", \"exactQuote\": ")
-                                .append(span.exactQuote()).append(" }");
-                    }
-                    json.append(spans.isEmpty() ? "]" : " ]");
-                    if (exact) {
-                        support.add(Optional.of(true));
-                        json.append(", \"supported\": true, \"contradicted\": null, \"source\": ")
-                                .append(string("rule: eligible exact quote"));
-                    } else if (!anyEligible) {
-                        support.add(Optional.of(false));
-                        json.append(", \"supported\": false, \"contradicted\": null, \"source\": ")
-                                .append(string("rule: no eligible citation"));
-                    } else {
-                        support.add(Optional.empty());
-                        json.append(", \"supported\": null, \"contradicted\": null, \"source\": ")
-                                .append(string("unjudged"));
-                    }
-                    json.append(" }");
-                }
-                json.append(answered.claims().isEmpty() ? "]" : " ]");
-            }
-        }
-        return json.append(", \"flags\": ").append(flagsJson(row, eligibleChunks, conflictPair, support))
-                .append(UNJUDGED_FIELDS).append(" }").toString();
-    }
-
-    /**
-     * The primary status of an abstention, fully determined by the labels and {@code E(q)}: the first of
-     * {@code CORRECT_ABSTENTION}, {@code EVIDENCE_MISS_ABSTENTION} and {@code WRONG_ABSTENTION} whose condition holds.
-     */
-    static String abstentionStatus(AnswerRow row) {
-        if (row.query().relevant().isEmpty()) {
-            return "CORRECT_ABSTENTION";
-        }
-        var retrieved = row.evidence().stream().map(EvidenceChunk::chunkId).collect(Collectors.toSet());
-        return retrieved.containsAll(row.query().required()) ? "WRONG_ABSTENTION" : "EVIDENCE_MISS_ABSTENTION";
-    }
-
-    /**
-     * The protocol's five per-answer flags. A flag is {@code null} when it needs a human verdict or does not apply to
-     * the query's category. {@code anyUnsupportedClaim} is {@code true} when a claim is unsupported by rule and
-     * {@code false} when every claim is supported by rule; {@code conflictDisclosed} is {@code false} by the
-     * {@code l4-answer-v1} rule, for an answer or an abstention, when the eligible citations do not cover both chunks
-     * of the conflicting pair.
-     */
-    private static String flagsJson(AnswerRow row, Set<String> eligibleChunks, Set<String> conflictPair,
-            List<Optional<Boolean>> support) {
-        var answered = row.answer().orElseThrow() instanceof Answered;
-        var anyUnsupported = !answered ? "false"
-                : support.stream().anyMatch(value -> value.isPresent() && !value.get()) ? "true"
-                : support.stream().allMatch(value -> value.isPresent() && value.get()) ? "false" : "null";
-        var conflicting = row.query().category() == Category.CONFLICTING_SOURCE;
-        // An abstention cites nothing, so it cannot cover the pair either.
-        var conflictDisclosed = conflicting && !eligibleChunks.containsAll(conflictPair) ? "false" : "null";
-        return "{ \"anyUnsupportedClaim\": " + anyUnsupported + ", \"anyContradictedClaim\": "
-                + (answered ? "null" : "false") + ", \"premiseAccepted\": null, \"premiseCorrected\": null,"
-                + " \"conflictDisclosed\": " + conflictDisclosed + " }";
     }
 
     private static String answerJson(Layer layer, int k, AnswerCounts counts) {
