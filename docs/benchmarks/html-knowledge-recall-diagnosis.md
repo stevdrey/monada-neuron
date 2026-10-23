@@ -200,20 +200,24 @@ every rule at every point.
 | rrf | 20 | 0.304 / 0.198 / 4 | 0.255 / 0.164 / 4 | 0.176 / 0.066 / 2 | 0.392 / 0.286 / 5 |
 | normalized-max | 20 | 0.539 / 0.399 / 8 | 0.510 / 0.337 / 8 | 0.314 / 0.232 / 5 | 0.255 / 0.211 / 4 |
 
-Max-score is invariant to the pool size: a larger per-token pool can only add candidates that score below the
-token's own top results, so it cannot change max-score's top `k`.
+Max-score is invariant to the pool size, ties included. A hit the larger pool adds to Signal `m`'s list scores at
+most that list's `k`-th hit. The `k` distinct atoms already in the list therefore each have a best hit at least that
+strong, and on an equal score that best hit comes from Signal `m` or an earlier one, at a smaller rank. So under the
+production order (score, then Signal index, then rank), all `k` of them precede the added hit, and max-score's top `k`
+cannot change. A test pins this.
 
 ### Score comparability and cost (k = 5)
 
 | Point | Spearman ρ(df, top-1) | Median df | Non-relevant B2 slots | of which distractors | won via df > median | B2 Store calls/query | Hits/query pool 5 | Distinct atoms pool 5 | Hits/query pool 20 |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| base-25 | 0.512 | 2 | 72 of 85 | 0 | 46 | 10.63 | 41.9 | 17.7 | 165.0 |
-| base-33 | 0.539 | 3 | 73 of 85 | 0 | 44 | 10.63 | 41.9 | 21.1 | 166.9 |
-| n100 | 0.338 | 5 | 78 of 85 | 60 | 42 | 10.63 | 41.9 | 33.4 | 167.4 |
-| n500 | 0.243 | 5 | 82 of 85 | 80 | 44 | 10.63 | 41.9 | 37.6 | 167.4 |
+| base-25 | 0.512 | 1 | 72 of 85 | 0 | 51 | 10.63 | 41.9 | 17.7 | 165.0 |
+| base-33 | 0.539 | 2 | 73 of 85 | 0 | 46 | 10.63 | 41.9 | 21.1 | 166.9 |
+| n100 | 0.338 | 2 | 78 of 85 | 60 | 50 | 10.63 | 41.9 | 33.4 | 167.4 |
+| n500 | 0.243 | 2 | 82 of 85 | 80 | 49 | 10.63 | 41.9 | 37.6 | 167.4 |
 
-- ρ is computed over 226 (query, token) pairs. "df" is the number of corpus chunks whose distinct tokens contain the
-  token, computed from chunk text only.
+- ρ and the median are computed over the same 226 (query, token) pairs whose pool-5 list is non-empty, so stop
+  tokens the Store answers with nothing are left out. "df" is the number of corpus chunks whose distinct tokens
+  contain the token, computed from chunk text only.
 - B1 makes 1 Store call per query; B2 makes 10.63 at every `k`. Pool 20 keeps the call count and multiplies the hits
   scanned by about 4.
 - Latency and allocation were not measured; see the #111 rows.
@@ -258,11 +262,11 @@ never sees that two tokens agree on it.
    - No chunk was lost to a tie-break (`TIE_BROKEN_OUT` = 0 everywhere).
    - Deduplication never removed a distinct relevant atom. Under max-score it can only free slots, by collapsing one
      atom's repeated hits (41.9 hits become 17.7 to 37.6 distinct atoms at pool 5).
-   - A larger pool alone does not help B2: max-score at pool 20 equals pool `k`.
+   - A larger pool alone does not help B2: max-score at pool 20 equals pool `k`, and provably must.
 3. **Cross-query scores.** Raw scores from different one-token queries are not comparable as used.
    - Token document frequency correlates positively with a token's top-1 score (ρ 0.51–0.54 without distractors,
      0.34 and 0.24 with them).
-   - About half of the non-relevant B2 slots are won through tokens with above-median df (42–46 of 72–82).
+   - 60 % to 71 % of the non-relevant B2 slots are won through tokens with above-median df (46–51 of 72–82).
    - With distractors, generic tokens such as `is` (df 223 at `n500`), `its`, `do`, `content` and `example` take most
      displacing slots, and 80 of 82 non-relevant slots at `n500` are distractors.
    - Normalizing each token's list by its own top score (`normalized-max`) barely helps (0.255 at `n500`). The issue

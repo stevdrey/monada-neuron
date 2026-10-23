@@ -11,8 +11,11 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -33,6 +36,11 @@ class MergeCounterfactualsTest {
             lists.add(hits);
         }
         return lists;
+    }
+
+    private static List<String> ranked(List<Merged> merged) {
+        return merged.stream().map(item -> item.chunkId() + " " + Double.doubleToLongBits(item.value()) + " "
+                + item.best()).toList();
     }
 
     private static List<String> chunks(List<Merged> merged) {
@@ -112,6 +120,39 @@ class MergeCounterfactualsTest {
 
         assertEquals(List.of("a", "b"), chunks(merged));
         assertEquals(0.0, merged.getFirst().value());
+    }
+
+    @Test
+    void maxScoreIsInvariantToThePoolSizeEvenWithTies() {
+        // Few distinct scores and shared atoms force ties at every cutoff and across Signals.
+        var random = new Random(135);
+        var scores = new double[] {0.5, 0.3, 0.3, 0.0};
+        for (var trial = 0; trial < 200; trial++) {
+            var full = new ArrayList<List<Hit>>();
+            var signals = 1 + random.nextInt(4);
+            for (var signal = 0; signal < signals; signal++) {
+                var atoms = new ArrayList<>(List.of("a", "b", "c", "d", "e", "f", "g"));
+                Collections.shuffle(atoms, random);
+                var length = random.nextInt(atoms.size() + 1);
+                var drawn = new ArrayList<Double>();
+                for (var i = 0; i < length; i++) {
+                    drawn.add(scores[random.nextInt(scores.length)]);
+                }
+                drawn.sort(Comparator.reverseOrder());
+                var hits = new ArrayList<Hit>();
+                for (var rank = 0; rank < length; rank++) {
+                    hits.add(new Hit(signal, rank, atoms.get(rank), REFERENCES.of(atoms.get(rank)), drawn.get(rank)));
+                }
+                full.add(hits);
+            }
+            for (var k = 1; k <= 7; k++) {
+                var pool = k;
+                var prefixes = full.stream().map(hits -> hits.subList(0, Math.min(pool, hits.size()))).toList();
+                // Atoms, order, values and best hits must agree; only the count of Signals seeing an atom may grow.
+                assertEquals(ranked(MergeCounterfactuals.merge(Rule.MAX_SCORE, full, k)),
+                        ranked(MergeCounterfactuals.merge(Rule.MAX_SCORE, prefixes, k)), "trial " + trial + " k " + k);
+            }
+        }
     }
 
     @Test

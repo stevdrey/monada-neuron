@@ -155,6 +155,53 @@ class RecallLossAttributionTest {
     }
 
     @Test
+    void aQueryOutsideTheObservationHasNoOutcome() {
+        var unobserved = query("q:paraphrase-01", Category.PARAPHRASE, "omega", Set.of("r1"), Set.of());
+        var scores = attribution().score(List.of(ANSWERABLE, unobserved));
+
+        assertEquals(List.of(unobserved.queryId()), scores.failedQueries());
+        assertTrue(scores.systems().stream().allMatch(score -> score.failed() == 1),
+                "no capture and no rows is a missing outcome for every system, never an empty result");
+        assertTrue(scores.fates().stream().noneMatch(fate -> fate.queryId().equals(unobserved.queryId())));
+    }
+
+    @Test
+    void aSupportingOnlyQueryIsAnswerableEverywhere() {
+        var supportingOnly = query("q:multi-evidence-01", Category.MULTI_EVIDENCE, "alpha beta", Set.of(),
+                Set.of("r1", "r2", "r3", "r4", "r5", "r6"));
+        var scores = attribution().score(List.of(supportingOnly));
+
+        var b2 = scores.systems().stream().filter(score -> score.system().equals("B2") && score.k() == 5)
+                .findFirst().orElseThrow();
+        assertEquals(1, b2.answerable());
+        assertEquals(5, scores.comparability().slots(), "its B2 slots are counted");
+        assertEquals(1, scores.ceilings().getFirst().unionRecall().nDefined(), "and it enters the ceiling");
+        assertTrue(scores.negativeQueries().isEmpty());
+    }
+
+    @Test
+    void theMedianDfUsesOnlyTokensWithHits() {
+        var withStopToken = new QueryCapture(ANSWERABLE.queryId(), List.of("alpha", "beta", "the"),
+                appendEmptySignal(capture(ANSWERABLE.queryId(), List.of("alpha", "beta"), FULL)), Optional.empty());
+        var scores = new RecallLossAttribution(new Snapshot("hash", rows(ANSWERABLE.queryId(), Layer.B2,
+                List.of("r1"))), List.of(withStopToken), Map.of("alpha", 2, "beta", 9, "the", 30), Set.of("r1"))
+                .score(List.of(ANSWERABLE));
+
+        assertEquals(5.5, scores.comparability().medianDf(), "the empty-list stop token (df 30) is left out");
+        assertEquals(2, scores.comparability().pairs());
+    }
+
+    private static Map<Integer, List<List<Hit>>> appendEmptySignal(QueryCapture capture) {
+        var lists = new LinkedHashMap<Integer, List<List<Hit>>>();
+        capture.lists().forEach((pool, perSignal) -> {
+            var extended = new ArrayList<>(perSignal);
+            extended.add(List.of());
+            lists.put(pool, extended);
+        });
+        return lists;
+    }
+
+    @Test
     void displacersNameTheWinningTokenAndDistractors() {
         var scores = attribution().score(List.of(ANSWERABLE));
         var displacers = scores.displacers();

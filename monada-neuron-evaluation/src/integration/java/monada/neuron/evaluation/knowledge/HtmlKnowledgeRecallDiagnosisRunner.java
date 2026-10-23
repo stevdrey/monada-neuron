@@ -195,8 +195,7 @@ public final class HtmlKnowledgeRecallDiagnosisRunner {
         var base = HtmlKnowledgeCorpus.bundled();
         var querySet = HtmlKnowledgeQuerySet.bundled(base);
         // The #111 curve cohort: fixed by every protocol size point, so it is the same at every ladder point.
-        var family = HtmlKnowledgeScalingCorpus.of(base, querySet, HtmlKnowledgeScalingCorpus.SIZES, options.seed());
-        var cohort = family.curve();
+        var cohort = HtmlKnowledgeScalingCorpus.curve(base, querySet);
         var ladder = RecallDiagnosisLadder.build(base, querySet, options.rungs(), options.seed());
         var diagnosis = new HtmlKnowledgeRecallDiagnosis(storeSeam);
 
@@ -227,7 +226,7 @@ public final class HtmlKnowledgeRecallDiagnosisRunner {
                         .ifPresent(left -> metadata.put("env.cleanupLeftovers", left));
             }
         }
-        describe(options, family, ladder, metadata);
+        describe(options, base, querySet, cohort, ladder, metadata);
 
         var evaluation = new EvaluationReport(Instant.now(), EnvironmentMetadata.current(),
                 new RunConfiguration(options.seed(), false, 0, 0, "no timed rows: a semantic diagnosis over the"
@@ -248,21 +247,21 @@ public final class HtmlKnowledgeRecallDiagnosisRunner {
                 HtmlKnowledgeIngestionRunner.writeFile(outputDir.resolve(REPORT_MARKDOWN), outcome.markdown()));
     }
 
-    private static void describe(Options options, HtmlKnowledgeScalingCorpus.Family family,
-            List<RecallDiagnosisLadder.LadderPoint> ladder, Map<String, String> metadata) {
+    private static void describe(Options options, HtmlKnowledgeCorpus base, HtmlKnowledgeQuerySet querySet,
+            List<JudgedQuery> cohort, List<RecallDiagnosisLadder.LadderPoint> ladder, Map<String, String> metadata) {
         metadata.put("protocolVersion", HtmlKnowledgeIngestionRunner.PROTOCOL_VERSION);
         metadata.put("study", STUDY);
         metadata.put("runMode", "points " + options.rungs().stream().map(Rung::label).toList() + "; "
                 + (options.storeRoot().isPresent() ? "kept point roots" : "temporary point roots (deleted)")
                 + "; in-process; nothing is timed");
-        metadata.put("corpus.base.version", family.base().version());
-        metadata.put("corpus.base.hash", family.base().corpusHash());
+        metadata.put("corpus.base.version", base.version());
+        metadata.put("corpus.base.hash", base.corpusHash());
         metadata.put("generator.version", ScalingDistractorGenerator.VERSION);
-        metadata.put("generator.seed", Long.toString(family.seed()));
-        metadata.put("query.version", family.querySet().version());
-        metadata.put("query.hash", family.querySet().queryHash());
-        metadata.put("query.cohort", family.curve().size() + " queries of the #111 curve population: "
-                + family.curve().stream().map(JudgedQuery::queryId).collect(Collectors.joining(", ")));
+        metadata.put("generator.seed", Long.toString(options.seed()));
+        metadata.put("query.version", querySet.version());
+        metadata.put("query.hash", querySet.queryHash());
+        metadata.put("query.cohort", cohort.size() + " queries of the #111 curve population: "
+                + cohort.stream().map(JudgedQuery::queryId).collect(Collectors.joining(", ")));
         metadata.put("query.cohortUse", "descriptive diagnosis only, never a tuning or validation set; every merge"
                 + " alternative is in-sample exploratory");
         metadata.put("k", "1, 3, 5");

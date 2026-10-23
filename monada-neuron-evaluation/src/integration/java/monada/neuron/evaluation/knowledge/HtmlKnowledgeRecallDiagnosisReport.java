@@ -371,11 +371,22 @@ final class HtmlKnowledgeRecallDiagnosisReport {
         if (b1.isEmpty() || b2.isEmpty()) {
             return "n/a";
         }
-        var answerable = b1.get().answerable() > 0;
-        return answerable ? format(b1.get().means().get("Recall@5").value()) + " / "
-                + format(b2.get().means().get("Recall@5").value())
-                : "FE " + b1.get().falseEvidence() + "/" + b1.get().unanswerable() + " / " + b2.get().falseEvidence()
-                        + "/" + b2.get().unanswerable();
+        // A group may hold both populations; each part is shown whenever the group has queries of it.
+        var parts = new ArrayList<String>(2);
+        if (b1.get().answerable() > 0) {
+            parts.add(format(b1.get().means().get("Recall@5").value()) + " / "
+                    + format(b2.get().means().get("Recall@5").value()));
+        }
+        if (b1.get().unanswerable() > 0) {
+            parts.add("FE " + b1.get().falseEvidence() + "/" + b1.get().unanswerable() + " / "
+                    + b2.get().falseEvidence() + "/" + b2.get().unanswerable());
+        }
+        return parts.isEmpty() ? "n/a" : String.join("; ", parts);
+    }
+
+    /** Returns the diagnosed points, in ladder order. */
+    List<PointDiagnosis> points() {
+        return points;
     }
 
     private static String cell(SystemScore score) {

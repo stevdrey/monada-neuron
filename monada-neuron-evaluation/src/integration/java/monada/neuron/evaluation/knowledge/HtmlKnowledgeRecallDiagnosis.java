@@ -3,12 +3,14 @@ package monada.neuron.evaluation.knowledge;
 import com.monada.api.MonadaMemory;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeIngestion.Check;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.Layer;
+import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.QueryText;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.Row;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.Snapshot;
 import monada.neuron.evaluation.knowledge.MergeCounterfactuals.Rule;
 import monada.neuron.evaluation.knowledge.RecallDiagnosisLadder.LadderPoint;
 import monada.neuron.evaluation.knowledge.RecallLossAttribution.PointScores;
 import monada.neuron.evaluation.knowledge.SignalHitCapture.QueryCapture;
+import monada.neuron.resonance.adapter.ResonanceStoreMemoryAdapter;
 import monada.neuron.resonance.adapter.ResonanceStoreRecall;
 
 import java.nio.file.Path;
@@ -37,11 +39,12 @@ final class HtmlKnowledgeRecallDiagnosis {
      * Everything one point produced.
      *
      * @param point the ladder point
+     * @param manifest the import manifest of the point's root
      * @param checks semantic verdicts, prefixed with the rung label
      * @param captures the labels-free capture, one per cohort query
      * @param scores the scorer's output over the cohort
      */
-    record PointDiagnosis(LadderPoint point, List<Check> checks, List<QueryCapture> captures, PointScores scores) {
+    record PointDiagnosis(LadderPoint point, IngestionManifest manifest, List<Check> checks, List<QueryCapture> captures, PointScores scores) {
 
         PointDiagnosis {
             checks = List.copyOf(checks);
@@ -68,33 +71,45 @@ final class HtmlKnowledgeRecallDiagnosis {
         var checks = new ArrayList<Check>();
         var root = directory.resolve("root");
         var imported = new HtmlKnowledgeIngestion(corpus).ingest(root);
-        imported.checks().forEach(check -> checks.add(prefixed(prefix, check)));
+        imported.checks().forEach(check -> checks.add(HtmlKnowledgeScaling.prefixed(prefix, check)));
         var manifest = imported.manifest();
 
         // Labels-free from here to the scorer: the recall paths see query ids and texts only.
         var queries = HtmlKnowledgeScaling.texts(cohort);
-        var observation = new HtmlKnowledgeRecall(corpus).observe(root, manifest, querySet.queryHash(), queries);
-        observation.checks().forEach(check -> checks.add(prefixed(prefix, check)));
-        var snapshot = observation.snapshot();
+        // One handle pair serves the observation and the capture: the diagnosis times nothing, so the observation
+        // overload without latency repetitions or cold samples is used.
+        var recall = new HtmlKnowledgeRecall(corpus);
         var memory = MonadaMemory.open(root);
+        Snapshot snapshot;
+        try (var adapter = ResonanceStoreMemoryAdapter.open(root, recall.adapterConfig())) {
+            var observation = recall.observe(memory, adapter, manifest, querySet.queryHash(), queries);
+            observation.checks().forEach(check -> checks.add(HtmlKnowledgeScaling.prefixed(prefix, check)));
+            snapshot = observation.snapshot();
+        }
         ResonanceStoreRecall store = (query, limit, threshold) -> memory.resonate(query).topK(limit)
                 .threshold(threshold).execute().results();
         var captures = new SignalHitCapture(corpus, manifest, storeSeam.apply(store)).capture(queries);
 
-        var failed = captures.stream().filter(capture -> !capture.completed())
-                .map(capture -> capture.queryId() + ": " + capture.failure().orElseThrow()).toList();
+        var failed = new ArrayList<String>();
+        captures.stream().filter(capture -> !capture.completed())
+                .map(capture -> capture.queryId() + ": " + capture.failure().orElseThrow()).forEach(failed::add);
+        var capturedIds = captures.stream().map(QueryCapture::queryId).toList();
+        var cohortIds = queries.stream().map(QueryText::queryId).toList();
+        if (!capturedIds.equals(cohortIds)) {
+            failed.add("captured queries " + capturedIds + " differ from the cohort " + cohortIds);
+        }
         checks.add(new Check(prefix + "diagnosis.captureCompleted", failed.isEmpty(), failed.isEmpty()
-                ? "every Store call of all " + captures.size() + " queries at pools " + SignalHitCapture.POOLS
+                ? "every cohort query was captured, and every Store call of all " + captures.size() + " queries at pools " + SignalHitCapture.POOLS
                         + " returned finite scores and atoms that map through the manifest with content hashing to"
                         + " the corpus sha256"
-                : failed.size() + " queries failed and are not scored: " + head(failed)));
+                : failed.size() + " queries failed and are not scored: " + HtmlKnowledgeScaling.head(failed)));
         var replay = replayDifferences(captures, snapshot);
         checks.add(new Check(prefix + "diagnosis.maxScoreReplayEqualsB2", replay.isEmpty() && failed.isEmpty(),
                 replay.isEmpty() && failed.isEmpty()
                         ? "the offline max-score replay over each Signal's pool-k list equals B2 and B2c at limit k for"
                                 + " k = 1, 3, 5 (chunks, order, bit-exact scores), so every counterfactual starts from"
                                 + " the candidates B2 itself merged"
-                        : "not compared or unequal: " + head(replay.isEmpty() ? failed : replay)));
+                        : "not compared or unequal: " + HtmlKnowledgeScaling.head(replay.isEmpty() ? failed : replay)));
 
         var scores = new RecallLossAttribution(snapshot, captures, SignalHitCapture.documentFrequency(corpus),
                 corpus.chunks().stream().map(CorpusChunk::chunkId).collect(Collectors.toSet())).score(cohort);
@@ -102,8 +117,8 @@ final class HtmlKnowledgeRecallDiagnosis {
         checks.add(new Check(prefix + "diagnosis.attributionConsistent", inconsistent.isEmpty(), inconsistent.isEmpty()
                 ? "every relevant chunk of every scored answerable query is attributed exactly once per k, and the"
                         + " RETRIEVED count equals the relevant chunks of B2 at limit k"
-                : head(inconsistent)));
-        return new PointDiagnosis(point, checks, captures, scores);
+                : HtmlKnowledgeScaling.head(inconsistent)));
+        return new PointDiagnosis(point, manifest, checks, captures, scores);
     }
 
     /** Returns every query and {@code k} where the max-score replay differs from B2 or B2c at limit {@code k}. */
@@ -158,13 +173,5 @@ final class HtmlKnowledgeRecallDiagnosis {
             }
         }
         return differences;
-    }
-
-    private static Check prefixed(String prefix, Check check) {
-        return new Check(prefix + check.name(), check.passed(), check.detail());
-    }
-
-    private static String head(List<String> values) {
-        return String.join("; ", values.subList(0, Math.min(5, values.size()))) + (values.size() > 5 ? "; ..." : "");
     }
 }

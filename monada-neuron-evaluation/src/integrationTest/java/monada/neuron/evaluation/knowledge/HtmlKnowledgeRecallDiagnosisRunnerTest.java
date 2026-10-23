@@ -74,7 +74,14 @@ class HtmlKnowledgeRecallDiagnosisRunnerTest {
             assertTrue(json.contains(member), member);
         }
         assertTrue(json.contains(HtmlKnowledgeRecallDiagnosisReport.RESEARCH_ONLY));
-        assertFalse(json.matches("(?s).*\"atomId\".*"), "raw atom ids never reach the report");
+        for (var point : outcome.diagnosis().orElseThrow().points()) {
+            for (var entry : point.manifest().entries()) {
+                assertFalse(json.contains(entry.atomId()), "raw atom id of " + entry.chunkId() + " reached the report");
+            }
+            // Positive control: the hits do carry the opaque references the manifest maps.
+            assertTrue(point.manifest().entries().stream().anyMatch(entry -> json.contains(entry.opaqueReference())),
+                    point.point().rung().label());
+        }
         var markdown = Files.readString(written.get(1));
         assertTrue(markdown.contains("### Where relevant chunks are lost (k = 5)"));
         assertTrue(markdown.contains("base growth (no distractors)"));

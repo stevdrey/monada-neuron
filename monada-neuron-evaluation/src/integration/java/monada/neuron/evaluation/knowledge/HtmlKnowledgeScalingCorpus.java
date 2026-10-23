@@ -87,12 +87,25 @@ final class HtmlKnowledgeScalingCorpus {
         }
         // The curve population is fixed by every protocol size point, not by the requested subset, so a subset run
         // scores each point over the same queries as a full run.
+        return new Family(base, querySet, seed, points, curve(base, querySet), excludedFromCurve(base, querySet));
+    }
+
+    /**
+     * Returns the ids of the queries removed at any protocol size point, in query-set order. Needs no generated corpus,
+     * since relevant chunks are always base chunks.
+     */
+    static List<String> excludedFromCurve(HtmlKnowledgeCorpus base, HtmlKnowledgeQuerySet querySet) {
         var excluded = new LinkedHashSet<String>();
         for (var size : SIZES) {
             excluded.addAll(removed(base, querySet, size));
         }
-        var curve = querySet.queries().stream().filter(query -> !excluded.contains(query.queryId())).toList();
-        return new Family(base, querySet, seed, points, curve, List.copyOf(excluded));
+        return List.copyOf(excluded);
+    }
+
+    /** Returns the curve population: the queries eligible at every protocol size point, in query-set order. */
+    static List<JudgedQuery> curve(HtmlKnowledgeCorpus base, HtmlKnowledgeQuerySet querySet) {
+        var excluded = Set.copyOf(excludedFromCurve(base, querySet));
+        return querySet.queries().stream().filter(query -> !excluded.contains(query.queryId())).toList();
     }
 
     /** Builds one point. */

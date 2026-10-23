@@ -33,6 +33,9 @@ import java.util.function.Predicate;
  * {@code k} ({@link Reason}). It also scores B1, B2 and every {@link MergeCounterfactuals} rule over identical
  * candidates, the candidate ceiling any merge could reach, the non-relevant slots of B2 and the tokens that won them.
  *
+ * <p>"Answerable" means a non-empty relevant set ({@code required ∪ supporting}), the population {@code A} of
+ * {@link RecallMetrics}; every count and aggregate here uses that one rule.
+ *
  * <p>Nothing here feeds back into encoding, retrieval or merging: every alternative is research-only and in-sample
  * exploratory over the fixed #111 curve cohort, which is a descriptive population, never a tuning or validation set.
  */
@@ -147,7 +150,8 @@ final class RecallLossAttribution {
      *
      * @param pairs (query, token) pairs with a non-empty pool-5 list
      * @param spearmanDfTop1 Spearman rank correlation between the token's document frequency and its top score
-     * @param medianDf the median document frequency over all (query, token) pairs
+     * @param medianDf the median document frequency over the same pairs as {@code spearmanDfTop1} (tokens with a
+     *     non-empty pool-5 list, so stop tokens the Store answers with nothing do not shift it)
      * @param slots B2 top-5 slots of answerable queries
      * @param nonRelevantSlots of which non-relevant
      * @param distractorSlots of which generated distractors
@@ -214,7 +218,8 @@ final class RecallLossAttribution {
         Optional<List<String>> topK(JudgedQuery query, int k);
     }
 
-    private final Snapshot snapshot;
+    /** The snapshot's limit-5 rows by {@code queryId + layer}, indexed once. */
+    private final Map<String, List<Row>> limitRows;
     private final Map<String, QueryCapture> captures;
     private final Map<String, Integer> documentFrequency;
     private final Set<String> corpusChunks;
@@ -229,7 +234,15 @@ final class RecallLossAttribution {
      */
     RecallLossAttribution(Snapshot snapshot, List<QueryCapture> captures, Map<String, Integer> documentFrequency,
             Set<String> corpusChunks) {
-        this.snapshot = Objects.requireNonNull(snapshot, "snapshot must not be null");
+        Objects.requireNonNull(snapshot, "snapshot must not be null");
+        var index = new LinkedHashMap<String, List<Row>>();
+        for (var row : snapshot.rows()) {
+            if (row.limit() == HtmlKnowledgeRecall.MAX_LIMIT) {
+                index.computeIfAbsent(key(row.queryId(), row.layer()), key -> new ArrayList<>()).add(row);
+            }
+        }
+        index.replaceAll((key, rows) -> List.copyOf(rows));
+        this.limitRows = Collections.unmodifiableMap(index);
         var byId = new LinkedHashMap<String, QueryCapture>();
         captures.forEach(capture -> byId.put(capture.queryId(), capture));
         this.captures = Collections.unmodifiableMap(byId);
@@ -276,7 +289,7 @@ final class RecallLossAttribution {
         var displacers = new ArrayList<Displacer>();
         var slots = 0;
         for (var query : cohort) {
-            if (query.answerable() && scorable(query)) {
+            if (!query.relevant().isEmpty() && scorable(query)) {
                 var top = merged(query, HtmlKnowledgeRecall.MAX_LIMIT, HtmlKnowledgeRecall.MAX_LIMIT);
                 slots += top.size();
                 displacers.addAll(displacers(query, top));
@@ -303,8 +316,19 @@ final class RecallLossAttribution {
         return systems;
     }
 
+    private static String key(String queryId, Layer layer) {
+        return queryId + "\t" + layer.label();
+    }
+
+    /**
+     * Returns the layer's top {@code k} for {@code query}, or empty when it has no outcome: the layer failed, or the
+     * query was not part of this observation (no capture), so absent rows are never scored as an empty result.
+     */
     private Optional<List<String>> snapshotTopK(JudgedQuery query, Layer layer, int k) {
-        var rows = snapshot.rows(query.queryId(), layer, HtmlKnowledgeRecall.MAX_LIMIT);
+        if (!captures.containsKey(query.queryId())) {
+            return Optional.empty();
+        }
+        var rows = limitRows.getOrDefault(key(query.queryId(), layer), List.of());
         if (rows.stream().anyMatch(row -> row.chunkId().equals(HtmlKnowledgeRecall.FAILED))) {
             return Optional.empty();
         }
@@ -465,7 +489,7 @@ final class RecallLossAttribution {
             for (var pool : List.of(k, SignalHitCapture.EXPANDED_POOL)) {
                 var values = new ArrayList<OptionalDouble>();
                 for (var query : cohort) {
-                    if (query.answerable() && scorable(query)) {
+                    if (!query.relevant().isEmpty() && scorable(query)) {
                         var union = captures.get(query.queryId()).at(pool).stream().flatMap(List::stream)
                                 .map(Hit::chunkId).distinct().toList();
                         values.add(RecallMetrics.recall(query.relevant(), union));
@@ -481,7 +505,7 @@ final class RecallLossAttribution {
         var withHits = tokens.stream().filter(row -> row.top1().isPresent()).toList();
         var spearman = spearman(withHits.stream().mapToDouble(TokenRow::df).toArray(),
                 withHits.stream().mapToDouble(row -> row.top1().getAsDouble()).toArray());
-        var dfs = tokens.stream().mapToDouble(TokenRow::df).sorted().toArray();
+        var dfs = withHits.stream().mapToDouble(TokenRow::df).sorted().toArray();
         var median = dfs.length == 0 ? 0.0 : dfs.length % 2 == 1 ? dfs[dfs.length / 2]
                 : (dfs[dfs.length / 2 - 1] + dfs[dfs.length / 2]) / 2.0;
         return new Comparability(withHits.size(), spearman, median, slots, displacers.size(),
@@ -542,7 +566,7 @@ final class RecallLossAttribution {
         var k = HtmlKnowledgeRecall.MAX_LIMIT;
         var candidates = new ArrayList<Regression>();
         for (var query : cohort) {
-            if (!query.answerable() || !scorable(query)) {
+            if (query.relevant().isEmpty() || !scorable(query)) {
                 continue;
             }
             var b1 = RecallMetrics.recall(query.relevant(), snapshotTopK(query, Layer.B1, k).orElseThrow())
