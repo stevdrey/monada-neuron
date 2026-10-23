@@ -23,7 +23,8 @@ class HtmlDecisionRunnerTest {
     private static final List<String> REQUIRED = List.of("seed.ingestion.manifestComplete",
             "seed.ingestion.contentFidelity", "seed.ingestion.readback", "reopen.persistence.readback",
             "decision.completed", "decision.selectorCitationsVerified", "control.emptyEvidenceAbstains",
-            "decision.deterministic", "perf.matchesVerified", "decision.scored", "gold.hashFrozen");
+            "decision.deterministic", "perf.matchesVerified", "decision.scored", "gold.hashFrozen",
+            "adjudication.hashFrozen", "adjudication.complete", "adjudication.independent", "gold.matchesAdjudication");
 
     @TempDir
     static Path directory;
@@ -47,6 +48,10 @@ class HtmlDecisionRunnerTest {
             assertEquals(REQUIRED, outcome.report().checks().stream().map(EvaluationCheck::name).toList());
             outcome.report().checks().forEach(check -> assertTrue(check.passed(), check.name() + ": "
                     + check.detail()));
+            assertEquals(HtmlDecisionGold.REVISION_VERSION, outcome.report().metadata().get("gold.version"));
+            assertEquals(HtmlDecisionRunner.FROZEN_GOLD_REVISION_HASH, outcome.report().metadata().get("gold.hash"));
+            assertEquals(HtmlDecisionRunner.FROZEN_ADJUDICATION_HASH,
+                    outcome.report().metadata().get("adjudication.hash"));
         }
     }
 

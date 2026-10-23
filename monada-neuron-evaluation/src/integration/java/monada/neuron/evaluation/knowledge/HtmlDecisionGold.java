@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -23,18 +24,30 @@ import java.util.Set;
  * and a test scans their bytecode for that. Load-time invariants: exactly one row per case, every choice a candidate of
  * its case, acceptable and ineligible disjoint, outcome-consistent fields, and every span inside its chunk with a
  * matching digest. A violation throws {@link CorpusValidationException}.
+ *
+ * <p>Two versions share this format: the authored {@value #VERSION} ({@code gold.tsv}) and, once the independent
+ * adjudication of Issue #152 changes a label, the {@value #REVISION_VERSION} revision ({@code gold-v2.tsv}). Results
+ * are comparable only within one version.
  */
 final class HtmlDecisionGold {
 
     /** Version of the authored gold labels. */
     static final String VERSION = "html-decision-v1-gold";
 
+    /**
+     * Version of the gold labels revised by the independent adjudication (Issue #152); it exists only when the
+     * adjudication changes a label, and its rows are exactly {@link HtmlDecisionAdjudication#revisedTable()}.
+     */
+    static final String REVISION_VERSION = "html-decision-v1-gold-v2";
+
     /** Header row of {@code gold.tsv}. */
     static final String HEADER = "caseId\texpected\tacceptable\tineligible\tassumptions\tpermissions\trationale"
             + "\tevidenceSpans\treviewer\tdraftedBy";
 
     private static final String FILE = "gold.tsv";
+    private static final String REVISION_FILE = "gold-v2.tsv";
     private static final String RESOURCE = "/" + HtmlDecisionCases.VERSION + "/" + FILE;
+    private static final String REVISION_RESOURCE = "/" + HtmlDecisionCases.VERSION + "/" + REVISION_FILE;
 
     /** The expected kind of answer. */
     enum Expected {
@@ -102,24 +115,46 @@ final class HtmlDecisionGold {
         }
     }
 
+    private final String version;
     private final Map<String, Gold> byCase;
+    private final List<List<String>> cells;
     private final String hash;
     private final String origin;
 
-    private HtmlDecisionGold(Map<String, Gold> byCase, String hash, String origin) {
+    private HtmlDecisionGold(String version, Map<String, Gold> byCase, List<List<String>> cells, String hash,
+            String origin) {
+        this.version = version;
         this.byCase = byCase;
+        this.cells = cells;
         this.hash = hash;
         this.origin = origin;
     }
 
-    /** Loads and validates the bundled gold labels against {@code cases} and {@code corpus}. */
+    /** Loads and validates the bundled {@value #VERSION} labels against {@code cases} and {@code corpus}. */
     static HtmlDecisionGold bundled(HtmlDecisionCases cases, HtmlKnowledgeCorpus corpus) {
-        return parse(HtmlKnowledgeCorpus.bundledTable(HtmlDecisionCases.VERSION, FILE), RESOURCE, cases, corpus);
+        return parse(HtmlKnowledgeCorpus.bundledTable(HtmlDecisionCases.VERSION, FILE), RESOURCE, VERSION, cases,
+                corpus);
     }
 
-    /** Parses and validates a gold table, as the loader does. */
+    /** Loads the bundled {@value #REVISION_VERSION} labels, or nothing when no adjudication changed a label. */
+    static Optional<HtmlDecisionGold> bundledRevision(HtmlDecisionCases cases, HtmlKnowledgeCorpus corpus) {
+        if (HtmlDecisionGold.class.getResource(REVISION_RESOURCE) == null) {
+            return Optional.empty();
+        }
+        return Optional.of(parse(HtmlKnowledgeCorpus.bundledTable(HtmlDecisionCases.VERSION, REVISION_FILE),
+                REVISION_RESOURCE, REVISION_VERSION, cases, corpus));
+    }
+
+    /** Parses and validates a {@value #VERSION} table, as the loader does. */
     static HtmlDecisionGold parse(String text, String origin, HtmlDecisionCases cases, HtmlKnowledgeCorpus corpus) {
+        return parse(text, origin, VERSION, cases, corpus);
+    }
+
+    /** Parses and validates a gold table of {@code version}, as the loader does. */
+    static HtmlDecisionGold parse(String text, String origin, String version, HtmlDecisionCases cases,
+            HtmlKnowledgeCorpus corpus) {
         var byCase = new LinkedHashMap<String, Gold>();
+        var cells = new ArrayList<List<String>>();
         for (var row : HtmlKnowledgeCorpus.rows(text, HEADER, origin)) {
             var gold = goldOf(row);
             if (!cases.contains(gold.caseId())) {
@@ -129,18 +164,35 @@ final class HtmlDecisionGold {
             if (byCase.put(gold.caseId(), gold) != null) {
                 throw row.reject("repeated gold label for " + gold.caseId());
             }
+            cells.add(row.cells().stream().map(String::strip).toList());
         }
         var missing = cases.cases().stream().map(HtmlDecisionCases.DecisionCase::caseId)
                 .filter(caseId -> !byCase.containsKey(caseId)).toList();
         if (!missing.isEmpty()) {
             throw new CorpusValidationException(origin, "cases without a gold label: " + missing);
         }
-        return new HtmlDecisionGold(Map.copyOf(byCase), CorpusDigests.sha256(text), origin);
+        return new HtmlDecisionGold(version, Map.copyOf(byCase), List.copyOf(cells), CorpusDigests.sha256(text),
+                origin);
     }
 
     /** Returns the gold label of {@code caseId}. */
     Gold of(String caseId) {
         return Objects.requireNonNull(byCase.get(caseId), "no gold label for " + caseId);
+    }
+
+    /** Returns the version of these labels. */
+    String version() {
+        return version;
+    }
+
+    /** Returns the stripped cells of every data row in file order, so a revision can be rebuilt and compared. */
+    List<List<String>> cells() {
+        return cells;
+    }
+
+    /** Returns everyone who drafted a label of this file. */
+    Set<String> drafters() {
+        return Set.copyOf(byCase.values().stream().map(Gold::draftedBy).toList());
     }
 
     /** Returns the SHA-256 of the normalized gold file. */

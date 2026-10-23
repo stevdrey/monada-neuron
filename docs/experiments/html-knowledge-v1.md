@@ -8,7 +8,7 @@
 | Issue | [#104](https://github.com/stevdrey/monada-neuron/issues/104) (Experiment Knowledge 1/8) |
 | Implementation | Corpus contract delivered by #105 ([ingestion](../benchmarks/html-knowledge-ingestion.md)); ingestion readback, post-reopen (restart) and L2 attribution delivered by #106 ([persistence](../benchmarks/html-knowledge-persistence.md)); query set `html-kq-v1`, L1/L2 judged recall and baselines B0 to B2c delivered by #107 ([recall](../benchmarks/html-knowledge-recall.md)); L3 evidence use (`l3-evidence-v1`) delivered by #108 ([evidence trace](../benchmarks/html-knowledge-evidence-trace.md)); L4 grounded answers (`l4-answer-v1`), baseline B3 and the generator seam delivered by #109 ([grounded answers](../benchmarks/html-knowledge-answers.md)); relevance feedback versus a no-feedback control (`feedback-v1`) delivered by #110 ([relevance feedback](../benchmarks/html-knowledge-feedback.md)); the rest of this document is the contract that issue #111 implements. |
 | Scope | Monada Neuron `monada-neuron-evaluation` optional `integration` / `integrationTest` source sets only |
-| Extensions | `l3-evidence-v1` (#108), `l4-answer-v1` (#109), `feedback-v1` (#110), `scaling-v1` (#111), `decision-v1` (#112, preliminary until #152) |
+| Extensions | `l3-evidence-v1` (#108), `l4-answer-v1` (#109), `feedback-v1` (#110), `scaling-v1` (#111), `decision-v1` (#112; gold independently adjudicated in #152) |
 
 The **core** protocol (`html-knowledge-protocol-v1`) covers the corpus and query contracts, L1/L2 retrieval
 metrics, baselines B0 to B2c, thresholds, run conditions, comparison rules and the report. The sections on evidence
@@ -838,7 +838,7 @@ issue fixes the exact task name in its own documentation.
 | #108 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeEvidenceTrace` | L3 evidence use in a bounded cognitive cycle, with memory-empty, swapped, removed-document, tight-budget and failed-recall controls |
 | #109 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeAnswers` | L4 grounded answers with B3, the in-sample B3c variant, abstention, a `TEST_DOUBLE` generator seam and frozen human judgments; `--ask` answers one question, unscored |
 | #110 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeFeedback` | [relevance feedback](#relevance-feedback-delivered-by-110) vs a no-feedback control: one control and three key-strategy treatment roots, seed, feedback and restarted reopen JVMs, a feedback-disabled reference |
-| #112 | **delivered (preliminary)** | `./gradlew :monada-neuron-evaluation:runHtmlDecisionBenchmark` | [HTML design decisions](../benchmarks/html-decision.md), preliminary until the independent gold adjudication of [#152](https://github.com/stevdrey/monada-neuron/issues/152), under explicit constraints: Store-only, raw-Store-plus-rules, Neuron-plus-rules and no-evidence arms, the host rule table printed, an optional labelled generator arm |
+| #112 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlDecisionBenchmark` | [HTML design decisions](../benchmarks/html-decision.md), scored against the gold `html-decision-v1-gold-v2` independently adjudicated in [#152](https://github.com/stevdrey/monada-neuron/issues/152), under explicit constraints: Store-only, raw-Store-plus-rules, Neuron-plus-rules and no-evidence arms, the host rule table printed, an optional labelled generator arm |
 | #111 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeScaling` | L6 profile over the [scaling family](#scaling-family-delivered-by-111): every phase a separate row, semantic validity checked outside every timed window |
 
 All planned tasks require the sibling `../monada-resonance-store` checkout, like the existing integration
@@ -960,11 +960,15 @@ source set, and do not change `./gradlew test` when it is absent.
     rationale and exact spans) are separate files; only the scorer reads the gold, and its hash is frozen.
   - Decisions come from an evaluation-only host rule baseline, printed in every report, never from Neuron; the
     raw-Store arm with the same rules is the matched reference for the Neuron arm.
-  - **Preliminary scope (deviation from the boundary above):** the acceptable-option sets are not *independently*
-    curated. They were drafted by the author of the rule baseline before any system output was inspected and are
-    reviewed by the reviewer of record. `decision-v1` is therefore a preliminary benchmark: every report says so, no
-    result may be presented as independent validation, and the independent adjudication (a new gold version) is
-    [#152](https://github.com/stevdrey/monada-neuron/issues/152).
+  - Independent adjudication ([#152](https://github.com/stevdrey/monada-neuron/issues/152)): the authored labels
+    `html-decision-v1-gold` were drafted by the author of the rule baseline before any system output was inspected.
+    Every item of every label was then judged (`agree` or `change`, with a reason) by a reviewer who did not write
+    the rules or draft a label and saw neither the rules nor any system output; the verdicts are the frozen
+    `html-decision-v1-adjudication`, and the labels with every change applied are the new gold version
+    `html-decision-v1-gold-v2`, which reports use. Results are comparable only within one gold version; the earlier
+    `html-decision-v1-gold` results remain preliminary. The reviewer is one model from another vendor
+    (`gpt-6.1-sol`), not a human expert or a panel, and it judged the rule author's draft rather than labelling from
+    scratch; the benchmark page states these limits.
   - Errata before merge: the two CSP cases now state that `script-src` is `'self'` (own-origin script files allowed,
     no `'unsafe-inline'`), because a policy that only omits `'unsafe-inline'` may also block external sources
     (`'none'`), so the external choice did not follow from the stated constraints. The `restrictiveCsp` constraint,

@@ -248,6 +248,16 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
         args(quotedBenchmarkArgs())
     }
 
+    // Independent adjudication hand-off of the html-decision-v1 gold labels (Issue #152): writes the reviewer
+    // worksheet and the fill-in template, and gold-v2.tsv once a bundled adjudication changes a label.
+    tasks.register<JavaExec>("htmlDecisionAdjudicationWorksheet") {
+        group = "benchmark"
+        description = "Writes the independent adjudication worksheet of the html-decision-v1 gold labels (Issue #152)"
+        classpath = integration.runtimeClasspath
+        mainClass.set("monada.neuron.evaluation.knowledge.HtmlDecisionAdjudicationWorksheet")
+        args("--output-dir", layout.buildDirectory.dir("reports/html-decision-adjudication").get().asFile.absolutePath)
+    }
+
     // Adapter-boundary JMH (Issue #49). Lives with the integration source set because it needs the
     // optional adapter; the generic `jmh` task only sees `main`.
     tasks.register<JavaExec>("jmhResonanceStoreAdapter") {

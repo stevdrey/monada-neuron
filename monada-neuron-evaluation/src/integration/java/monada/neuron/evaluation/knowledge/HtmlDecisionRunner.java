@@ -50,6 +50,12 @@ public final class HtmlDecisionRunner {
     /** SHA-256 of the frozen, reviewed {@code html-decision-v1} gold file. */
     static final String FROZEN_GOLD_HASH = "5506175cde52efcfbec6e4590ab470f1f728edf96e5844552b3f35315de87440";
 
+    /** SHA-256 of the frozen, independently adjudicated {@code gold-v2.tsv} revision. */
+    static final String FROZEN_GOLD_REVISION_HASH = "d9d480d88df1966f5b9358e9efbead28dab29ba9c377609a92de89da0f5109b9";
+
+    /** SHA-256 of the frozen independent adjudication by gpt-6.1-sol (Issue #152). */
+    static final String FROZEN_ADJUDICATION_HASH = "ff8cd6db6e50e0b9169acf2749122416384e6f3e2d5cfaa2cdfc519bf4563cc7";
+
     static final String REPORT_JSON = "html-decision.json";
     static final String REPORT_MARKDOWN = "html-decision.md";
     static final String TRACE = HtmlDecisionCases.VERSION + "-trace.tsv";
@@ -60,12 +66,31 @@ public final class HtmlDecisionRunner {
 
     private final Options options;
     private final Optional<GroundedAnswerGenerator> generator;
-    private final String frozenHash;
+    private final FrozenHashes frozen;
 
-    HtmlDecisionRunner(Options options, Optional<GroundedAnswerGenerator> generator, String frozenHash) {
+    HtmlDecisionRunner(Options options, Optional<GroundedAnswerGenerator> generator, FrozenHashes frozen) {
         this.options = Objects.requireNonNull(options, "options must not be null");
         this.generator = Objects.requireNonNull(generator, "generator must not be null");
-        this.frozenHash = Objects.requireNonNull(frozenHash, "frozenHash must not be null");
+        this.frozen = Objects.requireNonNull(frozen, "frozen must not be null");
+    }
+
+    /**
+     * The frozen hashes the bundled label files must match.
+     *
+     * @param gold the {@value HtmlDecisionGold#VERSION} file
+     * @param revision the {@value HtmlDecisionGold#REVISION_VERSION} file
+     * @param adjudication the {@value HtmlDecisionAdjudication#VERSION} file
+     */
+    record FrozenHashes(String gold, String revision, String adjudication) {
+
+        static final FrozenHashes BUNDLED = new FrozenHashes(FROZEN_GOLD_HASH, FROZEN_GOLD_REVISION_HASH,
+                FROZEN_ADJUDICATION_HASH);
+
+        FrozenHashes {
+            Objects.requireNonNull(gold, "gold must not be null");
+            Objects.requireNonNull(revision, "revision must not be null");
+            Objects.requireNonNull(adjudication, "adjudication must not be null");
+        }
     }
 
     /**
@@ -165,7 +190,7 @@ public final class HtmlDecisionRunner {
      * @throws CorpusValidationException when the corpus, the cases or the gold labels violate their contract
      */
     public static Outcome run(Options options, Optional<GroundedAnswerGenerator> generator) {
-        return new HtmlDecisionRunner(options, generator, FROZEN_GOLD_HASH).execute();
+        return new HtmlDecisionRunner(options, generator, FrozenHashes.BUNDLED).execute();
     }
 
     /** Writes the reports and the trace into the preflighted output directory. */
@@ -188,7 +213,10 @@ public final class HtmlDecisionRunner {
         options.storeRoot().ifPresent(HtmlKnowledgeIngestion::requireFreshRoot);
         var corpus = HtmlKnowledgeCorpus.bundledWithDecisionSupplement();
         var cases = HtmlDecisionCases.bundled();
-        var gold = HtmlDecisionGold.bundled(cases, corpus);
+        var authored = HtmlDecisionGold.bundled(cases, corpus);
+        var adjudication = HtmlDecisionAdjudication.bundled(cases, authored, corpus);
+        var revision = HtmlDecisionGold.bundledRevision(cases, corpus);
+        var gold = revision.orElse(authored);
 
         var work = temporaryDirectory();
         try {
@@ -222,7 +250,7 @@ public final class HtmlDecisionRunner {
             Optional<HtmlKnowledgeRecallRunner.Rendered> rendered;
             try {
                 var scores = DecisionMetrics.score(observation.rows(), cases, gold);
-                var report = new HtmlDecisionReport(scores, cases, gold, selector, generator);
+                var report = new HtmlDecisionReport(scores, cases, gold, adjudication, selector, generator);
                 rendered = Optional.of(new HtmlKnowledgeRecallRunner.Rendered(report.toJson(), report.toMarkdown()));
                 checks.add(new Check("decision.scored", true, "the scorer accepted " + observation.rows().size()
                         + " rows"));
@@ -231,13 +259,17 @@ public final class HtmlDecisionRunner {
                 checks.add(new Check("decision.scored", false, "the rows were rejected by the scorer; nothing was"
                         + " scored: " + e.getMessage()));
             }
-            checks.add(new Check("gold.hashFrozen", gold.hash().equals(frozenHash), gold.hash().equals(frozenHash)
-                    ? "the gold file hashes to its frozen value " + frozenHash
-                    : "the gold file hashes to " + gold.hash() + ", not the frozen " + frozenHash));
+            var frozenGold = revision.isPresent() ? frozen.revision() : frozen.gold();
+            checks.add(new Check("gold.hashFrozen", gold.hash().equals(frozenGold), gold.hash().equals(frozenGold)
+                    ? "the " + gold.version() + " file hashes to its frozen value " + frozenGold
+                    : "the " + gold.version() + " file hashes to " + gold.hash() + ", not the frozen " + frozenGold));
+            if (adjudication.isPresent() || revision.isPresent()) {
+                adjudicationChecks(adjudication, revision, checks);
+            }
             var digest = CorpusDigests.sha256(trace + "\n" + rendered.map(HtmlKnowledgeRecallRunner.Rendered::json)
                     .orElse("null"));
 
-            describe(corpus, cases, gold, root, metadata);
+            describe(corpus, cases, gold, adjudication, root, metadata);
             var evaluation = new EvaluationReport(
                     Instant.now(),
                     EnvironmentMetadata.current(),
@@ -256,8 +288,48 @@ public final class HtmlDecisionRunner {
         }
     }
 
-    private void describe(HtmlKnowledgeCorpus corpus, HtmlDecisionCases cases, HtmlDecisionGold gold, Path root,
-            Map<String, String> metadata) {
+    /**
+     * Adds the checks of the independent adjudication (Issue #152): its hash is frozen, every case and item has a
+     * verdict, no reviewer wrote the rules or drafted a label, and a revision exists exactly when a label changed
+     * and holds exactly the changed rows.
+     */
+    void adjudicationChecks(Optional<HtmlDecisionAdjudication> adjudication,
+            Optional<HtmlDecisionGold> revision, List<Check> checks) {
+        if (adjudication.isEmpty()) {
+            checks.add(new Check("gold.matchesAdjudication", false, "a " + HtmlDecisionGold.REVISION_VERSION
+                    + " file exists without an adjudication"));
+            return;
+        }
+        var recorded = adjudication.get();
+        var hash = recorded.hash();
+        checks.add(new Check("adjudication.hashFrozen", hash.equals(frozen.adjudication()),
+                hash.equals(frozen.adjudication()) ? "the adjudication hashes to its frozen value " + hash
+                        : "the adjudication hashes to " + hash + ", not the frozen '" + frozen.adjudication() + "'"));
+        checks.add(new Check("adjudication.complete", recorded.missing().isEmpty(), recorded.missing().isEmpty()
+                ? "every case and item has a verdict (" + recorded.agreements() + " agree, " + recorded.changes()
+                        + " change)"
+                : "without a verdict: " + recorded.missing()));
+        checks.add(new Check("adjudication.independent", recorded.dependentReviewers().isEmpty(),
+                recorded.dependentReviewers().isEmpty() ? "reviewed by " + recorded.reviewers()
+                        + ", none of whom wrote " + DecisionRuleBaseline.VERSION + " or drafted a label"
+                        : "not independent: " + recorded.dependentReviewers()));
+        boolean matches;
+        String detail;
+        if (recorded.changes() == 0) {
+            matches = revision.isEmpty();
+            detail = matches ? "no label changed, so " + HtmlDecisionGold.VERSION + " stays the active gold"
+                    : "no label changed, but a " + HtmlDecisionGold.REVISION_VERSION + " file exists";
+        } else {
+            matches = revision.map(value -> value.cells().equals(recorded.revisedTable())).orElse(false);
+            detail = revision.isEmpty() ? recorded.changes() + " changes but no " + HtmlDecisionGold.REVISION_VERSION
+                    + " file" : matches ? HtmlDecisionGold.REVISION_VERSION + " holds exactly the adjudicated labels"
+                    : HtmlDecisionGold.REVISION_VERSION + " differs from the adjudicated labels";
+        }
+        checks.add(new Check("gold.matchesAdjudication", matches, detail));
+    }
+
+    private void describe(HtmlKnowledgeCorpus corpus, HtmlDecisionCases cases, HtmlDecisionGold gold,
+            Optional<HtmlDecisionAdjudication> adjudication, Path root, Map<String, String> metadata) {
         metadata.put("protocolVersion", HtmlKnowledgeIngestionRunner.PROTOCOL_VERSION);
         metadata.put("extensions", HtmlDecisionExperiment.EXTENSION);
         metadata.put("corpus.version", corpus.version());
@@ -269,9 +341,16 @@ public final class HtmlDecisionRunner {
         metadata.put("cases.hash", cases.caseHash());
         metadata.put("cases.count", Integer.toString(cases.cases().size()));
         metadata.put("cases.pairs", Integer.toString(cases.pairs().size()));
-        metadata.put("gold.version", HtmlDecisionGold.VERSION);
+        metadata.put("gold.version", gold.version());
         metadata.put("gold.hash", gold.hash());
         metadata.put("gold.origin", gold.origin());
+        metadata.put("adjudication.version", adjudication.isPresent() ? HtmlDecisionAdjudication.VERSION
+                : "none (pending, issue #152)");
+        adjudication.ifPresent(value -> {
+            metadata.put("adjudication.hash", value.hash());
+            metadata.put("adjudication.reviewers", String.join(", ", value.reviewers()));
+            metadata.put("adjudication.verdicts", value.agreements() + " agree, " + value.changes() + " change");
+        });
         metadata.put("rules.version", DecisionRuleBaseline.VERSION);
         metadata.put("seed", "none (no randomness)");
         HtmlKnowledgePersistenceRunner.describeStore(root, options.storeRoot(), metadata);
