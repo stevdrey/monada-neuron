@@ -506,7 +506,23 @@ public final class HtmlKnowledgeCorpus {
 
     private static List<Row> table(CorpusFiles files, String name, String header) {
         var normalizer = new CorpusNormalizer();
-        var text = normalizer.normalize(files.read(name, MAX_TABLE_BYTES), name);
+        return rows(normalizer.normalize(files.read(name, MAX_TABLE_BYTES), name), header, name);
+    }
+
+    /**
+     * Reads the bundled, bounded fixture table {@code /<directory>/<name>} as normalized text; shared by the decision
+     * fixtures (Issue #112) so every bundled table has one read and size rule.
+     */
+    static String bundledTable(String directory, String name) {
+        return new CorpusNormalizer().normalize(new ClasspathFiles(directory).read(name, MAX_TABLE_BYTES),
+                "/" + directory + "/" + name);
+    }
+
+    /**
+     * Splits a normalized table into its data rows after its exact {@code header}; empty and {@code #} lines are
+     * skipped and every row must have the header's column count. Each row names its {@code origin:line}.
+     */
+    static List<Row> rows(String text, String header, String name) {
         var lines = text.split("\n", -1);
         var rows = new ArrayList<Row>();
         var columns = header.split("\t", -1).length;
@@ -536,8 +552,8 @@ public final class HtmlKnowledgeCorpus {
         return rows;
     }
 
-    /** One data row of a corpus table with its {@code file:line} origin. */
-    private record Row(String origin, List<String> cells) {
+    /** One data row of a corpus or fixture table with its {@code file:line} origin. */
+    record Row(String origin, List<String> cells) {
 
         String required(int column, String name) {
             var value = cells.get(column).strip();
@@ -550,6 +566,19 @@ public final class HtmlKnowledgeCorpus {
         Optional<String> optional(int column) {
             var value = cells.get(column).strip();
             return value.isEmpty() || value.equals(ABSENT) ? Optional.empty() : Optional.of(value);
+        }
+
+        /** Returns a {@code |}-separated list; {@code -} is the empty list, and an empty or repeated item fails. */
+        List<String> list(int column) {
+            var value = cells.get(column).strip();
+            if (value.equals(ABSENT)) {
+                return List.of();
+            }
+            var items = List.of(value.split(Pattern.quote("|"), -1));
+            if (items.stream().anyMatch(String::isBlank) || new HashSet<>(items).size() != items.size()) {
+                throw reject("column " + (column + 1) + " has an empty or repeated list item");
+            }
+            return items;
         }
 
         int integer(int column, String name) {

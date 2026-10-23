@@ -33,7 +33,8 @@ final class HtmlDecisionGold {
     static final String HEADER = "caseId\texpected\tacceptable\tineligible\tassumptions\tpermissions\trationale"
             + "\tevidenceSpans\treviewer\tdraftedBy";
 
-    private static final String RESOURCE = "/" + HtmlDecisionCases.VERSION + "/gold.tsv";
+    private static final String FILE = "gold.tsv";
+    private static final String RESOURCE = "/" + HtmlDecisionCases.VERSION + "/" + FILE;
 
     /** The expected kind of answer. */
     enum Expected {
@@ -45,12 +46,16 @@ final class HtmlDecisionGold {
         ABSTAIN
     }
 
-    /** The permission grant a good answer makes. */
+    /** The permission grant a good answer makes; written in {@code gold.tsv} as its exact lowercase label. */
     enum Permissions {
         /** Grant no extra permission. */
         NONE,
         /** Grant exactly the features the requirement asks for. */
-        REQUESTED
+        REQUESTED;
+
+        String label() {
+            return name().toLowerCase(Locale.ROOT);
+        }
     }
 
     /**
@@ -109,13 +114,13 @@ final class HtmlDecisionGold {
 
     /** Loads and validates the bundled gold labels against {@code cases} and {@code corpus}. */
     static HtmlDecisionGold bundled(HtmlDecisionCases cases, HtmlKnowledgeCorpus corpus) {
-        return parse(HtmlDecisionCases.read(RESOURCE), RESOURCE, cases, corpus);
+        return parse(HtmlKnowledgeCorpus.bundledTable(HtmlDecisionCases.VERSION, FILE), RESOURCE, cases, corpus);
     }
 
     /** Parses and validates a gold table, as the loader does. */
     static HtmlDecisionGold parse(String text, String origin, HtmlDecisionCases cases, HtmlKnowledgeCorpus corpus) {
         var byCase = new LinkedHashMap<String, Gold>();
-        for (var row : HtmlDecisionCases.rows(text, HEADER, origin)) {
+        for (var row : HtmlKnowledgeCorpus.rows(text, HEADER, origin)) {
             var gold = goldOf(row);
             if (!cases.contains(gold.caseId())) {
                 throw row.reject("gold label for unknown case " + gold.caseId());
@@ -147,7 +152,7 @@ final class HtmlDecisionGold {
         return origin;
     }
 
-    private static Gold goldOf(HtmlDecisionCases.Row row) {
+    private static Gold goldOf(HtmlKnowledgeCorpus.Row row) {
         var expected = enumOf(row, Expected.values(), row.required(1, "expected"));
         var options = new ArrayList<Option>();
         for (var item : row.list(4)) {
@@ -172,16 +177,21 @@ final class HtmlDecisionGold {
         }
         return new Gold(row.required(0, "caseId"), expected, new LinkedHashSet<>(row.list(2)),
                 new LinkedHashSet<>(row.list(3)), options,
-                enumOf(row, Permissions.values(), row.required(5, "permissions").toUpperCase(Locale.ROOT)),
+                permissionsOf(row, row.required(5, "permissions")),
                 row.required(6, "rationale"), spans, row.required(8, "reviewer"), row.required(9, "draftedBy"));
     }
 
-    private static <E extends Enum<E>> E enumOf(HtmlDecisionCases.Row row, E[] values, String label) {
+    private static Permissions permissionsOf(HtmlKnowledgeCorpus.Row row, String label) {
+        return Arrays.stream(Permissions.values()).filter(value -> value.label().equals(label)).findFirst()
+                .orElseThrow(() -> row.reject("permissions must be exactly none or requested, was '" + label + "'"));
+    }
+
+    private static <E extends Enum<E>> E enumOf(HtmlKnowledgeCorpus.Row row, E[] values, String label) {
         return Arrays.stream(values).filter(value -> value.name().equals(label)).findFirst()
                 .orElseThrow(() -> row.reject("'" + label + "' is not one of " + Arrays.toString(values)));
     }
 
-    private static void validate(HtmlDecisionCases.Row row, Gold gold, HtmlDecisionCases.DecisionCase decisionCase,
+    private static void validate(HtmlKnowledgeCorpus.Row row, Gold gold, HtmlDecisionCases.DecisionCase decisionCase,
             HtmlKnowledgeCorpus corpus) {
         var candidates = Set.copyOf(decisionCase.candidates());
         var named = new HashSet<String>(gold.acceptable());
@@ -202,9 +212,9 @@ final class HtmlDecisionGold {
             case CONDITIONAL -> {
                 var optionChoices = gold.options().stream().map(Option::choice).toList();
                 if (gold.options().isEmpty() || !Set.copyOf(optionChoices).equals(gold.acceptable())
-                        || Set.copyOf(optionChoices).size() != optionChoices.size()) {
-                    throw row.reject("CONDITIONAL needs options whose distinct choices are exactly the acceptable"
-                            + " choices");
+                        || Set.copyOf(gold.options()).size() != gold.options().size()) {
+                    throw row.reject("CONDITIONAL needs distinct choice@assumption options whose choices are exactly"
+                            + " the acceptable choices");
                 }
             }
             case ABSTAIN -> {
@@ -224,20 +234,7 @@ final class HtmlDecisionGold {
                 throw row.reject("spans must be sorted by (chunkId, start, end) without repeats");
             }
             previous = span;
-            var chunk = corpus.chunk(span.chunkId()).orElseThrow(() -> row.reject("span names " + span.chunkId()
-                    + ", which is not a chunk of " + corpus.version()));
-            var text = chunk.text();
-            var length = text.codePointCount(0, text.length());
-            if (span.start() < 0 || span.start() >= span.end() || span.end() > length) {
-                throw row.reject("span [" + span.start() + ", " + span.end() + ") is out of bounds for "
-                        + span.chunkId() + " of " + length + " code points");
-            }
-            var quoted = text.substring(text.offsetByCodePoints(0, span.start()),
-                    text.offsetByCodePoints(0, span.end()));
-            if (!CorpusDigests.sha256(quoted).equals(span.sha256())) {
-                throw row.reject("span digest does not match " + span.chunkId() + " [" + span.start() + ", "
-                        + span.end() + ")");
-            }
+            HtmlKnowledgeQuerySet.verifySpan(row.origin(), corpus, span);
         }
     }
 }

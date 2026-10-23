@@ -73,6 +73,9 @@ final class DecisionMetrics {
     static final Set<Verdict> CORRECT = Set.of(Verdict.CORRECT_DECISION, Verdict.CORRECT_CONDITIONAL,
             Verdict.CORRECT_ABSTENTION);
 
+    /** The arms whose contrastive pairs are scored: the ones whose selector sees evidence. */
+    static final List<Arm> PAIRED_ARMS = List.of(Arm.STORE_RULES, Arm.NEURON_RULES);
+
     /** The ratio metrics, in report order. */
     static final List<String> METRICS = List.of("evidenceCoverage", "citationFidelity", "citationGoldOverlap",
             "unsupportedClaimRate", "exclusionsCited");
@@ -197,7 +200,8 @@ final class DecisionMetrics {
         var byKey = new LinkedHashMap<String, Scored>();
         scored.forEach(value -> byKey.put(value.row().caseId() + " " + value.row().arm(), value));
         var pairs = new ArrayList<PairScore>();
-        for (var arm : List.of(Arm.STORE_RULES, Arm.NEURON_RULES, Arm.NO_EVIDENCE_RULES)) {
+        // R0 abstains by design, so its pairs say nothing about reversal; only the arms that can decide are paired.
+        for (var arm : PAIRED_ARMS) {
             for (var pair : cases.pairs()) {
                 var first = byKey.get(pair.first() + " " + arm);
                 var second = byKey.get(pair.second() + " " + arm);
@@ -369,7 +373,7 @@ final class DecisionMetrics {
                     diagnostics.add("answered conditionally; the gold abstains");
                     yield Verdict.OVERCONFIDENT;
                 }
-                var stated = conditional.options().stream().map(option -> option.choice() + "@" + option.assumption())
+                var stated = conditional.options().stream().map(DecisionRecommendation.Option::render)
                         .toList();
                 var missingOptions = gold.options().stream().map(HtmlDecisionGold.Option::render)
                         .filter(option -> !stated.contains(option)).toList();
@@ -424,7 +428,7 @@ final class DecisionMetrics {
         return row.outcome() + " " + row.recommendation().map(value -> switch (value) {
             case Decided decided -> new TreeSet<>(named(decided)) + " " + decided.permissions();
             case Conditional conditional -> conditional.options().stream()
-                    .map(option -> option.choice() + "@" + option.assumption()).sorted().toList().toString();
+                    .map(DecisionRecommendation.Option::render).sorted().toList().toString();
             case Abstained _ -> "";
         }).orElse("");
     }

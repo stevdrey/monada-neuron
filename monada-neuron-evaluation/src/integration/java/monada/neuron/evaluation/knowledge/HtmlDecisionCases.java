@@ -1,6 +1,5 @@
 package monada.neuron.evaluation.knowledge;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -43,10 +42,10 @@ final class HtmlDecisionCases {
     /** Longest requirement text, in code points; it is also the retrieval query. */
     static final int MAX_REQUIREMENT_CODE_POINTS = 400;
 
-    static final int MAX_TABLE_BYTES = 64 * 1024;
     static final String LIST_SEPARATOR = "|";
 
-    private static final String RESOURCE = "/" + VERSION + "/cases.tsv";
+    private static final String FILE = "cases.tsv";
+    private static final String RESOURCE = "/" + VERSION + "/" + FILE;
     private static final Pattern CASE_ID = Pattern.compile("case:[a-z]+(?:-[a-z]+)*-\\d{2}");
     private static final Pattern PAIR_ID = Pattern.compile("pair:[a-z]+(?:-[a-z]+)*");
 
@@ -230,13 +229,13 @@ final class HtmlDecisionCases {
 
     /** Loads and validates the bundled case set. */
     static HtmlDecisionCases bundled() {
-        return parse(VERSION, read(RESOURCE), RESOURCE);
+        return parse(VERSION, HtmlKnowledgeCorpus.bundledTable(VERSION, FILE), RESOURCE);
     }
 
     /** Parses and validates a case table, as the loader does. */
     static HtmlDecisionCases parse(String version, String text, String origin) {
         var cases = new ArrayList<DecisionCase>();
-        for (var row : rows(text, HEADER, origin)) {
+        for (var row : HtmlKnowledgeCorpus.rows(text, HEADER, origin)) {
             cases.add(caseOf(row));
         }
         return of(version, cases);
@@ -339,7 +338,7 @@ final class HtmlDecisionCases {
         return caseHash;
     }
 
-    private static DecisionCase caseOf(Row row) {
+    private static DecisionCase caseOf(HtmlKnowledgeCorpus.Row row) {
         var family = Family.ofLabel(row.origin(), row.required(1, "family"));
         var constraints = new EnumMap<Constraint, Tri>(Constraint.class);
         for (var item : row.list(4)) {
@@ -370,81 +369,5 @@ final class HtmlDecisionCases {
                     .field(value.renderConstraints()).field(String.join(LIST_SEPARATOR, value.candidates()));
         }
         return digest.hex();
-    }
-
-    /** Reads a bundled, bounded fixture resource as normalized text. */
-    static String read(String resource) {
-        try (var input = HtmlDecisionCases.class.getResourceAsStream(resource)) {
-            if (input == null) {
-                throw new CorpusValidationException(resource, "bundled decision fixture is missing");
-            }
-            var bytes = input.readNBytes(MAX_TABLE_BYTES + 1);
-            if (bytes.length > MAX_TABLE_BYTES || bytes.length == 0) {
-                throw new CorpusValidationException(resource, "file must hold 1.." + MAX_TABLE_BYTES + " bytes");
-            }
-            return new CorpusNormalizer().normalize(bytes, resource);
-        } catch (IOException e) {
-            throw new CorpusValidationException(resource, "cannot read bundled decision fixture", e);
-        }
-    }
-
-    /** Splits a fixture table into its data rows after its exact header; {@code #} lines are comments. */
-    static List<Row> rows(String text, String header, String origin) {
-        var columns = header.split("\t").length;
-        var rows = new ArrayList<Row>();
-        var headerSeen = false;
-        var lines = text.split("\n", -1);
-        for (var i = 0; i < lines.length; i++) {
-            var line = lines[i];
-            if (line.isEmpty() || line.startsWith("#")) {
-                continue;
-            }
-            var where = origin + ":" + (i + 1);
-            if (!headerSeen) {
-                if (!line.equals(header)) {
-                    throw new CorpusValidationException(where, "header must be exactly '" + header + "'");
-                }
-                headerSeen = true;
-                continue;
-            }
-            var cells = line.split("\t", -1);
-            if (cells.length != columns) {
-                throw new CorpusValidationException(where, "expected " + columns + " columns, found " + cells.length);
-            }
-            rows.add(new Row(where, List.of(cells)));
-        }
-        if (!headerSeen) {
-            throw new CorpusValidationException(origin, "the header row is missing");
-        }
-        return rows;
-    }
-
-    /** One data row of a fixture table with its {@code file:line} origin. */
-    record Row(String origin, List<String> cells) {
-
-        String required(int column, String name) {
-            var value = cells.get(column);
-            if (value.isBlank() || value.equals(HtmlKnowledgeCorpus.ABSENT) || !value.equals(value.strip())) {
-                throw reject(name + " is required and must not have surrounding whitespace");
-            }
-            return value;
-        }
-
-        /** Returns a {@code |}-separated list; {@code -} is the empty list, and an empty or repeated item fails. */
-        List<String> list(int column) {
-            var value = cells.get(column);
-            if (value.equals(HtmlKnowledgeCorpus.ABSENT)) {
-                return List.of();
-            }
-            var items = List.of(value.split(Pattern.quote(LIST_SEPARATOR), -1));
-            if (items.stream().anyMatch(String::isBlank) || Set.copyOf(items).size() != items.size()) {
-                throw reject("column " + (column + 1) + " has an empty or repeated list item");
-            }
-            return items;
-        }
-
-        CorpusValidationException reject(String rule) {
-            return new CorpusValidationException(origin, rule);
-        }
     }
 }

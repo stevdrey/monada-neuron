@@ -32,6 +32,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
@@ -68,6 +69,9 @@ final class HtmlDecisionExperiment {
 
     static final int PERF_WARMUPS = 2;
     static final int PERF_ITERATIONS = 5;
+
+    /** The arms whose rows the selector produced. */
+    static final Set<Arm> SELECTOR_ARMS = Set.of(Arm.STORE_RULES, Arm.NEURON_RULES, Arm.NO_EVIDENCE_RULES);
 
     /** The separately measured steps, in measurement order. */
     static final List<String> STEPS = List.of("store.recall", "neuron.cycle", "selector.decide");
@@ -143,15 +147,16 @@ final class HtmlDecisionExperiment {
 
     /** Runs the matrix twice, checks it, then measures each step. */
     Observation run(Root root, List<DecisionCase> cases) {
-        var first = matrix(root, cases);
-        var second = matrix(root, cases);
+        var verifiedPass = pass(root, cases);
+        var first = verifiedPass.rows();
+        var second = pass(root, cases).rows();
         var checks = new ArrayList<Check>();
         var failed = first.stream().filter(row -> row.outcome() == Outcome.RECALL_FAILED).toList();
         checks.add(new Check("decision.completed", failed.isEmpty(), failed.isEmpty()
                 ? "every arm of every case recalled its evidence; B+R listed exactly the chunks its cycle admitted"
                 : failed.size() + " rows failed, first " + failed.getFirst().caseId() + " "
                         + failed.getFirst().arm().label() + ": " + failed.getFirst().detail()));
-        var unverified = first.stream().filter(row -> row.kind().equals(selector.kind().name()))
+        var unverified = first.stream().filter(row -> SELECTOR_ARMS.contains(row.arm()))
                 .filter(row -> row.citations().stream().anyMatch(span -> !span.eligible())
                         || row.claims().stream().anyMatch(claim -> claim.citations().stream()
                                 .noneMatch(CitedSpan::exactQuote)))
@@ -177,14 +182,28 @@ final class HtmlDecisionExperiment {
         });
 
         var metadata = new TreeMap<String, String>();
-        var perf = measure(root, cases, first, checks, metadata);
+        var perf = measure(root, cases, verifiedPass, checks, metadata);
         describe(cases, metadata);
         return new Observation(first, checks, metadata, perf);
     }
 
+    /**
+     * One pass over every case.
+     *
+     * @param rows the rows, in case order then {@link Arm} order
+     * @param neuronEvidence per case, the evidence the B+R selector saw, or empty when the Neuron recall failed
+     */
+    private record Pass(List<Row> rows, List<Optional<List<EvidenceChunk>>> neuronEvidence) {
+    }
+
     /** Runs every arm of every case once. */
     List<Row> matrix(Root root, List<DecisionCase> cases) {
+        return pass(root, cases).rows();
+    }
+
+    private Pass pass(Root root, List<DecisionCase> cases) {
         var rows = new ArrayList<Row>();
+        var neuronEvidence = new ArrayList<Optional<List<EvidenceChunk>>>();
         for (var decisionCase : cases) {
             var query = decisionCase.query();
             var store = root.evidence().direct(root.memory(), query, K);
@@ -202,6 +221,7 @@ final class HtmlDecisionExperiment {
             });
 
             var neuron = neuron(root, query);
+            neuronEvidence.add(neuron.usable());
             rows.add(neuron.usable().isPresent()
                     ? selectorRow(decisionCase, Arm.NEURON_RULES, neuron.usable().get(), neuron.trace(),
                             neuron.detail())
@@ -216,7 +236,7 @@ final class HtmlDecisionExperiment {
                                 neuron.detail()));
             }
         }
-        return rows;
+        return new Pass(rows, neuronEvidence);
     }
 
     /**
@@ -333,16 +353,17 @@ final class HtmlDecisionExperiment {
      * must then equal the verified one in full (Store hits with scores; the whole Neuron trace with admitted and
      * selected chunks; the whole recommendation), or the row is withheld and {@code perf.matchesVerified} fails.
      */
-    private List<BenchmarkRunResult> measure(Root root, List<DecisionCase> cases, List<Row> verified,
+    private List<BenchmarkRunResult> measure(Root root, List<DecisionCase> cases, Pass verifiedPass,
             List<Check> checks, Map<String, String> metadata) {
+        var verified = verifiedPass.rows();
         var perf = new ArrayList<BenchmarkRunResult>();
         var failedChecks = checks.stream().filter(check -> !check.passed()).map(Check::name).toList();
         if (!failedChecks.isEmpty()) {
             for (var name : STEPS) {
                 metadata.put("perf." + name, "withheld (the verified pass failed " + failedChecks + ")");
             }
-            checks.add(new Check("perf.matchesVerified", true, "no timed row was measured: the verified pass failed "
-                    + failedChecks));
+            checks.add(new Check("perf.matchesVerified", false, "not measured: no timed row can be compared with a"
+                    + " verified pass that failed " + failedChecks));
             return perf;
         }
         var storeRows = verified.stream().filter(row -> row.arm() == Arm.STORE).toList();
@@ -375,16 +396,12 @@ final class HtmlDecisionExperiment {
                     return out;
                 }, neuronRows.stream().map(row -> row.neuron().orElse(null)).toList());
 
-        var inputs = new ArrayList<List<EvidenceChunk>>();
-        var inputsMatch = neuronReady;
-        for (var index = 0; index < cases.size() && inputsMatch; index++) {
-            var usable = neuron(root, cases.get(index).query()).usable();
-            inputsMatch = usable.isPresent() && hits(usable.get()).equals(neuronRows.get(index).evidence());
-            usable.ifPresent(inputs::add);
-        }
-        var selectorReady = inputsMatch && neuronRows.stream().allMatch(row -> row.recommendation().isPresent());
-        measured(STEPS.get(2), selectorReady, cases, selector.name() + ".decide over the B+R evidence per case,"
-                + " recomputed and required to equal the verified rows' evidence (evaluation-only decision step)",
+        // The selector is timed on exactly the evidence its verified B+R rows saw, kept from the verified pass.
+        var inputs = verifiedPass.neuronEvidence().stream().map(evidence -> evidence.orElse(List.of())).toList();
+        var selectorReady = neuronReady && verifiedPass.neuronEvidence().stream().allMatch(Optional::isPresent)
+                && neuronRows.stream().allMatch(row -> row.recommendation().isPresent());
+        measured(STEPS.get(2), selectorReady, cases, selector.name() + ".decide over the verified B+R evidence per"
+                + " case (evaluation-only decision step)",
                 mismatches, perf, metadata, () -> {
                     var out = new ArrayList<Object>();
                     for (var index = 0; index < cases.size(); index++) {

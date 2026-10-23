@@ -117,7 +117,7 @@ The whole matrix runs twice and must be identical. Store recall, the Neuron cycl
 measured separately (2 warm-ups, 5 iterations of all 17 cases each). A step is timed only when the verified pass
 passed every check and every verified reference row of the step completed. Every timed result must equal the verified
 one in full (Store hits with scores; the whole Neuron trace with admitted and selected chunks; the whole
-recommendation, over inputs recomputed and required to equal the verified rows' evidence), or the row is withheld.
+recommendation, over exactly the evidence the verified B+R rows saw), or the row is withheld.
 
 ### Host rules (`host-rules-v1`)
 
@@ -140,7 +140,7 @@ The rules never read a case id, the requirement text, a gold label, the corpus o
 | `control.emptyEvidenceAbstains` | the rules decide anything without evidence |
 | `decision.deterministic` | the second pass differs |
 | `generator.labelled` | (arm C only) a generator row hides its kind or carries a structured decision |
-| `perf.matchesVerified` | a timed result differs from the verified pass |
+| `perf.matchesVerified` | a timed result differs from the verified pass, a step's verified reference rows did not complete, or nothing could be measured because a verified check failed |
 | `decision.scored` | the scorer rejects the row matrix |
 | `gold.hashFrozen` | the gold file differs from its frozen hash |
 
@@ -158,7 +158,8 @@ the arm saw none of the gold chunks, `WRONG_ABSTENTION`, `WRONG_CHOICE`, `UNLIST
 and a citation overlaps a gold span (an abstention is grounded when it asks a clarifying question or names missing
 evidence). A conditional answer must state exactly the gold `choice@assumption` options, no fewer
 (`INCOMPLETE_CONDITIONAL`) and no more (`OVERBROAD_CONDITIONAL`), never a single "best tag". The only recognized grant
-is `allow=requested-features-only`. Per pair and arm: whether the observed outcome changes exactly when the gold outcome does.
+is `allow=requested-features-only`. Per pair, for A+R and B+R: whether the observed outcome changes exactly when the gold outcome does. R0 abstains by
+design and is not paired.
 
 Negative tests build rows with fabricated citations, altered quotes, `defer` on inline code, an excluded acceptable
 choice, an unrequested `allow`, certainty without evidence and a constant answer across a pair, and check that each is
@@ -167,13 +168,13 @@ flagged; a constraint-ignoring selector run over the real Store scores 0 of 12 c
 ## Results (2026-10-22)
 
 JDK 27, AMD Ryzen 7 7730U, default heap, temporary Store root; two runs, identical `semanticDigest`
-`34ae83bc…`; every check passed.
+`d6b0b6f7…`; every check passed.
 
 | Arm | Correct | Correct, grounded rationale | Evidence-miss abstentions | Wrong abstentions | Wrong choice | Overconfident | Contradictions | Unrequested permissions | Citation fidelity | Pairs consistent |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | A+R | 14/17 | 14 | 2 | 1 | 0 | 0 | 0 | 0 | 1.000 | 12/12 |
 | B+R | 9/17 | 9 | 7 | 1 | 0 | 0 | 0 | 0 | 1.000 | 7/12 |
-| R0 | 2/17 | 2 | 15 | 0 | 0 | 0 | 0 | 0 | n/a | 0/12 |
+| R0 | 2/17 | 2 | 15 | 0 | 0 | 0 | 0 | 0 | n/a | n/a |
 
 - **Retrieval decides the outcome.** The rules made no wrong, overconfident or contradicting choice in any arm, granted
   no unrequested permission and cited only exact spans of evidence they saw; every correct row also has a grounded
@@ -195,8 +196,8 @@ Latency and thread allocation per case (median of 5 iterations; GC and RSS delta
 
 | Step | Median per case | Allocated per case |
 | :--- | ---: | ---: |
-| Store recall (`RecalledEvidence.direct`, k = 5) | 0.28 ms | 154 KB |
-| Neuron cycle (`execute` + `decide`, k = 5) | 3.14 ms | 2.47 MB |
+| Store recall (`RecalledEvidence.direct`, k = 5) | 0.30 ms | 154 KB |
+| Neuron cycle (`execute` + `decide`, k = 5) | 3.07 ms | 2.47 MB |
 | Host rule step (evaluation-only) | 0.08 ms | 71 KB |
 
 The Neuron cycle sends one Store query per query token (up to 32), which accounts for most of its time and allocation.

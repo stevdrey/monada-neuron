@@ -14,7 +14,6 @@ import monada.neuron.evaluation.knowledge.HtmlDecisionCases.Family;
 import monada.neuron.evaluation.knowledge.HtmlDecisionCases.Tri;
 
 import java.util.ArrayList;
-import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -372,13 +371,13 @@ final class DecisionRuleBaseline implements DecisionSelector {
     private static Rule decided(String id, Family family, Map<Constraint, Tri> when, String choice,
             List<String> alsoValid, String reason, List<Cue> required, List<Cue> optional, List<Excludes> excludes,
             List<String> permissions) {
-        return new Rule(id, family, new EnumMap<>(when), Optional.of(choice), alsoValid, List.of(), reason, required,
+        return new Rule(id, family, when, Optional.of(choice), alsoValid, List.of(), reason, required,
                 optional, excludes, permissions);
     }
 
     private static Rule conditional(String id, Family family, Map<Constraint, Tri> when, List<Conditionally> options,
             List<Excludes> excludes) {
-        return new Rule(id, family, new EnumMap<>(when), Optional.empty(), List.of(), options, "conditional",
+        return new Rule(id, family, when, Optional.empty(), List.of(), options, "conditional",
                 List.of(), List.of(), excludes, List.of());
     }
 }

@@ -172,8 +172,8 @@ final class DecisionTrace {
                     recommendation.map(value -> value instanceof Decided decided ? join(decided.alsoValid()) : "-")
                             .orElse("-"),
                     recommendation.map(value -> value instanceof Conditional conditional
-                            ? join(conditional.options().stream().map(option -> option.choice() + "@"
-                                    + option.assumption()).toList()) : "-").orElse("-"),
+                            ? join(conditional.options().stream().map(DecisionRecommendation.Option::render).toList())
+                            : "-").orElse("-"),
                     recommendation.map(DecisionTrace::excluded).orElse("-"),
                     recommendation.map(DecisionTrace::constraintsUsed).orElse("-"),
                     recommendation.map(value -> value instanceof Decided decided ? join(decided.permissions()) : "-")

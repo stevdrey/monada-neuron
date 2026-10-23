@@ -6,6 +6,7 @@ import monada.neuron.evaluation.knowledge.AnswerComponent.EvidenceChunk;
 import monada.neuron.evaluation.knowledge.DecisionMetrics.Verdict;
 import monada.neuron.evaluation.knowledge.DecisionTrace.Arm;
 import monada.neuron.evaluation.knowledge.DecisionTrace.Outcome;
+import monada.neuron.evaluation.knowledge.GroundedAnswerGenerator.Excerpt;
 import monada.neuron.evaluation.knowledge.HtmlDecisionCases.DecisionCase;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeIngestion.Check;
 import monada.neuron.memory.ResonanceMemoryPort;
@@ -183,9 +184,74 @@ class HtmlDecisionExperimentTest {
         var failed = new HtmlDecisionExperiment(guessing, Optional.empty()).run(root, CASES.cases());
         assertTrue(failed.checks().stream().anyMatch(check -> check.name().equals("control.emptyEvidenceAbstains")
                 && !check.passed()));
+        assertTrue(failed.checks().stream().anyMatch(check -> check.name().equals("perf.matchesVerified")
+                && !check.passed() && check.detail().startsWith("not measured")), "never a vacuous pass");
         assertEquals(List.of(), failed.perf());
         HtmlDecisionExperiment.STEPS.forEach(step -> assertTrue(failed.metadata().get("perf." + step)
                 .startsWith("withheld"), step));
+    }
+
+    @Test
+    void theCitationCheckCoversSelectorArmsOnlyEvenWhenKindsCoincide() {
+        var rules = new DecisionRuleBaseline();
+        var testDoubleRules = new DecisionSelector() {
+            @Override
+            public String name() {
+                return "rules-as-test-double";
+            }
+
+            @Override
+            public String description() {
+                return "TEST_DOUBLE: the host rules under a test-double kind";
+            }
+
+            @Override
+            public Kind kind() {
+                return Kind.TEST_DOUBLE;
+            }
+
+            @Override
+            public DecisionRecommendation decide(DecisionCase decisionCase, List<EvidenceChunk> evidence) {
+                return rules.decide(decisionCase, evidence);
+            }
+        };
+        var paraphrasing = new GroundedAnswerGenerator() {
+            @Override
+            public String name() {
+                return "paraphrase";
+            }
+
+            @Override
+            public String description() {
+                return "TEST_DOUBLE: cites the first excerpt with text that is not a quote";
+            }
+
+            @Override
+            public AnswerComponent.Kind kind() {
+                return AnswerComponent.Kind.TEST_DOUBLE;
+            }
+
+            @Override
+            public GroundedAnswer propose(String question, List<Excerpt> excerpts) {
+                if (excerpts.isEmpty()) {
+                    return GroundedAnswer.Abstained.insufficient("no excerpt");
+                }
+                return new GroundedAnswer.Answered(List.of(new GroundedAnswer.Claim("a paraphrase",
+                        List.of(new GroundedAnswer.Citation(excerpts.getFirst().chunkId(), 0, 1)))));
+            }
+        };
+        var observed = new HtmlDecisionExperiment(testDoubleRules, Optional.of(paraphrasing)).run(root,
+                CASES.cases());
+        var check = observed.checks().stream()
+                .filter(value -> value.name().equals("decision.selectorCitationsVerified")).findFirst().orElseThrow();
+        assertTrue(check.passed(), check.detail());
+    }
+
+    @Test
+    void theNoEvidenceControlIsNotPaired() {
+        var scores = DecisionMetrics.score(observation.rows(), CASES, GOLD);
+        assertTrue(scores.pairs().stream().allMatch(pair -> DecisionMetrics.PAIRED_ARMS.contains(pair.arm())));
+        assertEquals(DecisionMetrics.PAIRED_ARMS.size() * CASES.pairs().size(), scores.pairs().size());
     }
 
     @Test

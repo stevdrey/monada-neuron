@@ -55,6 +55,11 @@ sealed interface DecisionRecommendation {
             Objects.requireNonNull(assumption, "assumption must not be null");
             Objects.requireNonNull(statement, "statement must not be null");
         }
+
+        /** Renders the option as {@code choice@assumption}, the form the gold labels use. */
+        public String render() {
+            return choice + "@" + assumption;
+        }
     }
 
     /**

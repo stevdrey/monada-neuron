@@ -31,8 +31,9 @@ import static monada.neuron.evaluation.knowledge.HtmlKnowledgeRecallReport.strin
  */
 final class HtmlDecisionReport {
 
-    /** What this benchmark does not show; rendered in both formats. */
-    static final List<String> LIMITS = List.of(
+    /** What this benchmark does not show over {@code cases}; rendered in both formats. */
+    static List<String> limits(HtmlDecisionCases cases) {
+        return List.of(
             "The decisions come from " + DecisionRuleBaseline.VERSION + ", deterministic host rules written by hand for"
                     + " this benchmark. Neuron did not infer them, and a correct decision is not evidence of a learned"
                     + " or general reasoning capability.",
@@ -42,7 +43,8 @@ final class HtmlDecisionReport {
             "Evidence cues are lexical: a cue matches a segment that contains its tokens, which is not understanding"
                     + " the sentence.",
             "A+R is the matched reference for B+R: same rules, same cases, raw Store evidence. Only a difference"
-                    + " between them can be attributed to the Neuron path, and only for these 17 cases.",
+                    + " between them can be attributed to the Neuron path, and only for these " + cases.cases().size()
+                    + " cases.",
             "Protocol deviation: the acceptable-option sets are not independently curated. They were drafted by the"
                     + " author of the rules (Claude) before any system output was inspected and reviewed by the"
                     + " reviewer of record; an independent re-labelling is follow-up work. The gold file is frozen by"
@@ -54,6 +56,7 @@ final class HtmlDecisionReport {
                     + " TEST_DOUBLE is never scored for decision quality.",
             "The corpus is small and authored (html-kc-v1 with the html-kd-v1 supplement); results do not transfer to"
                     + " other corpora, and no accuracy threshold gates CI.");
+    }
 
     private final Scores scores;
     private final HtmlDecisionCases cases;
@@ -72,7 +75,7 @@ final class HtmlDecisionReport {
 
     String toJson() {
         var json = new StringBuilder("{ \"extension\": ").append(string(HtmlDecisionExperiment.EXTENSION));
-        json.append(", \"limits\": ").append(strings(LIMITS));
+        json.append(", \"limits\": ").append(strings(limits(cases)));
         json.append(", \"layers\": { \"knowledgeRetrieval\": ").append(string(Arm.STORE.description()))
                 .append(", \"neuronEvidenceUse\": ").append(string(Arm.NEURON_RULES.description()))
                 .append(", \"hostRules\": ").append(string(selector.kind() + " " + selector.name() + ": "
@@ -246,7 +249,8 @@ final class HtmlDecisionReport {
                     .append(aggregate.flagged().get("unrequestedPermission")).append(" | ")
                     .append(format(aggregate.metrics().get("citationFidelity"))).append(" | ")
                     .append(format(aggregate.metrics().get("unsupportedClaimRate"))).append(" | ")
-                    .append(aggregate.pairsConsistent()).append("/").append(aggregate.pairsScored()).append(" |\n");
+                    .append(DecisionMetrics.PAIRED_ARMS.contains(aggregate.arm())
+                            ? aggregate.pairsConsistent() + "/" + aggregate.pairsScored() : "n/a").append(" |\n");
         }
 
         md.append("\n### Decisions per case\n\n");
@@ -265,14 +269,15 @@ final class HtmlDecisionReport {
                             .replace("|", "\\|")).append(" |\n");
         }
 
-        md.append("\n### Contrastive pairs\n\n| Pair | Varied | Expected change | A+R | B+R | R0 |\n")
-                .append("| :--- | :--- | :--- | :--- | :--- | :--- |\n");
+        md.append("\n### Contrastive pairs\n\nR0 abstains by design and is not paired.\n\n"
+                + "| Pair | Varied | Expected change | A+R | B+R |\n")
+                .append("| :--- | :--- | :--- | :--- | :--- |\n");
         for (var pair : cases.pairs()) {
             var byArm = scores.pairs().stream().filter(score -> score.pair().equals(pair)).toList();
             md.append("| ").append(pair.pairId()).append(" | ").append(pair.varied().label()).append(" | ")
                     .append(byArm.getFirst().expectedChange()).append(" | ")
                     .append(pairCell(byArm, Arm.STORE_RULES)).append(" | ").append(pairCell(byArm, Arm.NEURON_RULES))
-                    .append(" | ").append(pairCell(byArm, Arm.NO_EVIDENCE_RULES)).append(" |\n");
+                    .append(" |\n");
         }
 
         md.append("\n### Optional generator (arm C)\n\n");
@@ -288,7 +293,7 @@ final class HtmlDecisionReport {
         }
 
         md.append("\n### Limits\n\n");
-        LIMITS.forEach(limit -> md.append("- ").append(limit).append('\n'));
+        limits(cases).forEach(limit -> md.append("- ").append(limit).append('\n'));
         return md.toString();
     }
 

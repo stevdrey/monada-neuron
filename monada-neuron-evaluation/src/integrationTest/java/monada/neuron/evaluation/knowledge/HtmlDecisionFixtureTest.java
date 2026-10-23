@@ -23,8 +23,8 @@ class HtmlDecisionFixtureTest {
 
     private static final HtmlKnowledgeCorpus CORPUS = HtmlKnowledgeCorpus.bundledWithDecisionSupplement();
     private static final HtmlDecisionCases CASES = HtmlDecisionCases.bundled();
-    private static final String CASES_TEXT = HtmlDecisionCases.read("/html-decision-v1/cases.tsv");
-    private static final String GOLD_TEXT = HtmlDecisionCases.read("/html-decision-v1/gold.tsv");
+    private static final String CASES_TEXT = HtmlKnowledgeCorpus.bundledTable(HtmlDecisionCases.VERSION, "cases.tsv");
+    private static final String GOLD_TEXT = HtmlKnowledgeCorpus.bundledTable(HtmlDecisionCases.VERSION, "gold.tsv");
 
     @Test
     void theSupplementLeavesHtmlKcV1Untouched() {
@@ -126,6 +126,20 @@ class HtmlDecisionFixtureTest {
         assertRejected(() -> HtmlDecisionGold.parse(overlapping, "test", CASES, CORPUS), "disjoint");
         var nonCandidate = GOLD_TEXT.replace("case:list-nav-01\tDECIDE\tul\tol", "case:list-nav-01\tDECIDE\tdiv\tol");
         assertRejected(() -> HtmlDecisionGold.parse(nonCandidate, "test", CASES, CORPUS), "candidate");
+    }
+
+    @Test
+    void conditionalOptionsMayRepeatAChoiceButNotAnOptionAndPermissionsHaveOneSpelling() {
+        var twoAssumptions = GOLD_TEXT.replace("div@integration-preferred|iframe@isolation-preferred",
+                "div@integration-preferred|iframe@isolation-preferred|iframe@third-party-origin");
+        assertEquals(3, HtmlDecisionGold.parse(twoAssumptions, "test", CASES, CORPUS).of("case:embed-help-01")
+                .options().size());
+        var repeated = GOLD_TEXT.replace("div@integration-preferred|iframe@isolation-preferred",
+                "div@integration-preferred|iframe@isolation-preferred|div@integration-preferred");
+        assertRejected(() -> HtmlDecisionGold.parse(repeated, "test", CASES, CORPUS), "repeated list item");
+        var capitalized = GOLD_TEXT.replace("case:list-nav-01\tDECIDE\tul\tol\t-\tnone",
+                "case:list-nav-01\tDECIDE\tul\tol\t-\tNone");
+        assertRejected(() -> HtmlDecisionGold.parse(capitalized, "test", CASES, CORPUS), "exactly none or requested");
     }
 
     private static void assertRejected(Executable load, String fragment) {

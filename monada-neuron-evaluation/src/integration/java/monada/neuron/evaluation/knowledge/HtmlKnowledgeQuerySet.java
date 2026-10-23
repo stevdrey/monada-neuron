@@ -343,22 +343,34 @@ public final class HtmlKnowledgeQuerySet {
                 throw new CorpusValidationException(where, "evidence spans must be sorted by (chunkId, start, end)");
             }
             previous = span;
-            var text = corpus.chunk(span.chunkId()).orElseThrow().text();
-            var length = text.codePointCount(0, text.length());
-            if (span.start() < 0 || span.start() >= span.end() || span.end() > length) {
-                throw new CorpusValidationException(where, "evidence span [" + span.start() + ", " + span.end()
-                        + ") is out of bounds for " + span.chunkId() + " of " + length + " code points");
-            }
-            var substring = text.substring(text.offsetByCodePoints(0, span.start()),
-                    text.offsetByCodePoints(0, span.end()));
-            if (!CorpusDigests.sha256(substring).equals(span.sha256())) {
-                throw new CorpusValidationException(where, "evidence span digest does not match " + span.chunkId()
-                        + " [" + span.start() + ", " + span.end() + ")");
-            }
+            verifySpan(where, corpus, span);
             spanned.add(span.chunkId());
         }
         if (!spanned.containsAll(query.required())) {
             throw new CorpusValidationException(where, "every required chunk needs an evidence span");
+        }
+    }
+
+    /**
+     * Requires {@code span} to name a chunk of {@code corpus}, to lie inside it in code points and to hash to its
+     * declared {@code sha256}; shared by the query set and the decision gold labels (Issue #112).
+     *
+     * @throws CorpusValidationException naming {@code where} on any violation
+     */
+    static void verifySpan(String where, HtmlKnowledgeCorpus corpus, EvidenceSpan span) {
+        var chunk = corpus.chunk(span.chunkId()).orElseThrow(() -> new CorpusValidationException(where,
+                "evidence span names " + span.chunkId() + ", which is not a chunk of " + corpus.version()));
+        var text = chunk.text();
+        var length = text.codePointCount(0, text.length());
+        if (span.start() < 0 || span.start() >= span.end() || span.end() > length) {
+            throw new CorpusValidationException(where, "evidence span [" + span.start() + ", " + span.end()
+                    + ") is out of bounds for " + span.chunkId() + " of " + length + " code points");
+        }
+        var substring = text.substring(text.offsetByCodePoints(0, span.start()),
+                text.offsetByCodePoints(0, span.end()));
+        if (!CorpusDigests.sha256(substring).equals(span.sha256())) {
+            throw new CorpusValidationException(where, "evidence span digest does not match " + span.chunkId()
+                    + " [" + span.start() + ", " + span.end() + ")");
         }
     }
 
