@@ -305,10 +305,14 @@ public final class HtmlKnowledgeScalingRunner {
         var answerer = new ExtractiveAnswerer(ExtractiveAnswerer.Rule.B3);
         metadata.put("answer.component", answerer.name() + ": " + answerer.description());
         metadata.put("answer.evidenceLayers", "B1, B2 (answerK = k); timed rows bind B1");
-        metadata.put("answer.judgments", "unavailable at scale points: html-l4-judgments-v1 is keyed to html-kc-v1"
-                + " answers; only mechanical counts are reported");
-        metadata.put("answer.keyClaimCounts", "unavailable (no matcher-only or final key-claim matching and no reviewer"
-                + " overrides at scale points; every answer row carries keyClaimEdges null)");
+        metadata.put("answer.judgments", AnswerJudgments.VERSION + ", scored by the #109 AnswerMetrics: frozen verdicts"
+                + " are reused for every answer identical to an html-kc-v1 answer; every other verdict is listed as"
+                + " missing and leaves that row's status null (per point in nN.answer.judgments); judgment completeness"
+                + " is reported, never a check");
+        metadata.put("answer.keyClaimCounts", "matcher-only and final key-claim matchings and reviewer overrides are"
+                + " computed by AnswerMetrics for every answered row and rendered per row; nN.answer.keyClaimCounts"
+                + " totals them over the fully judged answered rows only, since a row with a missing verdict has a"
+                + " provisional matching");
         metadata.put("l3.traceKey", HtmlKnowledgeCycleExperiment.TRACE_KEY);
         metadata.put("l3.memoryStageLimit", "k (1, 3, 5)");
         metadata.put("footprint.heapRetainedBytes", "unavailable (not measured: no heap-dump or retained-size"

@@ -153,7 +153,7 @@ withheld.
 - **Quality.** The [#107 metrics](html-knowledge-recall.md#metrics) for B1 and B2 at each `k`, over the curve
   population and the point population: Recall, MRR, `NoAnswerFalsePositiveRate`, outcomes and abstention, overall and
   per query category.
-- **B3 answers.** Mechanical counts at each `answerK`: answered or abstained, split by a non-empty relevant set;
+- **B3 answers.** Counts at each `answerK`: answered or abstained, split by a non-empty relevant set;
   answers citing a relevant chunk; and ineligible citations. Every answer row is built as a #109 `AnswerRow` and
   scored and rendered by #109's own `AnswerMetrics` and `HtmlKnowledgeAnswerReport`, so its schema and rules (claim
   verdicts with their source, flags, candidate edges, matcher-only and final matchings, primary status, missing
@@ -202,8 +202,10 @@ results, and only the two blank queries abstain. It does not change with N.
 - **Over B2 evidence.** The same counts are 5, 3 and 3, and B3 abstains on 2 answerable queries at N ≥ 100.
 - **Citations.** No citation is ineligible at any point, and every B3 claim is an exact quote, so it is supported by
   rule.
-- **Human verdicts.** 13, 38 and 48 verdicts are missing at N = 25, 100 and 500: those answers differ from every
-  `html-kc-v1` answer, so their contradiction, flag and key-claim verdicts (and status) are open.
+- **Human verdicts.** The frozen verdicts fully judge 126 of 150, 105 of 174 and 93 of 174 answered rows at
+  N = 25, 100 and 500; 13, 38 and 48 verdicts are missing for answers that differ from every `html-kc-v1` answer, so
+  those rows' status stays open. Over the fully judged rows the final matchings cover 12, 21 and 18 key claims
+  (matcher-only 9, 15 and 12), with 3, 6 and 6 reviewer overrides.
 - **`answerK`.** The counts are identical across `answerK` because B3 reads only the first evidence chunk; this is
   documented behaviour of [B3](html-knowledge-answers.md), not a defect.
 
@@ -346,7 +348,9 @@ Recommendation:     <experiment change, or bug with the narrowest reproduction>
 - **Synthetic distractors.** They are lexical competitors written from a few templates, not real documentation, so
   quality at N = 500 describes this family, not a real corpus of that size.
 - **In-process.** Process-cold opens and retained heap are unavailable. Restart persistence is not re-proven here.
-- **L4 is mechanical at scale.** There are no human support or contradiction verdicts beyond `html-kc-v1`.
+- **L4 is partly judged at scale.** Frozen human verdicts exist only for answers identical to `html-kc-v1` answers;
+  every other verdict is listed as missing, its row's status stays `null`, and the key-claim totals
+  (`nN.answer.keyClaimCounts`) cover only the fully judged rows.
 - **No optimization.** Nothing in this change alters the Store, the adapter or the core. No SIMD, GPU or off-heap
   path is activated from one run.
 
@@ -359,6 +363,6 @@ rule are kept unchanged. These refinements fix what the extension left open:
 - `CorpusBounds.SCALING`;
 - in-process measurement, with process-cold reported as unavailable;
 - the cycle at every `k`;
-- mechanical L4 counts;
+- L4 rows scored by the #109 scorer with the frozen verdicts, missing verdicts reported rather than checked;
 - `B2 − B2c` as the only wrapper-overhead measure;
 - `perf.matchesVerified` as the guard against timing a degraded path.

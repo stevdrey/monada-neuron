@@ -11,8 +11,10 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -121,6 +123,47 @@ class HtmlKnowledgeScalingRunnerTest {
         assertEquals(Set.of("html-knowledge-scaling.json", "html-knowledge-scaling.md"),
                 written.stream().map(path -> path.getFileName().toString()).collect(Collectors.toSet()));
         assertEquals(json, Files.readString(written.getFirst()));
+    }
+
+    @Test
+    void l4MetadataAgreesWithTheScoredRows() {
+        var metadata = outcome.report().metadata();
+        assertTrue(metadata.get("answer.judgments").contains("frozen verdicts are reused"));
+        assertTrue(metadata.get("answer.keyClaimCounts").contains("computed by AnswerMetrics"));
+        var json = outcome.json();
+        var points = json.split("\n      \"size\": ");
+        for (var size : List.of(25, 100)) {
+            var point = Arrays.stream(points).filter(segment -> segment.startsWith(size + ",")).findFirst()
+                    .orElseThrow();
+            var missing = Pattern.compile("\"judgments\": \\{ \"version\": \"html-l4-judgments-v1\", \"hash\": \"[0-9a-f]+\","
+                    + " \"missing\": (\\d+) }").matcher(point);
+            assertTrue(missing.find(), "judgments block of N=" + size);
+            var answered = point.lines().filter(line -> line.contains("\"outcome\": \"ANSWERED\"")).toList();
+            var judged = answered.stream().filter(line -> line.contains("\"missingJudgments\": []")).toList();
+            var judgments = metadata.get("n" + size + ".answer.judgments");
+            assertTrue(judgments.contains("; " + judged.size() + " of " + answered.size() + " answered rows fully judged"),
+                    judgments);
+            assertTrue(judgments.contains("; " + missing.group(1) + " verdicts missing"), judgments);
+            var keyClaims = metadata.get("n" + size + ".answer.keyClaimCounts");
+            assertTrue(keyClaims.contains(" key claims matched over the " + judged.size() + " fully judged answered"
+                    + " rows; "), keyClaims);
+            assertTrue(keyClaims.contains("the " + (answered.size() - judged.size()) + " answered rows with a missing"
+                    + " verdict are excluded"), keyClaims);
+            var matcher = judged.stream().mapToInt(line -> pairs(line, "matcherMatching")).sum();
+            var fin = judged.stream().mapToInt(line -> pairs(line, "finalMatching")).sum();
+            assertTrue(keyClaims.startsWith("matcher-only " + matcher + ", final " + fin + " key claims"), keyClaims);
+            var overrides = judged.stream().mapToLong(line -> Pattern.compile(
+                    "\"matcher\": \"(accept|reject)\", \"final\": \"(accept|reject)\"").matcher(line).results()
+                    .filter(edge -> !edge.group(1).equals(edge.group(2))).count()).sum();
+            assertTrue(keyClaims.contains("; " + overrides + " reviewer overrides;"), keyClaims);
+        }
+    }
+
+    /** Counts the {@code [keyClaim, claim]} pairs of one rendered matching. */
+    private static int pairs(String line, String field) {
+        var matcher = Pattern.compile("\"" + field + "\": (\\[(?:\\[\\d+, \\d+\\](?:, )?)*\\])").matcher(line);
+        assertTrue(matcher.find(), field);
+        return (int) Pattern.compile("\\[\\d+, \\d+\\]").matcher(matcher.group(1)).results().count();
     }
 
     @Test

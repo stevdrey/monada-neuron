@@ -76,7 +76,7 @@ import java.util.stream.Stream;
  *
  * <p>Semantics are judged outside every timed window: the ingestion checks of #105, a fresh-handle readback, the full
  * #107 recall observation (B0, B1, B2, B2c with fidelity, prefix stability and B2 = B2c) over the point's eligible
- * queries, the #108 trace integrity of every verified cycle and the mechanical citation check of #109. Every timed
+ * queries, the #108 trace integrity of every verified cycle, and #109's citation check and scorer. Every timed
  * sample, warm-up included, keeps its result, and after the window each one must equal the verified result (mapped
  * chunk ids, order and bit-exact scores; equal cycle runs; equal answers). A mismatch or a throw fails
  * {@code perf.matchesVerified} and the row is withheld (listed as invalidated or unavailable). A row whose verified
@@ -454,9 +454,16 @@ final class HtmlKnowledgeScaling {
                         .toList()));
             }
         }
+        var judgments = judgmentSummary(answerScores);
         metadata.put(prefix + "answer.judgments", AnswerJudgments.VERSION + " " + answerScores.judgmentsHash()
-                + "; " + answerScores.missing().size() + " verdicts missing (expected at scale points: only answers"
-                + " identical to html-kc-v1 answers have frozen verdicts)");
+                + "; " + judgments.fullyJudged() + " of " + judgments.answered() + " answered rows fully judged with"
+                + " reused frozen verdicts; " + judgments.missingVerdicts() + " verdicts missing (expected at scale"
+                + " points: only answers identical to html-kc-v1 answers have frozen verdicts)");
+        metadata.put(prefix + "answer.keyClaimCounts", "matcher-only " + judgments.matcherMatched() + ", final "
+                + judgments.finalMatched() + " key claims matched over the " + judgments.fullyJudged()
+                + " fully judged answered rows; " + judgments.overrides() + " reviewer overrides; the "
+                + (judgments.answered() - judgments.fullyJudged()) + " answered rows with a missing verdict are"
+                + " excluded (their matchings are provisional)");
         checks.add(new Check(prefix + "cycle.traceIntegrity", cycleViolations.isEmpty(), cycleViolations.isEmpty()
                 ? "every verified cycle at every k replayed identically, ran MEMORY_RECALL -> REASONING -> EVALUATION"
                         + " and terminated COMPLETED with one port call whose request equals the codec Signals at limit"
@@ -488,6 +495,32 @@ final class HtmlKnowledgeScaling {
                 + " eligible queries of the point");
         return new PointResult(point, checks, rows.measured, rows.unavailable, quality, abstention, queryScores, answers,
                 answerScores, traces, footprint, overhead, storeCalls, metadata);
+    }
+
+    /**
+     * The judgment totals of one point's scored B3 rows.
+     *
+     * @param answered rows whose component answered
+     * @param fullyJudged answered rows without a missing verdict
+     * @param missingVerdicts distinct verdicts still to be judged
+     * @param matcherMatched key claims in the matcher-only matchings of the fully judged answered rows
+     * @param finalMatched key claims in the final matchings of the fully judged answered rows
+     * @param overrides reviewer verdicts that differ from the matcher, on edges of the fully judged answered rows
+     */
+    record JudgmentSummary(int answered, int fullyJudged, int missingVerdicts, int matcherMatched, int finalMatched,
+            int overrides) {
+    }
+
+    /** Totals the judgments of {@code scores}, as {@code nN.answer.judgments} and {@code nN.answer.keyClaimCounts}. */
+    static JudgmentSummary judgmentSummary(AnswerMetrics.Scores scores) {
+        var answered = scores.answers().stream()
+                .filter(answer -> answer.row().outcome() == AnswerTrace.Outcome.ANSWERED).toList();
+        var judged = answered.stream().filter(answer -> answer.missing().isEmpty()).toList();
+        return new JudgmentSummary(answered.size(), judged.size(), scores.missing().size(),
+                judged.stream().mapToInt(answer -> answer.matcherMatching().size()).sum(),
+                judged.stream().mapToInt(answer -> answer.finalMatching().size()).sum(),
+                (int) judged.stream().flatMap(answer -> answer.edges().stream())
+                        .filter(AnswerMetrics.Edge::overridden).count());
     }
 
     /**
