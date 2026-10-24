@@ -48,11 +48,11 @@ public record SpectralFrame(SpectralBasis basis, SpectralScale scale, int sample
                 if (scale.levels() != 0) {
                     throw new IllegalArgumentException("a DFT frame has scale 0, got: " + scale.levels());
                 }
-                if (!Double.isFinite((sampleCount / 2) * sampleRate)) {
+                if (!dftHighestLocatorFinite(sampleCount, sampleRate)) {
                     throw new IllegalArgumentException("the highest DFT locator overflows: sampleCount="
                             + sampleCount + ", sampleRate=" + sampleRate);
                 }
-                if (sampleRate / sampleCount < Double.MIN_NORMAL) {
+                if (!dftBinSpacingNormal(sampleCount, sampleRate)) {
                     throw new IllegalArgumentException("the DFT bin spacing sampleRate / sampleCount is subnormal: "
                             + "sampleCount=" + sampleCount + ", sampleRate=" + sampleRate);
                 }
@@ -68,6 +68,16 @@ public record SpectralFrame(SpectralBasis basis, SpectralScale scale, int sample
                 }
             }
         }
+    }
+
+    /** Returns whether the highest DFT locator {@code floor(N/2) * sampleRate} is finite. */
+    static boolean dftHighestLocatorFinite(int sampleCount, double sampleRate) {
+        return Double.isFinite((sampleCount / 2) * sampleRate);
+    }
+
+    /** Returns whether the DFT bin spacing {@code sampleRate / N} is at least {@link Double#MIN_NORMAL}. */
+    static boolean dftBinSpacingNormal(int sampleCount, double sampleRate) {
+        return sampleRate / sampleCount >= Double.MIN_NORMAL;
     }
 
     /** Returns the unit of every locator of this frame. */

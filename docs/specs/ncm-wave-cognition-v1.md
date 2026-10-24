@@ -1,7 +1,7 @@
 # NCM Wave Cognition Experiment Contract v1
 
 **Contract identifier**: `ncm-wave-cognition/1`
-**Status**: Accepted (issue #121; documentation only; experimental and opt-in)
+**Status**: Accepted (issue #121; experimental and opt-in; implemented in part by #122 and #123, see Sections 4 to 6)
 **Parent**: Epic #120, Hierarchical Wave Cognition
 **Decision record**: [ADR 0034](../adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md)
 **Composes, unchanged**: [ADR 0001](../adr/0001-cognition-memory-boundary.md),
@@ -152,13 +152,18 @@ All sketches are illustrative Java 27 shapes, `proposed, owned by issue #N`. Rec
 constructor, copy arrays and lists, and expose no mutable state.
 
 ```java
-// #123
+// #123 (implemented; ADR 0036)
 record SampledWave(double[] samples, double sampleRate, SampleUnit unit, WaveProvenance provenance) { }
-enum SampleUnit { HERTZ, ABSTRACT_PER_INDEX }
-record WaveProvenance(String encoderId, int encoderVersion, String sourceReference, long windowOffset) { }
+enum SampleUnit { HERTZ, ABSTRACT_PER_INDEX }                       // delivered by #122
+record WaveProvenance(String encoderId, int encoderVersion, String sourceReference, long windowOffset) { }  // #122
+interface WaveEncoder<S> { SampledWave encode(S source); }          // host-implemented seam
 
 sealed interface DecompositionResult permits Decomposed, DecompositionRejected { }
-interface WaveDecomposer { DecompositionResult decompose(SampledWave wave); }
+record Decomposed(SpectralPattern pattern) { }
+record DecompositionRejected(DecompositionRejectionReason reason, String detail) { }
+enum DecompositionRejectionReason { ENERGY_OUT_OF_RANGE, SAMPLE_RATE_OUT_OF_RANGE }
+interface WaveDecomposer { SpectralBasis basis(); DecompositionResult decompose(SampledWave wave); }
+final class DftWaveDecomposer implements WaveDecomposer { }         // scalar reference of section 5.2
 
 // #122 (implemented; ADR 0035 records the deviations from the first sketch)
 final class SpectralPattern { /* parallel primitive arrays; of(frame, sourceEnergy, provenance, arrays | List<WaveComponent>) */ }
@@ -193,7 +198,13 @@ the single-wave path can be compared as a control (H2); it is never implicit.
 
 ## 4. Input Schema
 
-### 4.1 `SampledWave` (proposed, owned by issue #123)
+### 4.1 `SampledWave` (implemented by issue #123)
+
+Implemented in `monada.neuron.spectral` ([ADR 0036](../adr/0036-deterministic-dft-reference-decomposer.md)). Every rule
+below is checked by the record's constructor, which throws `IllegalArgumentException` or `NullPointerException`
+(a malformed wave is a bug of the host encoder that built it); `-0.0` samples are canonicalized to `+0.0`, and
+`windowOffset + sampleCount` must fit in a `long`. Hosts build waves through their own `WaveEncoder<S>`
+implementations, where the meaning, rate, unit, window and pre-filtering of the samples are decided.
 
 | Field | Rule |
 | --- | --- |
@@ -216,6 +227,8 @@ by the host before it enters Neuron, and the host reports that in `provenance`.
 - The DC component (`k = 0`) is reported like any other bin; its phase is `0` or `π` by sign. For even `N` the
   Nyquist bin (`k = N/2`) is real for real input too, so its phase is also `0` or `π`; the decomposer computes both
   bins as real sums, and `SpectralPattern` rejects any other phase for them (ADR 0035).
+- Aliasing is never rejected and never flagged by a heuristic: a diagnostic based on the samples could not tell
+  folded content from genuine content. The fixed behavior of N7 and this section are the report.
 - There is no implicit windowing (rectangular window). Spectral leakage for non-integer cycle counts is expected and is
   covered by fixture P7, not hidden.
 - Two patterns with different `sampleRate`, `unit`, `sampleCount` or basis are incompatible (Section 7.2). Neuron never
@@ -243,9 +256,16 @@ pipeline as text.
 
 ### 5.2 Decision
 
-- **DFT reference** (#123): `X_k = Σ_{n=0}^{N-1} x_n · e^{-2πi·k·n/N}`, computed in `double` with `StrictMath.cos` and
-  `StrictMath.sin` of the reduced angle `2π·((k·n) mod N)/N`, summed in ascending `n`. Any length `1..maxSamples` is
-  valid; no power-of-two requirement.
+- **DFT reference** (#123, `DftWaveDecomposer`): `X_k = Σ_{n=0}^{N-1} x_n · e^{-2πi·k·n/N}`, computed in `double`
+  with `StrictMath.cos` and `StrictMath.sin` of the reduced angle `2π·((k·n) mod N)/N`, evaluated as `(2π · m) / N`
+  and read from a per-call table of the `N` residues `m` (the residue is tracked in exact integer arithmetic), summed
+  in ascending `n`. The DC and even-`N` Nyquist bins are the real sums `Σ x_n` and `Σ (−1)^n x_n`. Any length
+  `1..maxSamples` is valid; no power-of-two requirement. The time origin is the first sample of the window. Cost:
+  O(N²) time, O(N) memory; baseline in [wave-decomposer-reference.md](../benchmarks/wave-decomposer-reference.md).
+- **Typed rejections** (#123): a structurally valid wave outside a transform limit is a `DecompositionRejected`, not
+  an exception: `SAMPLE_RATE_OUT_OF_RANGE` when the DFT frame cannot locate the bins (highest locator overflow or
+  subnormal bin spacing, ADR 0035) and `ENERGY_OUT_OF_RANGE` when `Σ x_n²` overflows or is nonzero but below
+  `Double.MIN_NORMAL`. Silent samples decompose to zero magnitudes.
 - **Haar strategy** (#124): orthonormal Haar, `a = (x_{2m} + x_{2m+1}) / √2`, `d = (x_{2m} − x_{2m+1}) / √2`, applied
   to the approximation of each level, levels `1..L` with `L ≤ log2 N`. Requires `N` a power of two; any other length is
   rejected (fixture N4), never padded silently.
@@ -446,7 +466,8 @@ performance.
 - Ties are broken by explicit ordinals (Sections 6 and 8.4).
 - Inputs are validated at construction: NaN, infinities, negative magnitudes, empty arrays and out-of-bound sizes are
   rejected with a typed reason or `IllegalArgumentException` according to whether they are expected values or caller
-  bugs; #122 and #123 fix that split.
+  bugs. The split is fixed: malformed `SpectralPattern` arguments (#122) and malformed `SampledWave` values (#123)
+  throw; a valid wave outside a transform limit is a typed `DecompositionRejected` (Section 5.2, ADR 0036).
 
 ### 11.3 Fallback
 
