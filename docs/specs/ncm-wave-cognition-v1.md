@@ -83,7 +83,7 @@ separate tests.
 | Kind | Example | Unit | When it may be reported |
 | --- | --- | --- | --- |
 | Physical frequency | DFT bin `k` of samples taken at `sampleRate` Hz | `HERTZ`, `k * sampleRate / N` | Only when the input declares `SampleUnit.HERTZ` |
-| Abstract index frequency | DFT bin `k` of a sequence with no physical clock | cycles per window, `k / N` | When the input declares `SampleUnit.ABSTRACT_PER_INDEX` |
+| Abstract index frequency | DFT bin `k` of a sequence with no physical clock | cycles per index (per sample), `k / N`, which is `k * sampleRate / N` with the conventional `sampleRate = 1`; equivalently `k` cycles per window | When the input declares `SampleUnit.ABSTRACT_PER_INDEX` |
 | Scale | Haar level `j`, position `m` | dyadic level, sample positions | Always; never converted to Hz |
 | Learned feature | a weight inside a later learned predictor | none | Never reported as a frequency |
 
@@ -162,8 +162,8 @@ interface WaveDecomposer { DecompositionResult decompose(SampledWave wave); }
 
 // #122
 record SpectralPattern(int version, SpectralBasis basis, SpectralScale scale, int sampleCount,
-                       double sampleRate, SampleUnit unit, List<WaveComponent> components,
-                       WaveProvenance provenance) { }
+                       double sampleRate, SampleUnit unit, double sourceEnergy,
+                       List<WaveComponent> components, WaveProvenance provenance) { }
 enum SpectralBasis { DFT, HAAR }
 record SpectralScale(int level, int levelCount) { }       // DFT: level 0 of 1
 record WaveComponent(int index, int level, double magnitude, double phase, boolean phaseDefined,
@@ -182,7 +182,8 @@ record ConceptCandidate(int conceptOrdinal, int depth, double score, double marg
 enum AbstentionReason { LOW_CONFIDENCE, LOW_MARGIN, INCOMPATIBLE_INPUT, UNKNOWN_CONCEPT, BUDGET_EXHAUSTED }
 
 // #126
-record SynthesisResult(SynthesisStatus status, double[] samples, double maxAbsoluteError, double relativeEnergyError) { }
+record SynthesisResult(SynthesisStatus status, double[] samples, double retainedEnergyFraction,
+                       OptionalDouble maxAbsoluteError, OptionalDouble relativeEnergyError) { }
 enum SynthesisStatus { EXACT, LOSSY, NOT_INVERTIBLE }
 ```
 
@@ -197,7 +198,7 @@ compared as a control (H2); it is never implicit.
 | Field | Rule |
 | --- | --- |
 | `samples` | Copied `double[]`; length `1..maxSamples`; every value finite; NaN and infinities are rejected |
-| `sampleRate` | Finite and `> 0`; for `ABSTRACT_PER_INDEX` it is `1` by convention |
+| `sampleRate` | Finite and `> 0`; for `ABSTRACT_PER_INDEX` it must be exactly `1` (one sample per index), so locators are in cycles per index |
 | `unit` | `HERTZ` or `ABSTRACT_PER_INDEX`; there is no default |
 | `provenance.encoderId` | Opaque, non-blank, bounded (128 code points, the `MAX_REFERENCE_LENGTH` of ADR 0019) |
 | `provenance.encoderVersion` | `>= 1` |
@@ -261,8 +262,14 @@ pipeline as text.
   patterns are equal records). When the magnitude is below `phaseEpsilon` (`1e-12` relative to the
   largest magnitude of the pattern, or absolute when that is 0), `phaseDefined = false` and `phase = 0`. Comparisons
   ignore undefined phases.
-- **Locator**: physical or abstract frequency for DFT (Section 2.1), sample position of the coefficient's support start
+- **Locator**: for DFT, `k * sampleRate / N`: hertz for `HERTZ`, cycles per index for `ABSTRACT_PER_INDEX` (Section 2.1); sample position of the coefficient's support start
   for Haar.
+- **Source energy**: `sourceEnergy = Σ x_n²` of the decomposed samples, finite and `≥ 0`, set by the decomposer and
+  carried unchanged by any truncation (top-K, thresholding) of the pattern. It is what makes the retained-energy
+  diagnostic of Section 9 computable without the original samples. The energy a pattern retains is, for DFT,
+  `N · (m_0² + Σ_{0<k<N/2} m_k² / 2 + m_{N/2}²)` over its retained normalized magnitudes (the Nyquist term only for
+  even `N`), and for Haar `Σ c²` over its retained coefficients; for a complete pattern it equals `sourceEnergy`
+  within the Parseval tolerance of Section 12.4.
 - **Compact**: a later optimized layout (parallel primitive arrays, as `FrequencyStateBatch` does) is allowed behind the
   same value semantics; the public record stays the reference.
 
@@ -352,14 +359,19 @@ When integrated (Section 10) candidates become `Hypothesis` values scored downst
 
 ## 9. `WaveSynthesizer` (proposed, owned by issue #126)
 
-- Inverse DFT from a complete single-sided DFT pattern (all bins `0..floor(N/2)` present), with the conjugate-symmetric
-  reconstruction for real input, returns `EXACT` when the reconstruction error is within the tolerance of Section 12.4.
-- Inverse Haar from a complete multilevel Haar pattern returns `EXACT` under the same rule.
-- A pattern with dropped components (top-K or thresholded) returns `LOSSY` with `maxAbsoluteError` and
-  `relativeEnergyError` measured against the original samples when the caller supplies them, or the retained-energy
-  fraction otherwise. It never reports `EXACT`.
-- A pattern without the information for inversion (for example, phases undefined above `phaseEpsilon`) returns
-  `NOT_INVERTIBLE` with no samples.
+- `EXACT` is decided structurally: an inverse DFT from a complete single-sided DFT pattern (all bins `0..floor(N/2)`
+  present), with the conjugate-symmetric reconstruction for real input, or an inverse Haar from a complete multilevel
+  Haar pattern (every detail level and the final approximation present). Its reconstruction error is bounded by the
+  round-trip tolerance of Section 12.4, which fixtures P13 and P14 verify against the original samples. An undefined
+  phase (Section 6) is reconstructed as `0`; it belongs to a component below `phaseEpsilon`, so its error stays within
+  that tolerance.
+- A pattern with dropped components (top-K or thresholded) returns `LOSSY`. It never reports `EXACT`.
+- Every result reports `retainedEnergyFraction`, the retained energy (Section 6) divided by `sourceEnergy`, or `1` when
+  `sourceEnergy` is `0`. It is computable from the pattern alone.
+- `maxAbsoluteError` and `relativeEnergyError` are computed against the original samples only when the caller supplies
+  them; otherwise they are reported as unavailable (empty `OptionalDouble`), never estimated.
+- A pattern that is incomplete in a way the reference cannot invert (for example, a Haar pattern missing its final
+  approximation) returns `NOT_INVERTIBLE` with no samples.
 - Synthesis reconstructs samples. It does not generate images, audio, text or concept semantics (#126 non-goal).
 
 ## 10. Cognitive-Stage Wiring and Feedback
@@ -498,7 +510,9 @@ each is refuted by the stated observation.
 
 | Id | Hypothesis | Refuted when | Gate |
 | --- | --- | --- | --- |
-| H1 | The reference decomposers recover the generating components of synthetic signals within Section 12.4 | any positive fixture fails its tolerance, or a round trip of an invertible pattern is not `EXACT` | G1 |
+| H1 | The DFT reference decomposer recovers the generating components of synthetic signals within Section 12.4 | any positive or negative fixture owned by #123 fails, or Parseval fails | G1 |
+| H1h | The Haar strategy preserves energy and matches its exact values within Section 12.4 | any fixture owned by #124 fails | G1h |
+| H1s | The reference synthesizers invert complete patterns within Section 12.4 and never report a truncated one as `EXACT` | P13, P14 or N8 fails | G1s |
 | H2 | Spectral resonance separates same-concept from different-concept window pairs better than `ScalarResonanceMetric` on the dominant-component `FrequencyState` projection | the AUC of the spectral aggregate does not exceed the scalar control's AUC by the pre-registered margin | G2 |
 | H3 | Hierarchical NCM predicts the next concept better than baseline A (majority and transition prior, no spectral input) at matched coverage | selective accuracy at the matched coverage is not above baseline A by the pre-registered margin, with the interval excluding 0 | G3 |
 | H4 | Coarse-to-fine prediction beats flat prediction over the leaf concepts at equal cost | flat prediction matches or beats hierarchical accuracy at matched coverage | G3 (informational) |
@@ -552,7 +566,9 @@ around by widening scope.
 | Gate | After | Go when | On failure |
 | --- | --- | --- | --- |
 | G0 | #121 | This contract and ADR 0034 are merged | Children do not start |
-| G1 | #123, #124 | H1 holds; all P and N fixtures owned by #123/#124 pass; determinism is exact | Stop; fix the transform or record a negative result; no #125–#127 |
+| G1 | #123 | H1 holds; all P and N fixtures owned by #123 pass; determinism is exact | Stop; fix the transform or record a negative result; no #125–#127 |
+| G1h | #124 | H1h holds; determinism is exact | Haar is excluded: #126 inverts DFT patterns only, control D is dropped, and the report says so; G2 and G3 are unaffected |
+| G1s | #126 | H1s holds; determinism is exact | Synthesis stays out of #128, which integrates without it, and the report says so; G2 and G3 are unaffected |
 | G2 | #125 | H2 holds | Spectral resonance stays a diagnostic only; #127 may still proceed without resonance features, and the report says so |
 | G3 | #127 | H3 and H6 hold on the medium workload | **Stop before #128**; publish the negative result; no cycle integration |
 | G4 | #128 | All existing tests pass unchanged; N13 holds; budgets honored | Revert to library-only use; no default change |
@@ -568,11 +584,11 @@ prerequisites. The graph is acyclic; no issue builds on a descendant.
 ```text
 #121 -> #122
 #122 -> #123
-#122, #123 -> #124
-#122, #123 -> #125
-#123, #124 -> #126
+#122, #123 -> #124      (independent of G1; its own gate is G1h)
+#122, #123 -> #125      (and gate G1 = go)
+#123, #124 -> #126      (and gate G1 = go; Haar inversion only if G1h = go)
 #122, #125 -> #127
-#126, #127 -> #128      (and gate G3 = go)
+#126, #127 -> #128      (and gate G3 = go; G1s decides only whether synthesis is wired in)
 #127, #128 -> #129
 #123 .. #129 -> #130
 ```
@@ -580,17 +596,17 @@ prerequisites. The graph is acyclic; no issue builds on a descendant.
 | Issue | Delivers | Prerequisites | Main area | Gate served |
 | --- | --- | --- | --- | --- |
 | #121 | This contract, ADR 0034 | none | `docs/` | G0 |
-| #122 | `SpectralPattern`, `WaveComponent`, `SpectralBasis`, `SpectralScale`, provenance types | #121 | new spectral package in core | G1 prerequisite |
+| #122 | `SpectralPattern`, `WaveComponent`, `SpectralBasis`, `SpectralScale`, provenance types | #121 | new spectral package in core | G1, G1h prerequisite |
 | #123 | `SampledWave`, DFT `WaveDecomposer` reference | #122 | spectral package | G1 |
-| #124 | Haar strategy | #122, #123 | spectral package | G1 |
-| #125 | `SpectralResonanceDynamics` | #122, #123 | `monada.neuron.resonance` (new types only) | G2 |
-| #126 | `WaveSynthesizer`, fidelity diagnostics | #123, #124 | spectral package | G1 (round trips) |
+| #124 | Haar strategy | #122, #123 | spectral package | G1h |
+| #125 | `SpectralResonanceDynamics` | #122, #123, G1 = go | `monada.neuron.resonance` (new types only) | G2 |
+| #126 | `WaveSynthesizer`, fidelity diagnostics | #123, #124, G1 = go | spectral package | G1s |
 | #127 | `ConceptHierarchy`, `NextConceptPredictor` | #122, #125 | `monada.neuron.reasoning` (new types only) | G3 |
 | #128 | Opt-in cycle integration, typed hand-off | #126, #127, G3 go | stages, host wiring | G4 |
 | #129 | Feedback and caller-owned snapshots | #127, #128 | `monada.neuron.evolution` | G5 |
 | #130 | Ablation harness and go/no-go report | #123 to #129 | `monada-neuron-evaluation` | G5 |
 
-#124 and #125 may proceed in parallel after #123; #126 and #127 may proceed in parallel after their prerequisites.
+#124 and #125 may proceed in parallel after #123 (#125 once G1 is go); #126 and #127 may proceed in parallel after their prerequisites.
 
 ## 17. Versioning and Deviations
 

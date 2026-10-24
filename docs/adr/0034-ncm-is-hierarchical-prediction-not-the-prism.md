@@ -34,7 +34,7 @@ Adopt [NCM Wave Cognition Experiment Contract v1](../specs/ncm-wave-cognition-v1
   Concept labels and ground truth are host or fixture supplied. Neuron never infers semantics from arbitrary text and
   has no text-to-frequency oracle.
 - **Physical versus abstract units.** A frequency is reported in hertz only when the input declares a physical sample
-  rate; abstract sequences report cycles per window; wavelet coefficients report scale and position, never hertz.
+  rate; abstract sequences report cycles per index (`k / N` with a unit sample rate); wavelet coefficients report scale and position, never hertz.
 - **Scalar references first.** A direct DFT computed with `StrictMath` in a fixed summation order is the decomposition
   reference; an orthonormal Haar transform is the multiresolution strategy. FFT, SIMD, native and GPU backends are later
   options checked against these references within a documented tolerance, and none is in v1.
@@ -47,7 +47,7 @@ Adopt [NCM Wave Cognition Experiment Contract v1](../specs/ncm-wave-cognition-v1
   existing stage positions without a new `CognitiveStageKind`. Model state is a caller-owned snapshot updated only through
   validated outcome feedback carried across cycles (ADR 0021). Long-term memory, recall and ranking stay in Monada
   Resonance Store (ADR 0001).
-- **Binding stop/go gates.** Gates G0 to G5 with pre-registered margins decide whether work continues. In particular,
+- **Binding stop/go gates.** Gates G0 to G5 (with the Haar and synthesis sub-gates G1h and G1s) with pre-registered margins decide whether work continues. In particular,
   cycle integration (#128) does not start unless hierarchical NCM beats the no-spectral baseline at matched coverage
   (gate G3). A negative result is a valid, published outcome.
 
