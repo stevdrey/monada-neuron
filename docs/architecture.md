@@ -548,12 +548,14 @@ static, derived-not-consumed and adaptive controls in the evaluation module only
 adaptation on synthetic fixtures and coverage gaps on chosen-route-only Store exports, and makes no online routing quality,
 cost or accuracy claim.
 
-## NCM Wave Cognition Extension (specified; not implemented)
+## NCM Wave Cognition Extension (specified; value types only)
 
 Epic #120 explores an experimental, opt-in path from explicit numeric samples to hierarchical next-concept hypotheses.
 [NCM Wave Cognition Experiment Contract v1](specs/ncm-wave-cognition-v1.md) (`ncm-wave-cognition/1`, issue #121) and
-[ADR 0034](adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md) specify it; **no type or behavior exists yet**, and
-every name below is a proposal owned by issues #122 to #130.
+[ADR 0034](adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md) specify it. Only the bounded, immutable spectral
+value types exist (`monada.neuron.spectral`: `SpectralPattern`, `SpectralFrame`, `WaveComponent`, `WaveProvenance`;
+issue #122, [ADR 0035](adr/0035-compact-immutable-spectral-pattern.md)); no transform or behavior exists yet, and every
+other name below is a proposal owned by issues #123 to #130.
 
 ```text
 Host / modality encoder -> SampledWave (meaning, rate, unit, provenance: host owned)

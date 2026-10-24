@@ -160,14 +160,14 @@ record WaveProvenance(String encoderId, int encoderVersion, String sourceReferen
 sealed interface DecompositionResult permits Decomposed, DecompositionRejected { }
 interface WaveDecomposer { DecompositionResult decompose(SampledWave wave); }
 
-// #122
-record SpectralPattern(int version, SpectralBasis basis, SpectralScale scale, int sampleCount,
-                       double sampleRate, SampleUnit unit, double sourceEnergy,
-                       List<WaveComponent> components, WaveProvenance provenance) { }
+// #122 (implemented; ADR 0035 records the deviations from the first sketch)
+final class SpectralPattern { /* parallel primitive arrays; of(frame, sourceEnergy, provenance, arrays | List<WaveComponent>) */ }
+record SpectralFrame(SpectralBasis basis, SpectralScale scale, int sampleCount, double sampleRate, SampleUnit unit) { }
 enum SpectralBasis { DFT, HAAR }
-record SpectralScale(int level, int levelCount) { }       // DFT: level 0 of 1
-record WaveComponent(int index, int level, double magnitude, double phase, boolean phaseDefined,
+record SpectralScale(int levels) { }                      // decomposition depth: DFT 0, Haar 1..12
+record WaveComponent(int level, int index, double magnitude, double phase, boolean phaseDefined,
                      double locator) { }                  // locator: frequency for DFT, position for HAAR
+enum LocatorUnit { HERTZ, CYCLES_PER_INDEX, SAMPLE_POSITION }
 
 // #125
 sealed interface ComparisonResult permits SpectralComparison, Incompatible { }
@@ -188,8 +188,8 @@ enum SynthesisStatus { EXACT, LOSSY, NOT_INVERTIBLE }
 ```
 
 `FrequencyState` is not extended. A projection from a `SpectralPattern` to one `FrequencyState` (for example, the
-dominant component) may be offered by #122 as an explicit, documented, lossy helper so the single-wave path can be
-compared as a control (H2); it is never implicit.
+dominant component) may be offered by #125 (deferred from #122, ADR 0035) as an explicit, documented, lossy helper so
+the single-wave path can be compared as a control (H2); it is never implicit.
 
 ## 4. Input Schema
 
@@ -213,7 +213,9 @@ by the host before it enters Neuron, and the host reports that in `provenance`.
 - DFT bins `k = 0..floor(N/2)` are reported (single-sided). Bin `k` locates at `k * sampleRate / N`.
 - The Nyquist limit is `sampleRate / 2`. Content above it **aliases** and cannot be detected from the samples
   (fixture N7). Pre-filtering is the host's responsibility and is recorded in provenance.
-- The DC component (`k = 0`) is reported like any other bin; its phase is `0` or `π` by sign.
+- The DC component (`k = 0`) is reported like any other bin; its phase is `0` or `π` by sign. For even `N` the
+  Nyquist bin (`k = N/2`) is real for real input too, so its phase is also `0` or `π`; the decomposer computes both
+  bins as real sums, and `SpectralPattern` rejects any other phase for them (ADR 0035).
 - There is no implicit windowing (rectangular window). Spectral leakage for non-integer cycle counts is expected and is
   covered by fixture P7, not hidden.
 - Two patterns with different `sampleRate`, `unit`, `sampleCount` or basis are incompatible (Section 7.2). Neuron never
@@ -249,18 +251,25 @@ pipeline as text.
   rejected (fixture N4), never padded silently.
 - Neither strategy is the default for existing hosts. Choosing one is a host decision.
 
-## 6. `SpectralPattern` (proposed, owned by issue #122)
+## 6. `SpectralPattern` (implemented by issue #122)
 
-- **Immutable and bounded**: at most the component bound of its basis (`maxComponentsDft` or `maxComponentsHaar`, Section 11), list copied, sorted by `(level, index)`,
-  no duplicate `(level, index)`.
+Implemented in `monada.neuron.spectral`; [ADR 0035](../adr/0035-compact-immutable-spectral-pattern.md) records the
+representation: a compact final class over parallel primitive arrays, a `SpectralFrame` for basis and sampling
+metadata, `SpectralScale(levels)` as the decomposition depth, Haar level `0` for the final approximation and levels
+`1..L` for the details (so the approximation and the level-`L` detail never share a key), and `phaseDefined` and the
+locator derived on access. `SampleUnit` and `WaveProvenance` are delivered by #122 and reused by #123.
+
+- **Immutable and bounded**: at most the component bound of its basis (`maxComponentsDft` or `maxComponentsHaar`,
+  Section 11), component arrays copied once at construction, sorted by `(level, index)`, no duplicate `(level, index)`.
 - **Versioned**: `version` is the pattern schema version, `1` for this contract.
 - **Normalization, DFT**: magnitude `|X_k| / N` for `k = 0` and, when `N` is even, `k = N/2`; `2·|X_k| / N` otherwise.
   A pure cosine of amplitude `A` at an integer bin therefore reports magnitude `A`.
 - **Normalization, Haar**: coefficients are the orthonormal values themselves; `magnitude = |c|`, `phase = 0` for
-  `c ≥ 0` and `π` for `c < 0`. Energy is preserved (fixture P9).
+  `c ≥ 0` and `π` for `c < 0`. Energy is preserved (fixture P9). A Haar phase other than `0` or `π` is rejected.
 - **Phase**: `atan2(Im, Re)` wrapped to `(−π, π]` (a result of `−π` becomes `π`, and `−0.0` becomes `0.0`, so equal
-  patterns are equal records). The computed phase is **always stored**, whatever the
-  magnitude, because synthesis needs it. `phaseDefined` is only a comparison-validity flag: it is `false` when the
+  patterns are equal values). The computed phase is **always stored**, whatever the
+  magnitude, because synthesis needs it. `phaseDefined` is only a comparison-validity flag, derived on access and never
+  stored: it is `false` when the
   magnitude is below `phaseEpsilon` (`1e-12` relative to the largest magnitude of the pattern, or absolute when that
   is 0), and the coherence of Section 7.3 and NCM phase evidence ignore such phases. Interference, the aggregate and synthesis
   use the stored phase and never read the flag.
@@ -271,7 +280,12 @@ pipeline as text.
   diagnostic of Section 9 computable without the original samples. The energy a pattern retains is, for DFT,
   `N · (m_0² + Σ_{0<k<N/2} m_k² / 2 + m_{N/2}²)` over its retained normalized magnitudes (the Nyquist term only for
   even `N`), and for Haar `Σ c²` over its retained coefficients; for a complete pattern it equals `sourceEnergy`
-  within the Parseval tolerance of Section 12.4.
+  within the Parseval tolerance of Section 12.4, and a complete pattern (every key of its frame present) that does not
+  is rejected. Any pattern whose retained energy exceeds `sourceEnergy` by more than that relative tolerance (`1e-9`)
+  is rejected too. For (near-)subnormal energies, where the relative tolerance is smaller than rounding, the allowance
+  is `(sampleCount + componentCount + 4)` ULPs at the energy scale instead; a `sourceEnergy` of `0` (silent samples)
+  admits only zero magnitudes. The retained energy is summed with magnitudes scaled by a power of two, so a representable subnormal
+  energy is not lost to squaring underflow.
 - **Compact**: a later optimized layout (parallel primitive arrays, as `FrequencyStateBatch` does) is allowed behind the
   same value semantics; the public record stays the reference.
 
