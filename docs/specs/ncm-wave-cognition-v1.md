@@ -514,10 +514,10 @@ each is refuted by the stated observation.
 | --- | --- | --- | --- |
 | H1 | The DFT reference decomposer recovers the generating components of synthetic signals within Section 12.4 | any positive or negative fixture owned by #123 fails, or Parseval fails | G1 |
 | H1h | The Haar strategy preserves energy and matches its exact values within Section 12.4 | any fixture owned by #124 fails | G1h |
-| H1s | The reference synthesizers invert complete patterns within Section 12.4 and never report a truncated one as `EXACT` | P13, P14 or N8 fails | G1s |
+| H1s | The reference synthesizers invert complete patterns within Section 12.4 and never report a truncated one as `EXACT` | P13 or N8 fails (DFT path); P14 fails (Haar path, evaluated only when G1h is go) | G1s |
 | H2 | Spectral resonance separates same-concept from different-concept window pairs better than `ScalarResonanceMetric` on the dominant-component `FrequencyState` projection | the AUC of the spectral aggregate does not exceed the scalar control's AUC by the pre-registered margin | G2 |
 | H3 | Hierarchical NCM predicts the next concept better than baseline A (majority and transition prior, no spectral input) at matched coverage | selective accuracy at the matched coverage is not above baseline A by the pre-registered margin, with the interval excluding 0 | G3 |
-| H4 | Coarse-to-fine prediction beats flat prediction over the leaf concepts at equal cost | flat prediction matches or beats hierarchical accuracy at matched coverage | G3 (informational) |
+| H4 | Coarse-to-fine prediction beats flat prediction over the leaf concepts with the same features and scoring inputs | control C-flat matches or beats C's selective accuracy at matched coverage and equal work budget | G3 (informational) |
 | H5 | Validated outcome feedback improves H3's metric on later held-out windows without label leakage | no improvement, or any leakage detected | G5 |
 | H6 | Abstention is informative: accuracy on non-abstained windows exceeds accuracy on all windows, and N11 abstains more than clean evidence | either inequality fails | G3 |
 
@@ -540,8 +540,12 @@ the registered margins and adds none for H2 to H6. Changing a margin after seein
 
 - **A**: majority and transition prior, no spectral input (the no-NCM baseline). Delivered by #127 for G3.
 - **B**: spectral-only nearest centroid, flat over leaf concepts, no resonance and no hierarchy. Delivered by #127 for
-  G3 (H4).
+  G3.
 - **C**: DFT plus resonance plus hierarchy, the system under test at G3. Delivered by #127.
+- **C-flat**: C with the hierarchy removed: the same features (including resonance, or without it exactly when C runs
+  without it), the same scoring inputs and thresholds rule, flat over the leaf concepts, at the same work budget. It is
+  the control for H4, so that comparison changes only the hierarchy. Delivered by #127. B remains the spectral-only
+  baseline and is not used to evaluate H4.
 - **D**: C with Haar and coherence features. Delivered by #130.
 - **E**: C or D with validated feedback. Delivered by #129 for G5, reused by #130.
 - Scalar control for H2: `ScalarResonanceMetric` on the dominant-component projection. Delivered by #125 for G2.
@@ -576,9 +580,9 @@ around by widening scope.
 | G0 | #121 | This contract and ADR 0034 are merged | Children do not start |
 | G1 | #123 | H1 holds; all P and N fixtures owned by #123 pass; determinism is exact | Stop; fix the transform or record a negative result; no #125–#127 |
 | G1h | #124 | H1h holds; determinism is exact | Haar is excluded: #126 inverts DFT patterns only, control D is dropped, and the report says so; G2 and G3 are unaffected |
-| G1s | #126 | H1s holds; determinism is exact | Synthesis stays out of #128, which integrates without it, and the report says so; G2 and G3 are unaffected |
+| G1s | #126 | H1s holds for each synthesis path in scope (DFT always; Haar only when G1h is go); determinism is exact | Evaluated per path: a failing path stays out of #128, which integrates with the passing path or without synthesis, and the report says so; G2 and G3 are unaffected |
 | G2 | #125 (with the generator and scalar control) | H2 holds | Spectral resonance stays a diagnostic only; #127 may still proceed without resonance features, and the report says so |
-| G3 | #127 (with controls A, B and C) | H3 and H6 hold on the medium workload | **Stop before #128**; publish the negative result; no cycle integration |
+| G3 | #127 (with controls A, B, C and C-flat) | H3 and H6 hold on the medium workload | **Stop before #128**; publish the negative result; no cycle integration |
 | G4 | #128 | All existing tests pass unchanged; N13 holds; budgets honored | Revert to library-only use; no default change |
 | G5 | #129 (H5 with control E), #130 | H5 holds or is reported negative; #130 publishes the go/no-go report with every control | The report's decision is binding for further investment |
 
@@ -609,7 +613,7 @@ prerequisites. The graph is acyclic; no issue builds on a descendant.
 | #124 | Haar strategy | #122, #123 | spectral package | G1h |
 | #125 | `SpectralResonanceDynamics`; concept fixture generator, scalar control and H2 evaluation | #122, #123, G1 = go | `monada.neuron.resonance` (new types only), `monada-neuron-evaluation` | G2 |
 | #126 | `WaveSynthesizer`, fidelity diagnostics | #123, #124, G1 = go | spectral package | G1s |
-| #127 | `ConceptHierarchy`, `NextConceptPredictor`; controls A, B, C and the H3, H4, H6 evaluation | #122, #125 | `monada.neuron.reasoning` (new types only), `monada-neuron-evaluation` | G3 |
+| #127 | `ConceptHierarchy`, `NextConceptPredictor`; controls A, B, C, C-flat and the H3, H4, H6 evaluation | #122, #125 | `monada.neuron.reasoning` (new types only), `monada-neuron-evaluation` | G3 |
 | #128 | Opt-in cycle integration, typed hand-off | #126, #127, G3 go | stages, host wiring | G4 |
 | #129 | Feedback and caller-owned snapshots; control E and the H5 evaluation | #127, #128 | `monada.neuron.evolution`, `monada-neuron-evaluation` | G5 |
 | #130 | Consolidated ablation over all workloads, control D, large-workload resources, go/no-go report | #123 to #129 | `monada-neuron-evaluation` | G5 |
