@@ -222,7 +222,7 @@ by the host before it enters Neuron, and the host reports that in `provenance`.
 ### 4.3 Where meaning comes from
 
 The samples mean only what the encoder declares. An encoder that turns, for example, a feature trace into a sequence of
-numbers is a host adapter and owns that mapping. In the evaluation (#130) the encoders are synthetic generators with a
+numbers is a host adapter and owns that mapping. In the evaluation (Section 12.3) the encoders are synthetic generators with a
 documented formula and seed, so the "meaning" of each fixture is known exactly. Arbitrary text never enters the
 pipeline as text.
 
@@ -259,9 +259,10 @@ pipeline as text.
 - **Normalization, Haar**: coefficients are the orthonormal values themselves; `magnitude = |c|`, `phase = 0` for
   `c ≥ 0` and `π` for `c < 0`. Energy is preserved (fixture P9).
 - **Phase**: `atan2(Im, Re)` wrapped to `(−π, π]` (a result of `−π` becomes `π`, and `−0.0` becomes `0.0`, so equal
-  patterns are equal records). When the magnitude is below `phaseEpsilon` (`1e-12` relative to the
-  largest magnitude of the pattern, or absolute when that is 0), `phaseDefined = false` and `phase = 0`. Comparisons
-  ignore undefined phases.
+  patterns are equal records). The computed phase is **always stored**, whatever the
+  magnitude, because synthesis needs it. `phaseDefined` is only a comparison-validity flag: it is `false` when the
+  magnitude is below `phaseEpsilon` (`1e-12` relative to the largest magnitude of the pattern, or absolute when that
+  is 0), and comparisons (Section 7) and NCM evidence ignore such phases. Synthesis never reads the flag.
 - **Locator**: for DFT, `k * sampleRate / N`: hertz for `HERTZ`, cycles per index for `ABSTRACT_PER_INDEX` (Section 2.1); sample position of the coefficient's support start
   for Haar.
 - **Source energy**: `sourceEnergy = Σ x_n²` of the decomposed samples, finite and `≥ 0`, set by the decomposer and
@@ -362,9 +363,9 @@ When integrated (Section 10) candidates become `Hypothesis` values scored downst
 - `EXACT` is decided structurally: an inverse DFT from a complete single-sided DFT pattern (all bins `0..floor(N/2)`
   present), with the conjugate-symmetric reconstruction for real input, or an inverse Haar from a complete multilevel
   Haar pattern (every detail level and the final approximation present). Its reconstruction error is bounded by the
-  round-trip tolerance of Section 12.4, which fixtures P13 and P14 verify against the original samples. An undefined
-  phase (Section 6) is reconstructed as `0`; it belongs to a component below `phaseEpsilon`, so its error stays within
-  that tolerance.
+  round-trip tolerance of Section 12.4, which fixtures P13 and P14 verify against the original samples. Synthesis
+  uses every stored phase, including those flagged `phaseDefined = false` (Section 6), so many small components cannot
+  accumulate an error that zeroed phases would introduce.
 - A pattern with dropped components (top-K or thresholded) returns `LOSSY`. It never reports `EXACT`.
 - Every result reports `retainedEnergyFraction`, the retained energy (Section 6) divided by `sourceEnergy`, or `1` when
   `sourceEnergy` is `0`. It is computable from the pattern alone.
@@ -475,7 +476,8 @@ within a documented tolerance.
 
 ### 12.3 Concept fixture (labels and ground truth)
 
-Synthetic, seeded and generated in the evaluation module (#130); #127 uses a small copy for unit tests.
+Synthetic, seeded and generated in the evaluation module. The generator is delivered by #125, the first issue whose gate
+needs it (G2); #127 and #130 reuse it unchanged, and #127 also uses a small copy for unit tests.
 
 - **Hierarchy**: depth 0 categories `LOW_BAND` (code 1) and `HIGH_BAND` (code 2); depth 1 concepts `LOW_PURE` (11),
   `LOW_CHORD` (12) under `LOW_BAND`, `HIGH_PURE` (21), `HIGH_CHORD` (22) under `HIGH_BAND`. Domain is a fixture constant.
@@ -519,8 +521,10 @@ each is refuted by the stated observation.
 | H5 | Validated outcome feedback improves H3's metric on later held-out windows without label leakage | no improvement, or any leakage detected | G5 |
 | H6 | Abstention is informative: accuracy on non-abstained windows exceeds accuracy on all windows, and N11 abstains more than clean evidence | either inequality fails | G3 |
 
-Margins are pre-registered in #130 (or in #127 for its unit-level suite) **before** held-out results are computed, and
-recorded in the report. Changing a margin after seeing results requires a new protocol version and is reported.
+Each margin is pre-registered by the issue whose gate evaluates it, **before** held-out results are computed: H2 by
+#125, H3, H4 and H6 by #127, H5 by #129. Pre-registration means the margin is committed to that issue's benchmark document
+in a commit that precedes the first commit containing held-out results, and it is recorded in the report. #130 reuses
+the registered margins and adds none for H2 to H6. Changing a margin after seeing results requires a new protocol version and is reported.
 
 ## 14. Workloads, Controls and Metrics
 
@@ -532,14 +536,18 @@ recorded in the report. Changing a margin after seeing results requires a new pr
 | medium | 256 | 64 per sequence, 32 sequences | 4 to 16 | 2 | Section 12.3 fixture, main quality evidence |
 | large | 4,096 | 1,024 | 256 | 3 | Bounds, latency, allocation and memory behavior |
 
-### 14.2 Controls (from #130)
+### 14.2 Controls (named as in #130; delivered by the gate that needs them)
 
-- **A**: majority and transition prior, no spectral input (the no-NCM baseline).
-- **B**: spectral-only nearest centroid, flat over leaf concepts, no resonance and no hierarchy.
-- **C**: DFT plus resonance plus hierarchy.
-- **D**: C with Haar and coherence features.
-- **E**: C or D with validated feedback.
-- Scalar control for H2: `ScalarResonanceMetric` on the dominant-component projection.
+- **A**: majority and transition prior, no spectral input (the no-NCM baseline). Delivered by #127 for G3.
+- **B**: spectral-only nearest centroid, flat over leaf concepts, no resonance and no hierarchy. Delivered by #127 for
+  G3 (H4).
+- **C**: DFT plus resonance plus hierarchy, the system under test at G3. Delivered by #127.
+- **D**: C with Haar and coherence features. Delivered by #130.
+- **E**: C or D with validated feedback. Delivered by #129 for G5, reused by #130.
+- Scalar control for H2: `ScalarResonanceMetric` on the dominant-component projection. Delivered by #125 for G2.
+
+Each gate's evidence is therefore produced before the gate is evaluated; #130 consolidates every control over all
+workloads, adds D and the large-workload resource measurements, and publishes the final report.
 
 ### 14.3 Metrics
 
@@ -569,10 +577,10 @@ around by widening scope.
 | G1 | #123 | H1 holds; all P and N fixtures owned by #123 pass; determinism is exact | Stop; fix the transform or record a negative result; no #125–#127 |
 | G1h | #124 | H1h holds; determinism is exact | Haar is excluded: #126 inverts DFT patterns only, control D is dropped, and the report says so; G2 and G3 are unaffected |
 | G1s | #126 | H1s holds; determinism is exact | Synthesis stays out of #128, which integrates without it, and the report says so; G2 and G3 are unaffected |
-| G2 | #125 | H2 holds | Spectral resonance stays a diagnostic only; #127 may still proceed without resonance features, and the report says so |
-| G3 | #127 | H3 and H6 hold on the medium workload | **Stop before #128**; publish the negative result; no cycle integration |
+| G2 | #125 (with the generator and scalar control) | H2 holds | Spectral resonance stays a diagnostic only; #127 may still proceed without resonance features, and the report says so |
+| G3 | #127 (with controls A, B and C) | H3 and H6 hold on the medium workload | **Stop before #128**; publish the negative result; no cycle integration |
 | G4 | #128 | All existing tests pass unchanged; N13 holds; budgets honored | Revert to library-only use; no default change |
-| G5 | #129, #130 | H5 holds or is reported negative; #130 publishes the go/no-go report with every control | The report's decision is binding for further investment |
+| G5 | #129 (H5 with control E), #130 | H5 holds or is reported negative; #130 publishes the go/no-go report with every control | The report's decision is binding for further investment |
 
 The Epic may end after any gate with a documented negative result. That is a valid outcome of the experiment.
 
@@ -599,14 +607,15 @@ prerequisites. The graph is acyclic; no issue builds on a descendant.
 | #122 | `SpectralPattern`, `WaveComponent`, `SpectralBasis`, `SpectralScale`, provenance types | #121 | new spectral package in core | G1, G1h prerequisite |
 | #123 | `SampledWave`, DFT `WaveDecomposer` reference | #122 | spectral package | G1 |
 | #124 | Haar strategy | #122, #123 | spectral package | G1h |
-| #125 | `SpectralResonanceDynamics` | #122, #123, G1 = go | `monada.neuron.resonance` (new types only) | G2 |
+| #125 | `SpectralResonanceDynamics`; concept fixture generator, scalar control and H2 evaluation | #122, #123, G1 = go | `monada.neuron.resonance` (new types only), `monada-neuron-evaluation` | G2 |
 | #126 | `WaveSynthesizer`, fidelity diagnostics | #123, #124, G1 = go | spectral package | G1s |
-| #127 | `ConceptHierarchy`, `NextConceptPredictor` | #122, #125 | `monada.neuron.reasoning` (new types only) | G3 |
+| #127 | `ConceptHierarchy`, `NextConceptPredictor`; controls A, B, C and the H3, H4, H6 evaluation | #122, #125 | `monada.neuron.reasoning` (new types only), `monada-neuron-evaluation` | G3 |
 | #128 | Opt-in cycle integration, typed hand-off | #126, #127, G3 go | stages, host wiring | G4 |
-| #129 | Feedback and caller-owned snapshots | #127, #128 | `monada.neuron.evolution` | G5 |
-| #130 | Ablation harness and go/no-go report | #123 to #129 | `monada-neuron-evaluation` | G5 |
+| #129 | Feedback and caller-owned snapshots; control E and the H5 evaluation | #127, #128 | `monada.neuron.evolution`, `monada-neuron-evaluation` | G5 |
+| #130 | Consolidated ablation over all workloads, control D, large-workload resources, go/no-go report | #123 to #129 | `monada-neuron-evaluation` | G5 |
 
-#124 and #125 may proceed in parallel after #123 (#125 once G1 is go); #126 and #127 may proceed in parallel after their prerequisites.
+The evaluation pieces assigned to #125, #127 and #129 are scope additions relative to those issues' current text; each
+issue is updated to cite this table before it starts. #124 and #125 may proceed in parallel after #123 (#125 once G1 is go); #126 and #127 may proceed in parallel after their prerequisites.
 
 ## 17. Versioning and Deviations
 

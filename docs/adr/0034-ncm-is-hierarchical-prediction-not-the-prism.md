@@ -98,6 +98,8 @@ should stop.
 ## Follow-Up
 
 - #122 to #127 implement the reference types and algorithms against the fixtures of Section 12 of the contract.
-- #130 pre-registers the margins of hypotheses H2, H3 and H5 before computing held-out results.
+- The issue whose gate evaluates a hypothesis pre-registers its margin before computing held-out results: H2 in #125,
+  H3, H4 and H6 in #127, H5 in #129. #125, #127 and #129 also deliver the evaluation pieces their gates need (the
+  fixture generator and controls), so no gate waits on the final report of #130; their issue texts are updated to say so.
 - Revisit FFT or SIMD backends only after gate G1 passes and a profiled workload shows the DFT reference is the
   bottleneck.
