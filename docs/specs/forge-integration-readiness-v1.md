@@ -226,7 +226,7 @@ configuration (v1 Section 18.1 calls it an authoritative input) even though its 
 | `TaskFeatures.languages`, `domains` | Phase 2 context collection; `Unknown` allowed; at most 8 tags each (`TaskFeatures.MAX_TAGS`) | untrusted observation | encoding and learned preference only | never eligibility |
 | `TaskFeatures.changeSize`, `contextSize` | Phase 2 context collection, host units; `Unknown` allowed | untrusted observation | encoding and learned preference only | never eligibility; never copied into `requiredContextSize` |
 | `TaskFeatures.tests`, `security` | explicit human toggles (`REQUIRED`, `NOT_REQUIRED`); default `Unknown`; never derived from the constraints list | trusted configuration | encoding | not a quality guarantee |
-| `RouteCatalog` (`catalogVersion`, entries, estimates) | Phase 2: a static host catalog of at least one route, a required prerequisite; Phase 3 and later: host configuration of authorized adapters; `catalogVersion` changes with any content change | trusted configuration | eligibility and ranking | availability and `fallbackPriority` are not authorization; descriptors are not proof of capability, and availability is a point in time snapshot that Forge revalidates before executing |
+| `RouteCatalog` (`catalogVersion`, entries, estimates) | Phase 2: a static host catalog of at least one route, required for a call (absent or empty is `UNAVAILABLE(no-catalog)`, Section 5.1); Phase 3 and later: host configuration of authorized adapters; `catalogVersion` changes with any content change | trusted configuration | eligibility and ranking | availability and `fallbackPriority` are not authorization; descriptors are not proof of capability, and availability is a point in time snapshot that Forge revalidates before executing |
 | `RoutingPreference` | `RoutingPreference.empty(...)` in Phases 2 to 4; a Store built snapshot in Phase 5 | caller owned state | ranking | n/a |
 | `TrustedRoutingProfile` | host selected verifier, `TrustedRoutingProfile.lexicographic(parameters, definition)` built from the `PolicyParameters` and `RoutingStateDefinition` the host holds separately as its configuration; the convenience form `lexicographic(policy)` reads both from the policy instance and so verifies a decision against that instance, not against the host's intended configuration; used only through `RoutingReasoningStage`; optional at Phase 2 (plain `decide` is unverified advice), required from Phase 3 | trusted configuration | decision verification | n/a |
 
@@ -266,8 +266,8 @@ Neuron type, and this contract asks for no new Neuron type to carry them.
 
 | Outcome | Meaning | Trigger |
 | --- | --- | --- |
-| `NOT_READY(missing…)` | The host cannot build a request yet. | Any prerequisite is missing. `missing` is one or more of the `TaskDraft.Missing` values (`WORKSPACE`, `SPECIFICATION`, `SCOPE`), or the draft is not `READY`, plus the host side values `stage`, `ids`, `policy`, `catalog`. |
-| `UNAVAILABLE(reason)` | The host could build a request but will not call Neuron. | `reason` is one of `integration-off`, `no-catalog`, `version-mismatch`, `cancelled`. `integration-off`, `no-catalog` and `version-mismatch` are detected before any Neuron object is built; `cancelled` can happen at any point before `decide` is called, and a request already built is simply dropped. In every case `decide` is not called. |
+| `NOT_READY(missing…)` | The host cannot build a request yet. | Any prerequisite is missing. `missing` is one or more of the `TaskDraft.Missing` values (`WORKSPACE`, `SPECIFICATION`, `SCOPE`), or the draft is not `READY`, plus the host side values `stage`, `ids`, `policy`. A catalog is not a request input (it is a separate argument to `decide`), so its absence is never `NOT_READY`; it is `UNAVAILABLE(no-catalog)`. |
+| `UNAVAILABLE(reason)` | The host could build a request but will not call Neuron. | `reason` is one of `integration-off`, `no-catalog`, `version-mismatch`, `cancelled`. `no-catalog` covers a catalog that is not configured and a catalog that is empty alike (example 10.5); the host checks its catalog configuration for zero routes before constructing a `RouteCatalog`, because an empty `RouteCatalog` is constructible and `decide` over it returns `NoEligibleRoute` with an empty exclusion list, which never stands in for `no-catalog`. `integration-off`, `no-catalog` and `version-mismatch` are detected before any Neuron object is built; `cancelled` can happen at any point before `decide` is called, and a request already built is simply dropped. In every case `decide` is not called. |
 | `ADVISED(decision)` | `decide` was called and returned. | `decision` is one of the three unchanged v1 variants: `Selected`, `Abstain`, `NoEligibleRoute`. `NoEligibleRoute` keeps its v1 meaning and is not a readiness failure. |
 | `STALE` | Advice exists but its inputs changed before use. | Section 6. |
 
@@ -348,9 +348,9 @@ the host would otherwise build the request, but the value it reports was decided
 
 ```text
 draft INCOMPLETE or REVIEWABLE                      -> NOT_READY(missing: WORKSPACE | SPECIFICATION | SCOPE)
-draft READY, no stage, ids, policy or catalog       -> NOT_READY(missing: stage | ids | policy | catalog)
+draft READY, no stage, ids or policy                -> NOT_READY(missing: stage | ids | policy)
 prerequisites met, integration switched off         -> UNAVAILABLE(integration-off)
-prerequisites met, catalog empty or absent          -> UNAVAILABLE(no-catalog)
+prerequisites met, catalog not configured or empty  -> UNAVAILABLE(no-catalog)
 prerequisites met, runtime version probe fails      -> UNAVAILABLE(version-mismatch)  (a probed field differs, or the read fails)
 prerequisites met, person withdrew before the call  -> UNAVAILABLE(cancelled)  (any built request is dropped)
 prerequisites met, decide called                    -> ADVISED(Selected | Abstain | NoEligibleRoute)
