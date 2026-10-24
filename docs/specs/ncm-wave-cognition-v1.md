@@ -264,8 +264,8 @@ pipeline as text.
   O(N²) time, O(N) memory; baseline in [wave-decomposer-reference.md](../benchmarks/wave-decomposer-reference.md).
 - **Typed rejections** (#123): a structurally valid wave outside a transform limit is a `DecompositionRejected`, not
   an exception: `SAMPLE_RATE_OUT_OF_RANGE` when the DFT frame cannot locate the bins (highest locator overflow or
-  subnormal bin spacing, ADR 0035) and `ENERGY_OUT_OF_RANGE` when `Σ x_n²` overflows or is nonzero but below
-  `Double.MIN_NORMAL`. Silent samples decompose to zero magnitudes.
+  subnormal bin spacing, ADR 0035) and `ENERGY_OUT_OF_RANGE` when `Σ x_n²` exceeds `Double.MAX_VALUE / 2` (headroom
+  so the recomputed retained energy stays finite) or is nonzero but below `Double.MIN_NORMAL`. Silent samples decompose to zero magnitudes.
 - **Haar strategy** (#124): orthonormal Haar, `a = (x_{2m} + x_{2m+1}) / √2`, `d = (x_{2m} − x_{2m+1}) / √2`, applied
   to the approximation of each level, levels `1..L` with `L ≤ log2 N`. Requires `N` a power of two; any other length is
   rejected (fixture N4), never padded silently.

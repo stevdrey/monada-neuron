@@ -36,9 +36,12 @@ The reference must also be bit-reproducible with `StrictMath` (section 11.2), O(
   detail)`. A structurally valid wave can still fall outside what a transform can represent:
   - `SAMPLE_RATE_OUT_OF_RANGE`: the DFT frame guards of ADR 0035 (highest locator overflow, subnormal bin spacing),
     pre-checked through the same package-private `SpectralFrame` predicates so no exception escapes for host data;
-  - `ENERGY_OUT_OF_RANGE`: `Σ x_n²` overflows, or is nonzero but below `Double.MIN_NORMAL` (including nonzero samples
-    whose energy underflows to `0`), where the Parseval tolerance can no longer be checked and `SpectralPattern`
-    would reject the result. Silence (all samples `0`) is valid and decomposes to zero magnitudes.
+  - `ENERGY_OUT_OF_RANGE`: `Σ x_n²` exceeds `MAX_SOURCE_ENERGY = Double.MAX_VALUE / 2`, or is nonzero but below
+    `Double.MIN_NORMAL`. The upper bound is headroom: `SpectralPattern` recomputes the retained energy from rounded
+    magnitudes, which may exceed the source energy by up to the Parseval tolerance, so a finite source energy close to
+    `Double.MAX_VALUE` could otherwise overflow there and escape as an exception. The lower bound covers nonzero samples whose
+    energy is subnormal or underflows to `0`, where the Parseval tolerance can no longer be checked and
+    `SpectralPattern` would reject the result. Silence (all samples `0`) is valid and decomposes to zero magnitudes.
   #124 adds its own reason (non-power-of-two length, N4) to the same enum. Rejections are equal values for equal
   waves.
 - **`WaveEncoder<S>`** is a functional interface, `SampledWave encode(S source)`, implemented by hosts. It is the

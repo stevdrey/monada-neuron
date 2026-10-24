@@ -29,8 +29,8 @@ import monada.neuron.spectral.DecompositionResult.DecompositionRejected;
  * responsibility ({@link WaveEncoder}).
  *
  * <p><b>Rejections.</b> {@link DecompositionRejectionReason#SAMPLE_RATE_OUT_OF_RANGE} when the DFT frame cannot locate
- * the bins, and {@link DecompositionRejectionReason#ENERGY_OUT_OF_RANGE} when {@code Σ x_n²} overflows or is nonzero
- * but below {@link Double#MIN_NORMAL}. The source energy is summed with samples scaled by a power of two, as
+ * the bins, and {@link DecompositionRejectionReason#ENERGY_OUT_OF_RANGE} when {@code Σ x_n²} exceeds
+ * {@link #MAX_SOURCE_ENERGY} or is nonzero but below {@link Double#MIN_NORMAL}. The source energy is summed with samples scaled by a power of two, as
  * {@link SpectralPattern#retainedEnergy()} is, so a representable energy is never lost to squaring underflow.
  *
  * <p><b>Cost.</b> O(N²) time (about {@code N²/2} multiply-adds per window, 8.4 M at {@code N = 4096}), O(N) memory:
@@ -38,6 +38,13 @@ import monada.neuron.spectral.DecompositionResult.DecompositionRejected;
  * transform; a later FFT backend must match it within a documented tolerance.
  */
 public final class DftWaveDecomposer implements WaveDecomposer {
+
+    /**
+     * Largest accepted source energy, {@code Double.MAX_VALUE / 2}. The retained energy of the pattern is recomputed
+     * from rounded magnitudes and may exceed the source energy by up to the Parseval tolerance; this headroom keeps it
+     * finite, so an energy close to {@code Double.MAX_VALUE} is a typed rejection rather than an overflow.
+     */
+    public static final double MAX_SOURCE_ENERGY = Double.MAX_VALUE / 2;
 
     private static final double TWO_PI = 2.0 * StrictMath.PI;
 
@@ -65,9 +72,9 @@ public final class DftWaveDecomposer implements WaveDecomposer {
         double[] x = wave.samples();
         double peak = peakMagnitude(x);
         double energy = sourceEnergy(x, peak);
-        if (peak != 0.0 && !(Double.isFinite(energy) && energy >= Double.MIN_NORMAL)) {
+        if (peak != 0.0 && !(energy >= Double.MIN_NORMAL && energy <= MAX_SOURCE_ENERGY)) {
             return new DecompositionRejected(DecompositionRejectionReason.ENERGY_OUT_OF_RANGE,
-                    "source energy is not a normal finite double: " + energy);
+                    "source energy is outside [MIN_NORMAL, MAX_SOURCE_ENERGY]: " + energy);
         }
 
         int binCount = n / 2 + 1;

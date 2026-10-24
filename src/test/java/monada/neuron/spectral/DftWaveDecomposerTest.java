@@ -217,6 +217,25 @@ class DftWaveDecomposerTest {
     }
 
     @Test
+    void rejectsFiniteSourceEnergyAboveTheRetainedEnergyHeadroom() {
+        // Finite source energy Double.MAX_VALUE whose recomputed retained energy would overflow (review of #159).
+        var nearMax = new SampledWave(
+                new double[] {6.690088685069491E153, 1.1619103646436442E154, -9.196371841170621E151}, 3.0,
+                SampleUnit.HERTZ, PROVENANCE);
+        assertRejected(nearMax, DecompositionRejectionReason.ENERGY_OUT_OF_RANGE);
+
+        double atBound = StrictMath.sqrt(DftWaveDecomposer.MAX_SOURCE_ENERGY);
+        while (atBound * atBound > DftWaveDecomposer.MAX_SOURCE_ENERGY) {
+            atBound = Math.nextDown(atBound);
+        }
+        var accepted = decompose(new SampledWave(new double[] {atBound}, 1.0, SampleUnit.HERTZ, PROVENANCE));
+        assertTrue(Double.isFinite(accepted.retainedEnergy()));
+        assertEquals(atBound, accepted.magnitude(0));
+        assertRejected(new SampledWave(new double[] {Math.nextUp(Math.nextUp(atBound))}, 1.0, SampleUnit.HERTZ,
+                PROVENANCE), DecompositionRejectionReason.ENERGY_OUT_OF_RANGE);
+    }
+
+    @Test
     void acceptsSmallAndLargeEnergiesInTheNormalRange() {
         var small = decompose(new SampledWave(new double[] {1e-150, -1e-150}, 2.0, SampleUnit.HERTZ, PROVENANCE));
         var large = decompose(new SampledWave(new double[] {1e150, 1e150}, 2.0, SampleUnit.HERTZ, PROVENANCE));
