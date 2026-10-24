@@ -13,8 +13,16 @@
  * level is a dyadic scale; neither is ever a frequency. {@link monada.neuron.spectral.LocatorUnit} names the unit of
  * each pattern's locators explicitly.
  *
- * <p>Construction errors are caller bugs and throw {@link java.lang.IllegalArgumentException} or
- * {@link java.lang.NullPointerException}; typed rejections of host input belong to the decomposers (#123, #124).
- * Nothing in this package depends on a transform, codec, the Resonance Store or hardware-specific code.
+ * <p><b>Decomposition.</b> A host-implemented {@link monada.neuron.spectral.WaveEncoder} supplies one explicit
+ * {@link monada.neuron.spectral.SampledWave} window with its sampling metadata and provenance; a
+ * {@link monada.neuron.spectral.WaveDecomposer} such as the scalar reference
+ * {@link monada.neuron.spectral.DftWaveDecomposer} turns it into a pattern (ADR 0036). No public type here accepts a
+ * {@code Signal}: samples are never derived from one.
+ *
+ * <p>Construction errors, including a malformed {@code SampledWave}, are caller bugs and throw
+ * {@link java.lang.IllegalArgumentException} or {@link java.lang.NullPointerException}; a valid wave outside a
+ * transform limit is a typed {@link monada.neuron.spectral.DecompositionResult.DecompositionRejected}. Nothing in this
+ * package depends on a codec, the Resonance Store or hardware-specific code, and every transform is a single-threaded
+ * {@code StrictMath} reference.
  */
 package monada.neuron.spectral;

@@ -344,12 +344,14 @@ configuration or untrusted observation, and how stale metadata is handled is sta
 (`forge-integration-readiness/1`, Neuron issue #94, [ADR 0033](docs/adr/0033-phase-gated-host-adoption-boundary.md)).
 
 The experimental hierarchical wave cognition path of Epic #120 (explicit samples, a `WaveDecomposer` prism, spectral
-resonance, coarse-to-fine next-concept hypotheses and optional synthesis) is specified, not implemented, in the
+resonance, coarse-to-fine next-concept hypotheses and optional synthesis) is specified in the
 [NCM Wave Cognition Experiment Contract v1](docs/specs/ncm-wave-cognition-v1.md) (`ncm-wave-cognition/1`, issue #121,
 [ADR 0034](docs/adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md)). NCM is hierarchy and prediction over
 decomposed evidence, not the prism; the single-wave `Signal` path is unchanged, and stop/go gates decide whether
 later issues proceed. Its bounded, immutable spectral value types (`monada.neuron.spectral`, issue #122,
-[ADR 0035](docs/adr/0035-compact-immutable-spectral-pattern.md)) are implemented; no transform is.
+[ADR 0035](docs/adr/0035-compact-immutable-spectral-pattern.md)) are implemented, as is the deterministic scalar DFT
+reference `DftWaveDecomposer` over explicit host-encoded `SampledWave` windows (issue #123,
+[ADR 0036](docs/adr/0036-deterministic-dft-reference-decomposer.md)); the other transforms and stages are not.
 
 ## Design Principles
 

@@ -6,10 +6,13 @@ import monada.neuron.resonance.ScalarResonanceMetric;
 import monada.neuron.signal.Signal;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /** Proves the opt-in spectral types left the single-wave path of ADR 0005 and ADR 0006 unchanged. */
 class SpectralCompatibilityTest {
@@ -36,6 +39,20 @@ class SpectralCompatibilityTest {
     void canonicalStageKindsAreUnchanged() {
         assertEquals(List.of("PERCEPTION", "MEMORY_RECALL", "REASONING", "EVALUATION", "ADAPTATION", "ACTION"),
                 Arrays.stream(CognitiveStageKind.values()).map(Enum::name).toList());
+    }
+
+    @Test
+    void decompositionTakesExplicitSamplesNeverSignals() {
+        assertEquals(List.of("samples:double[]", "sampleRate:double", "unit:SampleUnit",
+                "provenance:WaveProvenance"), components(SampledWave.class));
+        for (Class<?> type : List.of(SampledWave.class, WaveEncoder.class, WaveDecomposer.class,
+                DftWaveDecomposer.class, DecompositionResult.class)) {
+            for (Method method : type.getMethods()) {
+                assertFalse(Arrays.asList(method.getParameterTypes()).contains(Signal.class),
+                        type.getSimpleName() + "." + method.getName() + " must not accept a Signal");
+                assertNotEquals(Signal.class, method.getReturnType());
+            }
+        }
     }
 
     private static List<String> components(Class<? extends Record> type) {

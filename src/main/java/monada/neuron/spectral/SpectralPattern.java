@@ -68,6 +68,13 @@ public final class SpectralPattern {
      */
     public static final double ENERGY_TOLERANCE = 1e-9;
 
+    /**
+     * Largest source energy a pattern may carry, {@code Double.MAX_VALUE / 2}. The retained energy is recomputed from
+     * rounded magnitudes and may exceed the source energy by up to {@link #ENERGY_TOLERANCE}; this headroom keeps it
+     * finite. Decomposers report a larger energy as a typed rejection before building a pattern.
+     */
+    public static final double MAX_SOURCE_ENERGY = Double.MAX_VALUE / 2;
+
     private final SpectralFrame frame;
     private final double sourceEnergy;
     private final WaveProvenance provenance;
@@ -120,6 +127,26 @@ public final class SpectralPattern {
         requireHeader(frame, sourceEnergy, provenance, count);
         return new SpectralPattern(frame, canonicalZero(sourceEnergy), provenance, levels.clone(), indices.clone(),
                 canonicalZeros(magnitudes), canonicalZeros(phases));
+    }
+
+    /**
+     * Creates a pattern that takes ownership of freshly allocated arrays instead of copying them, for decomposers in
+     * this package. The caller must not keep or mutate the arrays afterwards; signed zeros are canonicalized in place
+     * and every rule of the public factory is validated.
+     */
+    static SpectralPattern ofOwned(SpectralFrame frame, double sourceEnergy, WaveProvenance provenance,
+                                   int[] levels, int[] indices, double[] magnitudes, double[] phases) {
+        int count = levels.length;
+        if (indices.length != count || magnitudes.length != count || phases.length != count) {
+            throw new IllegalArgumentException("owned arrays must have equal lengths");
+        }
+        requireHeader(frame, sourceEnergy, provenance, count);
+        for (int i = 0; i < count; i++) {
+            magnitudes[i] = canonicalZero(magnitudes[i]);
+            phases[i] = canonicalZero(phases[i]);
+        }
+        return new SpectralPattern(frame, canonicalZero(sourceEnergy), provenance, levels, indices, magnitudes,
+                phases);
     }
 
     /**
@@ -335,13 +362,11 @@ public final class SpectralPattern {
                                       int count) {
         Objects.requireNonNull(frame, "frame must not be null");
         Objects.requireNonNull(provenance, "provenance must not be null");
-        if (!Double.isFinite(sourceEnergy) || sourceEnergy < 0.0) {
-            throw new IllegalArgumentException("sourceEnergy must be finite and non-negative, got: " + sourceEnergy);
+        if (!(sourceEnergy >= 0.0 && sourceEnergy <= MAX_SOURCE_ENERGY)) {
+            throw new IllegalArgumentException(
+                    "sourceEnergy must be in [0, MAX_SOURCE_ENERGY], got: " + sourceEnergy);
         }
-        if (provenance.windowOffset() > Long.MAX_VALUE - frame.sampleCount()) {
-            throw new IllegalArgumentException("windowOffset + sampleCount overflows: windowOffset="
-                    + provenance.windowOffset() + ", sampleCount=" + frame.sampleCount());
-        }
+        provenance.requireWindowFits(frame.sampleCount());
         int cap = frame.basis() == SpectralBasis.DFT ? MAX_COMPONENTS_DFT : MAX_COMPONENTS_HAAR;
         if (count > cap) {
             throw new IllegalArgumentException(
@@ -358,7 +383,7 @@ public final class SpectralPattern {
     }
 
     private static double canonicalZero(double value) {
-        return value == 0.0 ? 0.0 : value;
+        return SpectralArithmetic.canonicalZero(value);
     }
 
     /** Validates keys, order and values in one pass and returns the largest magnitude. */
@@ -408,15 +433,14 @@ public final class SpectralPattern {
             requireEnergyConsistent(0.0);
             return 0.0;
         }
-        int exponent = Math.getExponent(maxMagnitude);
+        int exponent = SpectralArithmetic.scaleExponent(maxMagnitude);
         double sum = 0.0;
         boolean dft = frame.basis() == SpectralBasis.DFT;
         for (int i = 0; i < magnitudes.length; i++) {
-            double scaled = Math.scalb(magnitudes[i], -exponent);
-            double squared = scaled * scaled;
+            double squared = SpectralArithmetic.scaledSquare(magnitudes[i], exponent);
             sum += dft && !frame.isRealDftBin(indices[i]) ? squared / 2.0 : squared;
         }
-        double energy = Math.scalb(dft ? frame.sampleCount() * sum : sum, 2 * exponent);
+        double energy = SpectralArithmetic.unscaleEnergy(dft ? frame.sampleCount() * sum : sum, exponent);
         if (!Double.isFinite(energy)) {
             throw new IllegalArgumentException("retained energy overflows for magnitudes of " + frame);
         }
