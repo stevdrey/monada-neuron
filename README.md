@@ -343,6 +343,13 @@ configuration or untrusted observation, and how stale metadata is handled is sta
 [Forge Integration Readiness Contract v1](docs/specs/forge-integration-readiness-v1.md)
 (`forge-integration-readiness/1`, Neuron issue #94, [ADR 0033](docs/adr/0033-phase-gated-host-adoption-boundary.md)).
 
+The experimental hierarchical wave cognition path of Epic #120 (explicit samples, a `WaveDecomposer` prism, spectral
+resonance, coarse-to-fine next-concept hypotheses and optional synthesis) is specified, not implemented, in the
+[NCM Wave Cognition Experiment Contract v1](docs/specs/ncm-wave-cognition-v1.md) (`ncm-wave-cognition/1`, issue #121,
+[ADR 0034](docs/adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md)). NCM is hierarchy and prediction over
+decomposed evidence, not the prism; the single-wave `Signal` path is unchanged, and stop/go gates decide whether
+later issues proceed.
+
 ## Design Principles
 
 ### 1. Do not build an LLM wrapper

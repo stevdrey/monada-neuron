@@ -1,0 +1,618 @@
+# NCM Wave Cognition Experiment Contract v1
+
+**Contract identifier**: `ncm-wave-cognition/1`
+**Status**: Accepted (issue #121; documentation only; experimental and opt-in)
+**Parent**: Epic #120, Hierarchical Wave Cognition
+**Decision record**: [ADR 0034](../adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md)
+**Composes, unchanged**: [ADR 0001](../adr/0001-cognition-memory-boundary.md),
+[ADR 0005](../adr/0005-signals-without-identifiers.md), [ADR 0006](../adr/0006-deterministic-scalar-resonance-metric.md),
+[ADR 0019](../adr/0019-typed-hypothesis-and-evidence-model.md), [ADR 0022](../adr/0022-embeddable-host-runtime-facade.md)
+
+This document is the normative contract for the Next-Concept Modeling (NCM) wave cognition experiment. It fixes the
+pipeline, the meaning of each value, who owns what, the bounds, the numerical tolerances, the test fixtures, the
+falsifiable hypotheses and the stop/go gates **before** any implementation exists. It introduces no Java type, no value
+of an existing type and no runtime behavior. Every type it names is a sketch marked `proposed, owned by issue #N`; the
+owning issue may refine the shape, and any change to a semantic, tolerance or gate stated here must update this
+document (Section 17).
+
+```text
+explicit samples
+  -> WaveDecomposer (the prism)            signal analysis: samples -> spectral components
+  -> SpectralPattern                       bounded, immutable, cycle-local spectral data
+  -> SpectralResonanceDynamics             alignment, phase coherence, signed interference between patterns
+  -> coarse-to-fine NCM                    hierarchical concept hypotheses from evidence, with abstention
+  -> optional WaveSynthesizer              reconstruction of samples when the pattern is invertible
+  -> optional cognitive-stage wiring       host composition inside the existing bounded cycle
+```
+
+## 1. Scope and Claims
+
+### 1.1 What this contract covers
+
+- The four distinct operations of the pipeline (decomposition, resonance, NCM inference, synthesis) and the boundary
+  between them (Section 2).
+- The architecture contract: diagram, lifecycle, API sketches and the ownership table (Section 3).
+- The input schema: sampling, units, provenance and aliasing rules (Section 4).
+- The transform family and the choice of reference transforms (Section 5).
+- The semantics of `SpectralPattern`, `SpectralResonanceDynamics`, the hierarchical predictor and `WaveSynthesizer`
+  (Sections 6 to 9), including which outputs are hypotheses rather than physical truths (Section 8.5).
+- Optional cognitive-stage wiring and feedback (Section 10).
+- Bounds, determinism, tie rules and fallback (Section 11).
+- Positive and negative fixtures with numerical tolerances (Section 12), falsifiable hypotheses (Section 13), synthetic
+  workloads and metrics (Section 14), stop/go gates (Section 15) and the issue/PR DAG (Section 16).
+
+### 1.2 Non-goals
+
+- No production feature code in this issue, and no Java type until its owning issue.
+- No new `CognitiveStageKind`, no change to the canonical stage order, no `CycleInput` field.
+- No change to `Signal`, `SignalKind`, `FrequencyState`, `ResonanceMetric` or `ScalarResonanceMetric` semantics.
+- No automatic semantics inferred from arbitrary text, no generic text-to-frequency oracle, no tokenizer, no LLM, no
+  prompt framework and no provider-specific model.
+- No long-term memory, persisted concept store, recall or ranking inside Neuron (ADR 0001).
+- No mandate to replace the single-wave path; it stays the default and the fallback.
+- No FFT library, SIMD, native, GPU or incubator backend in the reference path.
+
+### 1.3 What this experiment does not claim
+
+- Concepts are **not** waves. No physical, biological or electromagnetic equivalence between a concept and a spectral
+  component is claimed or implied.
+- A frequency reported in hertz is a property of the **samples**, not of the concept they were encoded from. Its
+  meaning is only what the modality encoder that produced the samples declares (Section 4.3).
+- Concept labels are **host supplied ground truth**. Nothing in the pipeline discovers, names or grounds a concept;
+  the predictor only proposes which known label the evidence supports.
+- A good reconstruction says the transform kept the information of the samples; it says nothing about whether a
+  concept prediction is right (Section 9).
+- No performance figure is promised. Section 14 defines what is measured, not what will be found.
+
+## 2. Vocabulary and the Prism Analogy
+
+The Epic's analogy: a structured input is the incoming beam, the decomposer is the prism, the resulting components are
+the spectrum, resonance studies how spectra relate, and NCM is the observer who forms hypotheses about what the
+spectrum indicates. **NCM is not the prism.** The four operations stay separate types with separate owners and
+separate tests.
+
+| Operation | Input | Output | Question it answers | Owning issue |
+| --- | --- | --- | --- | --- |
+| Decomposition | `SampledWave` | `SpectralPattern` | Which components make up these samples? | #123 (DFT), #124 (Haar) |
+| Resonance | two `SpectralPattern`s | `SpectralComparison` | How aligned, coherent or interfering are two patterns? | #125 |
+| NCM inference | patterns, comparisons, a `ConceptHierarchy` | `ConceptPrediction` | Which known concept, coarse then fine, does the evidence support, or abstain? | #127 |
+| Synthesis | `SpectralPattern` | `SynthesisResult` | Which samples does this pattern reconstruct, and how faithfully? | #126 |
+
+### 2.1 Physical frequencies versus abstract features
+
+| Kind | Example | Unit | When it may be reported |
+| --- | --- | --- | --- |
+| Physical frequency | DFT bin `k` of samples taken at `sampleRate` Hz | `HERTZ`, `k * sampleRate / N` | Only when the input declares `SampleUnit.HERTZ` |
+| Abstract index frequency | DFT bin `k` of a sequence with no physical clock | cycles per window, `k / N` | When the input declares `SampleUnit.ABSTRACT_PER_INDEX` |
+| Scale | Haar level `j`, position `m` | dyadic level, sample positions | Always; never converted to Hz |
+| Learned feature | a weight inside a later learned predictor | none | Never reported as a frequency |
+
+A value is reported in hertz only when it is a physical frequency in this table. A wavelet coefficient is a scale and
+position, not a frequency (#124's non-goal). A learned feature is not a wave component.
+
+## 3. Architecture Contract
+
+### 3.1 Diagram with owners
+
+```text
+Host / modality encoder (host owned)
+  -> chooses what the samples mean, the sample rate, the unit and the window       (meaning lives here)
+  -> builds SampledWave(samples, sampleRate, unit, provenance)                      (#123 type)
+        |
+        v
+Neuron, cycle-local, pure and deterministic
+  WaveDecomposer.decompose(SampledWave)                 -> SpectralPattern | Rejected(reason)    (#123, #124)
+  SpectralResonanceDynamics.compare(p1, p2)             -> SpectralComparison | Incompatible     (#125)
+  NextConceptPredictor.predict(evidence, hierarchy, model snapshot)
+                                                         -> ConceptPrediction (candidates | Abstain(reason))  (#127)
+  WaveSynthesizer.synthesize(SpectralPattern)           -> SynthesisResult (EXACT | LOSSY | NOT_INVERTIBLE)  (#126)
+        |
+        v  optional, host composed (#128)
+  existing CognitiveStage positions (no new kind) -> typed result -> later stages / ActionOutcome
+        |
+        v  optional, caller carried (#129)
+  validated outcome -> NcmFeedback -> caller-owned model snapshot -> next cycle
+        |
+        v  only through existing ports
+Monada Resonance Store (Store owned): persisted experience, recall, ranking
+```
+
+### 3.2 Lifecycle
+
+1. **Construct**: the host builds `SampledWave` and, when inference is wanted, supplies a `ConceptHierarchy` and an
+   immutable model snapshot. Construction validates; invalid input is rejected with a typed reason, never repaired.
+2. **Decompose**: one transform per window. The result carries its basis, scale and the input provenance.
+3. **Compare**: optional. Only compatible patterns (Section 7.2) are compared.
+4. **Infer**: optional. Coarse level first; finer levels only when the coarser level is confident (Section 8.2).
+5. **Synthesize**: optional. Only an invertible pattern reconstructs exactly.
+6. **Hand off**: optional, inside the existing cycle through a typed stage result (Section 10).
+7. **Discard**: every artifact is cycle-local and immutable. Neuron keeps nothing after the call or cycle returns.
+   Anything durable is a caller-owned snapshot (ADR 0021 and ADR 0030 pattern) or Store experience behind a port.
+
+### 3.3 Ownership table
+
+| Item | Owner | Notes |
+| --- | --- | --- |
+| Meaning of the samples, encoder identity and version | Host / modality encoder | Neuron never infers meaning from samples |
+| Sample rate, unit, window and pre-filtering | Host | Neuron validates and refuses; it does not resample or filter |
+| Concept labels, hierarchy and ground truth | Host (fixture author in evaluation) | Labels are opaque ids mapped to `Proposition(domain, code)` |
+| Transforms (`WaveDecomposer`, strategies) | Neuron | Pure functions, scalar references |
+| `SpectralPattern` value and validation | Neuron | Cycle-local, immutable, versioned |
+| `SpectralResonanceDynamics` | Neuron | Separate from `ScalarResonanceMetric`, which is unchanged |
+| Hierarchical NCM inference, hypotheses, abstention | Neuron | Proposals only, never truth (Section 8.5) |
+| `WaveSynthesizer` and fidelity diagnostics | Neuron | Reconstruction of samples only |
+| Model snapshot (priors, transition counts, centroids) | Caller | Immutable snapshot passed in; updates through #129 only |
+| Stage composition and budgets | Host through existing APIs | No new stage kind, existing `CognitiveBudget` |
+| Persisted experience, recall, ranking | Monada Resonance Store | Through `ResonanceMemoryPort` only |
+| Evaluation fixtures, harness and reports | `monada-neuron-evaluation` | Never in the published artifact |
+
+### 3.4 API sketches
+
+All sketches are illustrative Java 27 shapes, `proposed, owned by issue #N`. Records validate in their compact
+constructor, copy arrays and lists, and expose no mutable state.
+
+```java
+// #123
+record SampledWave(double[] samples, double sampleRate, SampleUnit unit, WaveProvenance provenance) { }
+enum SampleUnit { HERTZ, ABSTRACT_PER_INDEX }
+record WaveProvenance(String encoderId, int encoderVersion, String sourceReference, long windowOffset) { }
+
+sealed interface DecompositionResult permits Decomposed, DecompositionRejected { }
+interface WaveDecomposer { DecompositionResult decompose(SampledWave wave); }
+
+// #122
+record SpectralPattern(int version, SpectralBasis basis, SpectralScale scale, int sampleCount,
+                       double sampleRate, SampleUnit unit, List<WaveComponent> components,
+                       WaveProvenance provenance) { }
+enum SpectralBasis { DFT, HAAR }
+record SpectralScale(int level, int levelCount) { }       // DFT: level 0 of 1
+record WaveComponent(int index, int level, double magnitude, double phase, boolean phaseDefined,
+                     double locator) { }                  // locator: frequency for DFT, position for HAAR
+
+// #125
+sealed interface ComparisonResult permits SpectralComparison, Incompatible { }
+record BandContribution(int index, double alignment, double phaseDifference, double interference) { }
+record SpectralComparison(List<BandContribution> bands, double aggregate, double coherence) { }
+
+// #127
+record ConceptNode(int ordinal, long conceptCode, int parentOrdinal, int depth) { }
+record ConceptHierarchy(int domain, List<ConceptNode> nodes) { }
+sealed interface ConceptPrediction permits ConceptCandidates, ConceptAbstention { }
+record ConceptCandidate(int conceptOrdinal, int depth, double score, double margin, List<Integer> supportingComponents) { }
+enum AbstentionReason { LOW_CONFIDENCE, LOW_MARGIN, INCOMPATIBLE_INPUT, UNKNOWN_CONCEPT, BUDGET_EXHAUSTED }
+
+// #126
+record SynthesisResult(SynthesisStatus status, double[] samples, double maxAbsoluteError, double relativeEnergyError) { }
+enum SynthesisStatus { EXACT, LOSSY, NOT_INVERTIBLE }
+```
+
+`FrequencyState` is not extended. A projection from a `SpectralPattern` to one `FrequencyState` (for example, the
+dominant component) may be offered by #122 as an explicit, documented, lossy helper so the single-wave path can be
+compared as a control (H2); it is never implicit.
+
+## 4. Input Schema
+
+### 4.1 `SampledWave` (proposed, owned by issue #123)
+
+| Field | Rule |
+| --- | --- |
+| `samples` | Copied `double[]`; length `1..maxSamples`; every value finite; NaN and infinities are rejected |
+| `sampleRate` | Finite and `> 0`; for `ABSTRACT_PER_INDEX` it is `1` by convention |
+| `unit` | `HERTZ` or `ABSTRACT_PER_INDEX`; there is no default |
+| `provenance.encoderId` | Opaque, non-blank, bounded (128 code points, the `MAX_REFERENCE_LENGTH` of ADR 0019) |
+| `provenance.encoderVersion` | `>= 1` |
+| `provenance.sourceReference` | Opaque, bounded like `encoderId`; never a payload, text or file content |
+| `provenance.windowOffset` | `>= 0`, index of the first sample in the host's stream |
+
+The samples are uniformly spaced by construction: `SampledWave` has no timestamps. Non-uniform data must be resampled
+by the host before it enters Neuron, and the host reports that in `provenance`.
+
+### 4.2 Sampling and aliasing
+
+- DFT bins `k = 0..floor(N/2)` are reported (single-sided). Bin `k` locates at `k * sampleRate / N`.
+- The Nyquist limit is `sampleRate / 2`. Content above it **aliases** and cannot be detected from the samples
+  (fixture N7). Pre-filtering is the host's responsibility and is recorded in provenance.
+- The DC component (`k = 0`) is reported like any other bin; its phase is `0` or `π` by sign.
+- There is no implicit windowing (rectangular window). Spectral leakage for non-integer cycle counts is expected and is
+  covered by fixture P7, not hidden.
+- Two patterns with different `sampleRate`, `unit`, `sampleCount` or basis are incompatible (Section 7.2). Neuron never
+  interpolates or resamples to make them comparable.
+
+### 4.3 Where meaning comes from
+
+The samples mean only what the encoder declares. An encoder that turns, for example, a feature trace into a sequence of
+numbers is a host adapter and owns that mapping. In the evaluation (#130) the encoders are synthetic generators with a
+documented formula and seed, so the "meaning" of each fixture is known exactly. Arbitrary text never enters the
+pipeline as text.
+
+## 5. Transform Family
+
+### 5.1 Comparison
+
+| Family | What it yields | Invertible | Reference cost | Determinism | Role in v1 |
+| --- | --- | --- | --- | --- | --- |
+| Direct DFT | Magnitude and phase per frequency bin over the whole window | Yes (inverse DFT) | O(N²) time, O(N) memory | Bit-reproducible with `StrictMath` and fixed summation order | **Reference** (#123) |
+| FFT (radix 2, mixed radix) | Same values as DFT | Yes | O(N log N) | Reproducible only within tolerance of the DFT (different summation order) | Later optional backend, checked against the DFT; not in v1 |
+| Haar wavelet (orthonormal) | Approximation and detail per dyadic level and position; time and scale localized | Yes (inverse Haar), for power-of-two N | O(N) | Bit-reproducible | **Multiresolution strategy** (#124) |
+| Other wavelets (Daubechies, etc.) | Smoother scale localization | Yes, with boundary handling | O(N · filter length) | Depends on boundary rule | Out of scope for v1 |
+| Phase coupling, PLV-style | Consistency of phase differences between two patterns | Not a transform | O(bands) | Bit-reproducible | Measure inside #125 |
+| Coupled oscillators (Kuramoto) | Synchronization dynamics over time | Not a transform | O(steps · oscillators²) | Depends on the integrator | Out of default scope (#125 non-goal) |
+
+### 5.2 Decision
+
+- **DFT reference** (#123): `X_k = Σ_{n=0}^{N-1} x_n · e^{-2πi·k·n/N}`, computed in `double` with `StrictMath.cos` and
+  `StrictMath.sin` of the reduced angle `2π·((k·n) mod N)/N`, summed in ascending `n`. Any length `1..maxSamples` is
+  valid; no power-of-two requirement.
+- **Haar strategy** (#124): orthonormal Haar, `a = (x_{2m} + x_{2m+1}) / √2`, `d = (x_{2m} − x_{2m+1}) / √2`, applied
+  to the approximation of each level, levels `1..L` with `L ≤ log2 N`. Requires `N` a power of two; any other length is
+  rejected (fixture N4), never padded silently.
+- Neither strategy is the default for existing hosts. Choosing one is a host decision.
+
+## 6. `SpectralPattern` (proposed, owned by issue #122)
+
+- **Immutable and bounded**: at most `maxComponents` components (Section 11), list copied, sorted by `(level, index)`,
+  no duplicate `(level, index)`.
+- **Versioned**: `version` is the pattern schema version, `1` for this contract.
+- **Normalization, DFT**: magnitude `|X_k| / N` for `k = 0` and, when `N` is even, `k = N/2`; `2·|X_k| / N` otherwise.
+  A pure cosine of amplitude `A` at an integer bin therefore reports magnitude `A`.
+- **Normalization, Haar**: coefficients are the orthonormal values themselves; `magnitude = |c|`, `phase = 0` for
+  `c ≥ 0` and `π` for `c < 0`. Energy is preserved (fixture P9).
+- **Phase**: `atan2(Im, Re)` wrapped to `(−π, π]` (a result of `−π` becomes `π`, and `−0.0` becomes `0.0`, so equal
+  patterns are equal records). When the magnitude is below `phaseEpsilon` (`1e-12` relative to the
+  largest magnitude of the pattern, or absolute when that is 0), `phaseDefined = false` and `phase = 0`. Comparisons
+  ignore undefined phases.
+- **Locator**: physical or abstract frequency for DFT (Section 2.1), sample position of the coefficient's support start
+  for Haar.
+- **Compact**: a later optimized layout (parallel primitive arrays, as `FrequencyStateBatch` does) is allowed behind the
+  same value semantics; the public record stays the reference.
+
+## 7. `SpectralResonanceDynamics` (proposed, owned by issue #125)
+
+### 7.1 Separation from the scalar metric
+
+`SpectralResonanceDynamics` is a new, explicitly named mechanism. `ResonanceMetric` and `ScalarResonanceMetric`
+(ADR 0006) are not changed, not wrapped and not replaced. The scalar metric remains the control for H2.
+
+### 7.2 Compatibility
+
+Two patterns are comparable only when `version`, `basis`, `scale`, `sampleCount`, `sampleRate` and `unit` are equal.
+Otherwise the result is `Incompatible(reason)`. There is no interpolation, padding or rate conversion.
+
+### 7.3 Reference quantities
+
+For each band `k` present in both patterns with magnitudes `m1_k`, `m2_k` and phase difference `Δφ_k` (wrapped to
+`(−π, π]`, `0` when either phase is undefined):
+
+```text
+interference_k = m1_k · m2_k · cos(Δφ_k)                         signed; may be negative
+alignment_k    = min(m1_k, m2_k) / max(m1_k, m2_k), 0 when both are 0
+aggregate      = (1 + Σ_k interference_k / (‖m1‖ · ‖m2‖)) / 2     in [0, 1]; 0 when either norm is 0
+coherence      = |Σ_k w_k · e^{iΔφ_k}| / Σ_k w_k,  w_k = m1_k · m2_k, over bands with defined phases
+                                                                  in [0, 1]; 0 when Σ w_k = 0
+```
+
+`‖m‖` is the Euclidean norm of the magnitudes. The aggregate is the normalized real part of the spectral
+cross-correlation mapped to `[0, 1]`; it is symmetric. Negative interference is a diagnostic of destructive phase
+relation and is **never** written to the Store as a score. #125 may add weights per band; each must be documented and
+default to the reference above.
+
+## 8. Hierarchical NCM (proposed, owned by issue #127)
+
+### 8.1 Concept hierarchy
+
+`ConceptHierarchy` is a host-supplied rooted forest of labeled concepts: `ordinal` is the index in the list (stable,
+`0..maxConcepts−1`), `conceptCode` is the host's opaque label, `parentOrdinal` is `−1` for a root, `depth` is `0` for a
+root and at most `maxDepth − 1`. Parents precede children in the list; the structure is validated acyclic. A concept is
+emitted as `Proposition(domain, conceptCode)` (ADR 0019).
+
+### 8.2 Coarse-to-fine prediction
+
+The predictor reads an immutable caller-owned model snapshot (#127 defines its content; the minimal reference is a
+per-concept spectral centroid plus a concept-transition count table, both learned only from labeled training
+sequences), the current pattern evidence and optionally the previous concept.
+
+1. Score every depth 0 concept.
+2. Select the best; if `score < τ_conf` or `score − secondScore < τ_margin`, **abstain** at that depth with
+   `LOW_CONFIDENCE` or `LOW_MARGIN`, keeping the coarse candidates as diagnostics.
+3. Otherwise descend into the selected concept's children and repeat, until a leaf or `maxDepth`.
+4. The result is the deepest confident level reached: a coarse-only prediction is a valid, reported outcome, not a
+   failure.
+
+"Next concept" means the concept the evidence of the **next** window is predicted to support, given the current
+evidence and the previous concept; the fixtures (Section 12.3) define the label of each next window.
+
+### 8.3 Scores, uncertainty and calibration
+
+- Scores are finite and in `[0, 1]`; the margin is the difference to the runner-up at the same depth.
+- Calibration is **measured, not assumed**: the evaluation reports reliability bins and expected calibration error
+  (Section 14.3). A score is not called a probability unless calibration on held-out data supports it.
+- `supportingComponents` lists the component indices that contributed, so every candidate is explainable.
+
+### 8.4 Ties and abstention
+
+- Ranking: score descending, then lower `conceptOrdinal`. No hash order is used anywhere.
+- Abstention reasons: `LOW_CONFIDENCE`, `LOW_MARGIN`, `INCOMPATIBLE_INPUT` (pattern does not match the snapshot's
+  basis), `UNKNOWN_CONCEPT` (previous concept not in the hierarchy), `BUDGET_EXHAUSTED` (candidate or level bound
+  reached). An abstention is an expected value, not an exception.
+- Thresholds `τ_conf` and `τ_margin` are snapshot parameters, chosen on training data only, and reported.
+
+### 8.5 Hypotheses, not truths
+
+| Output | Status |
+| --- | --- |
+| Spectral components of the samples | Mathematical fact about the samples within tolerance (H1), not about the concept |
+| Resonance aggregate, coherence, interference | Measured relation between two patterns; a similarity, not an identity |
+| Coarse and fine concept candidates | **Hypotheses** with evidence and score; never asserted as true |
+| Abstention | A claim of insufficient evidence |
+| Reconstructed samples | Reconstruction of the input samples, not generation of a concept |
+| Calibration figures | Empirical properties of one fixture suite, not general guarantees |
+
+When integrated (Section 10) candidates become `Hypothesis` values scored downstream by the existing evaluation policy
+(ADR 0020); the predictor's own score may enter only as an explicitly configured resonance-like support component.
+
+## 9. `WaveSynthesizer` (proposed, owned by issue #126)
+
+- Inverse DFT from a complete single-sided DFT pattern (all bins `0..floor(N/2)` present), with the conjugate-symmetric
+  reconstruction for real input, returns `EXACT` when the reconstruction error is within the tolerance of Section 12.4.
+- Inverse Haar from a complete multilevel Haar pattern returns `EXACT` under the same rule.
+- A pattern with dropped components (top-K or thresholded) returns `LOSSY` with `maxAbsoluteError` and
+  `relativeEnergyError` measured against the original samples when the caller supplies them, or the retained-energy
+  fraction otherwise. It never reports `EXACT`.
+- A pattern without the information for inversion (for example, phases undefined above `phaseEpsilon`) returns
+  `NOT_INVERTIBLE` with no samples.
+- Synthesis reconstructs samples. It does not generate images, audio, text or concept semantics (#126 non-goal).
+
+## 10. Cognitive-Stage Wiring and Feedback
+
+### 10.1 Stage wiring (proposed, owned by issue #128)
+
+- Opt-in host composition inside existing positions: for example a `PERCEPTION` capability that yields the samples'
+  provenance as `OBSERVATION` signals and a `REASONING` stage that runs decomposition and prediction and returns a
+  `ReasoningCognitiveStageResult` with the hypotheses.
+- No new `CognitiveStageKind`, no static registry, no payload map on `Signal`. `Signal` stays identity-free (ADR 0005);
+  spectral data travels only in typed stage results, never inside a `Signal`.
+- Budgets: the stage honors `CognitiveBudget` (ADR 0009), `HypothesisLimits` (ADR 0019) and this contract's bounds; a
+  bound reached produces `BUDGET_EXHAUSTED` or a `LIMIT_REACHED` stage status, never an unbounded loop.
+- Evidence: `SignalEvidence` references accepted signal occurrences. If spectral components need their own evidence
+  variant, #128 records that change to the sealed `Evidence` hierarchy in an ADR.
+- A runtime that does not opt in behaves exactly as before; existing tests are the regression check (gate G4).
+
+### 10.2 Feedback (proposed, owned by issue #129)
+
+Outcome-driven updates follow the cross-cycle rule of ADR 0021: an outcome produces an explicit feedback artifact the
+caller carries forward; the caller applies it to its own model snapshot, producing a new immutable snapshot. No hidden
+online training, no mutation of the cycle that produced the outcome, no feedback derived from the predictor's own
+unvalidated output, and every update is reversible by keeping the previous snapshot.
+
+## 11. Bounds, Determinism and Fallback
+
+### 11.1 Proposed bounds
+
+Each bound is a proposal owned by the named issue, which may lower it or justify a change; none is a promise of
+performance.
+
+| Bound | Proposed value | Rationale | Owner |
+| --- | --- | --- | --- |
+| `maxSamples` | 4,096 | Largest workload (Section 14); direct DFT at 4,096 is about 16.8 M multiply-adds per window | #123 |
+| `maxComponents` | 2,049 | `floor(4096/2) + 1` single-sided bins; Haar of 4,096 also yields 4,096 coefficients, so Haar keeps its own bound of `maxSamples` | #122 |
+| `maxLevels` (Haar) | 12 | `log2 4096` | #124 |
+| `maxConcepts` | 256 | Largest workload | #127 |
+| `maxDepth` | 3 | Largest workload | #127 |
+| `maxCandidatesPerLevel` | 16 | Bounded diagnostics per depth | #127 |
+| `maxPatternsPerComparisonBatch` | 1,024 | Largest workload | #125 |
+
+### 11.2 Determinism
+
+- Same inputs and snapshot give bit-identical outputs in the reference implementations.
+- `StrictMath` for trigonometry and roots; fixed summation order; no `parallel()` streams, no concurrency, no hash-order
+  iteration in the reference.
+- Ties are broken by explicit ordinals (Sections 6 and 8.4).
+- Inputs are validated at construction: NaN, infinities, negative magnitudes, empty arrays and out-of-bound sizes are
+  rejected with a typed reason or `IllegalArgumentException` according to whether they are expected values or caller
+  bugs; #122 and #123 fix that split.
+
+### 11.3 Fallback
+
+The single-wave path (`Signal`, `FrequencyState`, `ScalarResonanceMetric`, existing stages) is the default and the
+fallback. A host that does not opt in, or whose experiment fails a gate, keeps it unchanged. Optimized FFT, SIMD,
+native or GPU backends are out of scope for v1; if later added, they are checked against these scalar references
+within a documented tolerance.
+
+## 12. Test Fixtures and Tolerances
+
+`t_n = n / sampleRate`. Unless stated, `N = 8`, `sampleRate = 8`, unit `HERTZ`, so bin `k` locates at `k` Hz.
+
+### 12.1 Positive fixtures
+
+| Id | Input | Expected | Owner |
+| --- | --- | --- | --- |
+| P1 | DC: `x_n = 3` | bin 0 magnitude 3, phase 0; all other magnitudes 0 | #123 |
+| P2 | `cos(2π·1·t)` | bin 1 magnitude 1, phase 0; others 0 | #123 |
+| P3 | `sin(2π·1·t)` | bin 1 magnitude 1, phase `−π/2` | #123 |
+| P4 | `cos(2π·1·t) + 0.5·cos(2π·3·t + π/4)` | bin 1 magnitude 1, phase 0; bin 3 magnitude 0.5, phase `π/4` | #123 |
+| P5 | Nyquist: `x_n = (−1)^n` | bin 4 magnitude 1, phase 0 | #123 |
+| P6 | Parseval on P4 and on seeded random `N = 256`, `N = 4096` | `Σ x_n² = (1/N) Σ_{k=0}^{N-1} |X_k|²` within 12.4 | #123 |
+| P7 | Leakage: `cos(2π·1.5·t)` | energy spread over several bins; Parseval still holds; no bin claims 1.5 Hz | #123 |
+| P8 | Odd length `N = 7`, `cos(2π·2·n/7)` | bin 2 magnitude 1; no Nyquist bin | #123 |
+| P9 | Haar of `[4, 2, 5, 5]`, 2 levels | approximation `[8]`, details level 2 `[−2]`, level 1 `[√2, 0]`; energy 70 preserved | #124 |
+| P10 | Identical patterns (P4 with itself) | aggregate 1, coherence 1, every interference `m_k² ≥ 0` | #125 |
+| P11 | P2 against P2 shifted by `π` | interference bin 1 = −1, aggregate 0 | #125 |
+| P12 | P2 against `cos(2π·1·t + π/2)` | interference 0, aggregate 0.5, coherence 1 | #125 |
+| P13 | DFT → inverse DFT round trip on P1–P5, P8 and seeded random `N ∈ {8, 256, 4096}` | `EXACT` within 12.4 | #126 |
+| P14 | Haar → inverse Haar round trip, seeded random `N ∈ {8, 256, 4096}` | `EXACT` within 12.4 | #126 |
+| P15 | Hierarchy fixture of Section 12.3, clean evidence | correct coarse and fine concept, deterministic order | #127 |
+| P16 | Two concepts with equal scores | lower `conceptOrdinal` first | #127 |
+
+### 12.2 Negative fixtures
+
+| Id | Input | Expected | Owner |
+| --- | --- | --- | --- |
+| N1 | Empty sample array | rejected | #123 |
+| N2 | Any sample NaN, `+∞` or `−∞` | rejected | #123 |
+| N3 | Length `maxSamples + 1` | rejected | #123 |
+| N4 | Haar with `N = 6` | rejected, not padded | #124 |
+| N5 | `sampleRate ≤ 0`, NaN or infinite; missing unit | rejected | #123 |
+| N6 | Compare patterns with `sampleRate` 8 and 16, or DFT with Haar | `Incompatible`, never interpolated | #125 |
+| N7 | Aliasing: `cos(2π·7·t)` at `sampleRate = 8` | reported as bin 1 magnitude 1; documented as undetectable from samples, not an error | #123 |
+| N8 | Drop half the bins of P4 then synthesize | `LOSSY` with finite error, never `EXACT` | #126 |
+| N9 | Previous concept code not in the hierarchy | `Abstain(UNKNOWN_CONCEPT)` | #127 |
+| N10 | Evidence equidistant from two concepts | `Abstain(LOW_MARGIN)` at depth 0 | #127 |
+| N11 | Random-noise evidence on the trained hierarchy | abstention rate reported; any confident prediction counted as an error | #127, #130 |
+| N12 | Hierarchy with a cycle, a child before its parent, or depth over `maxDepth` | rejected | #127 |
+| N13 | Opt-out runtime with the same inputs as before | outputs identical to `main` | #128 |
+
+### 12.3 Concept fixture (labels and ground truth)
+
+Synthetic, seeded and generated in the evaluation module (#130); #127 uses a small copy for unit tests.
+
+- **Hierarchy**: depth 0 categories `LOW_BAND` (code 1) and `HIGH_BAND` (code 2); depth 1 concepts `LOW_PURE` (11),
+  `LOW_CHORD` (12) under `LOW_BAND`, `HIGH_PURE` (21), `HIGH_CHORD` (22) under `HIGH_BAND`. Domain is a fixture constant.
+- **Generator**: `N = 256`, `sampleRate = 256` Hz. `LOW_*` dominant tone in 4–16 Hz, `HIGH_*` in 64–96 Hz; `*_PURE` one
+  tone, `*_CHORD` the dominant tone plus a second at a fixed ratio 3/2. Amplitude, phase and exact frequency drawn
+  from seeded ranges; additive Gaussian noise at documented SNRs (for example 20, 10 and 0 dB).
+- **Sequences**: windows follow a seeded first-order transition table over the four leaf concepts. The ground-truth
+  label of a window is the concept that generated it. The "next concept" label of window `w` is the generator label of
+  window `w + 1`.
+- **Splits**: disjoint seeds for training, threshold selection and held-out test. Labels of the test split are never
+  read during training, threshold selection or feedback. A leakage check (as in the HTML protocol) fails the run.
+
+### 12.4 Numerical tolerances
+
+| Check | Tolerance | Scope |
+| --- | --- | --- |
+| Exact-bin magnitude and phase (P1–P5, P8) | absolute `1e-12` | `N ≤ 64`, amplitudes in `[0, 10]` |
+| Off-bin magnitudes expected to be 0 | absolute `1e-12 · max(1, Σ|x_n|)` | `N ≤ 64` |
+| Parseval identity | relative `1e-9` of `Σ x_n²` | `N ≤ 4096`, samples in `[−10, 10]` |
+| Round trip (P13, P14) | max absolute error `≤ 1e-9 · max(1, max|x_n|)` | `N ≤ 4096` |
+| Haar exact values (P9) | absolute `1e-12` | as listed |
+| Resonance values (P10–P12) | absolute `1e-12` | `N ≤ 64` |
+| Phase defined | magnitude `≥ 1e-12` relative to the pattern maximum | all |
+
+Tolerances are documented per scale, not universal. An optimized backend later states its own tolerance against these
+references. Determinism checks (same input, same output) are exact equality.
+
+## 13. Falsifiable Hypotheses
+
+Each hypothesis is evaluated on the held-out split of Section 12.3, with seeded repeats and confidence intervals, and
+each is refuted by the stated observation.
+
+| Id | Hypothesis | Refuted when | Gate |
+| --- | --- | --- | --- |
+| H1 | The reference decomposers recover the generating components of synthetic signals within Section 12.4 | any positive fixture fails its tolerance, or a round trip of an invertible pattern is not `EXACT` | G1 |
+| H2 | Spectral resonance separates same-concept from different-concept window pairs better than `ScalarResonanceMetric` on the dominant-component `FrequencyState` projection | the AUC of the spectral aggregate does not exceed the scalar control's AUC by the pre-registered margin | G2 |
+| H3 | Hierarchical NCM predicts the next concept better than baseline A (majority and transition prior, no spectral input) at matched coverage | selective accuracy at the matched coverage is not above baseline A by the pre-registered margin, with the interval excluding 0 | G3 |
+| H4 | Coarse-to-fine prediction beats flat prediction over the leaf concepts at equal cost | flat prediction matches or beats hierarchical accuracy at matched coverage | G3 (informational) |
+| H5 | Validated outcome feedback improves H3's metric on later held-out windows without label leakage | no improvement, or any leakage detected | G5 |
+| H6 | Abstention is informative: accuracy on non-abstained windows exceeds accuracy on all windows, and N11 abstains more than clean evidence | either inequality fails | G3 |
+
+Margins are pre-registered in #130 (or in #127 for its unit-level suite) **before** held-out results are computed, and
+recorded in the report. Changing a margin after seeing results requires a new protocol version and is reported.
+
+## 14. Workloads, Controls and Metrics
+
+### 14.1 Synthetic workloads
+
+| Workload | Samples per window | Windows | Concepts | Depth | Purpose |
+| --- | --- | --- | --- | --- | --- |
+| tiny | 8 | 1 | 2 | 1 | Exact fixtures, determinism |
+| medium | 256 | 64 per sequence, 32 sequences | 4 to 16 | 2 | Section 12.3 fixture, main quality evidence |
+| large | 4,096 | 1,024 | 256 | 3 | Bounds, latency, allocation and memory behavior |
+
+### 14.2 Controls (from #130)
+
+- **A**: majority and transition prior, no spectral input (the no-NCM baseline).
+- **B**: spectral-only nearest centroid, flat over leaf concepts, no resonance and no hierarchy.
+- **C**: DFT plus resonance plus hierarchy.
+- **D**: C with Haar and coherence features.
+- **E**: C or D with validated feedback.
+- Scalar control for H2: `ScalarResonanceMetric` on the dominant-component projection.
+
+### 14.3 Metrics
+
+- **Fidelity**: per-fixture maximum absolute error, relative energy error, Parseval residual.
+- **Prediction**: top-1 and top-k accuracy at depth 0 and leaf depth; selective accuracy and coverage; risk-coverage
+  curve.
+- **Abstention**: abstention rate, precision and recall of abstention against windows the model gets wrong.
+- **Calibration**: reliability bins and expected calibration error on the held-out split.
+- **Resources**: latency per window and per sequence (JMH, stated warm-up and forks), allocation per operation (JMH
+  `-prof gc`), retained snapshot size; end to end, not kernel only.
+
+### 14.4 Required report fields
+
+Contract version `ncm-wave-cognition/1`, fixture generator version and seeds, split seeds, SNR levels, workload sizes,
+pre-registered margins, thresholds `τ_conf` and `τ_margin` with how they were chosen, JDK vendor and version, OS,
+architecture, CPU model, available processors, heap and GC settings, JMH settings, Neuron commit (`+dirty` when
+uncommitted), and the determinism check result. Negative results are reported with the same prominence as positive ones.
+
+## 15. Stop/Go Gates
+
+Gates are evaluated in order. A failed gate stops the dependent work and is published as a result; it is not worked
+around by widening scope.
+
+| Gate | After | Go when | On failure |
+| --- | --- | --- | --- |
+| G0 | #121 | This contract and ADR 0034 are merged | Children do not start |
+| G1 | #123, #124 | H1 holds; all P and N fixtures owned by #123/#124 pass; determinism is exact | Stop; fix the transform or record a negative result; no #125–#127 |
+| G2 | #125 | H2 holds | Spectral resonance stays a diagnostic only; #127 may still proceed without resonance features, and the report says so |
+| G3 | #127 | H3 and H6 hold on the medium workload | **Stop before #128**; publish the negative result; no cycle integration |
+| G4 | #128 | All existing tests pass unchanged; N13 holds; budgets honored | Revert to library-only use; no default change |
+| G5 | #129, #130 | H5 holds or is reported negative; #130 publishes the go/no-go report with every control | The report's decision is binding for further investment |
+
+The Epic may end after any gate with a documented negative result. That is a valid outcome of the experiment.
+
+## 16. Issue and PR DAG
+
+Each issue is one focused PR under 40 changed files, starting from an updated `main` that contains all of its
+prerequisites. The graph is acyclic; no issue builds on a descendant.
+
+```text
+#121 -> #122
+#122 -> #123
+#122, #123 -> #124
+#122, #123 -> #125
+#123, #124 -> #126
+#122, #125 -> #127
+#126, #127 -> #128      (and gate G3 = go)
+#127, #128 -> #129
+#123 .. #129 -> #130
+```
+
+| Issue | Delivers | Prerequisites | Main area | Gate served |
+| --- | --- | --- | --- | --- |
+| #121 | This contract, ADR 0034 | none | `docs/` | G0 |
+| #122 | `SpectralPattern`, `WaveComponent`, `SpectralBasis`, `SpectralScale`, provenance types | #121 | new spectral package in core | G1 prerequisite |
+| #123 | `SampledWave`, DFT `WaveDecomposer` reference | #122 | spectral package | G1 |
+| #124 | Haar strategy | #122, #123 | spectral package | G1 |
+| #125 | `SpectralResonanceDynamics` | #122, #123 | `monada.neuron.resonance` (new types only) | G2 |
+| #126 | `WaveSynthesizer`, fidelity diagnostics | #123, #124 | spectral package | G1 (round trips) |
+| #127 | `ConceptHierarchy`, `NextConceptPredictor` | #122, #125 | `monada.neuron.reasoning` (new types only) | G3 |
+| #128 | Opt-in cycle integration, typed hand-off | #126, #127, G3 go | stages, host wiring | G4 |
+| #129 | Feedback and caller-owned snapshots | #127, #128 | `monada.neuron.evolution` | G5 |
+| #130 | Ablation harness and go/no-go report | #123 to #129 | `monada-neuron-evaluation` | G5 |
+
+#124 and #125 may proceed in parallel after #123; #126 and #127 may proceed in parallel after their prerequisites.
+
+## 17. Versioning and Deviations
+
+- `ncm-wave-cognition/1` is this document. A **minor** revision adds clarification, a fixture or a report field without
+  changing any semantic. Changing a formula, a normalization, a tolerance, a bound's owner, a hypothesis, a margin rule or
+  a gate is a **major** revision (`/2`).
+- A child issue whose implementation diverges updates this document in the same PR, or records an ADR, and reports the
+  deviation in its PR description. A silent mismatch between code and this contract is a defect (`AGENTS.md`).
+- Proposed bounds (Section 11.1) may be lowered by their owner as a minor revision; raising one needs measured evidence.
+
+## 18. References
+
+- Epic #120 and child issues #122 to #130.
+- [ADR 0034](../adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md): NCM is hierarchy and prediction, not the prism.
+- [ADR 0001](../adr/0001-cognition-memory-boundary.md): cognition and memory boundary.
+- [ADR 0005](../adr/0005-signals-without-identifiers.md): signals without identifiers.
+- [ADR 0006](../adr/0006-deterministic-scalar-resonance-metric.md): deterministic scalar resonance metric.
+- [ADR 0009](../adr/0009-bounded-ephemeral-cognitive-context.md): bounded ephemeral cognitive context.
+- [ADR 0019](../adr/0019-typed-hypothesis-and-evidence-model.md): typed hypothesis and evidence model.
+- [ADR 0020](../adr/0020-deterministic-hypothesis-evaluation-policy.md): deterministic hypothesis evaluation policy.
+- [ADR 0021](../adr/0021-cross-cycle-outcome-feedback-handoff.md): cross-cycle outcome feedback handoff.
+- [ADR 0022](../adr/0022-embeddable-host-runtime-facade.md): embeddable host runtime facade.
+- [HTML knowledge-memory evaluation protocol](../experiments/html-knowledge-v1.md): report fields, leakage and
+  determinism conventions reused in Section 14.
+- [Baseline methodology](../benchmarks/baseline-methodology.md): measurement conventions.
