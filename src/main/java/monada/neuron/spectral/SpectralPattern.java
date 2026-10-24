@@ -61,9 +61,10 @@ public final class SpectralPattern {
     /**
      * Relative tolerance between {@link #retainedEnergy()} and {@link #sourceEnergy()}: the Parseval tolerance of
      * contract section 12.4. Any pattern may retain at most the source energy plus this tolerance; a complete pattern
-     * (every key of its frame present) must equal it within the tolerance in both directions. Differences below
-     * {@link Double#MIN_NORMAL} are always accepted, so a source energy of {@code 0} admits only a retained energy
-     * below {@link Double#MIN_NORMAL}.
+     * (every key of its frame present) must equal it within the tolerance in both directions. For (near-)subnormal
+     * energies, where a relative tolerance is smaller than rounding, the allowance is a bounded number of ULPs at the
+     * energy scale ({@code sampleCount + componentCount + 4}). A source energy of {@code 0} (silent samples) admits
+     * only zero magnitudes.
      */
     public static final double ENERGY_TOLERANCE = 1e-9;
 
@@ -399,6 +400,10 @@ public final class SpectralPattern {
      * underflows nor overflows, and a representable (possibly subnormal) energy is not lost to squaring underflow.
      */
     private double computeRetainedEnergy(double maxMagnitude) {
+        if (sourceEnergy == 0.0 && maxMagnitude != 0.0) {
+            throw new IllegalArgumentException(
+                    "sourceEnergy 0 means silent samples, so every magnitude must be 0, got maximum " + maxMagnitude);
+        }
         if (maxMagnitude == 0.0) {
             requireEnergyConsistent(0.0);
             return 0.0;
@@ -421,11 +426,15 @@ public final class SpectralPattern {
 
     /**
      * Retained energy may exceed the source energy by at most the allowed difference; a complete pattern (every key of
-     * its frame present) must also not fall below it. The allowed difference is {@link #ENERGY_TOLERANCE} relative to
-     * the larger energy, floored at {@link Double#MIN_NORMAL} because subnormal energies carry no relative precision.
+     * its frame present) must also not fall below it. The allowed difference is the larger of {@link #ENERGY_TOLERANCE}
+     * relative to the larger energy and a rounding allowance of {@code sampleCount + componentCount + 4} ULPs at that
+     * energy: one per rounded operation of the source sum {@code Σ x_n²} and of the retained sum, plus the scaling and
+     * the final multiply. The ULP term only dominates for (near-)subnormal energies, whose relative precision is reduced.
      */
     private void requireEnergyConsistent(double energy) {
-        double allowed = Math.max(ENERGY_TOLERANCE * Math.max(sourceEnergy, energy), Double.MIN_NORMAL);
+        double scale = Math.max(sourceEnergy, energy);
+        double roundingUlps = frame.sampleCount() + levels.length + 4.0;
+        double allowed = Math.max(ENERGY_TOLERANCE * scale, roundingUlps * Math.ulp(scale));
         if (energy - sourceEnergy > allowed) {
             throw new IllegalArgumentException("retained energy " + energy + " exceeds sourceEnergy " + sourceEnergy
                     + " beyond the allowed difference " + allowed);

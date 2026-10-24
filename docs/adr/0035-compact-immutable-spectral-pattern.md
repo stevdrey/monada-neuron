@@ -66,9 +66,13 @@ Three problems appear when the sketch is implemented literally:
   summed with magnitudes scaled by `2^-e`, `e` the exponent of the largest magnitude: power-of-two scaling is exact,
   so the sum is bit-identical to the unscaled one in the normal range and keeps a representable subnormal energy
   instead of losing it to squaring underflow.
-- **Energy consistency.** The allowed difference is `ENERGY_TOLERANCE = 1e-9` (the contract section 12.4 Parseval
-  tolerance) relative to the larger energy, floored at `Double.MIN_NORMAL` because subnormal energies carry no
-  relative precision. Any pattern may retain at most `sourceEnergy` plus that difference, so the retained-energy
+- **Energy consistency.** The allowed difference is the larger of `ENERGY_TOLERANCE = 1e-9` (the contract section 12.4
+  Parseval tolerance) relative to the larger energy `E`, and a rounding allowance of
+  `(sampleCount + componentCount + 4) · ulp(E)`: one ULP per rounded operation of the source sum `Σ x_n²` and of the
+  retained sum, plus the scaling and the final multiply. The ULP term only dominates when `E` is (near-)subnormal,
+  where a relative tolerance falls below rounding; normal energies keep the full relative test, so no absolute floor
+  such as `Double.MIN_NORMAL` can admit an inconsistent small-scale pattern. A `sourceEnergy` of `0` means silent
+  samples and admits only zero magnitudes. Any pattern may retain at most `sourceEnergy` plus that difference, so the retained-energy
   fraction of #126 never exceeds `1` beyond numerical noise. A complete pattern (every key of its frame present,
   which #126 classifies as `EXACT`) must also not retain less, so its energy equals `sourceEnergy` within the
   tolerance. `sourceEnergy = -0.0` is canonicalized to `0.0`.

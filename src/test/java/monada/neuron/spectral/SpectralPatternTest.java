@@ -126,7 +126,7 @@ class SpectralPatternTest {
 
     @Test
     void tinyPatternUsesTheRelativeThresholdButNeverDefinesZero() {
-        var pattern = SpectralPattern.of(DFT_8, 0.0, PROVENANCE,
+        var pattern = SpectralPattern.of(DFT_8, Double.MIN_VALUE, PROVENANCE,
                 new int[] {0, 0}, new int[] {0, 1}, new double[] {Double.MIN_VALUE, 0.0}, new double[] {0.0, 0.0});
 
         assertTrue(pattern.phaseDefined(0));
@@ -269,6 +269,53 @@ class SpectralPatternTest {
                         PROVENANCE, p9().levels(), p9().indices(), p9().magnitudes(), p9().phases())),
                 () -> assertEquals(1.0, SpectralPattern.of(single, 1.0 + 0.5e-9, PROVENANCE, dcOnly).retainedEnergy()),
                 () -> assertEquals(1.0, SpectralPattern.of(single, 1.0 - 0.5e-9, PROVENANCE, dcOnly).retainedEnergy()));
+    }
+
+    @Test
+    void smallNormalEnergiesKeepTheirRelativeTolerance() {
+        var single = new SpectralFrame(SpectralBasis.DFT, SpectralScale.SINGLE, 1, 1.0, SampleUnit.ABSTRACT_PER_INDEX);
+        double magnitude = StrictMath.sqrt(Double.MIN_NORMAL);
+        var component = List.of(new WaveComponent(0, 0, magnitude, 0.0, true, 0.0));
+        double twice = 2 * Double.MIN_NORMAL;
+
+        assertAll(
+                () -> assertEquals(Double.MIN_NORMAL, SpectralPattern.of(single, Double.MIN_NORMAL, PROVENANCE,
+                        component).retainedEnergy()),
+                () -> assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(single, twice, PROVENANCE,
+                        new int[] {0}, new int[] {0}, new double[] {magnitude}, new double[] {0.0})),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> SpectralPattern.of(single, twice, PROVENANCE, component)),
+                () -> assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(single, 0.0, PROVENANCE,
+                        new int[] {0}, new int[] {0}, new double[] {magnitude}, new double[] {0.0})),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> SpectralPattern.of(single, 0.0, PROVENANCE, component)));
+    }
+
+    @Test
+    void zeroSourceEnergyAdmitsOnlyZeroMagnitudes() {
+        var tiny = new double[] {Double.MIN_VALUE};
+
+        assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(DFT_8, 0.0, PROVENANCE,
+                new int[] {0}, new int[] {1}, tiny, new double[] {0.0}));
+        assertEquals(0.0, SpectralPattern.of(DFT_8, 0.0, PROVENANCE,
+                new int[] {0}, new int[] {1}, new double[] {0.0}, new double[] {0.0}).retainedEnergy());
+    }
+
+    @Test
+    void subnormalEnergiesAllowOnlyABoundedUlpAllowance() {
+        var single = new SpectralFrame(SpectralBasis.DFT, SpectralScale.SINGLE, 1, 1.0, SampleUnit.ABSTRACT_PER_INDEX);
+        double magnitude = Math.scalb(1.0, -530);
+        double energy = Math.scalb(1.0, -1060);
+        double withinRounding = energy + 3 * Double.MIN_VALUE;
+
+        assertAll(
+                () -> assertEquals(energy, SpectralPattern.of(single, withinRounding, PROVENANCE,
+                        new int[] {0}, new int[] {0}, new double[] {magnitude}, new double[] {0.0}).retainedEnergy()),
+                () -> assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(single, 2 * energy,
+                        PROVENANCE, new int[] {0}, new int[] {0}, new double[] {magnitude}, new double[] {0.0})),
+                () -> assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(single,
+                        energy + 100 * Double.MIN_VALUE, PROVENANCE,
+                        List.of(new WaveComponent(0, 0, magnitude, 0.0, true, 0.0)))));
     }
 
     @Test

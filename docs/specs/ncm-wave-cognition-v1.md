@@ -282,8 +282,9 @@ locator derived on access. `SampleUnit` and `WaveProvenance` are delivered by #1
   even `N`), and for Haar `Σ c²` over its retained coefficients; for a complete pattern it equals `sourceEnergy`
   within the Parseval tolerance of Section 12.4, and a complete pattern (every key of its frame present) that does not
   is rejected. Any pattern whose retained energy exceeds `sourceEnergy` by more than that relative tolerance (`1e-9`)
-  is rejected too. Differences below `Double.MIN_NORMAL` are accepted, because subnormal energies carry no relative
-  precision. The retained energy is summed with magnitudes scaled by a power of two, so a representable subnormal
+  is rejected too. For (near-)subnormal energies, where the relative tolerance is smaller than rounding, the allowance
+  is `(sampleCount + componentCount + 4)` ULPs at the energy scale instead; a `sourceEnergy` of `0` (silent samples)
+  admits only zero magnitudes. The retained energy is summed with magnitudes scaled by a power of two, so a representable subnormal
   energy is not lost to squaring underflow.
 - **Compact**: a later optimized layout (parallel primitive arrays, as `FrequencyStateBatch` does) is allowed behind the
   same value semantics; the public record stays the reference.
