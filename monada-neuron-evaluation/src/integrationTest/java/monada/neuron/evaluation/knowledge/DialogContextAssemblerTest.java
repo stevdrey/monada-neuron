@@ -138,6 +138,31 @@ class DialogContextAssemblerTest {
     }
 
     @Test
+    void aRequirementOutsideTheRubricStaysUnsupportedOnLaterTurns() {
+        var first = turn(1, Family.EMBED, "set:separateDocument=yes");
+        var security = new Turn(DIALOG, 2, Optional.empty(), "The partner is untrusted.", List.of(), List.of(),
+                List.of(1), Optional.empty(), List.of("untrustedThirdParty"));
+        var camera = turn(3, null, "set:powerfulFeatures=yes");
+        var held = held(ASSEMBLER.assemble(new DialogContext(DialogContext.VERSION, DIALOG, camera,
+                List.of(prior(first), prior(security)))), Hold.UNSUPPORTED);
+        assertTrue(held.detail().contains("untrustedThirdParty@dialog:test#2"), held.detail());
+    }
+
+    @Test
+    void aDialogReturningToAFamilyKeepsItsEarlierTurns() {
+        var list = turn(1, Family.LIST, "set:orderMatters=yes");
+        var script = turn(2, Family.SCRIPT, "set:moduleCode=no");
+        var again = turn(3, Family.LIST, "-");
+        var ready = assertInstanceOf(Ready.class, ASSEMBLER.assemble(new DialogContext(DialogContext.VERSION, DIALOG,
+                again, List.of(prior(list), prior(script)))));
+        assertEquals(List.of(1), ready.used());
+        assertEquals(List.of("orderMatters=yes@dialog:test#1"), ready.provenance());
+        var contradicting = turn(3, Family.LIST, "set:orderMatters=no");
+        held(ASSEMBLER.assemble(new DialogContext(DialogContext.VERSION, DIALOG, contradicting,
+                List.of(prior(list), prior(script)))), Hold.CONTRADICTION);
+    }
+
+    @Test
     void anEllipsisWithoutAntecedentOrFamilyAsks() {
         var orphan = turn(1, null, "-");
         var held = held(ASSEMBLER.assemble(DialogContext.alone(orphan)), Hold.NO_FAMILY);
@@ -171,6 +196,9 @@ class DialogContextAssemblerTest {
         var with = ASSEMBLER.assemble(new DialogContext(DialogContext.VERSION, DIALOG, second, List.of(
                 new PriorTurn(first, Optional.of(new Advice("DECIDED", List.of("ul"), "L2"))))));
         assertEquals(without, with);
+        assertEquals(new DialogContext(DialogContext.VERSION, DIALOG, second, List.of(prior(first))),
+                new DialogContext(DialogContext.VERSION, DIALOG, second, List.of(new PriorTurn(first,
+                        Optional.of(new Advice("DECIDED", List.of("ul"), "L2"))))).withoutAdvice());
     }
 
     @Test

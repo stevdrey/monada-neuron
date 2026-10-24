@@ -85,6 +85,9 @@ class HtmlDialogFixtureTest {
         var orphan = TURNS.replace("dialog:orphan-ellipsis\t1\t-\tAnd if it is external?\t-",
                 "dialog:orphan-ellipsis\t1\t-\tAnd if it is external?\tset:moduleCode=no");
         assertRejected(() -> parse(orphan), "need a family");
+        var lostFamily = TURNS.replace("new file?\tchange:externalFileAllowed=no\t-\t*\t2\t-",
+                "new file?\tchange:externalFileAllowed=no\t-\t1\t-\t-");
+        assertRejected(() -> parse(lostFamily), "constraint of list");
         var kind = TURNS.replace("change:reusedAcrossPages=yes", "maybe:reusedAcrossPages=yes");
         assertRejected(() -> parse(kind), "set: or change:");
     }

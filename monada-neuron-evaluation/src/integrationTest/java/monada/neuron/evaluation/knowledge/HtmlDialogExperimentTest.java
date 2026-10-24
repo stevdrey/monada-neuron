@@ -154,6 +154,30 @@ class HtmlDialogExperimentTest {
     }
 
     @Test
+    void aHostAbstentionIsAttributedToTheContextRulesNotTheSelector() {
+        for (var row : observation.rows()) {
+            if (row.arm() == Arm.STORE) {
+                continue;
+            }
+            var expected = row.assembled() instanceof Held ? DialogContextAssembler.VERSION : DecisionRuleBaseline.NAME;
+            assertEquals(expected, row.row().selector(), row.turnId() + " " + row.arm());
+            assertEquals(row.assembled() instanceof Held ? HtmlDialogExperiment.HOST_CONTEXT_KIND
+                    : DecisionSelector.Kind.HOST_RULE_BASELINE.name(), row.row().kind(), row.turnId());
+        }
+    }
+
+    @Test
+    void aFailedRecallInTheEvidenceRemovedControlIsNotClassifiedAsAnAnswer() {
+        var removed = observation.rows().stream().filter(row -> row.arm() == Arm.EVIDENCE_REMOVED).findFirst()
+                .orElseThrow();
+        var failed = new DecisionTrace.Row(removed.turnId(), removed.row().arm(), "R", "HOST_RULE_BASELINE",
+                List.of(), Optional.empty(), Outcome.RECALL_FAILED, Optional.empty(), List.of(), List.of(), "failed");
+        var row = new TurnRow(removed.dialogId(), removed.turn(), removed.arm(), removed.question(),
+                removed.context(), removed.assembled(), failed, Change.NOT_APPLICABLE);
+        assertEquals(Support.NOT_APPLICABLE, DialogMetrics.score(row, GOLD.of(row.turnId())).support());
+    }
+
+    @Test
     void aChangeThatShouldReviseIsScoredAndOneThatNeedNotIsCreditedByCorrectness() {
         var b = scores.aggregates().stream().filter(aggregate -> aggregate.arm() == Arm.NEURON_RULES).findFirst()
                 .orElseThrow();

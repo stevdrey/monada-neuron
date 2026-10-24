@@ -45,7 +45,7 @@ final class DialogMetrics {
         UNSUPPORTED,
         /** It answered citing a gold span although the decision-topic evidence was removed. */
         CLAIMED_SUPPORT,
-        /** Not the evidence-removed control. */
+        /** Not the evidence-removed control, or a row of it that produced no answer (a failed recall). */
         NOT_APPLICABLE
     }
 
@@ -193,7 +193,7 @@ final class DialogMetrics {
             };
         }
         var support = Support.NOT_APPLICABLE;
-        if (row.arm() == Arm.EVIDENCE_REMOVED) {
+        if (row.arm() == Arm.EVIDENCE_REMOVED && row.row().recommendation().isPresent()) {
             support = row.row().outcome() == Outcome.ABSTAINED ? Support.ABSTAINED
                     : decision.metrics().get("citationGoldOverlap").orElse(0.0) > 0 ? Support.CLAIMED_SUPPORT
                     : Support.UNSUPPORTED;

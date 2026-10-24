@@ -26,7 +26,6 @@ import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -57,6 +56,9 @@ final class HtmlDialogExperiment {
 
     /** Corpus topics whose chunks the evidence-removed control drops: every topic the three families decide from. */
     static final Set<String> DECISION_TOPICS = Set.of("scripts", "embedding", "structure", "lists");
+
+    /** The kind recorded for a host abstention of {@link DialogContextAssembler}, which no selector produced. */
+    static final String HOST_CONTEXT_KIND = "HOST_CONTEXT_RULES";
 
     /** The separately measured steps, in measurement order. */
     static final List<String> STEPS = List.of("context.assemble", "turn.neuron");
@@ -184,11 +186,13 @@ final class HtmlDialogExperiment {
             for (var turn : dialog.turns()) {
                 var full = new EnumMap<Arm, DialogContext>(Arm.class);
                 var assembled = new EnumMap<Arm, Assembled>(Arm.class);
+                // Advice never decides, so arms whose contexts differ only in advice share one assembly.
+                var assemblies = new HashMap<DialogContext, Assembled>();
                 for (var arm : Arm.values()) {
                     var context = arm == Arm.NO_CONTEXT ? DialogContext.alone(turn)
                             : contextTamper.apply(DialogContext.carried(dialog, turn, advice.get(arm)));
                     full.put(arm, context);
-                    assembled.put(arm, assembler.assemble(context));
+                    assembled.put(arm, assemblies.computeIfAbsent(context.withoutAdvice(), assembler::assemble));
                 }
                 contexts.add(full.get(Arm.NEURON_RULES));
                 assembledTurns.add(assembled.get(Arm.NEURON_RULES));
@@ -197,7 +201,9 @@ final class HtmlDialogExperiment {
                         HtmlDecisionExperiment.K);
                 var neuron = decision.neuron(root, assembled.get(Arm.NEURON_RULES).query());
                 traces.add(neuron.trace());
-                var alone = decision.neuron(root, assembled.get(Arm.NO_CONTEXT).query());
+                var aloneQuery = assembled.get(Arm.NO_CONTEXT).query();
+                var alone = aloneQuery.equals(assembled.get(Arm.NEURON_RULES).query()) ? neuron
+                        : decision.neuron(root, aloneQuery);
                 for (var arm : Arm.values()) {
                     var row = switch (arm) {
                         case STORE -> switch (store) {
@@ -252,11 +258,13 @@ final class HtmlDialogExperiment {
 
     private Row answer(Turn turn, Arm arm, Assembled assembled, List<EvidenceChunk> evidence,
             Optional<NeuronTrace> trace, String detail) {
-        var recommendation = switch (assembled) {
-            case Ready ready -> decision.selector().decide(ready.decisionCase(), evidence);
-            case Held held -> held.abstention();
+        return switch (assembled) {
+            case Ready ready -> decision.recommendationRow(turn.turnId(), arm.base(), selector().name(),
+                    selector().kind().name(), selector().decide(ready.decisionCase(), evidence), evidence, trace,
+                    detail);
+            case Held held -> decision.recommendationRow(turn.turnId(), arm.base(), DialogContextAssembler.VERSION,
+                    HOST_CONTEXT_KIND, held.abstention(), evidence, trace, detail);
         };
-        return decision.recommendationRow(turn.turnId(), arm.base(), recommendation, evidence, trace, detail);
     }
 
     private Row failed(Turn turn, Arm arm, Optional<NeuronTrace> trace, String detail) {
@@ -348,48 +356,8 @@ final class HtmlDialogExperiment {
     private void measured(String name, boolean referenceReady, int turns, String timed, List<String> mismatches,
             List<BenchmarkRunResult> perf, Map<String, String> metadata, Supplier<List<Object>> workload,
             List<?> expected) {
-        if (!referenceReady) {
-            mismatches.add(name + ": a verified reference row did not complete");
-            metadata.put("perf." + name, "withheld (a verified reference row did not complete)");
-            return;
-        }
-        var results = new ArrayList<List<Object>>();
-        var diagnostics = new TreeMap<String, String>();
-        diagnostics.put("timed", timed);
-        diagnostics.put("operationsPerIteration", Integer.toString(turns));
-        diagnostics.put("warmupIterations", Integer.toString(HtmlDecisionExperiment.PERF_WARMUPS));
-        diagnostics.put("measurementIterations", Integer.toString(HtmlDecisionExperiment.PERF_ITERATIONS));
-        diagnostics.put("validation", "every warm-up and measured result is compared with the verified pass after the"
-                + " window");
-        diagnostics.put("gcTelemetryScope", "thread-allocated bytes: workload plus one list append per sample; GC and"
-                + " RSS deltas are JVM-wide");
-        BenchmarkRunResult row;
-        try {
-            row = collector.measure("dialog." + name, turns + " turns", HtmlDecisionExperiment.PERF_WARMUPS,
-                    HtmlDecisionExperiment.PERF_ITERATIONS, turns, null, () -> results.add(workload.get()),
-                    diagnostics);
-        } catch (RuntimeException e) {
-            mismatches.add(name + " threw " + e);
-            metadata.put("perf." + name, "unavailable (the workload threw " + e + ")");
-            return;
-        }
-        var differing = results.stream().filter(result -> !result.equals(expected)).count();
-        if (differing > 0) {
-            mismatches.add(name + ": " + differing + " of " + results.size() + " passes differ");
-            metadata.put("perf." + name, "invalidated (results differ from the verified pass)");
-            return;
-        }
-        perf.add(row);
-        metadata.put("perf." + name + ".medianNanosPerIteration", format(row.latency().medianNanos()));
-        metadata.put("perf." + name + ".p95NanosPerIteration", format(row.latency().p95Nanos()));
-        metadata.put("perf." + name + ".medianNanosPerTurn", format(row.latency().medianNanos() / turns));
-        metadata.put("perf." + name + ".allocationSource", row.allocation().source().name());
-        metadata.put("perf." + name + ".bytesPerOp", format(row.allocation().bytesPerOp()));
-        metadata.put("perf." + name + ".timed", timed);
-    }
-
-    private static String format(double value) {
-        return String.format(Locale.ROOT, "%.1f", value);
+        HtmlDecisionExperiment.measured(collector, "dialog", "Turn", name, referenceReady, turns, timed, mismatches,
+                perf, metadata, workload, expected);
     }
 
     private void describe(HtmlDialogCases dialogs, Pass verified, Map<String, String> metadata) {

@@ -5,6 +5,7 @@ import monada.neuron.evaluation.knowledge.HtmlDecisionCases.Family;
 import monada.neuron.evaluation.knowledge.HtmlDecisionCases.Tri;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -139,11 +140,17 @@ final class HtmlDialogCases {
 
     private final String version;
     private final List<Dialog> dialogs;
+    private final List<Turn> turns;
+    private final Map<String, Turn> byTurnId;
     private final String dialogHash;
 
     private HtmlDialogCases(String version, List<Dialog> dialogs) {
         this.version = version;
         this.dialogs = List.copyOf(dialogs);
+        this.turns = this.dialogs.stream().flatMap(dialog -> dialog.turns().stream()).toList();
+        var index = new LinkedHashMap<String, Turn>();
+        this.turns.forEach(turn -> index.put(turn.turnId(), turn));
+        this.byTurnId = Collections.unmodifiableMap(index);
         this.dialogHash = hash(version, this.dialogs);
     }
 
@@ -189,7 +196,6 @@ final class HtmlDialogCases {
                 throw new CorpusValidationException(origin + " " + entry.getKey(), dialogTurns.size()
                         + " turns exceed " + MAX_TURNS);
             }
-            Optional<Family> latest = Optional.empty();
             for (var index = 0; index < dialogTurns.size(); index++) {
                 var turn = dialogTurns.get(index);
                 var where = origin + " " + turn.turnId();
@@ -197,10 +203,16 @@ final class HtmlDialogCases {
                     throw new CorpusValidationException(where, "turns must be numbered 1.." + dialogTurns.size()
                             + " in file order");
                 }
-                validate(where, turn, turn.family().isPresent() ? turn.family() : latest);
-                if (turn.family().isPresent()) {
-                    latest = turn.family();
+                // The family a turn may state constraints of: its own, else the latest one its carried turns name,
+                // as the assembler resolves it; a turn the host did not carry cannot supply it.
+                var family = turn.family();
+                for (var earlier : turn.carried()) {
+                    if (turn.family().isEmpty() && earlier >= 1 && earlier <= index
+                            && dialogTurns.get(earlier - 1).family().isPresent()) {
+                        family = dialogTurns.get(earlier - 1).family();
+                    }
                 }
+                validate(where, turn, family);
             }
             dialogs.add(new Dialog(entry.getKey(), dialogTurns));
         }
@@ -220,7 +232,7 @@ final class HtmlDialogCases {
         }
         if (!turn.statements().isEmpty() || !turn.candidates().isEmpty()) {
             var named = family.orElseThrow(() -> new CorpusValidationException(where, "statements and candidates"
-                    + " need a family stated by this or an earlier turn"));
+                    + " need a family stated by this or a carried earlier turn"));
             if (turn.statements().stream().anyMatch(statement -> statement.constraint().family() != named)) {
                 throw new CorpusValidationException(where, "every statement must be a constraint of "
                         + named.label());
@@ -248,13 +260,21 @@ final class HtmlDialogCases {
 
     /** Returns every turn, in dialog then turn order. */
     List<Turn> turns() {
-        return dialogs.stream().flatMap(dialog -> dialog.turns().stream()).toList();
+        return turns;
+    }
+
+    /** Returns whether {@code turnId} is a turn of this set. */
+    boolean contains(String turnId) {
+        return byTurnId.containsKey(turnId);
     }
 
     /** Returns the turn with {@code turnId}, or throws. */
     Turn turn(String turnId) {
-        return turns().stream().filter(turn -> turn.turnId().equals(turnId)).findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("unknown turn " + turnId));
+        var turn = byTurnId.get(turnId);
+        if (turn == null) {
+            throw new IllegalArgumentException("unknown turn " + turnId);
+        }
+        return turn;
     }
 
     /** Returns the canonical {@code dialogHash}. */

@@ -299,16 +299,17 @@ final class HtmlDecisionExperiment {
 
     private Row selectorRow(DecisionCase decisionCase, Arm arm, List<EvidenceChunk> evidence,
             Optional<NeuronTrace> trace, String detail) {
-        return recommendationRow(decisionCase.caseId(), arm, selector.decide(decisionCase, evidence), evidence, trace,
-                detail);
+        return recommendationRow(decisionCase.caseId(), arm, selector.name(), selector.kind().name(),
+                selector.decide(decisionCase, evidence), evidence, trace, detail);
     }
 
     /**
      * The row of a recommendation over {@code evidence}, with every claim and exclusion citation verified against it;
-     * the multi-turn suite (Issue #113) also records host abstentions this way.
+     * the multi-turn suite (Issue #113) also records host abstentions this way, under the name and kind of the
+     * component that produced them.
      */
-    Row recommendationRow(String caseId, Arm arm, DecisionRecommendation recommendation, List<EvidenceChunk> evidence,
-            Optional<NeuronTrace> trace, String detail) {
+    Row recommendationRow(String caseId, Arm arm, String producer, String kind, DecisionRecommendation recommendation,
+            List<EvidenceChunk> evidence, Optional<NeuronTrace> trace, String detail) {
         var claims = switch (recommendation) {
             case Decided decided -> decided.claims();
             case Conditional conditional -> conditional.claims();
@@ -321,7 +322,7 @@ final class HtmlDecisionExperiment {
         };
         var exclusionCitations = exclusions.stream().flatMap(exclusion -> exclusion.citations().stream())
                 .map(citation -> citations.verify("", citation, evidence)).toList();
-        return new Row(caseId, arm, selector.name(), selector.kind().name(), hits(evidence), trace,
+        return new Row(caseId, arm, producer, kind, hits(evidence), trace,
                 Row.outcomeOf(recommendation), Optional.of(recommendation), verified(claims, evidence),
                 exclusionCitations, detail);
     }
@@ -427,6 +428,21 @@ final class HtmlDecisionExperiment {
     private void measured(String name, boolean referenceReady, List<DecisionCase> cases, String timed,
             List<String> mismatches, List<BenchmarkRunResult> perf, Map<String, String> metadata,
             Supplier<List<Object>> workload, List<?> expected) {
+        measured(collector, "decision", "Case", name, referenceReady, cases.size(), timed, mismatches, perf, metadata,
+                workload, expected);
+    }
+
+    /**
+     * Times one step as {@code <prefix>.<name>} over {@code operations} operations per iteration, unless its verified
+     * reference did not complete; every warm-up and measured result must equal {@code expected}, or the row is
+     * withheld and named in {@code mismatches}. Shared by the multi-turn suite (Issue #113), whose unit is a turn.
+     *
+     * @param unit the operation unit, capitalized, for {@code perf.<name>.medianNanosPer<unit>}
+     */
+    static void measured(EvaluationMetricsCollector collector, String prefix, String unit, String name,
+            boolean referenceReady, int operations, String timed, List<String> mismatches,
+            List<BenchmarkRunResult> perf, Map<String, String> metadata, Supplier<List<Object>> workload,
+            List<?> expected) {
         if (!referenceReady) {
             mismatches.add(name + ": a verified reference row did not complete");
             metadata.put("perf." + name, "withheld (a verified reference row did not complete)");
@@ -435,7 +451,7 @@ final class HtmlDecisionExperiment {
         var results = new ArrayList<List<Object>>();
         var diagnostics = new TreeMap<String, String>();
         diagnostics.put("timed", timed);
-        diagnostics.put("operationsPerIteration", Integer.toString(cases.size()));
+        diagnostics.put("operationsPerIteration", Integer.toString(operations));
         diagnostics.put("warmupIterations", Integer.toString(PERF_WARMUPS));
         diagnostics.put("measurementIterations", Integer.toString(PERF_ITERATIONS));
         diagnostics.put("validation", "every warm-up and measured result is compared with the verified pass after the"
@@ -444,8 +460,8 @@ final class HtmlDecisionExperiment {
                 + " RSS deltas are JVM-wide");
         BenchmarkRunResult row;
         try {
-            row = collector.measure("decision." + name, cases.size() + " cases", PERF_WARMUPS, PERF_ITERATIONS,
-                    cases.size(), null, () -> results.add(workload.get()), diagnostics);
+            row = collector.measure(prefix + "." + name, operations + " " + unit.toLowerCase(Locale.ROOT) + "s",
+                    PERF_WARMUPS, PERF_ITERATIONS, operations, null, () -> results.add(workload.get()), diagnostics);
         } catch (RuntimeException e) {
             mismatches.add(name + " threw " + e);
             metadata.put("perf." + name, "unavailable (the workload threw " + e + ")");
@@ -460,7 +476,7 @@ final class HtmlDecisionExperiment {
         perf.add(row);
         metadata.put("perf." + name + ".medianNanosPerIteration", format(row.latency().medianNanos()));
         metadata.put("perf." + name + ".p95NanosPerIteration", format(row.latency().p95Nanos()));
-        metadata.put("perf." + name + ".medianNanosPerCase", format(row.latency().medianNanos() / cases.size()));
+        metadata.put("perf." + name + ".medianNanosPer" + unit, format(row.latency().medianNanos() / operations));
         metadata.put("perf." + name + ".allocationSource", row.allocation().source().name());
         metadata.put("perf." + name + ".bytesPerOp", format(row.allocation().bytesPerOp()));
         metadata.put("perf." + name + ".timed", timed);

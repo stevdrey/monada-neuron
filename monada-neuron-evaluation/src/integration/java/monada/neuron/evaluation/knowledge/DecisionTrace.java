@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 
 /**
@@ -192,6 +193,37 @@ final class DecisionTrace {
                         .toList()),
                 recommendation.map(DecisionRecommendation::ruleId).orElse("-"),
                 QueryText.escape(detail(row)));
+    }
+
+    /**
+     * Every choice a recommendation states as valid, in answer order: the decided choice and its equally valid ones,
+     * or the options of a conditional answer; none for an abstention.
+     */
+    static List<String> stated(DecisionRecommendation recommendation) {
+        return switch (recommendation) {
+            case Decided decided -> {
+                var all = new ArrayList<String>();
+                all.add(decided.choice());
+                all.addAll(decided.alsoValid());
+                yield all;
+            }
+            case Conditional conditional -> conditional.options().stream()
+                    .map(DecisionRecommendation.Option::choice).toList();
+            case Abstained _ -> List.of();
+        };
+    }
+
+    /**
+     * The observable outcome of a row: its outcome, the stated choices and permissions of a decision, or the options of
+     * a conditional answer. Contrastive pairs (#112) and the change between dialog turns (#113) compare it.
+     */
+    static String signature(Row row) {
+        return row.outcome() + " " + row.recommendation().map(value -> switch (value) {
+            case Decided decided -> new TreeSet<>(stated(decided)) + " " + decided.permissions();
+            case Conditional conditional -> conditional.options().stream()
+                    .map(DecisionRecommendation.Option::render).sorted().toList().toString();
+            case Abstained _ -> "";
+        }).orElse("");
     }
 
     /** Returns the decided choice, or {@code "-"}. */

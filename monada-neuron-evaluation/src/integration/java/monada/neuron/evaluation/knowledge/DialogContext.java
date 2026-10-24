@@ -84,6 +84,12 @@ record DialogContext(String version, String dialogId, Turn current, List<PriorTu
         return new DialogContext(VERSION, current.dialogId(), current, List.of());
     }
 
+    /** Returns this context with the advice of every carried turn removed: what the assembler decides from. */
+    DialogContext withoutAdvice() {
+        return new DialogContext(version, dialogId, current, priors.stream()
+                .map(prior -> new PriorTurn(prior.turn(), Optional.empty())).toList());
+    }
+
     /** Returns the carried turn numbers, in turn order. */
     List<Integer> carriedTurns() {
         return priors.stream().map(prior -> prior.turn().turn()).toList();

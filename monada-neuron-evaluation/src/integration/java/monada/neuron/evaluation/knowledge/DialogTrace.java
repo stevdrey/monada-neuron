@@ -1,15 +1,11 @@
 package monada.neuron.evaluation.knowledge;
 
-import monada.neuron.evaluation.knowledge.DecisionRecommendation.Abstained;
-import monada.neuron.evaluation.knowledge.DecisionRecommendation.Conditional;
-import monada.neuron.evaluation.knowledge.DecisionRecommendation.Decided;
 import monada.neuron.evaluation.knowledge.DecisionTrace.Row;
 import monada.neuron.evaluation.knowledge.DialogContextAssembler.Assembled;
 import monada.neuron.evaluation.knowledge.DialogContextAssembler.Held;
 import monada.neuron.evaluation.knowledge.DialogContextAssembler.Ready;
 import monada.neuron.evaluation.knowledge.HtmlKnowledgeRecall.QueryText;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -123,31 +119,6 @@ final class DialogTrace {
         }
     }
 
-    /** The comparable outcome of a row: outcome, stated choices, conditional options and permissions. */
-    static String signature(Row row) {
-        return row.outcome() + " " + row.recommendation().map(value -> switch (value) {
-            case Decided decided -> new TreeSet<>(stated(decided)) + " " + decided.permissions();
-            case Conditional conditional -> conditional.options().stream()
-                    .map(DecisionRecommendation.Option::render).sorted().toList().toString();
-            case Abstained _ -> "";
-        }).orElse("");
-    }
-
-    /** Every choice a recommendation states as valid, in answer order. */
-    static List<String> stated(DecisionRecommendation recommendation) {
-        return switch (recommendation) {
-            case Decided decided -> {
-                var all = new ArrayList<String>();
-                all.add(decided.choice());
-                all.addAll(decided.alsoValid());
-                yield all;
-            }
-            case Conditional conditional -> conditional.options().stream()
-                    .map(DecisionRecommendation.Option::choice).toList();
-            case Abstained _ -> List.of();
-        };
-    }
-
     /** Classifies {@code current} against the same arm's previous row. */
     static Change change(Optional<Row> previous, Row current, boolean first) {
         if (current.recommendation().isEmpty()) {
@@ -156,19 +127,18 @@ final class DialogTrace {
         if (first || previous.isEmpty() || previous.get().recommendation().isEmpty()) {
             return Change.FIRST;
         }
-        if (signature(previous.get()).equals(signature(current))) {
+        if (DecisionTrace.signature(previous.get()).equals(DecisionTrace.signature(current))) {
             return Change.UNCHANGED;
         }
         var before = previous.get().recommendation().get();
         var now = current.recommendation().get();
-        return previous.get().outcome() == current.outcome()
-                && new TreeSet<>(stated(before)).equals(new TreeSet<>(stated(now))) ? Change.QUALIFIED
-                : Change.REVISED;
+        var sameChoices = new TreeSet<>(DecisionTrace.stated(before)).equals(new TreeSet<>(DecisionTrace.stated(now)));
+        return previous.get().outcome() == current.outcome() && sameChoices ? Change.QUALIFIED : Change.REVISED;
     }
 
     /** Returns the advice the host records for a row: its outcome, stated choices and rule. */
     static DialogContext.Advice advice(Row row) {
-        return new DialogContext.Advice(row.outcome().name(), row.recommendation().map(DialogTrace::stated)
+        return new DialogContext.Advice(row.outcome().name(), row.recommendation().map(DecisionTrace::stated)
                 .orElse(List.of()), row.recommendation().map(DecisionRecommendation::ruleId).orElse("-"));
     }
 

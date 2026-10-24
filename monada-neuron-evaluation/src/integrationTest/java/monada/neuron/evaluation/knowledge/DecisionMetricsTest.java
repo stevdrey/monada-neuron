@@ -178,7 +178,7 @@ class DecisionMetricsTest {
     void ignoringTheVariedConstraintIsDetectedAsAMissingReversal() {
         var install = row("case:list-install-01", decided("ol", List.of(LISTS)), List.of(LISTS));
         var ingredients = row("case:list-ingredients-01", decided("ol", List.of(LISTS)), List.of(LISTS));
-        assertEquals(DecisionMetrics.signature(install), DecisionMetrics.signature(ingredients));
+        assertEquals(DecisionTrace.signature(install), DecisionTrace.signature(ingredients));
         assertNotEquals(DecisionMetrics.goldSignature(GOLD.of("case:list-install-01")),
                 DecisionMetrics.goldSignature(GOLD.of("case:list-ingredients-01")));
     }

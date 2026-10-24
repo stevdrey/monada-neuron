@@ -133,15 +133,18 @@ final class DialogContextAssembler {
             "C4 budget: when the UTF-8 bytes of the carried and current utterances and statements exceed "
                     + MAX_CONTEXT_BYTES + " the turn is BUDGET_EXHAUSTED; nothing is truncated",
             "C5 antecedent: an ellipsis whose antecedent turn was not carried is MISSING_ANTECEDENT and asks",
-            "C6 family: the current turn's family, else that of the latest carried turn naming one; a turn naming"
-                    + " another family than the carried one starts afresh and carries nothing of the other family;"
-                    + " no family is NO_FAMILY and asks; a statement or candidate of the current or a carried turn"
-                    + " outside the resolved family (its family was not carried) is REJECTED",
+            "C6 family: every carried turn resolves to its own family, else to the latest one named before it; the"
+                    + " current turn resolves to its own family, else to that of the latest carried turn; only the"
+                    + " carried turns of that family are used, so another family carries nothing and a dialog"
+                    + " returning to a family keeps its earlier turns; no family is NO_FAMILY and asks; a statement or"
+                    + " candidate of the current or a carried turn outside the resolved family (its family was not"
+                    + " carried) is REJECTED",
             "C7 constraints: every constraint of the family starts unknown; the statements of the carried turns of"
                     + " that family, then of the current turn, apply in order; change: overrides, set: on an already"
                     + " known different value, or two statements of one constraint in one turn, is CONTRADICTION and"
                     + " asks which holds",
-            "C8 rubric: a current turn naming a requirement outside the html-decision-v1 constraints is UNSUPPORTED",
+            "C8 rubric: a requirement outside the html-decision-v1 constraints, named by the current turn or a carried"
+                    + " turn of the family, is UNSUPPORTED",
             "C9 case: candidates are the current turn's, else the latest carried, else the family's; the requirement"
                     + " is the current utterance then the carried utterances newest first; the query is the #112"
                     + " query rule over them; advice is reported and never used to decide");
@@ -189,22 +192,25 @@ final class DialogContextAssembler {
                     Optional.empty(), bare, used);
         }
 
-        // C6: the carried turns of the active family, restarted whenever a turn names another family.
+        // C6: each carried turn resolves to its own family, else to the latest one named before it; the segment is
+        // every carried turn of the family the current turn resolves to, so a dialog returning to a family keeps its
+        // turns.
         Optional<Family> active = Optional.empty();
-        var segment = new ArrayList<Turn>();
+        var resolved = new ArrayList<Optional<Family>>();
         for (var prior : context.priors()) {
-            var turn = prior.turn();
-            if (turn.family().isPresent() && !turn.family().equals(active)) {
-                active = turn.family();
-                segment.clear();
+            if (prior.turn().family().isPresent()) {
+                active = prior.turn().family();
             }
-            if (active.isPresent()) {
-                segment.add(turn);
-            }
+            resolved.add(active);
         }
-        if (current.family().isPresent() && !current.family().equals(active)) {
+        if (current.family().isPresent()) {
             active = current.family();
-            segment.clear();
+        }
+        var segment = new ArrayList<Turn>();
+        for (var index = 0; index < context.priors().size(); index++) {
+            if (active.isPresent() && resolved.get(index).equals(active)) {
+                segment.add(context.priors().get(index).turn());
+            }
         }
         var segmentUsed = segment.stream().map(Turn::turn).toList();
         var requirement = new StringBuilder(current.utterance());
@@ -259,10 +265,12 @@ final class DialogContextAssembler {
                 sources.put(constraint, turn.turnId());
             }
         }
-        if (!current.unmodeled().isEmpty()) {
-            return held(Hold.UNSUPPORTED, "the turn adds " + current.unmodeled() + ", which no "
-                    + HtmlDecisionCases.VERSION + " constraint or " + DecisionRuleBaseline.VERSION + " rule covers",
-                    "-", active, query, segmentUsed);
+        var unmodeled = ordered.stream().flatMap(turn -> turn.unmodeled().stream().map(key -> key + "@"
+                + turn.turnId())).toList();
+        if (!unmodeled.isEmpty()) {
+            return held(Hold.UNSUPPORTED, "the dialog states " + unmodeled + ", which no " + HtmlDecisionCases.VERSION
+                    + " constraint or " + DecisionRuleBaseline.VERSION + " rule covers", "-", active, query,
+                    segmentUsed);
         }
         var provenance = family.constraints().stream().filter(sources::containsKey)
                 .map(constraint -> constraint.label() + "=" + values.get(constraint).label() + "@"

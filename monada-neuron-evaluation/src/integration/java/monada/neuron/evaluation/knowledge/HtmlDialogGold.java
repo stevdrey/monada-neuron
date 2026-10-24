@@ -132,8 +132,10 @@ final class HtmlDialogGold {
         var byTurn = new LinkedHashMap<String, TurnGold>();
         for (var row : HtmlKnowledgeCorpus.rows(text, HEADER, origin)) {
             var turnId = HtmlDialogCases.turnId(row.required(0, "dialogId"), row.integer(1, "turn"));
-            var turn = dialogs.turns().stream().filter(value -> value.turnId().equals(turnId)).findFirst()
-                    .orElseThrow(() -> row.reject("gold label for unknown turn " + turnId));
+            if (!dialogs.contains(turnId)) {
+                throw row.reject("gold label for unknown turn " + turnId);
+            }
+            var turn = dialogs.turn(turnId);
             var assembled = Objects.requireNonNull(reference.get(turnId), "no reference assembly for " + turnId);
             var goldRef = row.optional(2);
             var labelCells = row.cells().subList(LABEL_COLUMN, row.cells().size());
