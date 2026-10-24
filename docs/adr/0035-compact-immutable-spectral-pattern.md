@@ -61,7 +61,9 @@ Three problems appear when the sketch is implemented literally:
   repaired except signed zeros. Bounds: `MAX_SAMPLE_COUNT = 4096`, `MAX_COMPONENTS_DFT = 2049`,
   `MAX_COMPONENTS_HAAR = 4096`, `MAX_HAAR_LEVELS = 12`; the count is checked against the basis cap before any copy.
   Overflow guards: the highest DFT locator must be finite, `windowOffset + sampleCount` must fit in a `long`, and the
-  retained energy must be finite.
+  retained energy must be finite. Energy consistency: the retained energy may exceed `sourceEnergy` by at most the
+  relative Parseval tolerance `ENERGY_TOLERANCE = 1e-9` (contract section 12.4), so the retained-energy fraction of
+  #126 never exceeds `1` beyond numerical noise; `sourceEnergy = -0.0` is canonicalized to `0.0`.
 - **Semantics fixed here.** Silence (zero components or only zero magnitudes) is valid, defines no phase and retains
   energy `0`. DFT retained energy weights DC and, for even `N` only, the Nyquist bin once and every other bin by `1/2`;
   odd `N` has no Nyquist bin. DC and Nyquist phases are stored as given (expected `0` or `π` from real input) and not
@@ -94,8 +96,12 @@ Three problems appear when the sketch is implemented literally:
   | 2,049 | 49,312 | 49,288 |
   | 4,096 | 98,432 | 98,424 |
 
-  The measured values stay at or below the model; the 8 bytes per object difference matches the smaller headers of
-  the measuring JVM. Indexed reads (`magnitude`, `phase`, `locator`, `phaseDefined`) allocate 0 bytes.
+  The measured values stay at or below the model. The measuring JVM uses compact object headers: the pattern object is
+  8 bytes smaller (56 instead of 64), and an `int[]` with an odd length is 8 bytes smaller after alignment because its
+  array header is 12 bytes instead of 16; `double[]` and even-length `int[]` sizes are unchanged. That gives the 8 to
+  24 byte differences above. Indexed reads (`magnitude`, `phase`, `locator`, `phaseDefined`) and `hashCode` allocate
+  0 bytes; rewrapping another pattern's `components()` view over the same frame shares its immutable arrays and
+  allocates only the pattern object.
 - The public shape differs from the contract sketch; section 3.4 and section 6 of the contract now point here.
 - #123 and #124 build patterns through the array factory and reuse `SampleUnit`, `WaveProvenance`, `SpectralPhase`
   and `MAX_SAMPLE_COUNT`; #125 compares frames for compatibility and iterates with indexed accessors.

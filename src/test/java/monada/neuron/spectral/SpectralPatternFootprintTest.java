@@ -45,12 +45,32 @@ class SpectralPatternFootprintTest {
         Arrays.fill(magnitudes, 1.0);
 
         long measured = AllocationProbe.measure(2_000,
-                () -> sink = SpectralPattern.of(FRAME, 0.0, PROVENANCE, levels, indices, magnitudes, phases));
+                () -> sink = SpectralPattern.of(FRAME, k, PROVENANCE, levels, indices, magnitudes, phases));
         long modeled = model.retainedBytes(k);
 
         System.out.printf("SpectralPattern k=%d modeled=%d B measured=%d B%n", k, modeled, measured);
         assertTrue(measured <= modeled + 64, "k=" + k + " measured " + measured + " B, modeled " + modeled + " B");
         assertEquals(k, sink.componentCount());
+    }
+
+    @Test
+    void rewrappingAComponentViewAllocatesOnlyThePattern() {
+        var source = SpectralFixtures.p9();
+        var components = source.components();
+
+        long measured = AllocationProbe.measure(2_000,
+                () -> sink = SpectralPattern.of(SpectralFixtures.HAAR_4_L2, 70.0, PROVENANCE, components));
+
+        assertTrue(measured <= model.retainedBytes(0) - 4 * 16, "measured " + measured + " B");
+    }
+
+    @Test
+    void hashCodeDoesNotAllocate() {
+        var pattern = SpectralFixtures.p9();
+
+        long measured = AllocationProbe.measure(20_000, () -> readSink = pattern.hashCode());
+
+        assertEquals(0L, measured);
     }
 
     @Test

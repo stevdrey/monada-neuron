@@ -46,7 +46,7 @@ class SpectralPatternTest {
     void abstractUnitLocatorsAreCyclesPerIndex() {
         var frame = new SpectralFrame(SpectralBasis.DFT, SpectralScale.SINGLE, 8, 1.0,
                 SampleUnit.ABSTRACT_PER_INDEX);
-        var pattern = SpectralPattern.of(frame, 1.0, PROVENANCE,
+        var pattern = SpectralPattern.of(frame, 4.0, PROVENANCE,
                 new int[] {0}, new int[] {2}, new double[] {1.0}, new double[] {0.0});
 
         assertEquals(LocatorUnit.CYCLES_PER_INDEX, pattern.locatorUnit());
@@ -112,7 +112,7 @@ class SpectralPatternTest {
 
     @Test
     void phaseDefinedIsRelativeToTheLargestMagnitude() {
-        var pattern = SpectralPattern.of(DFT_8, 1.0, PROVENANCE,
+        var pattern = SpectralPattern.of(DFT_8, 32.0, PROVENANCE,
                 new int[] {0, 0, 0, 0}, new int[] {0, 1, 2, 3},
                 new double[] {2.0, 2e-12, 1.9e-12, 0.0}, new double[] {0.0, 1.0, 1.0, 1.0});
 
@@ -149,11 +149,11 @@ class SpectralPatternTest {
     @Test
     void rejectsNonFiniteAndNegativeMagnitudesAndNonCanonicalPhases() {
         for (double magnitude : new double[] {Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, -1.0}) {
-            assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(DFT_8, 1.0, PROVENANCE,
+            assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(DFT_8, 4.0, PROVENANCE,
                     new int[] {0}, new int[] {1}, new double[] {magnitude}, new double[] {0.0}), "magnitude " + magnitude);
         }
         for (double phase : new double[] {Double.NaN, Double.POSITIVE_INFINITY, -PI, 4.0, -3.5}) {
-            assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(DFT_8, 1.0, PROVENANCE,
+            assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(DFT_8, 4.0, PROVENANCE,
                     new int[] {0}, new int[] {1}, new double[] {1.0}, new double[] {phase}), "phase " + phase);
         }
     }
@@ -219,6 +219,55 @@ class SpectralPatternTest {
     }
 
     @Test
+    void canonicalizesNegativeZeroSourceEnergy() {
+        var negative = SpectralPattern.of(DFT_8, -0.0, PROVENANCE, new int[0], new int[0], new double[0], new double[0]);
+        var positive = SpectralPattern.of(DFT_8, 0.0, PROVENANCE, new int[0], new int[0], new double[0], new double[0]);
+        var fromList = SpectralPattern.of(DFT_8, -0.0, PROVENANCE, List.of());
+
+        assertEquals(positive, negative);
+        assertEquals(positive.hashCode(), negative.hashCode());
+        assertEquals(positive, fromList);
+        assertEquals(Double.doubleToRawLongBits(0.0), Double.doubleToRawLongBits(negative.sourceEnergy()));
+    }
+
+    @Test
+    void rejectsRetainedEnergyAboveSourceEnergy() {
+        // bin 1 magnitude 1 retains 8 * 1/2 = 4
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(DFT_8, 0.0, PROVENANCE,
+                        new int[] {0}, new int[] {1}, new double[] {1.0}, new double[] {0.0})),
+                () -> assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(DFT_8, 3.9, PROVENANCE,
+                        new int[] {0}, new int[] {1}, new double[] {1.0}, new double[] {0.0})),
+                () -> assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(HAAR_4_L2, 69.0,
+                        PROVENANCE, p9().components())));
+    }
+
+    @Test
+    void acceptsRetainedEnergyWithinTheParsevalTolerance() {
+        double source = 4.0 * (1.0 - 0.5e-9);
+        var pattern = SpectralPattern.of(DFT_8, source, PROVENANCE,
+                new int[] {0}, new int[] {1}, new double[] {1.0}, new double[] {0.0});
+
+        assertEquals(4.0, pattern.retainedEnergy());
+        assertEquals(source, pattern.sourceEnergy());
+    }
+
+    @Test
+    void rewrappingAnotherPatternsComponentsKeepsItsValues() {
+        var original = p4();
+        var rewrapped = SpectralPattern.of(DFT_8, original.sourceEnergy(),
+                new WaveProvenance("encoder.fixture", 2, "window-1", 8L), original.components());
+
+        assertArrayEquals(original.magnitudes(), rewrapped.magnitudes());
+        assertArrayEquals(original.phases(), rewrapped.phases());
+        assertEquals(original.components(), rewrapped.components());
+        assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(
+                new SpectralFrame(SpectralBasis.DFT, SpectralScale.SINGLE, 8, 16.0, SampleUnit.HERTZ),
+                original.sourceEnergy(), PROVENANCE, original.components()),
+                "a view over another frame takes the validating path and its locators disagree");
+    }
+
+    @Test
     void bothFactoriesProduceEqualPatterns() {
         var fromArrays = p4();
         var fromList = SpectralPattern.of(DFT_8, fromArrays.sourceEnergy(), PROVENANCE, fromArrays.components());
@@ -234,7 +283,7 @@ class SpectralPatternTest {
         var wrongLocator = List.of(new WaveComponent(0, 1, 1.0, 0.0, true, 1.5));
 
         assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(DFT_8, 1.0, PROVENANCE, wrongFlag));
-        assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(DFT_8, 1.0, PROVENANCE, wrongLocator));
+        assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(DFT_8, 4.0, PROVENANCE, wrongLocator));
         var withNull = new ArrayList<WaveComponent>();
         withNull.add(null);
         assertThrows(NullPointerException.class, () -> SpectralPattern.of(DFT_8, 1.0, PROVENANCE, withNull));
@@ -263,7 +312,7 @@ class SpectralPatternTest {
         int[] indices = {1, 2};
         double[] magnitudes = {1.0, 2.0};
         double[] phases = {0.0, 1.0};
-        var pattern = SpectralPattern.of(DFT_8, 1.0, PROVENANCE, levels, indices, magnitudes, phases);
+        var pattern = SpectralPattern.of(DFT_8, 20.0, PROVENANCE, levels, indices, magnitudes, phases);
 
         levels[0] = 9;
         indices[0] = 0;
@@ -279,7 +328,7 @@ class SpectralPatternTest {
                 () -> assertArrayEquals(new int[] {1, 2}, pattern.indices()),
                 () -> assertArrayEquals(new double[] {1.0, 2.0}, pattern.magnitudes()),
                 () -> assertArrayEquals(new double[] {0.0, 1.0}, pattern.phases()),
-                () -> assertEquals(SpectralPattern.of(DFT_8, 1.0, PROVENANCE, new int[] {0, 0}, new int[] {1, 2},
+                () -> assertEquals(SpectralPattern.of(DFT_8, 20.0, PROVENANCE, new int[] {0, 0}, new int[] {1, 2},
                         new double[] {1.0, 2.0}, new double[] {0.0, 1.0}), pattern));
     }
 

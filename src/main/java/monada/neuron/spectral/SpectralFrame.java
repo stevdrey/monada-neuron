@@ -115,6 +115,11 @@ public record SpectralFrame(SpectralBasis basis, SpectralScale scale, int sample
         if (!containsKey(level, index)) {
             throw new IllegalArgumentException("(" + level + ", " + index + ") is not a key of " + this);
         }
+        return locatorOf(level, index);
+    }
+
+    /** Returns the locator of a key already known to be valid; no key check (hot read path). */
+    double locatorOf(int level, int index) {
         return switch (basis) {
             case DFT -> index * sampleRate / sampleCount;
             case HAAR -> (double) (index << shift(level));

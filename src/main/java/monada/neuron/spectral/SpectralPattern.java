@@ -34,7 +34,9 @@ import java.util.RandomAccess;
  *
  * <p><b>Validation.</b> Invalid construction arguments are caller bugs and throw {@link IllegalArgumentException}
  * or {@link NullPointerException}; nothing is repaired except signed zeros, which are canonicalized to {@code +0.0}.
- * The component count is checked against the basis cap before any array is copied.
+ * The component count is checked against the basis cap before any array is copied. The retained energy may not
+ * exceed the source energy by more than {@link #ENERGY_TOLERANCE} (relative), so the retained-energy fraction is
+ * never above {@code 1} beyond numerical noise.
  */
 public final class SpectralPattern {
 
@@ -52,6 +54,12 @@ public final class SpectralPattern {
 
     /** Relative magnitude threshold below which a phase is not used for comparison. */
     public static final double PHASE_EPSILON = 1e-12;
+
+    /**
+     * Relative tolerance by which {@link #retainedEnergy()} may exceed {@link #sourceEnergy()}: the Parseval tolerance
+     * of contract section 12.4. A source energy of {@code 0} admits only a retained energy of {@code 0}.
+     */
+    public static final double ENERGY_TOLERANCE = 1e-9;
 
     private final SpectralFrame frame;
     private final double sourceEnergy;
@@ -102,7 +110,7 @@ public final class SpectralPattern {
                     count, indices.length, magnitudes.length, phases.length));
         }
         requireHeader(frame, sourceEnergy, provenance, count);
-        return new SpectralPattern(frame, sourceEnergy, provenance, levels.clone(), indices.clone(),
+        return new SpectralPattern(frame, canonicalZero(sourceEnergy), provenance, levels.clone(), indices.clone(),
                 canonicalZeros(magnitudes), canonicalZeros(phases));
     }
 
@@ -122,10 +130,18 @@ public final class SpectralPattern {
         Objects.requireNonNull(components, "components must not be null");
         int count = components.size();
         requireHeader(frame, sourceEnergy, provenance, count);
+        if (components instanceof SpectralPattern.ComponentView view && view.owner().frame.equals(frame)) {
+            // Derived values of another pattern over the same frame are consistent by construction.
+            var source = view.owner();
+            return new SpectralPattern(frame, canonicalZero(sourceEnergy), provenance, source.levels,
+                    source.indices, source.magnitudes, source.phases);
+        }
         var levels = new int[count];
         var indices = new int[count];
         var magnitudes = new double[count];
         var phases = new double[count];
+        var declaredPhaseDefined = new boolean[count];
+        var declaredLocators = new double[count];
         int i = 0;
         for (WaveComponent component : components) {
             Objects.requireNonNull(component, "component at index " + i + " must not be null");
@@ -133,20 +149,21 @@ public final class SpectralPattern {
             indices[i] = component.index();
             magnitudes[i] = component.magnitude();
             phases[i] = component.phase();
+            declaredPhaseDefined[i] = component.phaseDefined();
+            declaredLocators[i] = component.locator();
             i++;
         }
-        var pattern = new SpectralPattern(frame, sourceEnergy, provenance, levels, indices, magnitudes, phases);
-        i = 0;
-        for (WaveComponent component : components) {
-            if (component.phaseDefined() != pattern.phaseDefined(i)) {
+        var pattern = new SpectralPattern(frame, canonicalZero(sourceEnergy), provenance, levels, indices,
+                magnitudes, phases);
+        for (i = 0; i < count; i++) {
+            if (declaredPhaseDefined[i] != pattern.phaseDefined(i)) {
                 throw new IllegalArgumentException("component at index " + i + " declares phaseDefined="
-                        + component.phaseDefined() + " but the pattern derives " + pattern.phaseDefined(i));
+                        + declaredPhaseDefined[i] + " but the pattern derives " + pattern.phaseDefined(i));
             }
-            if (Double.compare(component.locator(), pattern.locator(i)) != 0) {
+            if (Double.compare(declaredLocators[i], pattern.locator(i)) != 0) {
                 throw new IllegalArgumentException("component at index " + i + " declares locator="
-                        + component.locator() + " but the frame derives " + pattern.locator(i));
+                        + declaredLocators[i] + " but the frame derives " + pattern.locator(i));
             }
-            i++;
         }
         return pattern;
     }
@@ -235,7 +252,7 @@ public final class SpectralPattern {
     /** Returns the locator of component {@code i} in {@link #locatorUnit()}. */
     public double locator(int i) {
         Objects.checkIndex(i, levels.length);
-        return frame.locator(levels[i], indices[i]);
+        return frame.locatorOf(levels[i], indices[i]);
     }
 
     /** Returns component {@code i} as a record (allocates one record). */
@@ -291,7 +308,9 @@ public final class SpectralPattern {
 
     @Override
     public int hashCode() {
-        int result = Objects.hash(frame, sourceEnergy, provenance);
+        int result = frame.hashCode();
+        result = 31 * result + Double.hashCode(sourceEnergy);
+        result = 31 * result + provenance.hashCode();
         result = 31 * result + Arrays.hashCode(levels);
         result = 31 * result + Arrays.hashCode(indices);
         result = 31 * result + Arrays.hashCode(magnitudes);
@@ -325,10 +344,13 @@ public final class SpectralPattern {
     private static double[] canonicalZeros(double[] source) {
         var copy = new double[source.length];
         for (int i = 0; i < source.length; i++) {
-            double value = source[i];
-            copy[i] = value == 0.0 ? 0.0 : value;
+            copy[i] = canonicalZero(source[i]);
         }
         return copy;
+    }
+
+    private static double canonicalZero(double value) {
+        return value == 0.0 ? 0.0 : value;
     }
 
     /** Validates keys, order and values in one pass and returns the phase-defined magnitude threshold. */
@@ -370,10 +392,18 @@ public final class SpectralPattern {
         if (!Double.isFinite(energy)) {
             throw new IllegalArgumentException("retained energy overflows for magnitudes of " + frame);
         }
+        if (energy > sourceEnergy * (1.0 + ENERGY_TOLERANCE)) {
+            throw new IllegalArgumentException("retained energy " + energy + " exceeds sourceEnergy " + sourceEnergy
+                    + " beyond the relative tolerance " + ENERGY_TOLERANCE);
+        }
         return energy;
     }
 
     private final class ComponentView extends AbstractList<WaveComponent> implements RandomAccess {
+
+        SpectralPattern owner() {
+            return SpectralPattern.this;
+        }
 
         @Override
         public WaveComponent get(int i) {

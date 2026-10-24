@@ -34,14 +34,14 @@ public record WaveComponent(int level, int index, double magnitude, double phase
         if (!Double.isFinite(magnitude) || magnitude < 0.0) {
             throw new IllegalArgumentException("magnitude must be finite and non-negative, got: " + magnitude);
         }
-        if (!Double.isFinite(phase) || phase <= -SpectralPhase.PI || phase > SpectralPhase.PI) {
+        phase = phase == 0.0 ? 0.0 : phase;
+        if (!SpectralPhase.isCanonical(phase)) {
             throw new IllegalArgumentException("phase must be finite and in (-π, π], got: " + phase);
         }
         if (!Double.isFinite(locator) || locator < 0.0) {
             throw new IllegalArgumentException("locator must be finite and non-negative, got: " + locator);
         }
         magnitude = magnitude == 0.0 ? 0.0 : magnitude;
-        phase = phase == 0.0 ? 0.0 : phase;
         locator = locator == 0.0 ? 0.0 : locator;
     }
 }

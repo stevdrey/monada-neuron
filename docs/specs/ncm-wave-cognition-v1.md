@@ -257,16 +257,17 @@ metadata, `SpectralScale(levels)` as the decomposition depth, Haar level `0` for
 `1..L` for the details (so the approximation and the level-`L` detail never share a key), and `phaseDefined` and the
 locator derived on access. `SampleUnit` and `WaveProvenance` are delivered by #122 and reused by #123.
 
-- **Immutable and bounded**: at most the component bound of its basis (`maxComponentsDft` or `maxComponentsHaar`, Section 11), list copied, sorted by `(level, index)`,
-  no duplicate `(level, index)`.
+- **Immutable and bounded**: at most the component bound of its basis (`maxComponentsDft` or `maxComponentsHaar`,
+  Section 11), component arrays copied once at construction, sorted by `(level, index)`, no duplicate `(level, index)`.
 - **Versioned**: `version` is the pattern schema version, `1` for this contract.
 - **Normalization, DFT**: magnitude `|X_k| / N` for `k = 0` and, when `N` is even, `k = N/2`; `2·|X_k| / N` otherwise.
   A pure cosine of amplitude `A` at an integer bin therefore reports magnitude `A`.
 - **Normalization, Haar**: coefficients are the orthonormal values themselves; `magnitude = |c|`, `phase = 0` for
   `c ≥ 0` and `π` for `c < 0`. Energy is preserved (fixture P9).
 - **Phase**: `atan2(Im, Re)` wrapped to `(−π, π]` (a result of `−π` becomes `π`, and `−0.0` becomes `0.0`, so equal
-  patterns are equal records). The computed phase is **always stored**, whatever the
-  magnitude, because synthesis needs it. `phaseDefined` is only a comparison-validity flag: it is `false` when the
+  patterns are equal values). The computed phase is **always stored**, whatever the
+  magnitude, because synthesis needs it. `phaseDefined` is only a comparison-validity flag, derived on access and never
+  stored: it is `false` when the
   magnitude is below `phaseEpsilon` (`1e-12` relative to the largest magnitude of the pattern, or absolute when that
   is 0), and the coherence of Section 7.3 and NCM phase evidence ignore such phases. Interference, the aggregate and synthesis
   use the stored phase and never read the flag.
@@ -277,7 +278,8 @@ locator derived on access. `SampleUnit` and `WaveProvenance` are delivered by #1
   diagnostic of Section 9 computable without the original samples. The energy a pattern retains is, for DFT,
   `N · (m_0² + Σ_{0<k<N/2} m_k² / 2 + m_{N/2}²)` over its retained normalized magnitudes (the Nyquist term only for
   even `N`), and for Haar `Σ c²` over its retained coefficients; for a complete pattern it equals `sourceEnergy`
-  within the Parseval tolerance of Section 12.4.
+  within the Parseval tolerance of Section 12.4. A pattern whose retained energy exceeds `sourceEnergy` by more than
+  that relative tolerance (`1e-9`) is rejected, so a `sourceEnergy` of `0` admits only a retained energy of `0`.
 - **Compact**: a later optimized layout (parallel primitive arrays, as `FrequencyStateBatch` does) is allowed behind the
   same value semantics; the public record stays the reference.
 

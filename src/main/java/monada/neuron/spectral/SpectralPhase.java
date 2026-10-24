@@ -8,8 +8,7 @@ package monada.neuron.spectral;
  */
 public final class SpectralPhase {
 
-    /** Upper bound (inclusive) of a canonical phase. */
-    public static final double PI = StrictMath.PI;
+    private static final double PI = StrictMath.PI;
 
     private static final double TWO_PI = 2.0 * StrictMath.PI;
 

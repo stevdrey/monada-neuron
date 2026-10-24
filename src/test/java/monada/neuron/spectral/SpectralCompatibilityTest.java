@@ -6,7 +6,6 @@ import monada.neuron.resonance.ScalarResonanceMetric;
 import monada.neuron.signal.Signal;
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.RecordComponent;
 import java.util.Arrays;
 import java.util.List;
 
@@ -41,7 +40,6 @@ class SpectralCompatibilityTest {
 
     private static List<String> components(Class<? extends Record> type) {
         return Arrays.stream(type.getRecordComponents())
-                .map(RecordComponent.class::cast)
                 .map(c -> c.getName() + ":" + c.getType().getSimpleName())
                 .toList();
     }
