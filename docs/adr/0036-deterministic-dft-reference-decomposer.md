@@ -91,8 +91,8 @@ The reference must also be bit-reproducible with `StrictMath` (section 11.2), O(
   Parseval is checked against an independent direct DFT for `N ∈ {8, 256, 4096}`, and a seeded `N = 256` window has a
   recorded bit-level checksum that detects cross-run or cross-JVM drift.
 - Cost: O(N²) time, O(N) memory and allocation. The measured baseline is in
-  [wave-decomposer-reference.md](../benchmarks/wave-decomposer-reference.md): about 0.5 µs at `N = 8` and 14 ms at
-  `N = 4096` on the recorded machine, about 112 bytes allocated per sample.
+  [wave-decomposer-reference.md](../benchmarks/wave-decomposer-reference.md): about 0.4 µs at `N = 8` and 11 ms at
+  `N = 4096` on the recorded machine, about 92 bytes allocated per sample.
 - `Signal`, `FrequencyState`, `ScalarResonanceMetric` and the canonical stage kinds are unchanged.
 
 ## Follow-Up
