@@ -30,21 +30,15 @@ import monada.neuron.spectral.DecompositionResult.DecompositionRejected;
  *
  * <p><b>Rejections.</b> {@link DecompositionRejectionReason#SAMPLE_RATE_OUT_OF_RANGE} when the DFT frame cannot locate
  * the bins, and {@link DecompositionRejectionReason#ENERGY_OUT_OF_RANGE} when {@code Σ x_n²} exceeds
- * {@link #MAX_SOURCE_ENERGY} or is nonzero but below {@link Double#MIN_NORMAL}. The source energy is summed with samples scaled by a power of two, as
- * {@link SpectralPattern#retainedEnergy()} is, so a representable energy is never lost to squaring underflow.
+ * {@link SpectralPattern#MAX_SOURCE_ENERGY} or is nonzero but below {@link Double#MIN_NORMAL}. The source energy is
+ * summed with the same power-of-two scaling {@link SpectralPattern#retainedEnergy()} uses, so a representable energy
+ * is never lost to squaring underflow and both sides of the Parseval check round alike.
  *
  * <p><b>Cost.</b> O(N²) time (about {@code N²/2} multiply-adds per window, 8.4 M at {@code N = 4096}), O(N) memory:
- * one sample copy, two twiddle tables and the four output arrays. This is a correctness reference, not a fast
- * transform; a later FFT backend must match it within a documented tolerance.
+ * two twiddle tables and the four output arrays, which the pattern takes over without copying. This is a correctness
+ * reference, not a fast transform; a later FFT backend must match it within a documented tolerance.
  */
 public final class DftWaveDecomposer implements WaveDecomposer {
-
-    /**
-     * Largest accepted source energy, {@code Double.MAX_VALUE / 2}. The retained energy of the pattern is recomputed
-     * from rounded magnitudes and may exceed the source energy by up to the Parseval tolerance; this headroom keeps it
-     * finite, so an energy close to {@code Double.MAX_VALUE} is a typed rejection rather than an overflow.
-     */
-    public static final double MAX_SOURCE_ENERGY = Double.MAX_VALUE / 2;
 
     private static final double TWO_PI = 2.0 * StrictMath.PI;
 
@@ -69,10 +63,10 @@ public final class DftWaveDecomposer implements WaveDecomposer {
             return new DecompositionRejected(DecompositionRejectionReason.SAMPLE_RATE_OUT_OF_RANGE,
                     "DFT bin spacing is subnormal: sampleCount=" + n + ", sampleRate=" + rate);
         }
-        double[] x = wave.samples();
-        double peak = peakMagnitude(x);
-        double energy = sourceEnergy(x, peak);
-        if (peak != 0.0 && !(energy >= Double.MIN_NORMAL && energy <= MAX_SOURCE_ENERGY)) {
+        double[] x = wave.sampleArray();
+        double peak = SpectralArithmetic.peakMagnitude(x);
+        double energy = SpectralArithmetic.sumOfSquares(x, peak);
+        if (peak != 0.0 && !(energy >= Double.MIN_NORMAL && energy <= SpectralPattern.MAX_SOURCE_ENERGY)) {
             return new DecompositionRejected(DecompositionRejectionReason.ENERGY_OUT_OF_RANGE,
                     "source energy is outside [MIN_NORMAL, MAX_SOURCE_ENERGY]: " + energy);
         }
@@ -127,37 +121,12 @@ public final class DftWaveDecomposer implements WaveDecomposer {
         }
 
         var frame = new SpectralFrame(SpectralBasis.DFT, SpectralScale.SINGLE, n, rate, wave.unit());
-        return new Decomposed(SpectralPattern.of(frame, energy, wave.provenance(), levels, indices, magnitudes,
+        return new Decomposed(SpectralPattern.ofOwned(frame, energy, wave.provenance(), levels, indices, magnitudes,
                 phases));
     }
 
     private void setRealBin(int k, double sum, int n, double[] magnitudes, double[] phases) {
         magnitudes[k] = Math.abs(sum) / n;
         phases[k] = sum < 0.0 ? StrictMath.PI : 0.0;
-    }
-
-    private double peakMagnitude(double[] x) {
-        double peak = 0.0;
-        for (double sample : x) {
-            peak = Math.max(peak, Math.abs(sample));
-        }
-        return peak;
-    }
-
-    /**
-     * {@code Σ x_n²} in ascending order, with samples scaled by {@code 2^-e}, {@code e} the exponent of the peak.
-     * Nonzero samples whose energy underflows return a value below {@link Double#MIN_NORMAL}, possibly {@code 0}.
-     */
-    private double sourceEnergy(double[] x, double peak) {
-        if (peak == 0.0) {
-            return 0.0;
-        }
-        int exponent = Math.getExponent(peak);
-        double sum = 0.0;
-        for (double sample : x) {
-            double scaled = Math.scalb(sample, -exponent);
-            sum += scaled * scaled;
-        }
-        return Math.scalb(sum, 2 * exponent);
     }
 }

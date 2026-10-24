@@ -36,10 +36,12 @@ The reference must also be bit-reproducible with `StrictMath` (section 11.2), O(
   detail)`. A structurally valid wave can still fall outside what a transform can represent:
   - `SAMPLE_RATE_OUT_OF_RANGE`: the DFT frame guards of ADR 0035 (highest locator overflow, subnormal bin spacing),
     pre-checked through the same package-private `SpectralFrame` predicates so no exception escapes for host data;
-  - `ENERGY_OUT_OF_RANGE`: `Σ x_n²` exceeds `MAX_SOURCE_ENERGY = Double.MAX_VALUE / 2`, or is nonzero but below
-    `Double.MIN_NORMAL`. The upper bound is headroom: `SpectralPattern` recomputes the retained energy from rounded
-    magnitudes, which may exceed the source energy by up to the Parseval tolerance, so a finite source energy close to
-    `Double.MAX_VALUE` could otherwise overflow there and escape as an exception. The lower bound covers nonzero samples whose
+  - `ENERGY_OUT_OF_RANGE`: `Σ x_n²` exceeds `SpectralPattern.MAX_SOURCE_ENERGY = Double.MAX_VALUE / 2`, or is
+    nonzero but below `Double.MIN_NORMAL`. The upper bound is headroom and belongs to the pattern, so every
+    decomposer (#124 included) shares it: `SpectralPattern` recomputes the retained energy from rounded magnitudes,
+    which may exceed the source energy by up to the Parseval tolerance, so a finite source energy close to
+    `Double.MAX_VALUE` could otherwise overflow there. This amends ADR 0035: a pattern's `sourceEnergy` must now lie
+    in `[0, MAX_SOURCE_ENERGY]`. The lower bound covers nonzero samples whose
     energy is subnormal or underflows to `0`, where the Parseval tolerance can no longer be checked and
     `SpectralPattern` would reject the result. Silence (all samples `0`) is valid and decomposes to zero magnitudes.
   #124 adds its own reason (non-power-of-two length, N4) to the same enum. Rejections are equal values for equal
@@ -60,7 +62,10 @@ The reference must also be bit-reproducible with `StrictMath` (section 11.2), O(
   - Other bins: magnitude `2 · hypot(Re, Im) / N`, phase `SpectralPhase.wrap(atan2(Im, Re))`, stored whatever the
     magnitude.
   - The source energy is summed with samples scaled by `2^-e` (`e` the exponent of the largest `|x_n|`), the same
-    technique `SpectralPattern` uses for its retained energy, so both sides of the Parseval check round alike.
+    technique `SpectralPattern` uses for its retained energy, through the shared package-private
+    `SpectralArithmetic` helpers, so both sides of the Parseval check round alike.
+  - The output arrays are handed to the pattern through a package-private owning factory instead of being copied
+    again, and the samples are read from the wave without a defensive copy (both stay inside the package).
 - **Aliasing is documented, not detected.** Content above `sampleRate / 2` folds onto a lower bin (N7:
   `cos(2π·7·t)` at 8 Hz reports bin 1 with magnitude 1). It is not a rejection and no heuristic (such as a
   Nyquist-energy flag) suggests otherwise; anti-alias pre-filtering is the encoder's responsibility. "Report

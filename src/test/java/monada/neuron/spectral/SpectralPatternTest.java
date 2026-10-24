@@ -175,6 +175,20 @@ class SpectralPatternTest {
     }
 
     @Test
+    void sourceEnergyLeavesHeadroomForTheRetainedEnergy() {
+        var frame = new SpectralFrame(SpectralBasis.DFT, SpectralScale.SINGLE, 1, 1.0, SampleUnit.HERTZ);
+        double max = SpectralPattern.MAX_SOURCE_ENERGY;
+
+        assertEquals(max, SpectralPattern.of(frame, max, PROVENANCE, new int[0], new int[0], new double[0],
+                new double[0]).sourceEnergy());
+        for (double bad : new double[] {Math.nextUp(max), Double.MAX_VALUE, Double.POSITIVE_INFINITY, Double.NaN,
+                -1.0}) {
+            assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(frame, bad, PROVENANCE,
+                    new int[0], new int[0], new double[0], new double[0]));
+        }
+    }
+
+    @Test
     void rejectsWindowOffsetOverflow() {
         var late = new WaveProvenance("encoder.fixture", 1, "window", Long.MAX_VALUE - 7);
         var ok = new WaveProvenance("encoder.fixture", 1, "window", Long.MAX_VALUE - 8);

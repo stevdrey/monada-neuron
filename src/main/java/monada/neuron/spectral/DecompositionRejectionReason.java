@@ -5,7 +5,7 @@ public enum DecompositionRejectionReason {
 
     /**
      * The source energy {@code Σ x_n²} is outside the range the pattern can represent: above
-     * {@link DftWaveDecomposer#MAX_SOURCE_ENERGY} ({@code Double.MAX_VALUE / 2}, headroom so the recomputed retained
+     * {@link SpectralPattern#MAX_SOURCE_ENERGY} ({@code Double.MAX_VALUE / 2}, headroom so the recomputed retained
      * energy cannot overflow), or nonzero but below {@link Double#MIN_NORMAL}, where the Parseval tolerance of contract
      * section 12.4 can no longer be checked. Silent samples (energy exactly {@code 0}) are accepted.
      */

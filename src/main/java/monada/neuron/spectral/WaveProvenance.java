@@ -29,6 +29,20 @@ public record WaveProvenance(String encoderId, int encoderVersion, String source
         }
     }
 
+    /**
+     * Requires that a window of {@code sampleCount} samples starting at {@link #windowOffset()} stays within a
+     * {@code long} index.
+     *
+     * @param sampleCount number of samples in the window
+     * @throws IllegalArgumentException if {@code windowOffset + sampleCount} overflows
+     */
+    void requireWindowFits(int sampleCount) {
+        if (windowOffset > Long.MAX_VALUE - sampleCount) {
+            throw new IllegalArgumentException("windowOffset + sampleCount overflows: windowOffset=" + windowOffset
+                    + ", sampleCount=" + sampleCount);
+        }
+    }
+
     private static void requireReference(String value, String name) {
         Objects.requireNonNull(value, name + " must not be null");
         if (value.isBlank()) {

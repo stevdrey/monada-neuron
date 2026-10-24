@@ -4,7 +4,6 @@ import monada.neuron.spectral.DecompositionResult.Decomposed;
 import monada.neuron.spectral.DecompositionResult.DecompositionRejected;
 import org.junit.jupiter.api.Test;
 
-import java.util.SplittableRandom;
 import java.util.function.IntToDoubleFunction;
 
 import static monada.neuron.spectral.SpectralFixtures.PROVENANCE;
@@ -107,12 +106,7 @@ class DftWaveDecomposerTest {
     void p6ParsevalHoldsOnP4AndSeededRandomWindows() {
         assertParseval(p4Wave());
         for (int n : new int[] {256, 4096}) {
-            var random = new SplittableRandom(0x5EED_0123L + n);
-            var samples = new double[n];
-            for (int i = 0; i < n; i++) {
-                samples[i] = random.nextDouble(-10.0, 10.0);
-            }
-            assertParseval(new SampledWave(samples, n, SampleUnit.HERTZ, PROVENANCE));
+            assertParseval(randomWave(n, 0x5EED_0123L + n));
         }
     }
 
@@ -224,8 +218,8 @@ class DftWaveDecomposerTest {
                 SampleUnit.HERTZ, PROVENANCE);
         assertRejected(nearMax, DecompositionRejectionReason.ENERGY_OUT_OF_RANGE);
 
-        double atBound = StrictMath.sqrt(DftWaveDecomposer.MAX_SOURCE_ENERGY);
-        while (atBound * atBound > DftWaveDecomposer.MAX_SOURCE_ENERGY) {
+        double atBound = StrictMath.sqrt(SpectralPattern.MAX_SOURCE_ENERGY);
+        while (atBound * atBound > SpectralPattern.MAX_SOURCE_ENERGY) {
             atBound = Math.nextDown(atBound);
         }
         var accepted = decompose(new SampledWave(new double[] {atBound}, 1.0, SampleUnit.HERTZ, PROVENANCE));
@@ -268,7 +262,8 @@ class DftWaveDecomposerTest {
 
     /**
      * Golden values recorded from this reference: a seeded window of {@code N = 256} must reproduce them bit for bit
-     * on any JVM, because every operation is {@code StrictMath} or IEEE 754 arithmetic in a fixed order.
+     * on any JVM, because the samples and every operation are {@code StrictMath} or IEEE 754 arithmetic in a fixed
+     * order.
      */
     @Test
     void goldenSeededWindowIsBitReproducible() {
@@ -277,7 +272,7 @@ class DftWaveDecomposerTest {
         assertEquals(GOLDEN_CHECKSUM, checksum(pattern));
     }
 
-    private static final long GOLDEN_CHECKSUM = 3320801901406220982L;
+    private static final long GOLDEN_CHECKSUM = 4354195059233923073L;
 
     private static long checksum(SpectralPattern pattern) {
         long hash = Double.doubleToRawLongBits(pattern.sourceEnergy());
@@ -361,9 +356,18 @@ class DftWaveDecomposerTest {
         return new SampledWave(samples(8, formula), 8.0, SampleUnit.HERTZ, PROVENANCE);
     }
 
+    /**
+     * Seeded samples in {@code [-10, 10)} from a fixed 64-bit LCG (Knuth's MMIX constants) and explicit arithmetic, so
+     * the golden fixture depends on no JDK random-number implementation.
+     */
     private static SampledWave randomWave(int n, long seed) {
-        var random = new SplittableRandom(seed);
-        return new SampledWave(samples(n, i -> random.nextDouble(-10.0, 10.0)), n, SampleUnit.HERTZ, PROVENANCE);
+        var samples = new double[n];
+        long state = seed;
+        for (int i = 0; i < n; i++) {
+            state = state * 6364136223846793005L + 1442695040888963407L;
+            samples[i] = -10.0 + 20.0 * ((state >>> 11) * 0x1.0p-53);
+        }
+        return new SampledWave(samples, n, SampleUnit.HERTZ, PROVENANCE);
     }
 
     private static double[] samples(int n, IntToDoubleFunction formula) {

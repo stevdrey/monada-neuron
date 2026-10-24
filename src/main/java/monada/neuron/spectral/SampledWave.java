@@ -48,17 +48,14 @@ public record SampledWave(double[] samples, double sampleRate, SampleUnit unit, 
             throw new IllegalArgumentException(
                     "sampleRate must be exactly 1 for ABSTRACT_PER_INDEX, got: " + sampleRate);
         }
-        if (provenance.windowOffset() > Long.MAX_VALUE - samples.length) {
-            throw new IllegalArgumentException("windowOffset + sampleCount overflows: windowOffset="
-                    + provenance.windowOffset() + ", sampleCount=" + samples.length);
-        }
+        provenance.requireWindowFits(samples.length);
         var copy = new double[samples.length];
         for (int i = 0; i < samples.length; i++) {
             double sample = samples[i];
             if (!Double.isFinite(sample)) {
                 throw new IllegalArgumentException("sample at index " + i + " must be finite, got: " + sample);
             }
-            copy[i] = sample == 0.0 ? 0.0 : sample;
+            copy[i] = SpectralArithmetic.canonicalZero(sample);
         }
         samples = copy;
     }
@@ -67,6 +64,11 @@ public record SampledWave(double[] samples, double sampleRate, SampleUnit unit, 
     @Override
     public double[] samples() {
         return samples.clone();
+    }
+
+    /** Returns the internal sample array for decomposers in this package; callers must not mutate it. */
+    double[] sampleArray() {
+        return samples;
     }
 
     /** Returns the number of samples {@code N}. */

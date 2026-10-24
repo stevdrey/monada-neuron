@@ -264,8 +264,9 @@ pipeline as text.
   O(N²) time, O(N) memory; baseline in [wave-decomposer-reference.md](../benchmarks/wave-decomposer-reference.md).
 - **Typed rejections** (#123): a structurally valid wave outside a transform limit is a `DecompositionRejected`, not
   an exception: `SAMPLE_RATE_OUT_OF_RANGE` when the DFT frame cannot locate the bins (highest locator overflow or
-  subnormal bin spacing, ADR 0035) and `ENERGY_OUT_OF_RANGE` when `Σ x_n²` exceeds `Double.MAX_VALUE / 2` (headroom
-  so the recomputed retained energy stays finite) or is nonzero but below `Double.MIN_NORMAL`. Silent samples decompose to zero magnitudes.
+  subnormal bin spacing, ADR 0035) and `ENERGY_OUT_OF_RANGE` when `Σ x_n²` exceeds
+  `SpectralPattern.MAX_SOURCE_ENERGY = Double.MAX_VALUE / 2` (headroom so the recomputed retained energy stays finite)
+  or is nonzero but below `Double.MIN_NORMAL`. Silent samples decompose to zero magnitudes.
 - **Haar strategy** (#124): orthonormal Haar, `a = (x_{2m} + x_{2m+1}) / √2`, `d = (x_{2m} − x_{2m+1}) / √2`, applied
   to the approximation of each level, levels `1..L` with `L ≤ log2 N`. Requires `N` a power of two; any other length is
   rejected (fixture N4), never padded silently.
@@ -295,7 +296,8 @@ locator derived on access. `SampleUnit` and `WaveProvenance` are delivered by #1
   use the stored phase and never read the flag.
 - **Locator**: for DFT, `k * sampleRate / N`: hertz for `HERTZ`, cycles per index for `ABSTRACT_PER_INDEX` (Section 2.1); sample position of the coefficient's support start
   for Haar.
-- **Source energy**: `sourceEnergy = Σ x_n²` of the decomposed samples, finite and `≥ 0`, set by the decomposer and
+- **Source energy**: `sourceEnergy = Σ x_n²` of the decomposed samples, in `[0, Double.MAX_VALUE / 2]` (headroom for the retained-energy
+  sum, ADR 0036), set by the decomposer and
   carried unchanged by any truncation (top-K, thresholding) of the pattern. It is what makes the retained-energy
   diagnostic of Section 9 computable without the original samples. The energy a pattern retains is, for DFT,
   `N · (m_0² + Σ_{0<k<N/2} m_k² / 2 + m_{N/2}²)` over its retained normalized magnitudes (the Nyquist term only for
