@@ -200,7 +200,7 @@ compared as a control (H2); it is never implicit.
 | `samples` | Copied `double[]`; length `1..maxSamples`; every value finite; NaN and infinities are rejected |
 | `sampleRate` | Finite and `> 0`; for `ABSTRACT_PER_INDEX` it must be exactly `1` (one sample per index), so locators are in cycles per index |
 | `unit` | `HERTZ` or `ABSTRACT_PER_INDEX`; there is no default |
-| `provenance.encoderId` | Opaque, non-blank, bounded (128 code points, the `MAX_REFERENCE_LENGTH` of ADR 0019) |
+| `provenance.encoderId` | Opaque, non-blank, at most 128 UTF-16 chars (`String.length()`), the same unit and value as `ResonanceMemoryResult.MAX_REFERENCE_LENGTH` (ADR 0019) |
 | `provenance.encoderVersion` | `>= 1` |
 | `provenance.sourceReference` | Opaque, bounded like `encoderId`; never a payload, text or file content |
 | `provenance.windowOffset` | `>= 0`, index of the first sample in the host's stream |
@@ -251,7 +251,7 @@ pipeline as text.
 
 ## 6. `SpectralPattern` (proposed, owned by issue #122)
 
-- **Immutable and bounded**: at most `maxComponents` components (Section 11), list copied, sorted by `(level, index)`,
+- **Immutable and bounded**: at most the component bound of its basis (`maxComponentsDft` or `maxComponentsHaar`, Section 11), list copied, sorted by `(level, index)`,
   no duplicate `(level, index)`.
 - **Versioned**: `version` is the pattern schema version, `1` for this contract.
 - **Normalization, DFT**: magnitude `|X_k| / N` for `k = 0` and, when `N` is even, `k = N/2`; `2·|X_k| / N` otherwise.
@@ -262,7 +262,8 @@ pipeline as text.
   patterns are equal records). The computed phase is **always stored**, whatever the
   magnitude, because synthesis needs it. `phaseDefined` is only a comparison-validity flag: it is `false` when the
   magnitude is below `phaseEpsilon` (`1e-12` relative to the largest magnitude of the pattern, or absolute when that
-  is 0), and comparisons (Section 7) and NCM evidence ignore such phases. Synthesis never reads the flag.
+  is 0), and the coherence of Section 7.3 and NCM phase evidence ignore such phases. Interference, the aggregate and synthesis
+  use the stored phase and never read the flag.
 - **Locator**: for DFT, `k * sampleRate / N`: hertz for `HERTZ`, cycles per index for `ABSTRACT_PER_INDEX` (Section 2.1); sample position of the coefficient's support start
   for Haar.
 - **Source energy**: `sourceEnergy = Σ x_n²` of the decomposed samples, finite and `≥ 0`, set by the decomposer and
@@ -288,18 +289,20 @@ Otherwise the result is `Incompatible(reason)`. There is no interpolation, paddi
 
 ### 7.3 Reference quantities
 
-For each band `k` present in both patterns with magnitudes `m1_k`, `m2_k` and phase difference `Δφ_k` (wrapped to
-`(−π, π]`, `0` when either phase is undefined):
+Components are matched by their `(level, index)` key. A band `k` is **shared** when both patterns retain it; with
+magnitudes `m1_k`, `m2_k` and stored phases, `Δφ_k` is the stored phase difference wrapped to `(−π, π]`. Sums run over
+shared bands; `‖m1‖` and `‖m2‖` are the Euclidean norms over **all** components each pattern retains, so a band one
+pattern dropped lowers the aggregate instead of being ignored:
 
 ```text
 interference_k = m1_k · m2_k · cos(Δφ_k)                         signed; may be negative
 alignment_k    = min(m1_k, m2_k) / max(m1_k, m2_k), 0 when both are 0
 aggregate      = (1 + Σ_k interference_k / (‖m1‖ · ‖m2‖)) / 2     in [0, 1]; 0 when either norm is 0
-coherence      = |Σ_k w_k · e^{iΔφ_k}| / Σ_k w_k,  w_k = m1_k · m2_k, over bands with defined phases
+coherence      = |Σ_k w_k · e^{iΔφ_k}| / Σ_k w_k,  w_k = m1_k · m2_k, over shared bands whose phases are both defined
                                                                   in [0, 1]; 0 when Σ w_k = 0
 ```
 
-`‖m‖` is the Euclidean norm of the magnitudes. The aggregate is the normalized real part of the spectral
+The aggregate is the normalized real part of the spectral
 cross-correlation mapped to `[0, 1]`; it is symmetric. Negative interference is a diagnostic of destructive phase
 relation and is **never** written to the Store as a score. #125 may add weights per band; each must be documented and
 default to the reference above.
@@ -317,14 +320,18 @@ emitted as `Proposition(domain, conceptCode)` (ADR 0019).
 
 The predictor reads an immutable caller-owned model snapshot (#127 defines its content; the minimal reference is a
 per-concept spectral centroid plus a concept-transition count table, both learned only from labeled training
-sequences), the current pattern evidence and optionally the previous concept.
+sequences), the current pattern evidence and optionally the previous concept. At evaluation time the previous
+concept is the predictor's **own** prediction for the preceding window, or absent at the start of a sequence; it is
+never a ground-truth label of a test window (Section 12.3).
 
 1. Score every depth 0 concept.
-2. Select the best; if `score < τ_conf` or `score − secondScore < τ_margin`, **abstain** at that depth with
-   `LOW_CONFIDENCE` or `LOW_MARGIN`, keeping the coarse candidates as diagnostics.
+2. Select the best; if `score < τ_conf` or `score − secondScore < τ_margin` at **depth 0**, the result is
+   `ConceptAbstention` with `LOW_CONFIDENCE` or `LOW_MARGIN`, keeping the candidates as diagnostics.
 3. Otherwise descend into the selected concept's children and repeat, until a leaf or `maxDepth`.
-4. The result is the deepest confident level reached: a coarse-only prediction is a valid, reported outcome, not a
-   failure.
+4. When the test fails at a depth `d > 0`, the result is `ConceptCandidates` at the deepest confident level `d − 1`
+   (a coarse-only prediction), not an abstention. Scoring is per depth: a coarse-only prediction counts as an answer at
+   the depths it reaches and as not covered at deeper depths. H3 and H6 are scored at the leaf depth, so a coarse-only
+   prediction counts there as not covered.
 
 "Next concept" means the concept the evidence of the **next** window is predicted to support, given the current
 evidence and the previous concept; the fixtures (Section 12.3) define the label of each next window.
@@ -379,9 +386,11 @@ When integrated (Section 10) candidates become `Hypothesis` values scored downst
 
 ### 10.1 Stage wiring (proposed, owned by issue #128)
 
-- Opt-in host composition inside existing positions: for example a `PERCEPTION` capability that yields the samples'
-  provenance as `OBSERVATION` signals and a `REASONING` stage that runs decomposition and prediction and returns a
-  `ReasoningCognitiveStageResult` with the hypotheses.
+- Opt-in host composition inside existing positions: for example a `REASONING` stage that obtains its `SampledWave`
+  windows from a host resolver keyed by the request-scoped `HostExecutionContext` (ADR 0023), the same pattern the
+  routing reasoning adapter uses for its inputs, runs decomposition and prediction, and returns a
+  `ReasoningCognitiveStageResult` with the hypotheses. Samples never travel as `Signal` values; any input signals the
+  stage receives are ordinary cycle signals, not encoded samples or provenance.
 - No new `CognitiveStageKind`, no static registry, no payload map on `Signal`. `Signal` stays identity-free (ADR 0005);
   spectral data travels only in typed stage results, never inside a `Signal`.
 - Budgets: the stage honors `CognitiveBudget` (ADR 0009), `HypothesisLimits` (ADR 0019) and this contract's bounds; a
@@ -407,7 +416,8 @@ performance.
 | Bound | Proposed value | Rationale | Owner |
 | --- | --- | --- | --- |
 | `maxSamples` | 4,096 | Largest workload (Section 14); direct DFT at 4,096 is about 16.8 M multiply-adds per window | #123 |
-| `maxComponents` | 2,049 | `floor(4096/2) + 1` single-sided bins; Haar of 4,096 also yields 4,096 coefficients, so Haar keeps its own bound of `maxSamples` | #122 |
+| `maxComponentsDft` | 2,049 | `floor(maxSamples/2) + 1` single-sided bins | #122 |
+| `maxComponentsHaar` | 4,096 | `maxSamples`: a complete Haar pattern of `N` samples has `N` coefficients at any level count | #122 |
 | `maxLevels` (Haar) | 12 | `log2 4096` | #124 |
 | `maxConcepts` | 256 | Largest workload | #127 |
 | `maxDepth` | 3 | Largest workload | #127 |
@@ -451,6 +461,7 @@ within a documented tolerance.
 | P10 | Identical patterns (P4 with itself) | aggregate 1, coherence 1, every interference `m_k² ≥ 0` | #125 |
 | P11 | P2 against P2 shifted by `π` | interference bin 1 = −1, aggregate 0 | #125 |
 | P12 | P2 against `cos(2π·1·t + π/2)` | interference 0, aggregate 0.5, coherence 1 | #125 |
+| P17 | P4 against P4 with bin 3 dropped | shared bin 1 interference 1; aggregate `(1 + 1/√1.25) / 2 ≈ 0.947214` | #125 |
 | P13 | DFT → inverse DFT round trip on P1–P5, P8 and seeded random `N ∈ {8, 256, 4096}` | `EXACT` within 12.4 | #126 |
 | P14 | Haar → inverse Haar round trip, seeded random `N ∈ {8, 256, 4096}` | `EXACT` within 12.4 | #126 |
 | P15 | Hierarchy fixture of Section 12.3, clean evidence | correct coarse and fine concept, deterministic order | #127 |
@@ -467,7 +478,7 @@ within a documented tolerance.
 | N5 | `sampleRate ≤ 0`, NaN or infinite; missing unit | rejected | #123 |
 | N6 | Compare patterns with `sampleRate` 8 and 16, or DFT with Haar | `Incompatible`, never interpolated | #125 |
 | N7 | Aliasing: `cos(2π·7·t)` at `sampleRate = 8` | reported as bin 1 magnitude 1; documented as undetectable from samples, not an error | #123 |
-| N8 | Drop half the bins of P4 then synthesize | `LOSSY` with finite error, never `EXACT` | #126 |
+| N8 | Drop bin 1 of P4, then synthesize with the original P4 samples supplied | `LOSSY`, never `EXACT`; `retainedEnergyFraction` 0.2; `maxAbsoluteError` and `relativeEnergyError` present, finite and positive | #126 |
 | N9 | Previous concept code not in the hierarchy | `Abstain(UNKNOWN_CONCEPT)` | #127 |
 | N10 | Evidence equidistant from two concepts | `Abstain(LOW_MARGIN)` at depth 0 | #127 |
 | N11 | Random-noise evidence on the trained hierarchy | abstention rate reported; any confident prediction counted as an error | #127, #130 |
@@ -481,14 +492,16 @@ needs it (G2); #127 and #130 reuse it unchanged, and #127 also uses a small copy
 
 - **Hierarchy**: depth 0 categories `LOW_BAND` (code 1) and `HIGH_BAND` (code 2); depth 1 concepts `LOW_PURE` (11),
   `LOW_CHORD` (12) under `LOW_BAND`, `HIGH_PURE` (21), `HIGH_CHORD` (22) under `HIGH_BAND`. Domain is a fixture constant.
-- **Generator**: `N = 256`, `sampleRate = 256` Hz. `LOW_*` dominant tone in 4–16 Hz, `HIGH_*` in 64–96 Hz; `*_PURE` one
-  tone, `*_CHORD` the dominant tone plus a second at a fixed ratio 3/2. Amplitude, phase and exact frequency drawn
+- **Generator**: `N = 256`, `sampleRate = 256` Hz. `LOW_*` dominant tone in 4–16 Hz, `HIGH_*` in 64–80 Hz; `*_PURE` one
+  tone, `*_CHORD` the dominant tone plus a second at a fixed ratio 3/2 (at most 120 Hz). Every generated tone stays
+  below the 128 Hz Nyquist limit; the generator rejects any parameter set that would exceed it. Amplitude, phase and exact frequency drawn
   from seeded ranges; additive Gaussian noise at documented SNRs (for example 20, 10 and 0 dB).
 - **Sequences**: windows follow a seeded first-order transition table over the four leaf concepts. The ground-truth
   label of a window is the concept that generated it. The "next concept" label of window `w` is the generator label of
   window `w + 1`.
 - **Splits**: disjoint seeds for training, threshold selection and held-out test. Labels of the test split are never
-  read during training, threshold selection or feedback. A leakage check (as in the HTML protocol) fails the run.
+  read during training, threshold selection, feedback **or inference**: no predictor or control receives a test label
+  as input, including as the previous concept. Test labels are read only by the scorer. A leakage check (as in the HTML protocol) fails the run.
 
 ### 12.4 Numerical tolerances
 
@@ -499,7 +512,7 @@ needs it (G2); #127 and #130 reuse it unchanged, and #127 also uses a small copy
 | Parseval identity | relative `1e-9` of `Σ x_n²` | `N ≤ 4096`, samples in `[−10, 10]` |
 | Round trip (P13, P14) | max absolute error `≤ 1e-9 · max(1, max|x_n|)` | `N ≤ 4096` |
 | Haar exact values (P9) | absolute `1e-12` | as listed |
-| Resonance values (P10–P12) | absolute `1e-12` | `N ≤ 64` |
+| Resonance values (P10–P12, P17) | absolute `1e-12` | `N ≤ 64` |
 | Phase defined | magnitude `≥ 1e-12` relative to the pattern maximum | all |
 
 Tolerances are documented per scale, not universal. An optimized backend later states its own tolerance against these
@@ -516,10 +529,10 @@ each is refuted by the stated observation.
 | H1h | The Haar strategy preserves energy and matches its exact values within Section 12.4 | any fixture owned by #124 fails | G1h |
 | H1s | The reference synthesizers invert complete patterns within Section 12.4 and never report a truncated one as `EXACT` | P13 or N8 fails (DFT path); P14 fails (Haar path, evaluated only when G1h is go) | G1s |
 | H2 | Spectral resonance separates same-concept from different-concept window pairs better than `ScalarResonanceMetric` on the dominant-component `FrequencyState` projection | the AUC of the spectral aggregate does not exceed the scalar control's AUC by the pre-registered margin | G2 |
-| H3 | Hierarchical NCM predicts the next concept better than baseline A (majority and transition prior, no spectral input) at matched coverage | selective accuracy at the matched coverage is not above baseline A by the pre-registered margin, with the interval excluding 0 | G3 |
-| H4 | Coarse-to-fine prediction beats flat prediction over the leaf concepts with the same features and scoring inputs | control C-flat matches or beats C's selective accuracy at matched coverage and equal work budget | G3 (informational) |
+| H3 | Hierarchical NCM predicts the next concept better than baseline A (no spectral input) on the windows it answers, with enough coverage | C's leaf accuracy on the windows C covers is not above A's accuracy on the **same** windows by the pre-registered margin with the interval excluding 0, or C's leaf coverage is below the pre-registered minimum coverage | G3 |
+| H4 | Coarse-to-fine prediction beats flat prediction over the leaf concepts with the same features and scoring inputs | control C-flat, with its threshold set on the threshold-selection split to reach C's leaf coverage, matches or beats C's leaf accuracy on covered windows at equal work budget | G3 (informational) |
 | H5 | Validated outcome feedback improves H3's metric on later held-out windows without label leakage | no improvement, or any leakage detected | G5 |
-| H6 | Abstention is informative: accuracy on non-abstained windows exceeds accuracy on all windows, and N11 abstains more than clean evidence | either inequality fails | G3 |
+| H6 | Abstention is informative: C's leaf accuracy on covered windows exceeds the accuracy of C's forced top-1 leaf answer on all windows (abstention and coarse-only results replaced by the top-ranked leaf candidate, never scored as errors), and N11 abstains more than clean evidence | either inequality fails | G3 |
 
 Each margin is pre-registered by the issue whose gate evaluates it, **before** held-out results are computed: H2 by
 #125, H3, H4 and H6 by #127, H5 by #129. Pre-registration means the margin is committed to that issue's benchmark document
@@ -538,7 +551,12 @@ the registered margins and adds none for H2 to H6. Changing a margin after seein
 
 ### 14.2 Controls (named as in #130; delivered by the gate that needs them)
 
-- **A**: majority and transition prior, no spectral input (the no-NCM baseline). Delivered by #127 for G3.
+- **A**: no spectral input (the no-NCM baseline). It predicts, for every test window, the most frequent next concept of
+  the training split, ties to the lower `conceptOrdinal`; it reads no test input and always answers. Because A has no
+  confidence score, H3 compares it with C paired on the windows C covers, plus a pre-registered minimum coverage.
+  Delivered by #127 for G3.
+- **A-oracle** (informational only): the training transition table applied to the **true** label of the current window.
+  It reads a test label, so it is reported as a labelled upper reference and never used by a gate.
 - **B**: spectral-only nearest centroid, flat over leaf concepts, no resonance and no hierarchy. Delivered by #127 for
   G3.
 - **C**: DFT plus resonance plus hierarchy, the system under test at G3. Delivered by #127.

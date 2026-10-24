@@ -47,9 +47,10 @@ Adopt [NCM Wave Cognition Experiment Contract v1](../specs/ncm-wave-cognition-v1
   existing stage positions without a new `CognitiveStageKind`. Model state is a caller-owned snapshot updated only through
   validated outcome feedback carried across cycles (ADR 0021). Long-term memory, recall and ranking stay in Monada
   Resonance Store (ADR 0001).
-- **Binding stop/go gates.** Gates G0 to G5 (with the Haar and synthesis sub-gates G1h and G1s) with pre-registered margins decide whether work continues. In particular,
-  cycle integration (#128) does not start unless hierarchical NCM beats the no-spectral baseline at matched coverage
-  (gate G3). A negative result is a valid, published outcome.
+- **Binding stop/go gates.** Gates G0 to G5, with the Haar and synthesis sub-gates G1h and G1s, and pre-registered
+  margins decide whether work continues. In particular, cycle integration (#128) does not start unless hierarchical NCM
+  beats the no-spectral baseline on the windows it answers, with a pre-registered minimum coverage (gate G3). No
+  predictor or control reads a test label at inference. A negative result is a valid, published outcome.
 
 The contract introduces no Java type and no runtime behavior. Every named type is a sketch owned by its issue, and every
 numeric bound is a proposal owned by its issue.

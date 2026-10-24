@@ -569,7 +569,8 @@ decomposed evidence, not the prism, and concept labels are host-supplied ground 
 frequencies. `Signal`, `FrequencyState` and `ScalarResonanceMetric` are unchanged and remain the default path; spectral
 data never travels inside a `Signal`. All artifacts are cycle-local and bounded, model state is a caller-owned snapshot,
 and memory, recall and ranking stay in Monada Resonance Store. Binding stop/go gates decide whether later issues proceed:
-cycle integration (#128) waits until hierarchical NCM beats a no-spectral baseline at matched coverage.
+cycle integration (#128) waits until hierarchical NCM beats a no-spectral baseline on the windows it answers, with a
+pre-registered minimum coverage.
 
 ## Target Module Boundaries
 
