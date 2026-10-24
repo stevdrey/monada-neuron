@@ -301,6 +301,6 @@ In that run the per-case medians were 0.33 ms (Store), 3.78 ms (Neuron cycle) an
   even when the stated condition means nearly the same.
 - The host reason text is a fixed template per rule and is not judged; the rationale is judged only through its cited
   evidence (`rationaleGrounded`).
-- The corpus is small and authored; results do not transfer to other corpora. Multi-turn context is out of scope
-  (Issue #113).
+- The corpus is small and authored; results do not transfer to other corpora. Multi-turn context is covered separately
+  by [HTML multi-turn follow-ups](html-dialog.md) (Issue #113).
 - Arm C is exercised only with a test double; no model result exists.

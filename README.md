@@ -247,7 +247,10 @@ issue #135). Context-dependent HTML design choices (`div`/`iframe`, `ol`/`ul`, i
 `defer`, modules and CSP) are benchmarked over contrastive cases, with Store retrieval, Neuron evidence use and an
 explicitly printed, evaluation-only host rule baseline reported separately
 ([`runHtmlDecisionBenchmark`](docs/benchmarks/html-decision.md), issue #112), scored against gold labels
-independently adjudicated by a model from another vendor (issue #152).
+independently adjudicated by a model from another vendor (issue #152). Multi-turn follow-ups and constraint changes are
+evaluated with an explicit, immutable host-supplied context per turn, no-context and evidence-removed controls, and
+the component holding conversational state stated (the host, never Neuron)
+([`runHtmlDialogBenchmark`](docs/benchmarks/html-dialog.md), issue #113).
 
 **Module path.** A JPMS host writes `requires monada.neuron;`. The jar is an automatic module, so it declares no
 `requires jdk.incubator.vector` and the scalar fallback applies unless the host adds the module itself.

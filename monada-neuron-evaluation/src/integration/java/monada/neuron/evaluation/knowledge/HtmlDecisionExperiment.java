@@ -246,10 +246,11 @@ final class HtmlDecisionExperiment {
      * @param usable the evidence the selector may use, or empty when the recall failed
      * @param detail what happened
      */
-    private record NeuronPath(Optional<NeuronTrace> trace, Optional<List<EvidenceChunk>> usable, String detail) {
+    record NeuronPath(Optional<NeuronTrace> trace, Optional<List<EvidenceChunk>> usable, String detail) {
     }
 
-    private NeuronPath neuron(Root root, String query) {
+    /** Runs the B+R Neuron path of one query; reused per turn by the multi-turn suite (Issue #113). */
+    NeuronPath neuron(Root root, String query) {
         var neuronTrace = cycle(root, root.adapter(), query);
         var decision = neuronTrace.decision();
         var admitted = neuronTrace.admitted();
@@ -279,7 +280,7 @@ final class HtmlDecisionExperiment {
     }
 
     /** Runs one Neuron cycle over {@code port} and returns its full trace: signals, decision, admitted and selected. */
-    private NeuronTrace cycle(Root root, ResonanceMemoryPort port, String query) {
+    NeuronTrace cycle(Root root, ResonanceMemoryPort port, String query) {
         var run = cycle.execute(port, query, HtmlKnowledgeCycleExperiment.BUDGET, K);
         var decision = cycle.decide(run, root.resolver());
         var admitted = run.memory().map(memory -> memory.response().results().stream()
@@ -298,7 +299,16 @@ final class HtmlDecisionExperiment {
 
     private Row selectorRow(DecisionCase decisionCase, Arm arm, List<EvidenceChunk> evidence,
             Optional<NeuronTrace> trace, String detail) {
-        var recommendation = selector.decide(decisionCase, evidence);
+        return recommendationRow(decisionCase.caseId(), arm, selector.decide(decisionCase, evidence), evidence, trace,
+                detail);
+    }
+
+    /**
+     * The row of a recommendation over {@code evidence}, with every claim and exclusion citation verified against it;
+     * the multi-turn suite (Issue #113) also records host abstentions this way.
+     */
+    Row recommendationRow(String caseId, Arm arm, DecisionRecommendation recommendation, List<EvidenceChunk> evidence,
+            Optional<NeuronTrace> trace, String detail) {
         var claims = switch (recommendation) {
             case Decided decided -> decided.claims();
             case Conditional conditional -> conditional.claims();
@@ -311,7 +321,7 @@ final class HtmlDecisionExperiment {
         };
         var exclusionCitations = exclusions.stream().flatMap(exclusion -> exclusion.citations().stream())
                 .map(citation -> citations.verify("", citation, evidence)).toList();
-        return new Row(decisionCase.caseId(), arm, selector.name(), selector.kind().name(), hits(evidence), trace,
+        return new Row(caseId, arm, selector.name(), selector.kind().name(), hits(evidence), trace,
                 Row.outcomeOf(recommendation), Optional.of(recommendation), verified(claims, evidence),
                 exclusionCitations, detail);
     }
@@ -337,13 +347,13 @@ final class HtmlDecisionExperiment {
                 .map(citation -> citations.verify(claim.text(), citation, evidence)).toList())).toList();
     }
 
-    private static Row failedRow(DecisionCase decisionCase, Arm arm, String selector, String kind,
+    static Row failedRow(DecisionCase decisionCase, Arm arm, String selector, String kind,
             Optional<NeuronTrace> trace, String detail) {
         return new Row(decisionCase.caseId(), arm, selector, kind, List.of(), trace, Outcome.RECALL_FAILED,
                 Optional.empty(), List.of(), List.of(), detail);
     }
 
-    private static List<Hit> hits(List<EvidenceChunk> chunks) {
+    static List<Hit> hits(List<EvidenceChunk> chunks) {
         return chunks.stream().map(chunk -> new Hit(chunk.chunkId(), chunk.rank(), chunk.score())).toList();
     }
 

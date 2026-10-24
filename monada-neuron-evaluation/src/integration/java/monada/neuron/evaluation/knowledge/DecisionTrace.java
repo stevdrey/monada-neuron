@@ -164,29 +164,34 @@ final class DecisionTrace {
         var tsv = new StringBuilder("# caseHash ").append(caseHash).append("\n# corpusHash ").append(corpusHash)
                 .append('\n').append(HEADER).append('\n');
         for (var row : rows) {
-            var recommendation = row.recommendation();
-            tsv.append(String.join("\t", row.caseId(), row.arm().label(), row.selector(), row.kind(),
-                    join(row.evidence().stream().map(Hit::render).toList()),
-                    row.neuron().map(NeuronTrace::render).orElse("-"), row.outcome().name(),
-                    recommendation.map(DecisionTrace::choice).orElse("-"),
-                    recommendation.map(value -> value instanceof Decided decided ? join(decided.alsoValid()) : "-")
-                            .orElse("-"),
-                    recommendation.map(value -> value instanceof Conditional conditional
-                            ? join(conditional.options().stream().map(DecisionRecommendation.Option::render).toList())
-                            : "-").orElse("-"),
-                    recommendation.map(DecisionTrace::excluded).orElse("-"),
-                    recommendation.map(DecisionTrace::constraintsUsed).orElse("-"),
-                    recommendation.map(value -> value instanceof Decided decided ? join(decided.permissions()) : "-")
-                            .orElse("-"),
-                    join(row.claims().stream().map(claim -> QueryText.escape(claim.text()).replace("|", "\\p"))
-                            .toList()),
-                    join(row.citations().stream().map(span -> span.citation().render() + ":"
-                            + (span.eligible() ? "eligible" : "ineligible") + (span.exactQuote() ? ":exact" : ""))
-                            .toList()),
-                    recommendation.map(DecisionRecommendation::ruleId).orElse("-"),
-                    QueryText.escape(detail(row)))).append('\n');
+            tsv.append(line(row)).append('\n');
         }
         return tsv.append("end\t").append(rows.size()).append('\n').toString();
+    }
+
+    /** Renders one row as one TSV line in {@link #HEADER} order, without the line break. */
+    static String line(Row row) {
+        var recommendation = row.recommendation();
+        return String.join("\t", row.caseId(), row.arm().label(), row.selector(), row.kind(),
+                join(row.evidence().stream().map(Hit::render).toList()),
+                row.neuron().map(NeuronTrace::render).orElse("-"), row.outcome().name(),
+                recommendation.map(DecisionTrace::choice).orElse("-"),
+                recommendation.map(value -> value instanceof Decided decided ? join(decided.alsoValid()) : "-")
+                        .orElse("-"),
+                recommendation.map(value -> value instanceof Conditional conditional
+                        ? join(conditional.options().stream().map(DecisionRecommendation.Option::render).toList())
+                        : "-").orElse("-"),
+                recommendation.map(DecisionTrace::excluded).orElse("-"),
+                recommendation.map(DecisionTrace::constraintsUsed).orElse("-"),
+                recommendation.map(value -> value instanceof Decided decided ? join(decided.permissions()) : "-")
+                        .orElse("-"),
+                join(row.claims().stream().map(claim -> QueryText.escape(claim.text()).replace("|", "\\p"))
+                        .toList()),
+                join(row.citations().stream().map(span -> span.citation().render() + ":"
+                        + (span.eligible() ? "eligible" : "ineligible") + (span.exactQuote() ? ":exact" : ""))
+                        .toList()),
+                recommendation.map(DecisionRecommendation::ruleId).orElse("-"),
+                QueryText.escape(detail(row)));
     }
 
     /** Returns the decided choice, or {@code "-"}. */

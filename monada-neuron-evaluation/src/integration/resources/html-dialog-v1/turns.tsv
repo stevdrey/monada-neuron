@@ -1,0 +1,30 @@
+# html-dialog-v1 multi-turn dialogs over html-kc-v1 with the html-kd-v1 supplement (Issue #113). System-visible: no gold label is here.
+# family is script, list, embed, or - for an elliptical turn whose family only the carried context can supply.
+# statements are '|'-separated set:name=value (a new fact) or change:name=value (an explicit revision); names are html-decision-v1 constraints.
+# candidates '-' carries the latest stated candidates, else the family's choices. carried is '*' (every earlier turn) or the '|'-separated earlier turns the host supplies.
+# antecedent is the earlier turn an ellipsis refers to, or '-'. unmodeled lists requirement keys outside the html-decision-v1 rubric. Any change is a new dialog-set version.
+dialogId	turn	family	utterance	statements	candidates	carried	antecedent	unmodeled
+dialog:script-intro	1	script	How do I execute JavaScript on a page?	-	-	*	-	-
+dialog:script-intro	2	-	Should it be inline or in another file? It is a three-line classic script for one page, there is no Content Security Policy, it may run where it appears, and we can add files.	set:moduleCode=no|set:externalFileAllowed=yes|set:runAfterParse=no|set:restrictiveCsp=no|set:reusedAcrossPages=no	-	*	1	-
+dialog:script-intro	3	-	Now every page of the site needs the same script.	change:reusedAcrossPages=yes	-	*	2	-
+dialog:script-intro	4	-	And the site now sends a Content Security Policy whose script-src is 'self' without 'unsafe-inline'.	change:restrictiveCsp=yes	-	*	2	-
+dialog:script-dom	1	script	One page needs a classic script that reads elements of the page. We can put it in its own file, there is no Content Security Policy, and no other page uses it.	set:moduleCode=no|set:externalFileAllowed=yes|set:restrictiveCsp=no|set:reusedAcrossPages=no	-	*	-	-
+dialog:script-dom	2	-	It must run only after the whole document is parsed, before later deferred scripts.	set:runAfterParse=yes	-	*	1	-
+dialog:script-dom	3	-	And if the hosting does not let us add any file?	change:externalFileAllowed=no	-	*	2	-
+dialog:script-dom	4	-	Still the same single page; nothing else changed.	set:reusedAcrossPages=no	-	*	3	-
+dialog:list-order	1	list	Write the installation instructions: download the archive, unpack it, then run the installer; another order breaks the install. Should this be an ol or a ul?	set:orderMatters=yes	ol|ul	*	-	-
+dialog:list-order	2	-	Actually the list now shows the product's features, and their order means nothing.	change:orderMatters=no	-	*	1	-
+dialog:list-order	3	-	And the order of the features matters.	set:orderMatters=yes	-	*	2	-
+dialog:embed-partner	1	embed	A product card groups an image, a title and a price that we style and script with the rest of the page. Should it be a div or an iframe?	set:separateDocument=no|set:integrateWithPage=yes|set:powerfulFeatures=no	div|iframe	*	-	-
+dialog:embed-partner	2	-	And if it is instead a partner's separately hosted booking page whose styles must not leak into ours?	change:separateDocument=yes|change:integrateWithPage=no	-	*	1	-
+dialog:embed-partner	3	-	The partner page is a video call, so it needs the camera.	change:powerfulFeatures=yes	-	*	2	-
+dialog:embed-partner	4	-	What about security? The partner is an untrusted third party.	-	-	*	2	untrustedThirdParty
+dialog:orphan-ellipsis	1	-	And if it is external?	-	-	*	-	-
+dialog:orphan-ellipsis	2	script	I mean a classic script that every page of the site uses; there is no Content Security Policy, it may run where it appears, and we can add files.	set:moduleCode=no|set:externalFileAllowed=yes|set:runAfterParse=no|set:restrictiveCsp=no|set:reusedAcrossPages=yes	-	*	-	-
+dialog:topic-switch	1	list	Show the ten best-selling books of the week, where the position of each book is its rank. Should this be an ol or a ul?	set:orderMatters=yes	ol|ul	*	-	-
+dialog:topic-switch	2	script	Unrelated question: one page needs a short classic script, and the site's Content Security Policy script-src is 'self' without 'unsafe-inline'. We can add files, it may run where it appears, and no other page uses it.	set:moduleCode=no|set:externalFileAllowed=yes|set:runAfterParse=no|set:restrictiveCsp=yes|set:reusedAcrossPages=no	-	*	-	-
+dialog:topic-switch	3	-	And if the hosting does not let us add any new file?	change:externalFileAllowed=no	-	*	2	-
+dialog:lost-context	1	embed	Our help articles are separate HTML documents, but each one must look like part of the page, share our styles and be read in the same accessibility tree. Should the article go in a div or an iframe?	set:separateDocument=yes|set:integrateWithPage=yes|set:powerfulFeatures=no	div|iframe	*	-	-
+dialog:lost-context	2	-	To be precise: our own documentation team writes the articles, they hold only text, headings, lists and images, they use no camera, microphone, location or other device feature, and they never run scripts; the team publishes them as standalone HTML pages that we want to show inside the help panel of our application without them looking different from the rest of the interface.	set:powerfulFeatures=no	-	*	1	-
+dialog:lost-context	3	-	So, for the articles from before, div or iframe?	-	-	2	1	-
+dialog:lost-context	4	-	Let me restate everything for the record: the help articles are kept as separate HTML documents by our documentation team, they must share the page's styles and layout, they must be in the same accessibility tree so screen readers read them with the page, and they need no device feature at all. Given all of that, which element should hold an article, a div or an iframe?	set:separateDocument=yes|set:integrateWithPage=yes|set:powerfulFeatures=no	-	*	1	-
