@@ -122,6 +122,22 @@ class DialogContextAssemblerTest {
     }
 
     @Test
+    void aStatementOrCandidateOfAFamilyThatWasNotCarriedIsRejected() {
+        var list = turn(1, Family.LIST, "set:orderMatters=yes");
+        for (var statements : List.of("set:moduleCode=no", "change:moduleCode=yes")) {
+            var script = new Turn(DIALOG, 3, Optional.empty(), "And if we cannot add files?", statements(statements),
+                    List.of(), List.of(1), Optional.empty(), List.of());
+            var held = held(ASSEMBLER.assemble(new DialogContext(DialogContext.VERSION, DIALOG, script,
+                    List.of(prior(list)))), Hold.REJECTED);
+            assertTrue(held.detail().contains("moduleCode") && held.detail().contains("list"), held.detail());
+        }
+        var candidates = new Turn(DIALOG, 3, Optional.empty(), "Inline or external?", List.of(),
+                List.of("inline", "external"), List.of(1), Optional.empty(), List.of());
+        assertTrue(held(ASSEMBLER.assemble(new DialogContext(DialogContext.VERSION, DIALOG, candidates,
+                List.of(prior(list)))), Hold.REJECTED).detail().contains("candidates"));
+    }
+
+    @Test
     void anEllipsisWithoutAntecedentOrFamilyAsks() {
         var orphan = turn(1, null, "-");
         var held = held(ASSEMBLER.assemble(DialogContext.alone(orphan)), Hold.NO_FAMILY);

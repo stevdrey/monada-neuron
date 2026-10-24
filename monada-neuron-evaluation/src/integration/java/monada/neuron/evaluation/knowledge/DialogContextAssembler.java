@@ -5,6 +5,7 @@ import monada.neuron.evaluation.knowledge.HtmlDecisionCases.DecisionCase;
 import monada.neuron.evaluation.knowledge.HtmlDecisionCases.Family;
 import monada.neuron.evaluation.knowledge.HtmlDecisionCases.Tri;
 import monada.neuron.evaluation.knowledge.HtmlDialogCases.Kind;
+import monada.neuron.evaluation.knowledge.HtmlDialogCases.Statement;
 import monada.neuron.evaluation.knowledge.HtmlDialogCases.Turn;
 
 import java.nio.charset.StandardCharsets;
@@ -134,7 +135,8 @@ final class DialogContextAssembler {
             "C5 antecedent: an ellipsis whose antecedent turn was not carried is MISSING_ANTECEDENT and asks",
             "C6 family: the current turn's family, else that of the latest carried turn naming one; a turn naming"
                     + " another family than the carried one starts afresh and carries nothing of the other family;"
-                    + " no family is NO_FAMILY and asks",
+                    + " no family is NO_FAMILY and asks; a statement or candidate of the current or a carried turn"
+                    + " outside the resolved family (its family was not carried) is REJECTED",
             "C7 constraints: every constraint of the family starts unknown; the statements of the carried turns of"
                     + " that family, then of the current turn, apply in order; change: overrides, set: on an already"
                     + " known different value, or two statements of one constraint in one turn, is CONTRADICTION and"
@@ -215,6 +217,18 @@ final class DialogContextAssembler {
                     segmentUsed);
         }
         var family = active.get();
+        var ordered = new ArrayList<>(segment);
+        ordered.add(current);
+        for (var turn : ordered) {
+            var foreign = turn.statements().stream().map(Statement::constraint)
+                    .filter(constraint -> constraint.family() != family).map(Constraint::label).toList();
+            var outside = turn.candidates().stream().filter(choice -> !family.choices().contains(choice)).toList();
+            if (!foreign.isEmpty() || !outside.isEmpty()) {
+                return held(Hold.REJECTED, turn.turnId() + " states " + (foreign.isEmpty() ? "candidates " + outside
+                        : "constraints " + foreign) + " outside the resolved family " + family.label()
+                        + "; the family they need was not carried", "-", active, bare, segmentUsed);
+            }
+        }
         var candidates = current.candidates();
         for (var index = segment.size() - 1; candidates.isEmpty() && index >= 0; index--) {
             candidates = segment.get(index).candidates();
@@ -228,8 +242,6 @@ final class DialogContextAssembler {
         var values = new EnumMap<Constraint, Tri>(Constraint.class);
         var sources = new EnumMap<Constraint, String>(Constraint.class);
         family.constraints().forEach(constraint -> values.put(constraint, Tri.UNKNOWN));
-        var ordered = new ArrayList<>(segment);
-        ordered.add(current);
         for (var turn : ordered) {
             var seen = new HashSet<Constraint>();
             for (var statement : turn.statements()) {

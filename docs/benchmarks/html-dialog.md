@@ -112,7 +112,8 @@ and Neuron evidence, rather than an invented assumption:
    `BUDGET_EXHAUSTED`; nothing is truncated.
 5. **C5 antecedent** — an ellipsis whose antecedent was not carried is `MISSING_ANTECEDENT` and asks.
 6. **C6 family** — the turn's family, else the latest carried one; a turn naming another family starts afresh; none is
-   `NO_FAMILY` and asks.
+   `NO_FAMILY` and asks. A statement or candidate outside the resolved family (its family was not carried) is
+   `REJECTED`.
 7. **C7 constraints** — start unknown; apply carried statements then the current ones; `change:` overrides; a `set:`
    on a known different value, or two statements of one constraint in one turn, is `CONTRADICTION` and asks which
    holds.
@@ -144,7 +145,7 @@ saw no decision-topic chunk), `dialog.deterministic` (two passes equal), `perf.m
 ## Results
 
 Run on 2026-10-23, commit `de3babb` plus this change, AMD Ryzen 7 7730U, JDK 27 (Zulu 27.0.0+35), temporary Store root
-on tmpfs. All checks passed; two runs gave the semantic digest `e8dbd8f9…` (byte-identical traces).
+on tmpfs. All checks passed; two runs gave the semantic digest `640cc1a6…` (byte-identical traces).
 
 | Arm | Judged | Correct | Conditional | Revision (`revise`/`qualify`) | No change required (`keep`/`any`) | Unrequired revisions | Constraint adherence | Unjustified certainty | Abstention precision / recall | Clarifications asked (precision) | Evidence coverage |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
