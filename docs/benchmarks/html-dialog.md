@@ -105,8 +105,9 @@ and Neuron evidence, rather than an invented assumption:
 
 1. **C1 version** — any other context version is `REJECTED`.
 2. **C2 count** — a turn above 4, or more than 3 carried turns, is `REJECTED`.
-3. **C3 scope** — every carried turn must belong to the dialog and precede the current turn in ascending order, or the
-   context is `REJECTED`: no cross-dialog carry-over.
+3. **C3 scope** — the current turn and every carried turn must belong to the dialog, and carried turns must precede
+   the current turn in ascending order, or the context is `REJECTED`: no cross-dialog carry-over, even with an empty
+   history.
 4. **C4 budget** — above 1024 UTF-8 bytes of carried and current utterances and statements the turn is
    `BUDGET_EXHAUSTED`; nothing is truncated.
 5. **C5 antecedent** — an ellipsis whose antecedent was not carried is `MISSING_ANTECEDENT` and asks.
@@ -143,14 +144,14 @@ saw no decision-topic chunk), `dialog.deterministic` (two passes equal), `perf.m
 ## Results
 
 Run on 2026-10-23, commit `de3babb` plus this change, AMD Ryzen 7 7730U, JDK 27 (Zulu 27.0.0+35), temporary Store root
-on tmpfs. All checks passed; two runs gave the semantic digest `37f74ab5…` (byte-identical traces).
+on tmpfs. All checks passed; two runs gave the semantic digest `e8dbd8f9…` (byte-identical traces).
 
-| Arm | Judged | Correct | Conditional | Revision (`revise`/`qualify`) | No change required (`keep`/`any`) | Unrequired revisions | Constraint adherence | Unjustified certainty | Clarification precision / recall | Evidence coverage |
-| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| A+R | 24 | 15 | 1/3 | 3/10 | 4/5 | 3 | 0.900 | 0 | 0.500 / 1.000 | 0.563 |
-| B+R | 24 | 15 | 2/3 | 2/10 | 4/5 | 1 | 1.000 | 0 | 0.467 / 1.000 | 0.493 |
-| B+R:no-context | 24 | 21 (control label) | 0/0 | n/a | n/a | 0 | 1.000 | 0 | 0.857 / 1.000 | 0.288 |
-| B+R:evidence-removed | 24 | 7 | 0/3 | n/a | n/a | 0 | n/a | 0 | 0.292 / 1.000 | 0.000 |
+| Arm | Judged | Correct | Conditional | Revision (`revise`/`qualify`) | No change required (`keep`/`any`) | Unrequired revisions | Constraint adherence | Unjustified certainty | Abstention precision / recall | Clarifications asked (precision) | Evidence coverage |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| A+R | 24 | 15 | 1/3 | 3/10 | 4/5 | 3 | 0.900 | 0 | 0.500 / 1.000 | 5 (1.000) | 0.563 |
+| B+R | 24 | 15 | 2/3 | 2/10 | 4/5 | 1 | 1.000 | 0 | 0.467 / 1.000 | 5 (1.000) | 0.493 |
+| B+R:no-context | 24 | 21 (control label) | 0/0 | n/a | n/a | 0 | 1.000 | 0 | 0.857 / 1.000 | 18 (1.000) | 0.288 |
+| B+R:evidence-removed | 24 | 7 | 0/3 | n/a | n/a | 0 | n/a | 0 | 0.292 / 1.000 | 5 (1.000) | 0.000 |
 
 Against each turn's own label (the question the dialog asks): A+R 15/24, B+R 15/24, no-context 10/24,
 evidence-removed 7/24. Ablation deltas: **context +5** (B+R over no-context), **evidence +8** (B+R over evidence
@@ -210,6 +211,9 @@ verified pass).
   [HTML design decisions](html-decision.md#limits)); a correct turn is not evidence of a reasoning capability.
 - Inline labels are drafted by the author of the assembler and not independently adjudicated; reused labels inherit
   `html-decision-v1-gold-v2`.
+- Abstention precision and recall count every abstention. Only an abstention that asks a question is a clarification
+  request; the labels do not mark which abstaining turns require a question (a budget overrun or an unsupported
+  requirement abstains without one), so clarification precision is reported and clarification recall is not.
 - Revision is scored only where the labels require one; a stable answer and a still-acceptable change both pass a
   `keep` or `any` turn.
 - Seven short authored dialogs over a small authored corpus; results do not transfer, and no accuracy threshold gates

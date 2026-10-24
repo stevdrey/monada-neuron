@@ -135,6 +135,25 @@ class HtmlDialogExperimentTest {
     }
 
     @Test
+    void onlyAnAbstentionThatAsksCountsAsAClarification() {
+        var b = scores.aggregates().stream().filter(aggregate -> aggregate.arm() == Arm.NEURON_RULES).findFirst()
+                .orElseThrow();
+        var asked = scores.scored().stream().filter(scored -> scored.row().arm() == Arm.NEURON_RULES)
+                .filter(scored -> scored.row().row().recommendation().orElse(null)
+                        instanceof DecisionRecommendation.Abstained abstained
+                        && !abstained.clarifyingQuestion().equals("-")).count();
+        assertEquals(asked, (long) b.counts().get("clarificationRequests"));
+        assertTrue(b.counts().get("clarificationRequests") < b.counts().get("abstained"), b.counts().toString());
+        for (var turnId : List.of("dialog:embed-partner#4", "dialog:lost-context#4")) {
+            var row = scores.scored().stream().filter(scored -> scored.row().arm() == Arm.NEURON_RULES
+                    && scored.row().turnId().equals(turnId)).findFirst().orElseThrow();
+            assertEquals("-", ((DecisionRecommendation.Abstained) row.row().row().recommendation().orElseThrow())
+                    .clarifyingQuestion(), turnId + " abstains without asking");
+        }
+        assertFalse(b.metrics().containsKey("clarificationRecall"));
+    }
+
+    @Test
     void aChangeThatShouldReviseIsScoredAndOneThatNeedNotIsCreditedByCorrectness() {
         var b = scores.aggregates().stream().filter(aggregate -> aggregate.arm() == Arm.NEURON_RULES).findFirst()
                 .orElseThrow();

@@ -56,6 +56,9 @@ class DialogContextAssemblerTest {
                 statements("set:orderMatters=yes"), List.of(), List.of(), Optional.empty(), List.of());
         var leaked = new DialogContext(DialogContext.VERSION, DIALOG, turn(2, null, "-"), List.of(prior(foreign)));
         assertTrue(held(ASSEMBLER.assemble(leaked), Hold.REJECTED).detail().contains("dialog:other"));
+        var foreignAlone = new DialogContext(DialogContext.VERSION, DIALOG, foreign, List.of());
+        assertTrue(held(ASSEMBLER.assemble(foreignAlone), Hold.REJECTED).detail().contains("current turn"),
+                "a foreign first turn with an empty history is rejected too");
         var reversed = new DialogContext(DialogContext.VERSION, DIALOG, turn(3, null, "-"),
                 List.of(prior(turn(2, Family.LIST, "-")), prior(turn(1, Family.LIST, "-"))));
         held(ASSEMBLER.assemble(reversed), Hold.REJECTED);

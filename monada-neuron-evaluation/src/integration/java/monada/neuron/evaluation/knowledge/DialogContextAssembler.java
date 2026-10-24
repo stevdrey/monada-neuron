@@ -126,8 +126,9 @@ final class DialogContextAssembler {
             "C1 version: a context whose version is not " + DialogContext.VERSION + " is REJECTED",
             "C2 count: a current turn above " + MAX_TURNS + " or more than " + (MAX_TURNS - 1) + " carried turns is"
                     + " REJECTED",
-            "C3 scope: every carried turn must belong to the context's dialog and come before the current turn, in"
-                    + " ascending order without repeats, or the context is REJECTED (no cross-dialog carry-over)",
+            "C3 scope: the current turn and every carried turn must belong to the context's dialog, and carried turns"
+                    + " must come before the current turn in ascending order without repeats, or the context is"
+                    + " REJECTED (no cross-dialog carry-over)",
             "C4 budget: when the UTF-8 bytes of the carried and current utterances and statements exceed "
                     + MAX_CONTEXT_BYTES + " the turn is BUDGET_EXHAUSTED; nothing is truncated",
             "C5 antecedent: an ellipsis whose antecedent turn was not carried is MISSING_ANTECEDENT and asks",
@@ -158,10 +159,14 @@ final class DialogContextAssembler {
                     + context.priors().size() + " carried turns, at most " + MAX_TURNS + " turns", "-",
                     Optional.empty(), bare, used);
         }
+        if (!current.dialogId().equals(context.dialogId())) {
+            return held(Hold.REJECTED, "the current turn " + current.turnId() + " is not a turn of "
+                    + context.dialogId(), "-", Optional.empty(), bare, used);
+        }
         var previous = 0;
         for (var prior : context.priors()) {
             var turn = prior.turn();
-            if (!turn.dialogId().equals(context.dialogId()) || !current.dialogId().equals(context.dialogId())) {
+            if (!turn.dialogId().equals(context.dialogId())) {
                 return held(Hold.REJECTED, "turn " + turn.turnId() + " is not a turn of " + context.dialogId(), "-",
                         Optional.empty(), bare, used);
             }

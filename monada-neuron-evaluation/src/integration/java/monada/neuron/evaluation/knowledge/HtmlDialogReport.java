@@ -55,6 +55,9 @@ final class HtmlDialogReport {
                     + ", the author of the assembler, and are NOT INDEPENDENTLY ADJUDICATED; no result on an inline"
                     + " turn is independent validation (follow-up: an adjudication like " + ADJUDICATION_FOLLOW_UP
                     + ").",
+            "Abstention precision and recall count every abstention; only an abstention that asks a question is a"
+                    + " clarification request. The labels do not mark which abstaining turns require a question, so"
+                    + " clarification precision is reported and clarification recall is not.",
             "Revision is scored only where the labels require one (revise, qualify); where they do not (keep, any) a"
                     + " turn is credited by correctness alone, so a stable answer and a still-acceptable change both"
                     + " pass.",
@@ -193,8 +196,9 @@ final class HtmlDialogReport {
 
         md.append("\n### Multi-turn results per arm\n\n| Arm | Judged | Correct | Accuracy | Conditional | Revision |"
                 + " No change required | Unrequired revisions | Constraint adherence | Unjustified certainty |"
-                + " Clarification precision | Clarification recall | Citation fidelity | Evidence coverage |\n");
-        md.append("| :--- |").append(" ---: |".repeat(13)).append('\n');
+                + " Abstention precision | Abstention recall | Clarifications asked | Clarification precision |"
+                + " Citation fidelity | Evidence coverage |\n");
+        md.append("| :--- |").append(" ---: |".repeat(15)).append('\n');
         for (var aggregate : scores.aggregates()) {
             if (aggregate.arm() == Arm.STORE) {
                 continue;
@@ -211,8 +215,10 @@ final class HtmlDialogReport {
                     .append(c.get("unrequiredRevisions")).append(" | ")
                     .append(format(m.get("constraintAdherence"))).append(" | ")
                     .append(c.get("unjustifiedCertainty")).append(" | ")
+                    .append(format(m.get("abstentionPrecision"))).append(" | ")
+                    .append(format(m.get("abstentionRecall"))).append(" | ")
+                    .append(c.get("clarificationRequests")).append(" | ")
                     .append(format(m.get("clarificationPrecision"))).append(" | ")
-                    .append(format(m.get("clarificationRecall"))).append(" | ")
                     .append(format(m.get("citationFidelity"))).append(" | ")
                     .append(format(m.get("evidenceCoverage"))).append(" |\n");
         }

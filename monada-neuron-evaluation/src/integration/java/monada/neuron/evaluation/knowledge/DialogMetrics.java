@@ -1,6 +1,7 @@
 package monada.neuron.evaluation.knowledge;
 
 import monada.neuron.evaluation.knowledge.DecisionMetrics.Verdict;
+import monada.neuron.evaluation.knowledge.DecisionRecommendation.Abstained;
 import monada.neuron.evaluation.knowledge.DecisionTrace.Outcome;
 import monada.neuron.evaluation.knowledge.DialogTrace.Arm;
 import monada.neuron.evaluation.knowledge.DialogTrace.Change;
@@ -29,7 +30,8 @@ import java.util.OptionalDouble;
  * (scored for {@code revise} and {@code qualify}; {@code keep} and {@code any} require no change and are credited by
  * correctness alone), and, for the evidence-removed control, whether the answer abstained, stayed unsupported by any
  * gold span, or claimed gold support. Per arm: accuracy, conditional and revision accuracy, constraint adherence,
- * evidence and citation coverage, unjustified certainty and clarification precision and recall; across arms the
+ * evidence and citation coverage, unjustified certainty, abstention precision and recall, and clarification
+ * precision (of the abstentions that ask a question, how many are on turns whose label abstains); across arms the
  * context and evidence ablation deltas. Multi-turn correctness is reported apart from single-turn retrieval coverage
  * (arm A). Cost: linear in the rows.
  */
@@ -113,12 +115,13 @@ final class DialogMetrics {
     static final List<String> COUNTS = List.of("taskCorrect", "conditionalCorrect", "conditionalTurns",
             "revisionCorrect", "revisionTurns", "noChangeRequiredCorrect", "noChangeRequiredTurns",
             "unrequiredRevisions", "constraintsSatisfied", "answered", "unjustifiedCertainty", "abstained",
-            "abstainedWhereGoldAbstains", "goldAbstains", "supportAbstained", "supportUnsupported", "supportClaimed");
+            "abstainedWhereGoldAbstains", "goldAbstains", "clarificationRequests", "clarifiedWhereGoldAbstains",
+            "supportAbstained", "supportUnsupported", "supportClaimed");
 
     /** The ratio metrics, in report order. */
     static final List<String> METRICS = List.of("turnAccuracy", "conditionalAccuracy", "revisionAccuracy",
             "constraintAdherence", "evidenceCoverage", "citationFidelity", "citationGoldOverlap",
-            "unsupportedClaimRate", "clarificationPrecision", "clarificationRecall");
+            "unsupportedClaimRate", "abstentionPrecision", "abstentionRecall", "clarificationPrecision");
 
     private DialogMetrics() {
     }
@@ -243,6 +246,12 @@ final class DialogMetrics {
                 counts.merge("abstained", 1, Integer::sum);
                 counts.merge("abstainedWhereGoldAbstains", gold.expected() == Expected.ABSTAIN ? 1 : 0,
                         Integer::sum);
+                if (value.row().row().recommendation().orElse(null) instanceof Abstained asked
+                        && !asked.clarifyingQuestion().equals("-")) {
+                    counts.merge("clarificationRequests", 1, Integer::sum);
+                    counts.merge("clarifiedWhereGoldAbstains", gold.expected() == Expected.ABSTAIN ? 1 : 0,
+                            Integer::sum);
+                }
             }
             if (gold.expected() == Expected.ABSTAIN) {
                 counts.merge("goldAbstains", 1, Integer::sum);
@@ -265,9 +274,13 @@ final class DialogMetrics {
             metrics.put(name, rows.stream().map(value -> value.decision().metrics().get(name))
                     .filter(OptionalDouble::isPresent).mapToDouble(OptionalDouble::getAsDouble).average());
         }
-        metrics.put("clarificationPrecision", ratio(counts.get("abstainedWhereGoldAbstains"), counts.get("abstained")));
-        metrics.put("clarificationRecall", ratio(counts.get("abstainedWhereGoldAbstains"),
-                counts.get("goldAbstains")));
+        metrics.put("abstentionPrecision", ratio(counts.get("abstainedWhereGoldAbstains"), counts.get("abstained")));
+        metrics.put("abstentionRecall", ratio(counts.get("abstainedWhereGoldAbstains"), counts.get("goldAbstains")));
+        // Only an abstention that asks counts as a clarification request; the labels do not mark which abstaining
+        // turns require a question (a budget overrun or an unsupported requirement abstains without one), so no
+        // clarification recall is defined.
+        metrics.put("clarificationPrecision", ratio(counts.get("clarifiedWhereGoldAbstains"),
+                counts.get("clarificationRequests")));
         return new ArmAggregate(arm, rows.size(), judged, correct, verdicts, counts, metrics);
     }
 
