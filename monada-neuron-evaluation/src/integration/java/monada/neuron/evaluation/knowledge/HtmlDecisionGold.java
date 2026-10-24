@@ -209,7 +209,8 @@ final class HtmlDecisionGold {
         return origin;
     }
 
-    private static Gold goldOf(HtmlKnowledgeCorpus.Row row) {
+    /** Parses one label row in the {@link #HEADER} column layout, without validating it against a case. */
+    static Gold goldOf(HtmlKnowledgeCorpus.Row row) {
         var expected = enumOf(row, Expected.values(), row.required(1, "expected"));
         var options = new ArrayList<Option>();
         for (var item : row.list(4)) {
@@ -248,7 +249,8 @@ final class HtmlDecisionGold {
                 .orElseThrow(() -> row.reject("'" + label + "' is not one of " + Arrays.toString(values)));
     }
 
-    private static void validate(HtmlKnowledgeCorpus.Row row, Gold gold, HtmlDecisionCases.DecisionCase decisionCase,
+    /** Validates a parsed label against its case's candidates and the corpus spans, as the loader does. */
+    static void validate(HtmlKnowledgeCorpus.Row row, Gold gold, HtmlDecisionCases.DecisionCase decisionCase,
             HtmlKnowledgeCorpus corpus) {
         var candidates = Set.copyOf(decisionCase.candidates());
         var named = new HashSet<String>(gold.acceptable());

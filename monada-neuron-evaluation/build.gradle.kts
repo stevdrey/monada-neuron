@@ -248,6 +248,19 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
         args(quotedBenchmarkArgs())
     }
 
+    // HTML multi-turn follow-ups (Issue #113, docs/benchmarks/html-dialog.md). Opt-in: imports html-kc-v1 with the
+    // html-kd-v1 supplement into a temporary Store, runs every html-dialog-v1 turn with an explicit host-supplied context
+    // through the Store, Neuron, no-context and evidence-removed arms and scores them against the frozen labels.
+    tasks.register<JavaExec>("runHtmlDialogBenchmark") {
+        group = "benchmark"
+        description = "Evaluates multi-turn HTML follow-ups and constraint-change sensitivity (Issue #113)"
+        classpath = integration.runtimeClasspath
+        mainClass.set("monada.neuron.evaluation.knowledge.HtmlDialogRunner")
+        systemProperty("monada.neuron.version", project.version.toString())
+        systemProperty("monada.resonance.store.dir", rootProject.file("../monada-resonance-store").absolutePath)
+        args(quotedBenchmarkArgs())
+    }
+
     // Independent adjudication hand-off of the html-decision-v1 gold labels (Issue #152): writes the reviewer
     // worksheet and the fill-in template, and gold-v2.tsv once a bundled adjudication changes a label.
     tasks.register<JavaExec>("htmlDecisionAdjudicationWorksheet") {

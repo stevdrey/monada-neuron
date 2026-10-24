@@ -822,7 +822,9 @@ supplement `html-kd-v1`:
   matters), and `script` with inline code vs an external `src` (reuse, loading behavior, Content Security Policy).
 - A deterministic rule baseline in the test harness is reported separately from Neuron's recalled evidence and
   from any optional generator.
-- Multi-turn context is explicitly **caller-supplied** input, never implicit Neuron state.
+- Multi-turn context is explicitly **caller-supplied** input, never implicit Neuron state. Issue #113 delivers the
+  extension `dialog-v1` ([HTML multi-turn follow-ups](../benchmarks/html-dialog.md)) with the dialog set
+  `html-dialog-v1`.
 - An HTML choice is not a worker/model route; `RoutingPolicy` and its metrics are not used.
 
 ## Planned commands
@@ -839,6 +841,7 @@ issue fixes the exact task name in its own documentation.
 | #109 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeAnswers` | L4 grounded answers with B3, the in-sample B3c variant, abstention, a `TEST_DOUBLE` generator seam and frozen human judgments; `--ask` answers one question, unscored |
 | #110 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeFeedback` | [relevance feedback](#relevance-feedback-delivered-by-110) vs a no-feedback control: one control and three key-strategy treatment roots, seed, feedback and restarted reopen JVMs, a feedback-disabled reference |
 | #112 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlDecisionBenchmark` | [HTML design decisions](../benchmarks/html-decision.md), scored against the gold `html-decision-v1-gold-v2` independently adjudicated in [#152](https://github.com/stevdrey/monada-neuron/issues/152), under explicit constraints: Store-only, raw-Store-plus-rules, Neuron-plus-rules and no-evidence arms, the host rule table printed, an optional labelled generator arm |
+| #113 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlDialogBenchmark` | [HTML multi-turn follow-ups](../benchmarks/html-dialog.md): an explicit, immutable host-supplied context per turn resolved by printed host rules, Store, Neuron, no-context and evidence-removed arms, revision scored only where the labels require a change |
 | #111 | **delivered** | `./gradlew :monada-neuron-evaluation:runHtmlKnowledgeScaling` | L6 profile over the [scaling family](#scaling-family-delivered-by-111): every phase a separate row, semantic validity checked outside every timed window |
 
 All planned tasks require the sibling `../monada-resonance-store` checkout, like the existing integration
@@ -985,3 +988,14 @@ source set, and do not change `./gradlew test` when it is absent.
   - What remains open: the reviewer is one model from another vendor (`gpt-6.1-sol`), not a human expert or a
     panel; it judged the rule author's draft rather than labelling from scratch; and the case set was written by
     the same author as the rules. See [HTML design decisions](../benchmarks/html-decision.md#limits).
+- No core version change (issue #113). New extension `dialog-v1`, delivered by `runHtmlDialogBenchmark`
+  ([HTML multi-turn follow-ups](../benchmarks/html-dialog.md)):
+  - The dialog set `html-dialog-v1` (system-visible: utterances, typed `set:`/`change:` statements over the
+    `html-decision-v1` constraints, carried turns, antecedents and unmodeled requirements) and its labels
+    `html-dialog-v1-gold` are separate files; only the scorer reads the labels, and their hash is frozen.
+  - Conversation context is an explicit, immutable `dialog-context-v1` value built by the host per turn and resolved by
+    the printed host rules `host-context-v1`; Neuron runs one request-scoped cycle per turn and keeps nothing between
+    turns. Contradictions, missing antecedents, unknown families, unmodeled requirements and budget overruns are held
+    as host abstentions, never guessed.
+  - Labels reuse the adjudicated `html-decision-v1-gold-v2` where a turn resolves to a #112 case; inline labels are
+    not independently adjudicated. Revision is scored only where consecutive labels require a change.

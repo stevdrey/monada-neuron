@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 
 /**
@@ -164,29 +165,65 @@ final class DecisionTrace {
         var tsv = new StringBuilder("# caseHash ").append(caseHash).append("\n# corpusHash ").append(corpusHash)
                 .append('\n').append(HEADER).append('\n');
         for (var row : rows) {
-            var recommendation = row.recommendation();
-            tsv.append(String.join("\t", row.caseId(), row.arm().label(), row.selector(), row.kind(),
-                    join(row.evidence().stream().map(Hit::render).toList()),
-                    row.neuron().map(NeuronTrace::render).orElse("-"), row.outcome().name(),
-                    recommendation.map(DecisionTrace::choice).orElse("-"),
-                    recommendation.map(value -> value instanceof Decided decided ? join(decided.alsoValid()) : "-")
-                            .orElse("-"),
-                    recommendation.map(value -> value instanceof Conditional conditional
-                            ? join(conditional.options().stream().map(DecisionRecommendation.Option::render).toList())
-                            : "-").orElse("-"),
-                    recommendation.map(DecisionTrace::excluded).orElse("-"),
-                    recommendation.map(DecisionTrace::constraintsUsed).orElse("-"),
-                    recommendation.map(value -> value instanceof Decided decided ? join(decided.permissions()) : "-")
-                            .orElse("-"),
-                    join(row.claims().stream().map(claim -> QueryText.escape(claim.text()).replace("|", "\\p"))
-                            .toList()),
-                    join(row.citations().stream().map(span -> span.citation().render() + ":"
-                            + (span.eligible() ? "eligible" : "ineligible") + (span.exactQuote() ? ":exact" : ""))
-                            .toList()),
-                    recommendation.map(DecisionRecommendation::ruleId).orElse("-"),
-                    QueryText.escape(detail(row)))).append('\n');
+            tsv.append(line(row)).append('\n');
         }
         return tsv.append("end\t").append(rows.size()).append('\n').toString();
+    }
+
+    /** Renders one row as one TSV line in {@link #HEADER} order, without the line break. */
+    static String line(Row row) {
+        var recommendation = row.recommendation();
+        return String.join("\t", row.caseId(), row.arm().label(), row.selector(), row.kind(),
+                join(row.evidence().stream().map(Hit::render).toList()),
+                row.neuron().map(NeuronTrace::render).orElse("-"), row.outcome().name(),
+                recommendation.map(DecisionTrace::choice).orElse("-"),
+                recommendation.map(value -> value instanceof Decided decided ? join(decided.alsoValid()) : "-")
+                        .orElse("-"),
+                recommendation.map(value -> value instanceof Conditional conditional
+                        ? join(conditional.options().stream().map(DecisionRecommendation.Option::render).toList())
+                        : "-").orElse("-"),
+                recommendation.map(DecisionTrace::excluded).orElse("-"),
+                recommendation.map(DecisionTrace::constraintsUsed).orElse("-"),
+                recommendation.map(value -> value instanceof Decided decided ? join(decided.permissions()) : "-")
+                        .orElse("-"),
+                join(row.claims().stream().map(claim -> QueryText.escape(claim.text()).replace("|", "\\p"))
+                        .toList()),
+                join(row.citations().stream().map(span -> span.citation().render() + ":"
+                        + (span.eligible() ? "eligible" : "ineligible") + (span.exactQuote() ? ":exact" : ""))
+                        .toList()),
+                recommendation.map(DecisionRecommendation::ruleId).orElse("-"),
+                QueryText.escape(detail(row)));
+    }
+
+    /**
+     * Every choice a recommendation states as valid, in answer order: the decided choice and its equally valid ones,
+     * or the options of a conditional answer; none for an abstention.
+     */
+    static List<String> stated(DecisionRecommendation recommendation) {
+        return switch (recommendation) {
+            case Decided decided -> {
+                var all = new ArrayList<String>();
+                all.add(decided.choice());
+                all.addAll(decided.alsoValid());
+                yield all;
+            }
+            case Conditional conditional -> conditional.options().stream()
+                    .map(DecisionRecommendation.Option::choice).toList();
+            case Abstained _ -> List.of();
+        };
+    }
+
+    /**
+     * The observable outcome of a row: its outcome, the stated choices and permissions of a decision, or the options of
+     * a conditional answer. Contrastive pairs (#112) and the change between dialog turns (#113) compare it.
+     */
+    static String signature(Row row) {
+        return row.outcome() + " " + row.recommendation().map(value -> switch (value) {
+            case Decided decided -> new TreeSet<>(stated(decided)) + " " + decided.permissions();
+            case Conditional conditional -> conditional.options().stream()
+                    .map(DecisionRecommendation.Option::render).sorted().toList().toString();
+            case Abstained _ -> "";
+        }).orElse("");
     }
 
     /** Returns the decided choice, or {@code "-"}. */

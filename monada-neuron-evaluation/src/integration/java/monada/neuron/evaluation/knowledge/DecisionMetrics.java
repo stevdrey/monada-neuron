@@ -207,7 +207,7 @@ final class DecisionMetrics {
                 var second = byKey.get(pair.second() + " " + arm);
                 var judged = first.verdict() != Verdict.NOT_SCORED && second.verdict() != Verdict.NOT_SCORED;
                 pairs.add(new PairScore(pair, arm, !goldSignature(first.gold()).equals(goldSignature(second.gold())),
-                        !signature(first.row()).equals(signature(second.row())), judged));
+                        !DecisionTrace.signature(first.row()).equals(DecisionTrace.signature(second.row())), judged));
             }
         }
         var aggregates = new ArrayList<ArmAggregate>();
@@ -271,7 +271,7 @@ final class DecisionMetrics {
         metrics.put("exclusionsCited", ratio(exclusions.stream().filter(exclusion -> !exclusion.citations().isEmpty())
                 .count(), exclusions.size()));
 
-        var named = named(recommendation);
+        var named = DecisionTrace.stated(recommendation);
         var flags = new LinkedHashMap<String, Boolean>();
         var invalid = named.stream().filter(choice -> !decisionCase.candidates().contains(choice)).toList();
         flags.put("candidateValid", invalid.isEmpty());
@@ -403,34 +403,9 @@ final class DecisionMetrics {
         };
     }
 
-    /** Every choice a recommendation states as valid. */
-    private static List<String> named(DecisionRecommendation recommendation) {
-        return switch (recommendation) {
-            case Decided decided -> {
-                var all = new ArrayList<String>();
-                all.add(decided.choice());
-                all.addAll(decided.alsoValid());
-                yield all;
-            }
-            case Conditional conditional -> conditional.options().stream()
-                    .map(DecisionRecommendation.Option::choice).toList();
-            case Abstained _ -> List.of();
-        };
-    }
-
     private static boolean overlapsGold(CitedSpan span, Gold gold) {
         return span.eligible() && gold.evidence().stream().anyMatch(goldSpan -> span.citation()
                 .overlaps(goldSpan.chunkId(), goldSpan.start(), goldSpan.end()));
-    }
-
-    /** The observable outcome of a row, compared within a pair. */
-    static String signature(Row row) {
-        return row.outcome() + " " + row.recommendation().map(value -> switch (value) {
-            case Decided decided -> new TreeSet<>(named(decided)) + " " + decided.permissions();
-            case Conditional conditional -> conditional.options().stream()
-                    .map(DecisionRecommendation.Option::render).sorted().toList().toString();
-            case Abstained _ -> "";
-        }).orElse("");
     }
 
     /** The gold outcome of a case, compared within a pair. */

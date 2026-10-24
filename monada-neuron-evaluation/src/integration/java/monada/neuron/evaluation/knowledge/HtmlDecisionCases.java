@@ -180,18 +180,7 @@ final class HtmlDecisionCases {
          * fixed function of the case text, never of a gold label.
          */
         String query() {
-            var tokens = new LinkedHashSet<String>();
-            for (var token : HtmlTokens.tokens(String.join(" ", candidates) + " " + requirement)) {
-                if (tokens.size() == TokenPackingSignalCodec.MAX_QUERY_TOKENS) {
-                    break;
-                }
-                if (!ExtractiveAnswerer.FUNCTION_WORDS.contains(token)
-                        && token.length() <= TokenPackingSignalCodec.MAX_TOKEN_LENGTH
-                        && token.chars().allMatch(c -> (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
-                    tokens.add(token);
-                }
-            }
-            return String.join(" ", tokens);
+            return HtmlDecisionCases.query(candidates, requirement);
         }
 
         /** Renders the constraints as {@code name=value} in declaration order. */
@@ -199,6 +188,25 @@ final class HtmlDecisionCases {
             return String.join(LIST_SEPARATOR, constraints.entrySet().stream()
                     .map(entry -> entry.getKey().label() + "=" + entry.getValue().label()).toList());
         }
+    }
+
+    /**
+     * The retrieval query rule of {@link DecisionCase#query()} over any candidates and requirement text; the multi-turn
+     * suite (Issue #113) applies it to turns whose family is not known yet.
+     */
+    static String query(List<String> candidates, String requirement) {
+        var tokens = new LinkedHashSet<String>();
+        for (var token : HtmlTokens.tokens(String.join(" ", candidates) + " " + requirement)) {
+            if (tokens.size() == TokenPackingSignalCodec.MAX_QUERY_TOKENS) {
+                break;
+            }
+            if (!ExtractiveAnswerer.FUNCTION_WORDS.contains(token)
+                    && token.length() <= TokenPackingSignalCodec.MAX_TOKEN_LENGTH
+                    && token.chars().allMatch(c -> (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
+                tokens.add(token);
+            }
+        }
+        return String.join(" ", tokens);
     }
 
     /**
