@@ -160,14 +160,14 @@ record WaveProvenance(String encoderId, int encoderVersion, String sourceReferen
 sealed interface DecompositionResult permits Decomposed, DecompositionRejected { }
 interface WaveDecomposer { DecompositionResult decompose(SampledWave wave); }
 
-// #122
-record SpectralPattern(int version, SpectralBasis basis, SpectralScale scale, int sampleCount,
-                       double sampleRate, SampleUnit unit, double sourceEnergy,
-                       List<WaveComponent> components, WaveProvenance provenance) { }
+// #122 (implemented; ADR 0035 records the deviations from the first sketch)
+final class SpectralPattern { /* parallel primitive arrays; of(frame, sourceEnergy, provenance, arrays | List<WaveComponent>) */ }
+record SpectralFrame(SpectralBasis basis, SpectralScale scale, int sampleCount, double sampleRate, SampleUnit unit) { }
 enum SpectralBasis { DFT, HAAR }
-record SpectralScale(int level, int levelCount) { }       // DFT: level 0 of 1
-record WaveComponent(int index, int level, double magnitude, double phase, boolean phaseDefined,
+record SpectralScale(int levels) { }                      // decomposition depth: DFT 0, Haar 1..12
+record WaveComponent(int level, int index, double magnitude, double phase, boolean phaseDefined,
                      double locator) { }                  // locator: frequency for DFT, position for HAAR
+enum LocatorUnit { HERTZ, CYCLES_PER_INDEX, SAMPLE_POSITION }
 
 // #125
 sealed interface ComparisonResult permits SpectralComparison, Incompatible { }
@@ -188,8 +188,8 @@ enum SynthesisStatus { EXACT, LOSSY, NOT_INVERTIBLE }
 ```
 
 `FrequencyState` is not extended. A projection from a `SpectralPattern` to one `FrequencyState` (for example, the
-dominant component) may be offered by #122 as an explicit, documented, lossy helper so the single-wave path can be
-compared as a control (H2); it is never implicit.
+dominant component) may be offered by #125 (deferred from #122, ADR 0035) as an explicit, documented, lossy helper so
+the single-wave path can be compared as a control (H2); it is never implicit.
 
 ## 4. Input Schema
 
@@ -249,7 +249,13 @@ pipeline as text.
   rejected (fixture N4), never padded silently.
 - Neither strategy is the default for existing hosts. Choosing one is a host decision.
 
-## 6. `SpectralPattern` (proposed, owned by issue #122)
+## 6. `SpectralPattern` (implemented by issue #122)
+
+Implemented in `monada.neuron.spectral`; [ADR 0035](../adr/0035-compact-immutable-spectral-pattern.md) records the
+representation: a compact final class over parallel primitive arrays, a `SpectralFrame` for basis and sampling
+metadata, `SpectralScale(levels)` as the decomposition depth, Haar level `0` for the final approximation and levels
+`1..L` for the details (so the approximation and the level-`L` detail never share a key), and `phaseDefined` and the
+locator derived on access. `SampleUnit` and `WaveProvenance` are delivered by #122 and reused by #123.
 
 - **Immutable and bounded**: at most the component bound of its basis (`maxComponentsDft` or `maxComponentsHaar`, Section 11), list copied, sorted by `(level, index)`,
   no duplicate `(level, index)`.

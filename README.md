@@ -348,7 +348,8 @@ resonance, coarse-to-fine next-concept hypotheses and optional synthesis) is spe
 [NCM Wave Cognition Experiment Contract v1](docs/specs/ncm-wave-cognition-v1.md) (`ncm-wave-cognition/1`, issue #121,
 [ADR 0034](docs/adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md)). NCM is hierarchy and prediction over
 decomposed evidence, not the prism; the single-wave `Signal` path is unchanged, and stop/go gates decide whether
-later issues proceed.
+later issues proceed. Its bounded, immutable spectral value types (`monada.neuron.spectral`, issue #122,
+[ADR 0035](docs/adr/0035-compact-immutable-spectral-pattern.md)) are implemented; no transform is.
 
 ## Design Principles
 
