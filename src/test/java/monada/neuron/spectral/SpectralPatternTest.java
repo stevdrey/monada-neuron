@@ -2,6 +2,7 @@ package monada.neuron.spectral;
 
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -253,6 +254,91 @@ class SpectralPatternTest {
     }
 
     @Test
+    void completePatternMustMatchItsSourceEnergy() {
+        var single = new SpectralFrame(SpectralBasis.DFT, SpectralScale.SINGLE, 1, 1.0, SampleUnit.ABSTRACT_PER_INDEX);
+        var dcOnly = List.of(new WaveComponent(0, 0, 1.0, 0.0, true, 0.0));
+
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(single, 2.0, PROVENANCE,
+                        new int[] {0}, new int[] {0}, new double[] {1.0}, new double[] {0.0})),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> SpectralPattern.of(single, 2.0, PROVENANCE, dcOnly)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> SpectralPattern.of(HAAR_4_L2, 71.0, PROVENANCE, p9().components())),
+                () -> assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(HAAR_4_L2, 71.0,
+                        PROVENANCE, p9().levels(), p9().indices(), p9().magnitudes(), p9().phases())),
+                () -> assertEquals(1.0, SpectralPattern.of(single, 1.0 + 0.5e-9, PROVENANCE, dcOnly).retainedEnergy()),
+                () -> assertEquals(1.0, SpectralPattern.of(single, 1.0 - 0.5e-9, PROVENANCE, dcOnly).retainedEnergy()));
+    }
+
+    @Test
+    void truncatedPatternMayRetainLessThanItsSourceEnergy() {
+        var truncated = SpectralPattern.of(DFT_8, 5.0, PROVENANCE,
+                new int[] {0}, new int[] {1}, new double[] {1.0}, new double[] {0.0});
+
+        assertEquals(4.0, truncated.retainedEnergy());
+        assertEquals(5.0, truncated.sourceEnergy());
+    }
+
+    @Test
+    void realValuedComponentsNeedASignOnlyPhase() {
+        var haar2 = new SpectralFrame(SpectralBasis.HAAR, new SpectralScale(1), 2, 2.0, SampleUnit.HERTZ);
+        double half = PI / 2;
+
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(haar2, 1.0, PROVENANCE,
+                        new int[] {0, 1}, new int[] {0, 0}, new double[] {1.0, 0.0}, new double[] {half, 0.0})),
+                () -> assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(haar2, 1.0, PROVENANCE,
+                        List.of(new WaveComponent(0, 0, 1.0, half, true, 0.0),
+                                new WaveComponent(1, 0, 0.0, 0.0, false, 0.0)))),
+                () -> assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(haar2, 1.0, PROVENANCE,
+                        new int[] {0, 1}, new int[] {0, 0}, new double[] {1.0, 0.0}, new double[] {0.0, 0.1})),
+                () -> assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(DFT_8, 8.0, PROVENANCE,
+                        new int[] {0}, new int[] {0}, new double[] {1.0}, new double[] {half})),
+                () -> assertThrows(IllegalArgumentException.class, () -> SpectralPattern.of(DFT_8, 8.0, PROVENANCE,
+                        List.of(new WaveComponent(0, 4, 1.0, 0.1, true, 4.0)))),
+                () -> assertEquals(PI, SpectralPattern.of(DFT_8, 8.0, PROVENANCE,
+                        new int[] {0}, new int[] {0}, new double[] {1.0}, new double[] {PI}).phase(0)),
+                () -> assertEquals(half, SpectralPattern.of(DFT_8, 4.0, PROVENANCE,
+                        new int[] {0}, new int[] {1}, new double[] {1.0}, new double[] {half}).phase(0)));
+    }
+
+    @Test
+    void oddLengthLastBinIsNotRealValued() {
+        var frame = new SpectralFrame(SpectralBasis.DFT, SpectralScale.SINGLE, 7, 7.0, SampleUnit.HERTZ);
+
+        assertEquals(0.5, SpectralPattern.of(frame, 3.5, PROVENANCE,
+                new int[] {0}, new int[] {3}, new double[] {1.0}, new double[] {0.5}).phase(0));
+    }
+
+    @Test
+    void retainedEnergyKeepsARepresentableSubnormalResult() {
+        var frame = new SpectralFrame(SpectralBasis.DFT, SpectralScale.SINGLE, 4096, 4096.0, SampleUnit.HERTZ);
+        double expected = new BigDecimal("4096").multiply(new BigDecimal(1e-162).pow(2))
+                .divide(new BigDecimal(2)).doubleValue();
+        var pattern = SpectralPattern.of(frame, expected, PROVENANCE,
+                new int[] {0}, new int[] {1}, new double[] {1e-162}, new double[] {0.0});
+
+        assertTrue(expected > 0.0 && expected < Double.MIN_NORMAL, "expected a subnormal energy, got " + expected);
+        assertEquals(expected, pattern.retainedEnergy());
+    }
+
+    @Test
+    void scaledEnergyIsBitIdenticalInTheNormalRange() {
+        // Truncated (bin 4 dropped) so the source energy only bounds the retained energy.
+        var magnitudes = new double[] {3.0, 0.1, 0.7, 1e-3};
+        var pattern = SpectralPattern.of(DFT_8, 100.0, PROVENANCE,
+                new int[] {0, 0, 0, 0}, new int[] {0, 1, 2, 3}, magnitudes, new double[4]);
+        double naive = 0.0;
+        for (int i = 0; i < magnitudes.length; i++) {
+            double squared = magnitudes[i] * magnitudes[i];
+            naive += i == 0 ? squared : squared / 2.0;
+        }
+
+        assertEquals(8 * naive, pattern.retainedEnergy());
+    }
+
+    @Test
     void rewrappingAnotherPatternsComponentsKeepsItsValues() {
         var original = p4();
         var rewrapped = SpectralPattern.of(DFT_8, original.sourceEnergy(),
@@ -292,10 +378,10 @@ class SpectralPatternTest {
     @Test
     void equalityCoversFrameEnergyProvenanceAndComponents() {
         var base = p4();
-        var otherEnergy = SpectralPattern.of(DFT_8, 6.0, PROVENANCE, base.components());
+        var otherEnergy = SpectralPattern.of(DFT_8, Math.nextUp(5.0), PROVENANCE, base.components());
         var otherProvenance = SpectralPattern.of(DFT_8, base.sourceEnergy(),
                 new WaveProvenance("encoder.fixture", 2, "window-0", 0L), base.components());
-        var otherMagnitude = SpectralPattern.of(DFT_8, base.sourceEnergy(), PROVENANCE,
+        var otherMagnitude = SpectralPattern.of(DFT_8, 4.25, PROVENANCE,
                 base.levels(), base.indices(), new double[] {0.0, 1.0, 0.0, 0.25, 0.0}, base.phases());
 
         assertAll(

@@ -30,6 +30,8 @@ class SpectralFrameTest {
                 () -> assertInvalid(SpectralBasis.DFT, 0, 8, Double.POSITIVE_INFINITY, SampleUnit.HERTZ),
                 () -> assertInvalid(SpectralBasis.DFT, 0, 8, 2.0, SampleUnit.ABSTRACT_PER_INDEX),
                 () -> assertInvalid(SpectralBasis.DFT, 0, 8, Double.MAX_VALUE, SampleUnit.HERTZ),
+                () -> assertInvalid(SpectralBasis.DFT, 0, 8, Double.MIN_NORMAL, SampleUnit.HERTZ),
+                () -> assertInvalid(SpectralBasis.DFT, 0, 1, Double.MIN_VALUE, SampleUnit.HERTZ),
                 () -> assertInvalid(SpectralBasis.DFT, 1, 8, 8.0, SampleUnit.HERTZ),
                 () -> assertInvalid(SpectralBasis.HAAR, 1, 6, 6.0, SampleUnit.HERTZ),
                 () -> assertInvalid(SpectralBasis.HAAR, 0, 8, 8.0, SampleUnit.HERTZ),
@@ -40,6 +42,15 @@ class SpectralFrameTest {
                         () -> new SpectralFrame(SpectralBasis.DFT, null, 8, 8.0, SampleUnit.HERTZ)),
                 () -> assertThrows(NullPointerException.class,
                         () -> new SpectralFrame(SpectralBasis.DFT, SpectralScale.SINGLE, 8, 8.0, null)));
+    }
+
+    @Test
+    void acceptsTheSmallestNormalBinSpacing() {
+        var frame = new SpectralFrame(SpectralBasis.DFT, SpectralScale.SINGLE, 8, 8 * Double.MIN_NORMAL,
+                SampleUnit.HERTZ);
+
+        assertEquals(Double.MIN_NORMAL, frame.locator(0, 1));
+        assertEquals(4 * Double.MIN_NORMAL, frame.locator(0, 4));
     }
 
     @Test

@@ -213,7 +213,9 @@ by the host before it enters Neuron, and the host reports that in `provenance`.
 - DFT bins `k = 0..floor(N/2)` are reported (single-sided). Bin `k` locates at `k * sampleRate / N`.
 - The Nyquist limit is `sampleRate / 2`. Content above it **aliases** and cannot be detected from the samples
   (fixture N7). Pre-filtering is the host's responsibility and is recorded in provenance.
-- The DC component (`k = 0`) is reported like any other bin; its phase is `0` or `π` by sign.
+- The DC component (`k = 0`) is reported like any other bin; its phase is `0` or `π` by sign. For even `N` the
+  Nyquist bin (`k = N/2`) is real for real input too, so its phase is also `0` or `π`; the decomposer computes both
+  bins as real sums, and `SpectralPattern` rejects any other phase for them (ADR 0035).
 - There is no implicit windowing (rectangular window). Spectral leakage for non-integer cycle counts is expected and is
   covered by fixture P7, not hidden.
 - Two patterns with different `sampleRate`, `unit`, `sampleCount` or basis are incompatible (Section 7.2). Neuron never
@@ -263,7 +265,7 @@ locator derived on access. `SampleUnit` and `WaveProvenance` are delivered by #1
 - **Normalization, DFT**: magnitude `|X_k| / N` for `k = 0` and, when `N` is even, `k = N/2`; `2·|X_k| / N` otherwise.
   A pure cosine of amplitude `A` at an integer bin therefore reports magnitude `A`.
 - **Normalization, Haar**: coefficients are the orthonormal values themselves; `magnitude = |c|`, `phase = 0` for
-  `c ≥ 0` and `π` for `c < 0`. Energy is preserved (fixture P9).
+  `c ≥ 0` and `π` for `c < 0`. Energy is preserved (fixture P9). A Haar phase other than `0` or `π` is rejected.
 - **Phase**: `atan2(Im, Re)` wrapped to `(−π, π]` (a result of `−π` becomes `π`, and `−0.0` becomes `0.0`, so equal
   patterns are equal values). The computed phase is **always stored**, whatever the
   magnitude, because synthesis needs it. `phaseDefined` is only a comparison-validity flag, derived on access and never
@@ -278,8 +280,11 @@ locator derived on access. `SampleUnit` and `WaveProvenance` are delivered by #1
   diagnostic of Section 9 computable without the original samples. The energy a pattern retains is, for DFT,
   `N · (m_0² + Σ_{0<k<N/2} m_k² / 2 + m_{N/2}²)` over its retained normalized magnitudes (the Nyquist term only for
   even `N`), and for Haar `Σ c²` over its retained coefficients; for a complete pattern it equals `sourceEnergy`
-  within the Parseval tolerance of Section 12.4. A pattern whose retained energy exceeds `sourceEnergy` by more than
-  that relative tolerance (`1e-9`) is rejected, so a `sourceEnergy` of `0` admits only a retained energy of `0`.
+  within the Parseval tolerance of Section 12.4, and a complete pattern (every key of its frame present) that does not
+  is rejected. Any pattern whose retained energy exceeds `sourceEnergy` by more than that relative tolerance (`1e-9`)
+  is rejected too. Differences below `Double.MIN_NORMAL` are accepted, because subnormal energies carry no relative
+  precision. The retained energy is summed with magnitudes scaled by a power of two, so a representable subnormal
+  energy is not lost to squaring underflow.
 - **Compact**: a later optimized layout (parallel primitive arrays, as `FrequencyStateBatch` does) is allowed behind the
   same value semantics; the public record stays the reference.
 

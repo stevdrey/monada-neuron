@@ -60,14 +60,26 @@ Three problems appear when the sketch is implemented literally:
   `NullPointerException`; typed rejections of host input belong to #123's `DecompositionResult`. Nothing is
   repaired except signed zeros. Bounds: `MAX_SAMPLE_COUNT = 4096`, `MAX_COMPONENTS_DFT = 2049`,
   `MAX_COMPONENTS_HAAR = 4096`, `MAX_HAAR_LEVELS = 12`; the count is checked against the basis cap before any copy.
-  Overflow guards: the highest DFT locator must be finite, `windowOffset + sampleCount` must fit in a `long`, and the
-  retained energy must be finite. Energy consistency: the retained energy may exceed `sourceEnergy` by at most the
-  relative Parseval tolerance `ENERGY_TOLERANCE = 1e-9` (contract section 12.4), so the retained-energy fraction of
-  #126 never exceeds `1` beyond numerical noise; `sourceEnergy = -0.0` is canonicalized to `0.0`.
+  Overflow and underflow guards: the highest DFT locator must be finite, the DFT bin spacing `sampleRate / N` must be
+  at least `Double.MIN_NORMAL` (so distinct bins never collapse to one subnormal or zero locator),
+  `windowOffset + sampleCount` must fit in a `long`, and the retained energy must be finite. The retained energy is
+  summed with magnitudes scaled by `2^-e`, `e` the exponent of the largest magnitude: power-of-two scaling is exact,
+  so the sum is bit-identical to the unscaled one in the normal range and keeps a representable subnormal energy
+  instead of losing it to squaring underflow.
+- **Energy consistency.** The allowed difference is `ENERGY_TOLERANCE = 1e-9` (the contract section 12.4 Parseval
+  tolerance) relative to the larger energy, floored at `Double.MIN_NORMAL` because subnormal energies carry no
+  relative precision. Any pattern may retain at most `sourceEnergy` plus that difference, so the retained-energy
+  fraction of #126 never exceeds `1` beyond numerical noise. A complete pattern (every key of its frame present,
+  which #126 classifies as `EXACT`) must also not retain less, so its energy equals `sourceEnergy` within the
+  tolerance. `sourceEnergy = -0.0` is canonicalized to `0.0`.
+- **Real-valued components.** Every Haar coefficient, the DFT DC bin and, for even `N`, the DFT Nyquist bin are real by
+  definition, so their phase encodes only the sign and must be exactly `0` or `π`, whatever the magnitude. The
+  decomposers (#123, #124) compute those values as real sums, so a real-valued inverse can honor every complete
+  pattern.
 - **Semantics fixed here.** Silence (zero components or only zero magnitudes) is valid, defines no phase and retains
   energy `0`. DFT retained energy weights DC and, for even `N` only, the Nyquist bin once and every other bin by `1/2`;
-  odd `N` has no Nyquist bin. DC and Nyquist phases are stored as given (expected `0` or `π` from real input) and not
-  enforced. `sourceEnergy` is carried unchanged by truncation.
+  odd `N` has no Nyquist bin, and its last bin `floor(N/2)` is an ordinary complex bin with any canonical phase.
+  `sourceEnergy` is carried unchanged by truncation.
 
 ## Alternatives
 

@@ -9,7 +9,8 @@ import java.util.Objects;
  * compared only when their frames are equal (contract section 7.2); Neuron never resamples or interpolates.
  *
  * <ul>
- *   <li>{@link SpectralBasis#DFT}: scale {@link SpectralScale#SINGLE}; level {@code 0}; bins {@code 0..floor(N/2)}
+ *   <li>{@link SpectralBasis#DFT}: scale {@link SpectralScale#SINGLE}; bin spacing {@code sampleRate / N} at least
+ *       {@link Double#MIN_NORMAL}; level {@code 0}; bins {@code 0..floor(N/2)}
  *       (single-sided); locator {@code k * sampleRate / N}. The DC bin is {@code k = 0}; the Nyquist bin exists only
  *       for even {@code N} at {@code k = N/2}. Content above the Nyquist limit aliases and is not detectable here.</li>
  *   <li>{@link SpectralBasis#HAAR}: {@code N} a power of two, depth {@code L >= 1} with {@code 2^L <= N}; level
@@ -51,6 +52,10 @@ public record SpectralFrame(SpectralBasis basis, SpectralScale scale, int sample
                     throw new IllegalArgumentException("the highest DFT locator overflows: sampleCount="
                             + sampleCount + ", sampleRate=" + sampleRate);
                 }
+                if (sampleRate / sampleCount < Double.MIN_NORMAL) {
+                    throw new IllegalArgumentException("the DFT bin spacing sampleRate / sampleCount is subnormal: "
+                            + "sampleCount=" + sampleCount + ", sampleRate=" + sampleRate);
+                }
             }
             case HAAR -> {
                 if (Integer.bitCount(sampleCount) != 1) {
@@ -84,6 +89,14 @@ public record SpectralFrame(SpectralBasis basis, SpectralScale scale, int sample
     /** Returns whether {@code index} is the DC bin or, for even {@code N}, the Nyquist bin of a DFT frame. */
     boolean isRealDftBin(int index) {
         return index == 0 || (sampleCount % 2 == 0 && index == sampleCount / 2);
+    }
+
+    /**
+     * Returns whether the coefficient at a valid key is real by definition, so its phase encodes only a sign: every
+     * Haar coefficient, and the DC and (even {@code N}) Nyquist bins of a DFT.
+     */
+    boolean isRealValued(int level, int index) {
+        return basis == SpectralBasis.HAAR || isRealDftBin(index);
     }
 
     /**

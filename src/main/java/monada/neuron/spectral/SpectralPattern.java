@@ -36,7 +36,10 @@ import java.util.RandomAccess;
  * or {@link NullPointerException}; nothing is repaired except signed zeros, which are canonicalized to {@code +0.0}.
  * The component count is checked against the basis cap before any array is copied. The retained energy may not
  * exceed the source energy by more than {@link #ENERGY_TOLERANCE} (relative), so the retained-energy fraction is
- * never above {@code 1} beyond numerical noise.
+ * never above {@code 1} beyond numerical noise, and a complete pattern must equal its source energy within that
+ * tolerance. Real-valued components (every Haar coefficient, the DFT DC bin and, for even {@code N}, the Nyquist bin)
+ * encode their sign only: their phase must be exactly {@code 0} or {@code π}. Decomposers compute those bins as real
+ * sums.
  */
 public final class SpectralPattern {
 
@@ -56,8 +59,11 @@ public final class SpectralPattern {
     public static final double PHASE_EPSILON = 1e-12;
 
     /**
-     * Relative tolerance by which {@link #retainedEnergy()} may exceed {@link #sourceEnergy()}: the Parseval tolerance
-     * of contract section 12.4. A source energy of {@code 0} admits only a retained energy of {@code 0}.
+     * Relative tolerance between {@link #retainedEnergy()} and {@link #sourceEnergy()}: the Parseval tolerance of
+     * contract section 12.4. Any pattern may retain at most the source energy plus this tolerance; a complete pattern
+     * (every key of its frame present) must equal it within the tolerance in both directions. Differences below
+     * {@link Double#MIN_NORMAL} are always accepted, so a source energy of {@code 0} admits only a retained energy
+     * below {@link Double#MIN_NORMAL}.
      */
     public static final double ENERGY_TOLERANCE = 1e-9;
 
@@ -80,8 +86,9 @@ public final class SpectralPattern {
         this.indices = indices;
         this.magnitudes = magnitudes;
         this.phases = phases;
-        this.phaseThreshold = validateComponents();
-        this.retainedEnergy = computeRetainedEnergy();
+        double maxMagnitude = validateComponents();
+        this.phaseThreshold = maxMagnitude == 0.0 ? PHASE_EPSILON : PHASE_EPSILON * maxMagnitude;
+        this.retainedEnergy = computeRetainedEnergy(maxMagnitude);
     }
 
     /**
@@ -353,7 +360,7 @@ public final class SpectralPattern {
         return value == 0.0 ? 0.0 : value;
     }
 
-    /** Validates keys, order and values in one pass and returns the phase-defined magnitude threshold. */
+    /** Validates keys, order and values in one pass and returns the largest magnitude. */
     private double validateComponents() {
         double maxMagnitude = 0.0;
         for (int i = 0; i < levels.length; i++) {
@@ -372,31 +379,61 @@ public final class SpectralPattern {
                 throw new IllegalArgumentException(
                         "magnitude at index " + i + " must be finite and non-negative, got: " + magnitude);
             }
-            if (!SpectralPhase.isCanonical(phases[i])) {
+            double phase = phases[i];
+            if (!SpectralPhase.isCanonical(phase)) {
                 throw new IllegalArgumentException(
-                        "phase at index " + i + " must be finite and in (-π, π], got: " + phases[i]);
+                        "phase at index " + i + " must be finite and in (-π, π], got: " + phase);
+            }
+            if (frame.isRealValued(level, index) && phase != 0.0 && phase != StrictMath.PI) {
+                throw new IllegalArgumentException("component at index " + i + " with key (" + level + ", " + index
+                        + ") is real-valued in " + frame.basis() + " and needs phase 0 or π, got: " + phase);
             }
             maxMagnitude = Math.max(maxMagnitude, magnitude);
         }
-        return maxMagnitude == 0.0 ? PHASE_EPSILON : PHASE_EPSILON * maxMagnitude;
+        return maxMagnitude;
     }
 
-    private double computeRetainedEnergy() {
+    /**
+     * Sums the retained energy with magnitudes scaled by {@code 2^-e}, {@code e} the exponent of the largest magnitude.
+     * Power-of-two scaling is exact, so the result is bit-identical to the unscaled sum whenever that sum neither
+     * underflows nor overflows, and a representable (possibly subnormal) energy is not lost to squaring underflow.
+     */
+    private double computeRetainedEnergy(double maxMagnitude) {
+        if (maxMagnitude == 0.0) {
+            requireEnergyConsistent(0.0);
+            return 0.0;
+        }
+        int exponent = Math.getExponent(maxMagnitude);
         double sum = 0.0;
         boolean dft = frame.basis() == SpectralBasis.DFT;
         for (int i = 0; i < magnitudes.length; i++) {
-            double squared = magnitudes[i] * magnitudes[i];
+            double scaled = Math.scalb(magnitudes[i], -exponent);
+            double squared = scaled * scaled;
             sum += dft && !frame.isRealDftBin(indices[i]) ? squared / 2.0 : squared;
         }
-        double energy = dft ? frame.sampleCount() * sum : sum;
+        double energy = Math.scalb(dft ? frame.sampleCount() * sum : sum, 2 * exponent);
         if (!Double.isFinite(energy)) {
             throw new IllegalArgumentException("retained energy overflows for magnitudes of " + frame);
         }
-        if (energy > sourceEnergy * (1.0 + ENERGY_TOLERANCE)) {
-            throw new IllegalArgumentException("retained energy " + energy + " exceeds sourceEnergy " + sourceEnergy
-                    + " beyond the relative tolerance " + ENERGY_TOLERANCE);
-        }
+        requireEnergyConsistent(energy);
         return energy;
+    }
+
+    /**
+     * Retained energy may exceed the source energy by at most the allowed difference; a complete pattern (every key of
+     * its frame present) must also not fall below it. The allowed difference is {@link #ENERGY_TOLERANCE} relative to
+     * the larger energy, floored at {@link Double#MIN_NORMAL} because subnormal energies carry no relative precision.
+     */
+    private void requireEnergyConsistent(double energy) {
+        double allowed = Math.max(ENERGY_TOLERANCE * Math.max(sourceEnergy, energy), Double.MIN_NORMAL);
+        if (energy - sourceEnergy > allowed) {
+            throw new IllegalArgumentException("retained energy " + energy + " exceeds sourceEnergy " + sourceEnergy
+                    + " beyond the allowed difference " + allowed);
+        }
+        if (levels.length == frame.componentCapacity() && sourceEnergy - energy > allowed) {
+            throw new IllegalArgumentException("complete pattern retains energy " + energy + " but sourceEnergy is "
+                    + sourceEnergy + ", beyond the allowed difference " + allowed);
+        }
     }
 
     private final class ComponentView extends AbstractList<WaveComponent> implements RandomAccess {
