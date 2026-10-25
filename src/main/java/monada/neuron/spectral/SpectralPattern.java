@@ -329,6 +329,45 @@ public final class SpectralPattern {
         return retainedEnergy;
     }
 
+    /**
+     * Returns the energy the retained components of one level carry: the scale-local energy of a Haar pattern
+     * ({@code Σ c²} over the level's coefficients; level {@code 0} is the final approximation), or for a DFT, whose
+     * only level is {@code 0}, the same value as {@link #retainedEnergy()}. A level with no retained component has
+     * energy {@code 0}. Each level is summed in canonical order with its own power-of-two scaling, so the level
+     * energies add up to {@link #retainedEnergy()} within rounding, not bit for bit. O(k), no allocation.
+     *
+     * @param level component level, {@code 0..scale().levels()}
+     * @return the retained energy of that level
+     * @throws IllegalArgumentException if the level is not a level of this pattern's frame
+     */
+    public double levelEnergy(int level) {
+        if (level < 0 || level > frame.scale().levels()) {
+            throw new IllegalArgumentException(
+                    "level must be in [0, " + frame.scale().levels() + "], got: " + level);
+        }
+        int start = 0;
+        while (start < levels.length && levels[start] < level) {
+            start++;
+        }
+        int end = start;
+        double peak = 0.0;
+        while (end < levels.length && levels[end] == level) {
+            peak = Math.max(peak, magnitudes[end]);
+            end++;
+        }
+        if (peak == 0.0) {
+            return 0.0;
+        }
+        int exponent = SpectralArithmetic.scaleExponent(peak);
+        double sum = 0.0;
+        boolean dft = frame.basis() == SpectralBasis.DFT;
+        for (int i = start; i < end; i++) {
+            double squared = SpectralArithmetic.scaledSquare(magnitudes[i], exponent);
+            sum += dft && !frame.isRealDftBin(indices[i]) ? squared / 2.0 : squared;
+        }
+        return SpectralArithmetic.unscaleEnergy(dft ? frame.sampleCount() * sum : sum, exponent);
+    }
+
     @Override
     public boolean equals(Object other) {
         return this == other || other instanceof SpectralPattern that

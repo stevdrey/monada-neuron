@@ -66,7 +66,7 @@ public final class DftWaveDecomposer implements WaveDecomposer {
         double[] x = wave.sampleArray();
         double peak = SpectralArithmetic.peakMagnitude(x);
         double energy = SpectralArithmetic.sumOfSquares(x, peak);
-        if (peak != 0.0 && !(energy >= Double.MIN_NORMAL && energy <= SpectralPattern.MAX_SOURCE_ENERGY)) {
+        if (!SpectralArithmetic.sourceEnergyRepresentable(peak, energy)) {
             return new DecompositionRejected(DecompositionRejectionReason.ENERGY_OUT_OF_RANGE,
                     "source energy is outside [MIN_NORMAL, MAX_SOURCE_ENERGY]: " + energy);
         }

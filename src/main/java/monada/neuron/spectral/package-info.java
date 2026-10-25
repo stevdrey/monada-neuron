@@ -1,6 +1,6 @@
 /**
  * Experimental, opt-in spectral value types of the NCM wave cognition contract ({@code ncm-wave-cognition/1},
- * {@code docs/specs/ncm-wave-cognition-v1.md}, ADR 0034 and ADR 0035).
+ * {@code docs/specs/ncm-wave-cognition-v1.md}, ADR 0034 to ADR 0037).
  *
  * <p>A {@link monada.neuron.spectral.SpectralPattern} is bounded, immutable, cycle-local data: the components a
  * decomposer found in one window of host samples, with the basis, scale, sampling metadata and provenance needed to
@@ -16,8 +16,12 @@
  * <p><b>Decomposition.</b> A host-implemented {@link monada.neuron.spectral.WaveEncoder} supplies one explicit
  * {@link monada.neuron.spectral.SampledWave} window with its sampling metadata and provenance; a
  * {@link monada.neuron.spectral.WaveDecomposer} such as the scalar reference
- * {@link monada.neuron.spectral.DftWaveDecomposer} turns it into a pattern (ADR 0036). No public type here accepts a
- * {@code Signal}: samples are never derived from one.
+ * {@link monada.neuron.spectral.DftWaveDecomposer} turns it into a pattern (ADR 0036). The opt-in
+ * {@link monada.neuron.spectral.HaarWaveDecomposer} is the separate multiresolution strategy (ADR 0037): fixed depth,
+ * power-of-two windows only, coefficients by scale and position with
+ * {@link monada.neuron.spectral.SpectralPattern#levelEnergy(int) scale-local energy}. Fourier and wavelet patterns
+ * never share a frame, so they cannot be compared as if their components were the same bins. No public type here
+ * accepts a {@code Signal}: samples are never derived from one.
  *
  * <p>Construction errors, including a malformed {@code SampledWave}, are caller bugs and throw
  * {@link java.lang.IllegalArgumentException} or {@link java.lang.NullPointerException}; a valid wave outside a

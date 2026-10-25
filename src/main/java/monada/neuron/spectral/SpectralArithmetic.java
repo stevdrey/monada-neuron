@@ -43,6 +43,15 @@ final class SpectralArithmetic {
         return Math.scalb(scaledEnergy, 2 * exponent);
     }
 
+    /**
+     * Returns whether a source energy can be carried by a pattern: silent samples ({@code peak == 0}), or an energy in
+     * {@code [Double.MIN_NORMAL, SpectralPattern.MAX_SOURCE_ENERGY]}. Every decomposer applies this rule before it
+     * builds a pattern and reports a failure as {@link DecompositionRejectionReason#ENERGY_OUT_OF_RANGE}.
+     */
+    static boolean sourceEnergyRepresentable(double peak, double energy) {
+        return peak == 0.0 || energy >= Double.MIN_NORMAL && energy <= SpectralPattern.MAX_SOURCE_ENERGY;
+    }
+
     /** Returns {@code Σ values[i]²} in ascending order with the scaling rule; {@code 0} when {@code peak} is 0. */
     static double sumOfSquares(double[] values, double peak) {
         if (peak == 0.0) {

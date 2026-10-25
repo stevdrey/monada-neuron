@@ -46,7 +46,7 @@ class SpectralCompatibilityTest {
         assertEquals(List.of("samples:double[]", "sampleRate:double", "unit:SampleUnit",
                 "provenance:WaveProvenance"), components(SampledWave.class));
         for (Class<?> type : List.of(SampledWave.class, WaveEncoder.class, WaveDecomposer.class,
-                DftWaveDecomposer.class, DecompositionResult.class)) {
+                DftWaveDecomposer.class, HaarWaveDecomposer.class, DecompositionResult.class)) {
             for (Method method : type.getMethods()) {
                 assertFalse(Arrays.asList(method.getParameterTypes()).contains(Signal.class),
                         type.getSimpleName() + "." + method.getName() + " must not accept a Signal");

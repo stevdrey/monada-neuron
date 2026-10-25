@@ -71,6 +71,26 @@ class SpectralPatternTest {
     }
 
     @Test
+    void levelEnergyIsTheScaleLocalShareOfTheRetainedEnergy() {
+        var haar = p9();
+        var dft = p4();
+        // P9 without its level-1 details: that scale retains nothing.
+        var truncated = SpectralPattern.of(HAAR_4_L2, 70.0, PROVENANCE,
+                new int[] {0, 2}, new int[] {0, 0}, new double[] {8.0, 2.0}, new double[] {0.0, PI});
+
+        assertAll(
+                () -> assertEquals(64.0, haar.levelEnergy(0)),
+                () -> assertEquals(2.0, haar.levelEnergy(1), 1e-12),
+                () -> assertEquals(4.0, haar.levelEnergy(2)),
+                () -> assertEquals(dft.retainedEnergy(), dft.levelEnergy(0)),
+                () -> assertEquals(0.0, truncated.levelEnergy(1)),
+                () -> assertEquals(4.0, truncated.levelEnergy(2)),
+                () -> assertThrows(IllegalArgumentException.class, () -> haar.levelEnergy(-1)),
+                () -> assertThrows(IllegalArgumentException.class, () -> haar.levelEnergy(3)),
+                () -> assertThrows(IllegalArgumentException.class, () -> dft.levelEnergy(1)));
+    }
+
+    @Test
     void retainedEnergyWeightsDcAndNyquistOnceForEvenLength() {
         // N = 8: DC 3, bin 1 magnitude 1, Nyquist bin 4 magnitude 1 -> 8 * (9 + 1/2 + 1)
         var pattern = SpectralPattern.of(DFT_8, 84.0, PROVENANCE,
