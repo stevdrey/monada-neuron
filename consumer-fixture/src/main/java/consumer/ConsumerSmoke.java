@@ -24,6 +24,9 @@ import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteDescriptor;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.routing.features.FeatureDimension;
+import monada.neuron.routing.features.FeatureReadinessAssessment;
+import monada.neuron.routing.features.TaskFeatureReadiness;
 import monada.neuron.routing.features.TaskFeatures;
 import monada.neuron.routing.feedback.CohortKey;
 import monada.neuron.signal.Signal;
@@ -32,6 +35,7 @@ import monada.neuron.signal.SignalKind;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 import java.util.UUID;
 
 /** Minimal host that embeds Neuron through the public host API only. */
@@ -106,5 +110,12 @@ public final class ConsumerSmoke {
                 LexicographicRoutingPolicy.DEFAULT_MIN_SUPPORTING_OBSERVATIONS, OptionalInt.empty(),
                 Optional.empty());
         return policy.decide(request, catalog, store.snapshot(policy, catalog));
+    }
+
+    /** Feature readiness diagnostics: a host preview learns what it knows before any advice is shown. */
+    public static FeatureReadinessAssessment assessFeatureReadiness() {
+        var features = TaskFeatures.builder().stageKind("implement").languages(List.of("java")).build();
+        return new TaskFeatureReadiness().assess(features, "implement",
+                Set.of(FeatureDimension.CATEGORY, FeatureDimension.LANGUAGES));
     }
 }
