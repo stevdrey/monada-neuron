@@ -44,11 +44,13 @@ class FeatureReadinessBoundaryTest {
         return types;
     }
 
+    // covers: AC-7
     @Test
     void coversSevenTypes() {
         assertEquals(7, allTypes().size(), allTypes().toString());
     }
 
+    // covers: AC-7
     @Test
     void onlyBooleanWithoutArgumentsIsTheRequiredEcho() throws NoSuchMethodException {
         List<Method> booleans = new ArrayList<>();
@@ -63,6 +65,7 @@ class FeatureReadinessBoundaryTest {
         assertEquals(List.of(FieldDiagnostic.class.getMethod("required")), booleans);
     }
 
+    // covers: AC-7
     @Test
     void noPublicNameReadsAsAGrant() {
         List<String> names = new ArrayList<>();
@@ -93,6 +96,7 @@ class FeatureReadinessBoundaryTest {
         }
     }
 
+    // covers: AC-7
     @Test
     void assessTakesNoRoutingType() throws NoSuchMethodException {
         Method assess = TaskFeatureReadiness.class.getMethod("assess", TaskFeatures.class, String.class,
@@ -106,6 +110,7 @@ class FeatureReadinessBoundaryTest {
         }
     }
 
+    // covers: AC-10
     @Test
     void everyTypeCarriesTheNonAuthoritySentenceOnceInItsOwnJavadoc() throws IOException {
         Map<Class<?>, Integer> typesPerFile = new HashMap<>();

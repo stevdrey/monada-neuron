@@ -42,6 +42,7 @@ class FeatureReadinessDecideIndependenceTest {
                 RoutingPreference.empty(request, policy.definition(), policy.policyId(), policy.policyVersion()));
     }
 
+    // covers: AC-8
     @Test
     void assessingTheFeaturesDoesNotChangeTheDecision() {
         for (TaskFeatures features : List.of(TaskFeatures.builder().stageKind("implement").build(),

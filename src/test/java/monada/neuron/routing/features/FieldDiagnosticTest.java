@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class FieldDiagnosticTest {
 
+    // covers: AC-2
     @Test
     void factoryAppliesTheSeverityTable() {
         assertEquals(DiagnosticSeverity.INFORMATION,
@@ -23,6 +24,7 @@ class FieldDiagnosticTest {
                 FieldDiagnostic.of(FeatureDimension.STAGE_KIND, FieldStatus.MISMATCH, true).severity());
     }
 
+    // covers: AC-6
     @Test
     void mismatchIsRejectedOffStageKind() {
         assertThrows(IllegalArgumentException.class,
@@ -31,6 +33,7 @@ class FieldDiagnosticTest {
                 FieldStatus.MISMATCH, false, DiagnosticSeverity.INCONSISTENT_WITH_REQUEST));
     }
 
+    // covers: AC-6
     @Test
     void severityThatBreaksTheTableIsRejected() {
         assertThrows(IllegalArgumentException.class, () -> new FieldDiagnostic(FeatureDimension.CATEGORY,
@@ -41,6 +44,7 @@ class FieldDiagnosticTest {
                 FieldStatus.MISMATCH, false, DiagnosticSeverity.INFORMATION));
     }
 
+    // covers: AC-6
     @Test
     void nullComponentsThrowWithTheirName() {
         assertEquals("dimension must not be null", assertThrows(NullPointerException.class,
@@ -49,5 +53,21 @@ class FieldDiagnosticTest {
                 () -> FieldDiagnostic.of(FeatureDimension.TESTS, null, false)).getMessage());
         assertEquals("severity must not be null", assertThrows(NullPointerException.class,
                 () -> new FieldDiagnostic(FeatureDimension.TESTS, FieldStatus.KNOWN, false, null)).getMessage());
+    }
+
+    // covers: AC-6
+    @Test
+    void stageKindAcceptsEveryStatus() {
+        for (FieldStatus status : FieldStatus.values()) {
+            assertEquals(status, FieldDiagnostic.of(FeatureDimension.STAGE_KIND, status, false).status());
+        }
+    }
+
+    // covers: AC-2
+    @Test
+    void factoryAndCanonicalConstructorAgree() {
+        assertEquals(new FieldDiagnostic(FeatureDimension.SECURITY, FieldStatus.UNKNOWN, true,
+                        DiagnosticSeverity.MISSING_FOR_HOST_PREVIEW),
+                FieldDiagnostic.of(FeatureDimension.SECURITY, FieldStatus.UNKNOWN, true));
     }
 }

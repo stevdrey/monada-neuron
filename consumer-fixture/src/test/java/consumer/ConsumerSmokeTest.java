@@ -48,6 +48,7 @@ class ConsumerSmokeTest {
         assertEquals("adaptive-routing-state/1", decision.provenance().state().mappingVersion());
     }
 
+    // covers: AC-9
     @Test
     void featureReadinessDiagnosticsAreAvailableThroughThePublishedArtifact() {
         var assessed = assertInstanceOf(FeatureReadinessAssessment.Assessed.class,

@@ -3,6 +3,8 @@ package monada.neuron.routing.features;
 import monada.neuron.routing.features.FeatureReadinessAssessment.Assessed;
 import monada.neuron.routing.features.FeatureReadinessAssessment.SchemaMismatch;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import java.util.Arrays;
 import java.util.EnumSet;
@@ -14,6 +16,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -39,6 +42,7 @@ class TaskFeatureReadinessTest {
         return assertInstanceOf(Assessed.class, readiness.assess(features, "implement", required));
     }
 
+    // covers: AC-1, AC-2
     @Test
     void fullSnapshotGivesEightKnownInformationRowsInDeclarationOrder() {
         Assessed assessed = assess(full(), Set.of());
@@ -55,6 +59,7 @@ class TaskFeatureReadinessTest {
         assertTrue(assessed.inconsistentWithRequest().isEmpty());
     }
 
+    // covers: AC-1
     @Test
     void emptySnapshotGivesEightUnknownRows() {
         Assessed assessed = assess(TaskFeatures.builder().build(), Set.of());
@@ -65,6 +70,7 @@ class TaskFeatureReadinessTest {
         }
     }
 
+    // covers: AC-1, AC-2
     @Test
     void emptySnapshotWithEverythingRequiredIsMissingEverywhere() {
         Assessed assessed = assess(TaskFeatures.builder().build(), EnumSet.allOf(FeatureDimension.class));
@@ -77,6 +83,7 @@ class TaskFeatureReadinessTest {
         assertEquals(List.of(FeatureDimension.values()), assessed.missingForHostPreview());
     }
 
+    // covers: AC-1
     @Test
     void equalInputsGiveEqualAssessments() {
         TaskFeatures features = full();
@@ -90,6 +97,7 @@ class TaskFeatureReadinessTest {
         return TaskFeatures.builder().stageKind("implement").languages(List.of("java")).build();
     }
 
+    // covers: AC-1, AC-2, AC-4
     @Test
     void mixedSnapshotListsOnlyRequiredUnknownDimensionsAsMissing() {
         Assessed assessed = assess(mixed(), Set.of(FeatureDimension.CATEGORY, FeatureDimension.TESTS,
@@ -108,6 +116,7 @@ class TaskFeatureReadinessTest {
                 FeatureDimension.CATEGORY)));
     }
 
+    // covers: AC-4
     @Test
     void emptyRequiredSetMeansNothingIsRequired() {
         Assessed assessed = assess(TaskFeatures.builder().build(), Set.of());
@@ -117,6 +126,7 @@ class TaskFeatureReadinessTest {
         assertTrue(assessed.diagnostics().stream().noneMatch(FieldDiagnostic::required));
     }
 
+    // covers: AC-4
     @Test
     void requiredSetOrderAndImplementationDoNotChangeTheAssessment() {
         Assessed fromEnumSet = assess(mixed(), EnumSet.of(FeatureDimension.SECURITY, FeatureDimension.CATEGORY));
@@ -137,6 +147,7 @@ class TaskFeatureReadinessTest {
         assertThrows(UnsupportedOperationException.class, () -> backward.inconsistentWithRequest().clear());
     }
 
+    // covers: AC-4
     @Test
     void requiredSetIsCopiedNotShared() {
         Set<FeatureDimension> required = new HashSet<>(Set.of(FeatureDimension.CATEGORY));
@@ -147,6 +158,7 @@ class TaskFeatureReadinessTest {
         assertEquals(Set.of(FeatureDimension.CATEGORY), assessed.required());
     }
 
+    // covers: AC-2, AC-3
     @Test
     void differentStageKindIsInconsistentWithTheRequestWhetherRequiredOrNot() {
         TaskFeatures features = TaskFeatures.builder().stageKind("review").build();
@@ -164,6 +176,7 @@ class TaskFeatureReadinessTest {
         }
     }
 
+    // covers: AC-3
     @Test
     void equalStageKindIsKnownAndUnknownStageKindStaysUnknown() {
         FieldDiagnostic equal = assess(TaskFeatures.builder().stageKind("implement").build(), Set.of())
@@ -176,6 +189,7 @@ class TaskFeatureReadinessTest {
         assertEquals(DiagnosticSeverity.MISSING_FOR_HOST_PREVIEW, unknown.severity());
     }
 
+    // covers: AC-5
     @Test
     void newerSchemaIsReportedWithoutRows() {
         TaskFeatures features = TaskFeatures.builder().schemaVersion("task-features/2").stageKind("review").build();
@@ -185,6 +199,7 @@ class TaskFeatureReadinessTest {
         assertEquals(new SchemaMismatch(TaskFeatures.SCHEMA_VERSION, "task-features/2"), result);
     }
 
+    // covers: AC-6
     @Test
     void nullArgumentsThrowWithTheirName() {
         assertNullMessage("features must not be null", () -> readiness.assess(null, "implement", Set.of()));
@@ -195,6 +210,7 @@ class TaskFeatureReadinessTest {
                         null))));
     }
 
+    // covers: AC-6
     @Test
     void argumentChecksRunBeforeTheSchemaCheck() {
         TaskFeatures newer = TaskFeatures.builder().schemaVersion("task-features/2").build();
@@ -205,6 +221,7 @@ class TaskFeatureReadinessTest {
         assertThrows(IllegalArgumentException.class, () -> readiness.assess(newer, "", Set.of()));
     }
 
+    // covers: AC-6
     @Test
     void invalidExpectedStageKindIsRejectedBeforeNullElements() {
         Set<FeatureDimension> withNull = new HashSet<>(Arrays.asList((FeatureDimension) null));
@@ -212,6 +229,129 @@ class TaskFeatureReadinessTest {
         for (String token : List.of("", "a".repeat(129), "bad\ntoken", " padded")) {
             assertThrows(IllegalArgumentException.class, () -> readiness.assess(mixed(), token, withNull), token);
         }
+    }
+
+    private static TaskFeatures onlyKnown(FeatureDimension dimension) {
+        TaskFeatures.Builder builder = TaskFeatures.builder();
+        switch (dimension) {
+            case STAGE_KIND -> builder.stageKind("implement");
+            case CATEGORY -> builder.category("bugfix");
+            case LANGUAGES -> builder.languages(List.of("java"));
+            case DOMAINS -> builder.domains(List.of("backend"));
+            case CHANGE_SIZE -> builder.changeSize(1);
+            case CONTEXT_SIZE -> builder.contextSize(1);
+            case TESTS -> builder.tests(Requirement.REQUIRED);
+            case SECURITY -> builder.security(Requirement.REQUIRED);
+        }
+        return builder.build();
+    }
+
+    // covers: AC-1
+    @ParameterizedTest
+    @EnumSource(FeatureDimension.class)
+    void eachRowReadsOnlyItsOwnFeatureComponent(FeatureDimension known) {
+        Assessed assessed = assess(onlyKnown(known), Set.of());
+
+        for (FieldDiagnostic row : assessed.diagnostics()) {
+            FieldStatus expected = row.dimension() == known ? FieldStatus.KNOWN : FieldStatus.UNKNOWN;
+            assertEquals(expected, row.status(), row.dimension().name());
+        }
+    }
+
+    // covers: AC-2
+    @ParameterizedTest
+    @EnumSource(FeatureDimension.class)
+    void requiringOneUnknownDimensionMarksOnlyThatRowMissing(FeatureDimension required) {
+        Assessed assessed = assess(TaskFeatures.builder().build(), Set.of(required));
+
+        assertEquals(List.of(required), assessed.missingForHostPreview());
+        for (FieldDiagnostic row : assessed.diagnostics()) {
+            assertEquals(row.dimension() == required, row.required(), row.dimension().name());
+        }
+    }
+
+    // covers: AC-1, AC-2
+    @Test
+    void zeroSizesEmptyTagsAndNotRequiredAreKnownValuesNotUnknown() {
+        TaskFeatures features = TaskFeatures.builder()
+                .languages(List.of())
+                .domains(List.of())
+                .changeSize(0)
+                .contextSize(0)
+                .tests(Requirement.NOT_REQUIRED)
+                .security(Requirement.NOT_REQUIRED)
+                .build();
+
+        Assessed assessed = assess(features, EnumSet.range(FeatureDimension.LANGUAGES, FeatureDimension.SECURITY));
+
+        assertEquals(List.of(), assessed.missingForHostPreview());
+        for (FieldDiagnostic row : assessed.diagnostics().subList(2, 8)) {
+            assertEquals(FieldStatus.KNOWN, row.status(), row.dimension().name());
+        }
+    }
+
+    // covers: AC-3
+    @Test
+    void stageKindIsComparedExactlyWithoutCaseOrUnicodeNormalization() {
+        assertStageStatus(FieldStatus.MISMATCH, "Plan", "plan");
+        assertStageStatus(FieldStatus.MISMATCH, "\u00e9tape", "e\u0301tape");
+        assertStageStatus(FieldStatus.KNOWN, "\uD83D\uDE80 launch", "\uD83D\uDE80 launch");
+    }
+
+    private void assertStageStatus(FieldStatus expected, String featureStage, String expectedStage) {
+        TaskFeatures features = TaskFeatures.builder().stageKind(featureStage).build();
+        Assessed assessed = assertInstanceOf(Assessed.class, readiness.assess(features, expectedStage, Set.of()));
+
+        assertEquals(expected, assessed.diagnostics().getFirst().status(), featureStage + " vs " + expectedStage);
+    }
+
+    // covers: AC-2, AC-3
+    @Test
+    void mismatchAndMissingAreReportedSideBySide() {
+        TaskFeatures features = TaskFeatures.builder().stageKind("review").build();
+
+        Assessed assessed = assertInstanceOf(Assessed.class, readiness.assess(features, "plan",
+                Set.of(FeatureDimension.STAGE_KIND, FeatureDimension.CATEGORY)));
+
+        assertEquals(List.of(FeatureDimension.STAGE_KIND), assessed.inconsistentWithRequest());
+        assertEquals(List.of(FeatureDimension.CATEGORY), assessed.missingForHostPreview());
+    }
+
+    // covers: AC-6
+    @Test
+    void expectedStageKindAcceptsExactly128CodePointsIncludingSupplementaryCharacters() {
+        String rocket = "\uD83D\uDE80";
+
+        assertInstanceOf(Assessed.class, readiness.assess(mixed(), rocket.repeat(128), Set.of()));
+        assertThrows(IllegalArgumentException.class, () -> readiness.assess(mixed(), rocket.repeat(129), Set.of()));
+        assertThrows(IllegalArgumentException.class, () -> readiness.assess(mixed(), "plan ", Set.of()));
+    }
+
+    // covers: AC-6
+    @Test
+    void nullChecksRunBeforeTheTokenCheck() {
+        assertNullMessage("required must not be null", () -> readiness.assess(mixed(), "", null));
+        assertNullMessage("features must not be null", () -> readiness.assess(null, "", null));
+    }
+
+    // covers: AC-4
+    @Test
+    void requiredSetVariantsGiveEqualHashCodes() {
+        Assessed fromSetOf = assess(mixed(), Set.of(FeatureDimension.TESTS, FeatureDimension.DOMAINS));
+        Assessed fromLinked = assess(mixed(), new LinkedHashSet<>(List.of(FeatureDimension.TESTS,
+                FeatureDimension.DOMAINS)));
+
+        assertEquals(fromSetOf.hashCode(), fromLinked.hashCode());
+        assertNotEquals(fromSetOf, assess(mixed(), Set.of(FeatureDimension.TESTS)));
+    }
+
+    // covers: AC-5
+    @Test
+    void anyOtherSchemaIsAMismatchNamingTheSupportedVersion() {
+        TaskFeatures features = TaskFeatures.builder().schemaVersion("other-schema/1").build();
+
+        assertEquals(new SchemaMismatch(TaskFeatures.SCHEMA_VERSION, "other-schema/1"),
+                readiness.assess(features, "plan", Set.of()));
     }
 
     private static void assertNullMessage(String message, Runnable call) {

@@ -12,6 +12,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FeatureReadinessAssessmentTest {
 
@@ -19,6 +20,7 @@ class FeatureReadinessAssessmentTest {
         return TaskFeatures.builder().stageKind("implement").languages(List.of("java")).build();
     }
 
+    // covers: AC-4
     @Test
     void handBuiltAssessedEqualsTheOneAssessReturns() {
         TaskFeatures features = mixed();
@@ -29,6 +31,7 @@ class FeatureReadinessAssessmentTest {
                 new Assessed(features, "implement", required));
     }
 
+    // covers: AC-6
     @Test
     void assessedRejectsAnotherSchema() {
         TaskFeatures newer = TaskFeatures.builder().schemaVersion("task-features/2").build();
@@ -36,6 +39,7 @@ class FeatureReadinessAssessmentTest {
         assertThrows(IllegalArgumentException.class, () -> new Assessed(newer, "implement", Set.of()));
     }
 
+    // covers: AC-6
     @Test
     void assessedChecksArgumentsInOrder() {
         TaskFeatures newer = TaskFeatures.builder().schemaVersion("task-features/2").build();
@@ -48,6 +52,7 @@ class FeatureReadinessAssessmentTest {
         assertNullMessage("required must not contain null", () -> new Assessed(newer, "implement", withNull));
     }
 
+    // covers: AC-6
     @Test
     void schemaMismatchRequiresTwoDifferentValidTokens() {
         assertThrows(IllegalArgumentException.class,
@@ -56,6 +61,25 @@ class FeatureReadinessAssessmentTest {
         assertThrows(IllegalArgumentException.class, () -> new SchemaMismatch(TaskFeatures.SCHEMA_VERSION, " v2"));
         assertNullMessage("expected must not be null", () -> new SchemaMismatch(null, "task-features/2"));
         assertNullMessage("actual must not be null", () -> new SchemaMismatch(TaskFeatures.SCHEMA_VERSION, null));
+    }
+
+    // covers: AC-4
+    @Test
+    void handBuiltAssessedCanonicalizesRequired() {
+        Assessed assessed = new Assessed(mixed(), "implement", new LinkedHashSet<>(List.of(FeatureDimension.SECURITY,
+                FeatureDimension.STAGE_KIND)));
+
+        assertEquals(List.of(FeatureDimension.STAGE_KIND, FeatureDimension.SECURITY), List.copyOf(assessed.required()));
+        assertThrows(UnsupportedOperationException.class, () -> assessed.required().clear());
+    }
+
+    // covers: AC-6
+    @Test
+    void schemaMismatchAcceptsAnyTwoDistinctValidTokens() {
+        SchemaMismatch mismatch = new SchemaMismatch("task-features/9", "task-features/1");
+
+        assertEquals("task-features/9", mismatch.expected());
+        assertTrue(mismatch.toString().contains("task-features/1"));
     }
 
     private static void assertNullMessage(String message, Runnable call) {
