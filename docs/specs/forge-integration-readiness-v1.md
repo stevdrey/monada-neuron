@@ -1,16 +1,19 @@
 # Forge Integration Readiness Contract v1
 
 **Contract identifier**: `forge-integration-readiness/1`
-**Status**: Accepted (issue #94; documentation only; normative for host adoption, decided in ADR 0033)
+**Status**: Accepted (issue #94; documentation only; normative for host adoption, decided in ADR 0033). Section 5.4
+documents the Neuron types added by issue #95 (ADR 0037).
 **Composes**: [Forge Routing Contract v1](forge-routing-contract-v1.md) (`forge-routing/1`), unchanged
-**Decision record**: [ADR 0033](../adr/0033-phase-gated-host-adoption-boundary.md)
+**Decision record**: [ADR 0033](../adr/0033-phase-gated-host-adoption-boundary.md); Section 5.4 by
+[ADR 0037](../adr/0037-feature-readiness-diagnostics.md)
 **Forge baseline**: `stevdrey/monada-forge` at commit [`56c35e05bb94d4d97e49b59c138fbaed66036ecd`](https://github.com/stevdrey/monada-forge/commit/56c35e05bb94d4d97e49b59c138fbaed66036ecd) (2026-10-21)
 
 This document tells a host application, Monada Forge in particular, how to opt into Neuron's routing advice one phase at a
 time. It names the first useful slice, the gate for each later phase, who owns every input, output and authority, how a
 reviewed task draft is turned into the existing `TaskFeatures` and `RoutingRequest`, what "ready" means before a catalog or
-a Store exists, and how stale metadata is handled. It composes the routing contract v1; it introduces no type, no value of an
-existing type, no numeric limit and no new version of `forge-routing/1`.
+a Store exists, and how stale metadata is handled. It composes the routing contract v1; it introduces no type of its own,
+no value of an existing type, no numeric limit and no new version of `forge-routing/1`. Section 5.4 describes the Neuron
+types added by issue #95 (feature readiness diagnostics), which this contract documents but does not define.
 
 Every Forge phase beyond Phase 1 is written in the conditional. Forge `main` at the pinned commit has Phases 0 and 1 only,
 and its roadmap says the Phase 1 manual desktop verification is still partly pending. Nothing here changes Forge's roadmap
@@ -120,6 +123,9 @@ it.
   widens it. Widening a scope needs a separate explicit user action (Forge security invariant 3).
 - `overflowPermitted`: admits overflow routes to eligibility for one request. It is not spending authorization; Forge
   revalidates quota before executing.
+- A `FeatureReadinessAssessment` and its severities (`INFORMATION`, `MISSING_FOR_HOST_PREVIEW`,
+  `INCONSISTENT_WITH_REQUEST`), Section 5.4: a report of which feature fields are known. A report with nothing missing
+  and nothing inconsistent is not `READY`, not eligibility and not authorization.
 
 ## 3. Phase Gates
 
@@ -358,6 +364,44 @@ decide returned, person withdrew before it was shown -> decision discarded unsee
 ADVISED, then any draft change before use           -> STALE  (re request: next requestOrdinal, new attemptId)
 ADVISED, then host execution (Phase 3 and later)    -> local outcome entry, PENDING until judged; never fed back before Phase 5
 ```
+
+### 5.4 Feature readiness diagnostics
+
+Before it builds a `RoutingRequest`, a host may ask Neuron which `TaskFeatures` fields it supplied, so a preview can say
+"category unknown" instead of silently showing weaker advice. The call is
+`new TaskFeatureReadiness().assess(features, expectedStageKind, required)` in `monada.neuron.routing.features`
+(issue #95, [ADR 0037](../adr/0037-feature-readiness-diagnostics.md)). It is pure: it reads only its three arguments,
+does no I/O and keeps no state.
+
+Diagnostics are information only: they are never eligibility, readiness, authentication or authorization, and no routing decision reads them.
+
+- **Inputs.** `features` is the snapshot the host is about to send; `expectedStageKind` is the stage kind token of the
+  request it will build (an opaque token, compared by `String.equals`); `required` is the host's own set of dimensions
+  that its preview needs, possibly empty. `required` is a display preference, not a policy Neuron enforces.
+- **Result.** A sealed `FeatureReadinessAssessment`: `Assessed` or `SchemaMismatch(expected, actual)`. Null arguments and
+  an invalid token throw; a different schema is returned, never thrown.
+- **Rows.** `Assessed.diagnostics()` returns exactly one `FieldDiagnostic` per `FeatureDimension`, eight in declaration
+  order. A row holds the dimension, a `FieldStatus` (`KNOWN`, `UNKNOWN`, or `MISMATCH`, which only `STAGE_KIND` can
+  have, when the known stage kind differs from `expectedStageKind`), whether the dimension was required, and a severity.
+  Rows carry no feature values; the host reads those from its own `TaskFeatures`. Rows are derived from the inputs on
+  every call and never stored.
+- **Severity table** (fixed in Neuron, not configurable; declaration order is not a ranking):
+
+| Status | Required | Severity |
+| --- | --- | --- |
+| `KNOWN` | either | `INFORMATION` |
+| `UNKNOWN` | no | `INFORMATION` |
+| `UNKNOWN` | yes | `MISSING_FOR_HOST_PREVIEW` |
+| `MISMATCH` | either | `INCONSISTENT_WITH_REQUEST` |
+
+- **Not a readiness outcome.** The host may use `missingForHostPreview()` to fill its own `NOT_READY(missing…)` list and
+  `inconsistentWithRequest()` to explain why it did not build a request (a mismatched stage kind would make the
+  `RoutingRequest` constructor throw). `NOT_READY`, `UNAVAILABLE`, `ADVISED` and `STALE` stay host vocabulary (Section
+  5.1). A report with no missing and no inconsistent rows is not `READY` and is not permission (Section 2.2).
+- **Schema mismatch carries no stage diagnostic.** A `SchemaMismatch` has no field rows, so a host that gets one learns
+  nothing about the stage kind or any other field. It treats the result like the Section 5.2 version mismatch backstop.
+- **Independent of advice.** `decide`, `RouteEligibilityFilter`, `RoutingPreference` and ranking never read an assessment,
+  and an assessment never changes what `decide` returns. Unknown values stay unknown: nothing is defaulted or inferred.
 
 ## 6. Staleness, Re Check and Re Request
 
@@ -674,10 +718,10 @@ This contract reuses the work of issues #59 to #68 and #89 by type name and v1 s
 ### 11.2 Forward references
 
 Every reference to a later issue in this document is marked `proposed, owned by issue #N` and is not part of
-`forge-integration-readiness/1`. The numbers are Neuron issues in `stevdrey/monada-neuron`; the Resonance Store has issues
+`forge-integration-readiness/1` until it is marked `implemented by issue #N`. The numbers are Neuron issues in `stevdrey/monada-neuron`; the Resonance Store has issues
 with the same numbers (v1 Section 1 cites Store issues 99 and 100), which are never meant here:
 
-- `proposed, owned by issue #95`: feature readiness diagnostics over `TaskFeatures` before advice is shown.
+- `implemented by issue #95, Section 5.4`: feature readiness diagnostics over `TaskFeatures` before advice is shown.
 - `proposed, owned by issue #96`: human review summaries of a `RoutingDecision`.
 - `proposed, owned by issue #97`: versioned advice receipts.
 - `proposed, owned by issue #98`: host disposition of advice.
@@ -710,12 +754,14 @@ the never permission list of Section 2.2 and this contract takes a minor bump.
 
 ### 12.1 Verification for this document
 
-- `./gradlew test` passes; the change touches no file under `src/`.
+- `./gradlew test` passes; the issue #94 revision touched no file under `src/`.
 - Every relative link in this document resolves in this repository; every Forge link resolves at commit
   `56c35e05bb94d4d97e49b59c138fbaed66036ecd`.
 - No sentence states or implies that a Forge phase beyond 1 is implemented.
-- Every mention of issues #95 to #103 carries `proposed, owned by issue`.
-- No new type, value or numeric limit is introduced.
+- In the issue #94 revision, every mention of issues #95 to #103 carried `proposed, owned by issue`; issues #96 to #103
+  still carry `proposed`, and #95 is `implemented by issue #95, Section 5.4`.
+- The issue #94 revision introduced no new type, value or numeric limit; the issue #95 revision adds the Section 5.4
+  types in Neuron, without changing any field table classification or adding a numeric limit.
 
 ### 12.2 Documentation updates
 
