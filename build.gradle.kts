@@ -233,6 +233,10 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
 
 tasks.test {
     useJUnitPlatform()
+    // Boundary tests read Javadoc from the sources, and an edit to Javadoc alone leaves the compiled classes unchanged.
+    inputs.dir(layout.projectDirectory.dir("src/main/java"))
+        .withPropertyName("mainSources")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 tasks.withType<JavaCompile> {
