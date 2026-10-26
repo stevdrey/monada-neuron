@@ -4,11 +4,14 @@ import monada.neuron.monad.CognitiveCycleTermination;
 import monada.neuron.resonance.AdaptiveBatchResonanceEvaluator;
 import monada.neuron.routing.RoutingDecision;
 import monada.neuron.resonance.BatchResonanceEvaluator;
+import monada.neuron.routing.features.FeatureDimension;
+import monada.neuron.routing.features.FeatureReadinessAssessment;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -43,6 +46,15 @@ class ConsumerSmokeTest {
     void adaptiveRoutingStateIsAvailableThroughThePublishedArtifact() {
         var decision = assertInstanceOf(RoutingDecision.Selected.class, ConsumerSmoke.routeFromAdaptiveState());
         assertEquals("adaptive-routing-state/1", decision.provenance().state().mappingVersion());
+    }
+
+    @Test
+    void featureReadinessDiagnosticsAreAvailableThroughThePublishedArtifact() {
+        var assessed = assertInstanceOf(FeatureReadinessAssessment.Assessed.class,
+                ConsumerSmoke.assessFeatureReadiness());
+
+        assertEquals(8, assessed.diagnostics().size());
+        assertEquals(List.of(FeatureDimension.CATEGORY), assessed.missingForHostPreview());
     }
 
     @Test

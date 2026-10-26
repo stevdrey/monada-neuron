@@ -20,6 +20,9 @@ import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteDescriptor;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.routing.features.FeatureDimension;
+import monada.neuron.routing.features.FeatureReadinessAssessment;
+import monada.neuron.routing.features.TaskFeatureReadiness;
 import monada.neuron.routing.features.TaskFeatures;
 import monada.neuron.routing.feedback.CohortKey;
 import monada.neuron.signal.Signal;
@@ -32,6 +35,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 import java.util.UUID;
 import java.util.jar.Attributes;
 import java.util.jar.JarFile;
@@ -91,6 +95,13 @@ public final class ModuleConsumer {
         require(adaptive instanceof RoutingDecision.Selected s
                         && s.provenance().state().mappingVersion().equals("adaptive-routing-state/1"),
                 "adaptive snapshot routing must select with the reference mapping: " + adaptive);
+
+        var readiness = new TaskFeatureReadiness().assess(
+                TaskFeatures.builder().stageKind("implement").languages(List.of("java")).build(), "implement",
+                Set.of(FeatureDimension.CATEGORY, FeatureDimension.LANGUAGES));
+        require(readiness instanceof FeatureReadinessAssessment.Assessed a && a.diagnostics().size() == 8
+                        && a.missingForHostPreview().equals(List.of(FeatureDimension.CATEGORY)),
+                "feature readiness must report eight rows with CATEGORY missing: " + readiness);
 
         System.out.println("[module-consumer] " + self.getName() + " reads " + neuron.getName()
                 + " (automatic=" + neuron.getDescriptor().isAutomatic() + ", location="
