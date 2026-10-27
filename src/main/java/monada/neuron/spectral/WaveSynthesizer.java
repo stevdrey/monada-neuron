@@ -117,7 +117,8 @@ public final class WaveSynthesizer {
      * Requires the original to be the wave the pattern was decomposed from, as far as the pattern can tell. Silence
      * must match exactly, as in {@link SpectralPattern}: an original whose samples are all {@code 0} only for a pattern
      * of source energy {@code 0}, and the reverse. Silence is judged by the samples, not by their energy, which can
-     * underflow to {@code 0} for subnormal samples.
+     * underflow to {@code 0} for subnormal samples. An original whose energy overflows is rejected before the
+     * comparison, since no pattern can carry it.
      */
     private void requireOriginalOf(SpectralPattern pattern, SampledWave original) {
         if (original.sampleCount() != pattern.sampleCount()
@@ -137,6 +138,12 @@ public final class WaveSynthesizer {
                     + pattern.sourceEnergy() + " must both be 0 or both be nonzero");
         }
         double energy = SpectralArithmetic.sumOfSquares(x, peak);
+        // Finite samples can still square past Double.MAX_VALUE; an infinite energy would make the allowance infinite
+        // too and pass the comparison below. No pattern carries such an energy (sourceEnergy <= MAX_SOURCE_ENERGY).
+        if (!Double.isFinite(energy)) {
+            throw new IllegalArgumentException("original energy overflows, so it cannot match the pattern "
+                    + "sourceEnergy " + pattern.sourceEnergy());
+        }
         double scale = Math.max(energy, pattern.sourceEnergy());
         double allowed = SpectralArithmetic.energyAllowance(scale,
                 pattern.sampleCount() + pattern.componentCount() + 4.0);

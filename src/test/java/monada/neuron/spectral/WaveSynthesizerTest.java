@@ -302,6 +302,22 @@ class WaveSynthesizerTest {
     }
 
     @Test
+    void anOriginalWhoseEnergyOverflowsIsRejected() {
+        var frame = new SpectralFrame(SpectralBasis.DFT, SpectralScale.SINGLE, 1, 1.0, SampleUnit.HERTZ);
+        var pattern = SpectralPattern.of(frame, 1.0, PROVENANCE, new int[] {0}, new int[] {0}, new double[] {1.0},
+                new double[] {0.0});
+        var overflowing = new SampledWave(new double[] {Double.MAX_VALUE}, 1.0, SampleUnit.HERTZ, PROVENANCE);
+
+        assertThrows(IllegalArgumentException.class, () -> synthesizer.synthesize(pattern, overflowing),
+                "finite samples whose squared energy overflows cannot be this pattern's source");
+        var twoLarge = new SampledWave(new double[] {1e200, -1e200}, 2.0, SampleUnit.HERTZ, PROVENANCE);
+        var twoPattern = SpectralPattern.of(new SpectralFrame(SpectralBasis.DFT, SpectralScale.SINGLE, 2, 2.0,
+                SampleUnit.HERTZ), 2.0, PROVENANCE, new int[] {0, 0}, new int[] {0, 1}, new double[] {0.0, 1.0},
+                new double[] {0.0, 0.0});
+        assertThrows(IllegalArgumentException.class, () -> synthesizer.synthesize(twoPattern, twoLarge));
+    }
+
+    @Test
     void exactReportsTheFullFractionAndRmsNeverExceedsThePeak() {
         for (int n : new int[] {8, 255, 256}) {
             var wave = randomWave(n, 77L + n);
