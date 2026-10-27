@@ -45,12 +45,12 @@ import java.util.Objects;
  * bit-identical to the unscaled formula whenever that formula neither underflows nor overflows, and it stays
  * meaningful for subnormal energies. The reported norms and per-band interference terms are unscaled. They are finite
  * because a pattern's energy is bounded by {@link SpectralPattern#MAX_SOURCE_ENERGY}, which bounds every squared
- * magnitude and every squared norm by it as well, but for very small energies they can underflow: the aggregate can
- * be recomputed from them only while {@code firstNorm · secondNorm} stays a normal double (about {@code 1e-308} and
- * up), whereas the reported aggregate and coherence never lose their meaning. Rounding can push the normalized sum a few ulps past {@code ±1} and the coherence past {@code 1}; both
- * are clamped. Sums run in ascending key order with {@code StrictMath}, so equal inputs give bit-identical results,
- * and swapping the patterns gives the same aggregate and coherence and negated phase differences (except at
- * {@code π}, which is its own negation in {@code (-π, π]}).
+ * magnitude and every squared norm by it as well, but an unscaled product of small magnitudes can underflow; the
+ * {@link ComparisonResult.SpectralComparison} documentation gives the scaled recomputation. Rounding can push the
+ * normalized sum a few ulps past {@code ±1} and the coherence past {@code 1}; both are clamped. Sums run in ascending
+ * key order with {@code StrictMath}, so equal inputs give bit-identical results. Swapping the patterns negates every
+ * phase difference except {@code π}, which is its own negation in {@code (-π, π]} and contributes a sine of exactly
+ * {@code 0}, so the aggregate and the coherence are bit-identical in both orders.
  */
 public final class SpectralResonanceDynamics {
 
@@ -99,6 +99,9 @@ public final class SpectralResonanceDynamics {
                 double secondMagnitude = second.magnitude(j);
                 double phaseDifference = SpectralPhase.wrap(first.phase(i) - second.phase(j));
                 double cos = StrictMath.cos(phaseDifference);
+                // π is its own negation in (-π, π]; StrictMath.sin(π) is 1.2e-16, not 0, and would keep its sign
+                // when the patterns are swapped while every other band's sine flips.
+                double sin = phaseDifference == StrictMath.PI ? 0.0 : StrictMath.sin(phaseDifference);
                 boolean phasesDefined = first.phaseDefined(i) && second.phaseDefined(j);
 
                 double scaledProduct = Math.scalb(firstMagnitude, -firstExponent)
@@ -107,7 +110,7 @@ public final class SpectralResonanceDynamics {
                 if (phasesDefined) {
                     scaledWeight += scaledProduct;
                     weightedCos += scaledProduct * cos;
-                    weightedSin += scaledProduct * StrictMath.sin(phaseDifference);
+                    weightedSin += scaledProduct * sin;
                 }
                 bands.add(new BandContribution(first.level(i), first.index(i), firstMagnitude, secondMagnitude,
                         phaseDifference, alignment(firstMagnitude, secondMagnitude),

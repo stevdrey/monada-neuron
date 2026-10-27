@@ -379,10 +379,14 @@ Implementation rules (#125, [ADR 0041](../adr/0041-spectral-resonance-dynamics.m
 - **Matching** is one two-pointer pass over the canonical, duplicate-free `(level, index)` order of both patterns:
   O(n + m) time, no sort or hashing, at most `min(n, m)` `BandContribution`s in ascending key order. The result also
   carries both norms and the counts of components only one pattern retains, so the aggregate and the coherence can be
-  recomputed from the bands while `firstNorm · secondNorm` is a normal double; below that the unscaled diagnostics
-  underflow, but the reported aggregate and coherence (computed with power-of-two scaling) stay meaningful.
-- **Phase difference** is `SpectralPhase.wrap(φ1 − φ2)`; a difference of `π` is `π` in both orders. Interference uses
-  every stored phase; only the coherence reads `phaseDefined`.
+  recomputed from the bands. Both are invariant under a separate positive scale per pattern and are computed scaled;
+  to recompute them, scale each pattern's band magnitudes and norm by `2^-getExponent(norm)` and evaluate the
+  formulas on the scaled magnitudes and the stored `phaseDifference`. The stored `interference` terms and unscaled
+  products can underflow for small magnitudes even when `firstNorm · secondNorm` is normal, so an unscaled
+  recomputation is reliable only while every product it uses is a normal double.
+- **Phase difference** is `SpectralPhase.wrap(φ1 − φ2)`; a difference of `π` is `π` in both orders and contributes
+  a sine of exactly `0` to the coherence, so swapping the patterns gives bit-identical summary values. Interference
+  uses every stored phase; only the coherence reads `phaseDefined`.
 - **Numerics.** The aggregate ratio and the coherence are summed with each pattern's magnitudes scaled by `2^-e`,
   `e` the exponent of its largest magnitude. This is exact, so the result is bit-identical to the unscaled formula
   when that formula does not underflow. The energy bound of Section 6 keeps every raw interference term and norm

@@ -13,15 +13,22 @@ public sealed interface ComparisonResult
     /**
      * Measured relation between two compatible patterns (contract {@code ncm-wave-cognition/1} section 7.3).
      *
-     * <p>The bands, the norms and the counts are enough to recompute both summary values whenever
-     * {@code firstNorm · secondNorm} is a normal double. The summary values themselves are computed with power-of-two
-     * scaling and stay meaningful below that limit, where the unscaled norms and interference terms underflow:
+     * <p>The bands, the norms and the counts are enough to recompute both summary values:
      *
      * <pre>{@code
      * aggregate = (1 + Σ interference / (firstNorm · secondNorm)) / 2      0 when either norm is 0
      * coherence = |Σ w · e^{i·phaseDifference}| / Σ w,  w = m1 · m2,
      *             over the bands whose phasesDefined is true                0 when Σ w = 0
      * }</pre>
+     *
+     * <p>Both values are invariant under a separate positive scale of each pattern's magnitudes, and they are computed
+     * scaled. To recompute them, scale the first pattern's band magnitudes and {@code firstNorm} by
+     * {@code 2^-getExponent(firstNorm)}, and the second's by {@code 2^-getExponent(secondNorm)} (exact powers of two),
+     * then evaluate {@code m1 · m2 · cos(phaseDifference)} and the weights from the scaled magnitudes and the stored
+     * {@code phaseDifference}. The stored {@code interference} terms and unscaled products {@code m1 · m2} can
+     * underflow for small magnitudes, so the formulas above, evaluated unscaled, are reliable only while every product
+     * they use is a normal double; a normal {@code firstNorm · secondNorm} alone does not ensure that for the
+     * coherence weights.
      *
      * <p>The aggregate is a similarity in {@code [0, 1]}, not an identity: {@code 1} for identical patterns,
      * {@code 0.5} when no retained energy is shared in phase or anti-phase, {@code 0} for exact opposition. Coherence

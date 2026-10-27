@@ -38,7 +38,7 @@ section 3.4:
   alignment, interference, phasesDefined)`:
   - It adds `level` to the sketch, because a Haar key is `(level, index)`.
   - It adds the two magnitudes and the phase-defined flag, so every summary value can be recomputed from the bands
-    while `firstNorm · secondNorm` is a normal double (see *Numerics*).
+    by the scaled procedure under *Numerics*.
   - `SpectralComparison` carries the shared bands in ascending key order, both full norms, the counts of
     unshared components, `aggregate` and `coherence`.
 - **Two-pointer matching.** One merge over the canonical, duplicate-free key order that `SpectralPattern` guarantees.
@@ -54,13 +54,17 @@ section 3.4:
     exponent of its largest magnitude. The scaling is exact, so the result is bit-identical to the unscaled formula
     whenever that formula does not underflow, and it stays meaningful for subnormal energies.
   - **Finiteness.** `SpectralPattern` bounds energy by `MAX_SOURCE_ENERGY = Double.MAX_VALUE / 2`. That bounds every
-    squared magnitude and squared norm, so raw interference terms and norms are finite. They are unscaled, so for
-    energies near the bottom of the double range they underflow: recomputing the aggregate from them needs
-    `firstNorm · secondNorm` to be a normal double, while the reported aggregate and coherence stay meaningful.
+    squared magnitude and squared norm, so raw interference terms and norms are finite. They are unscaled, so a product of
+    small magnitudes can underflow, even when `firstNorm · secondNorm` is normal (a tiny shared band of two
+    otherwise large patterns). Both summary values are invariant under a separate positive scale per pattern, so they
+    are recomputed by scaling each pattern's band magnitudes and norm by `2^-getExponent(norm)` and evaluating the
+    formulas on the scaled magnitudes and the stored `phaseDifference`; an unscaled recomputation is reliable only
+    while every product it uses is a normal double.
   - **Clamping.** The normalized sum is clamped to `[−1, 1]` and the coherence to `[0, 1]`, against a few ulps of
     rounding.
   - **Determinism.** Sums run in ascending key order with `StrictMath`. Results are bit-reproducible and symmetric
-    in the aggregate and the coherence.
+    in the aggregate and the coherence. A phase difference of exactly `π` (its own negation) contributes a sine of
+    `0` rather than `StrictMath.sin(π) ≈ 1.2e-16`, so swapping the patterns cannot move the coherence by an ulp.
 - **`DominantComponentProjection`** in `monada.neuron.resonance`: an explicit, lossy helper. It returns the
   largest-magnitude component, ties to the lower key, as `FrequencyState(magnitude, locator, phase)`.
   - A silent pattern gives `FrequencyState.ZERO`.

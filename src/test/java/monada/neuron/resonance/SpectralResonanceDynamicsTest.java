@@ -242,7 +242,7 @@ class SpectralResonanceDynamicsTest {
 
     @Test
     void unscaledDiagnosticsUnderflowBelowTheRecomputationLimit() {
-        // ‖m1‖·‖m2‖ ≈ 1e-400 is not representable: the documented recomputation limit, not a wrong aggregate.
+        // ‖m1‖·‖m2‖ ≈ 1e-400 is not representable: an unscaled recomputation fails, the scaled one does not.
         SpectralPattern pattern = sparse(new int[] {1}, new double[] {1e-200}, new double[] {0.0});
         SpectralComparison comparison = compared(pattern, pattern);
 
@@ -250,7 +250,39 @@ class SpectralResonanceDynamicsTest {
                 () -> assertEquals(1.0, comparison.aggregate()),
                 () -> assertEquals(1.0, comparison.coherence()),
                 () -> assertEquals(0.0, comparison.bands().getFirst().interference()),
-                () -> assertEquals(0.0, comparison.firstNorm() * comparison.secondNorm()));
+                () -> assertEquals(0.0, comparison.firstNorm() * comparison.secondNorm()),
+                () -> assertRecomputesScaled(comparison));
+    }
+
+    @Test
+    void coherenceWeightCanUnderflowUnderANormalNormProduct() {
+        // Norm product 1e-300 is normal, but the shared band's weight 1e-162 · 1e-162 rounds to 0 unscaled.
+        SpectralComparison comparison = compared(
+                sparse(DFT_8, 1.0, new int[] {1, 2}, new double[] {1e-150, 1e-162}, new double[] {0.0, 0.0}),
+                sparse(DFT_8, 1.0, new int[] {2, 3}, new double[] {1e-162, 1e-150}, new double[] {0.0, 0.0}));
+        BandContribution shared = comparison.bands().getFirst();
+
+        assertAll(
+                () -> assertTrue(Math.abs(comparison.firstNorm() * comparison.secondNorm()) >= Double.MIN_NORMAL),
+                () -> assertTrue(shared.phasesDefined()),
+                () -> assertEquals(0.0, shared.firstMagnitude() * shared.secondMagnitude()),
+                () -> assertEquals(1.0, comparison.coherence()),
+                () -> assertRecomputesScaled(comparison));
+    }
+
+    @Test
+    void coherenceIsBitSymmetricAtThePiEndpoint() {
+        // Δφ = π in both orders; StrictMath.sin(π) ≠ 0 would keep its sign while the π/2 band's sine flips.
+        SpectralPattern first = sparse(new int[] {1, 2}, new double[] {1.0, 1.0}, new double[] {PI, PI / 2});
+        SpectralPattern second = sparse(new int[] {1, 2}, new double[] {1.0, 1.0}, new double[] {0.0, 0.0});
+
+        SpectralComparison forward = compared(first, second);
+        SpectralComparison backward = compared(second, first);
+        assertEquals(PI, forward.bands().getFirst().phaseDifference());
+        assertEquals(PI, backward.bands().getFirst().phaseDifference());
+        assertEquals(Double.doubleToRawLongBits(forward.coherence()), Double.doubleToRawLongBits(backward.coherence()));
+        assertEquals(Double.doubleToRawLongBits(forward.aggregate()), Double.doubleToRawLongBits(backward.aggregate()));
+        assertEquals(StrictMath.sqrt(0.5), forward.coherence(), TOLERANCE);
     }
 
     @Test
@@ -276,23 +308,33 @@ class SpectralResonanceDynamicsTest {
 
     @Test
     void summaryValuesRecomputeFromTheBandDiagnostics() {
-        SpectralComparison comparison = compared(decompose(64, 21L), decompose(64, 22L));
+        assertRecomputesScaled(compared(decompose(64, 21L), decompose(64, 22L)));
+    }
 
+    /**
+     * Recomputes both summary values by the documented procedure: each pattern's band magnitudes and norm scaled by
+     * {@code 2^-getExponent(norm)}, then the formulas on the scaled magnitudes and the stored phase differences.
+     */
+    private void assertRecomputesScaled(SpectralComparison comparison) {
+        int firstExponent = Math.getExponent(comparison.firstNorm());
+        int secondExponent = Math.getExponent(comparison.secondNorm());
         double interference = 0.0;
         double weight = 0.0;
         double cos = 0.0;
         double sin = 0.0;
         for (BandContribution band : comparison.bands()) {
-            interference += band.interference();
+            double w = Math.scalb(band.firstMagnitude(), -firstExponent)
+                    * Math.scalb(band.secondMagnitude(), -secondExponent);
+            interference += w * StrictMath.cos(band.phaseDifference());
             if (band.phasesDefined()) {
-                double w = band.firstMagnitude() * band.secondMagnitude();
                 weight += w;
                 cos += w * StrictMath.cos(band.phaseDifference());
                 sin += w * StrictMath.sin(band.phaseDifference());
             }
         }
-        double aggregate = (1.0 + interference / (comparison.firstNorm() * comparison.secondNorm())) / 2.0;
-        assertEquals(aggregate, comparison.aggregate(), TOLERANCE);
+        double norms = Math.scalb(comparison.firstNorm(), -firstExponent)
+                * Math.scalb(comparison.secondNorm(), -secondExponent);
+        assertEquals((1.0 + interference / norms) / 2.0, comparison.aggregate(), TOLERANCE);
         assertEquals(StrictMath.hypot(cos, sin) / weight, comparison.coherence(), TOLERANCE);
     }
 
