@@ -111,8 +111,8 @@ bin. Patterns come from `DftWaveDecomposer`, complete and untruncated.
 | JVM flags | `--add-modules=jdk.incubator.vector` (evaluation module default), G1, default heap (3,832 MB max) |
 | OS / architecture | Linux 7.2 (Fedora 44), x86_64 |
 | CPU | AMD Ryzen 7 7730U with Radeon Graphics, 16 available processors (the evaluation is single-threaded) |
-| Neuron commit | `9e20e6a` (clean tree; the noise-seed correction `ca465cf` and the review fixes, after the pre-registration commit `054f804`) |
-| Run | about 15 s wall clock for the full protocol; two runs on `9e20e6a` gave bit-identical reports (only the timestamp and heap size differ) |
+| Neuron commit | `1801331` (clean tree; the noise-seed correction `ca465cf` and the review fixes `9e20e6a` and `1801331`, after the pre-registration commit `054f804`) |
+| Run | about 15 s wall clock for the full protocol; two runs on `1801331` gave bit-identical reports (only the timestamp and heap size differ) |
 
 ## Checks
 
@@ -137,8 +137,9 @@ All five semantic checks pass, so the verdict below can be trusted:
 > registered definition did not change: the implementation now matches it. Every number below is from the corrected
 > rerun on the registered seeds. The verdict did not change; gate-arm AUCs moved by at most 0.012 and the lower
 > bound of the difference by at most 0.022. The later review fixes (`9e20e6a`: clean-window disjointness, one seed
-> helper that keeps the registered derivations bit for bit, cached patterns in the counterfactual check) changed no
-> score.
+> helper that keeps the registered derivations bit for bit, cached patterns in the counterfactual check) and
+> `1801331` (a sine of exactly 0 at a phase difference of π, for bit-symmetric coherence) changed no score: the
+> full-precision report is identical.
 
 ### Gate arms (pooled over 20, 10 and 0 dB; 95% paired-bootstrap intervals)
 
