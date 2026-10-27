@@ -25,6 +25,8 @@ import monada.neuron.routing.features.FeatureReadinessAssessment;
 import monada.neuron.routing.features.TaskFeatureReadiness;
 import monada.neuron.routing.features.TaskFeatures;
 import monada.neuron.routing.feedback.CohortKey;
+import monada.neuron.routing.receipt.AdviceReceipt;
+import monada.neuron.routing.receipt.DecodeResult;
 import monada.neuron.routing.review.DecisionReview;
 import monada.neuron.routing.review.ReviewNotice;
 import monada.neuron.signal.Signal;
@@ -109,6 +111,11 @@ public final class ModuleConsumer {
         require(review instanceof DecisionReview.Selected selected && selected.route().routeId().equals("route-a")
                         && review.notices().contains(ReviewNotice.RECHECK_BEFORE_EXECUTION),
                 "a Level A review must be Selected and carry RECHECK_BEFORE_EXECUTION: " + review);
+
+        var receipt = AdviceReceipt.of(levelA);
+        require(AdviceReceipt.decode(receipt.bytes()) instanceof DecodeResult.Decoded d && d.receipt().equals(receipt)
+                        && d.receipt().decision().equals(levelA),
+                "an advice receipt must decode to an equal receipt: " + receipt);
 
         System.out.println("[module-consumer] " + self.getName() + " reads " + neuron.getName()
                 + " (automatic=" + neuron.getDescriptor().isAutomatic() + ", location="

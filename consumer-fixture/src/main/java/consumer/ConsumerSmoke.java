@@ -29,6 +29,8 @@ import monada.neuron.routing.features.FeatureReadinessAssessment;
 import monada.neuron.routing.features.TaskFeatureReadiness;
 import monada.neuron.routing.features.TaskFeatures;
 import monada.neuron.routing.feedback.CohortKey;
+import monada.neuron.routing.receipt.AdviceReceipt;
+import monada.neuron.routing.receipt.DecodeResult;
 import monada.neuron.routing.review.DecisionReview;
 import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
@@ -123,5 +125,10 @@ public final class ConsumerSmoke {
     /** Decision review: a host builds the coded summary a person reads before accepting the Level A advice. */
     public static DecisionReview reviewOneStage() {
         return DecisionReview.from(routeOneStage());
+    }
+
+    /** Advice receipt: canonical bytes of a Level A decision, read back strictly by the host. */
+    public static DecodeResult receiptRoundTrip() {
+        return AdviceReceipt.decode(AdviceReceipt.of(routeOneStage()).bytes());
     }
 }

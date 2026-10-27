@@ -518,7 +518,14 @@ on the Store's `main`, #102 is informational) are available; the Neuron side of 
 [Forge Integration Readiness Contract v1](specs/forge-integration-readiness-v1.md) (`forge-integration-readiness/1`,
 issue #94, [ADR 0033](adr/0033-phase-gated-host-adoption-boundary.md)) states how a host adopts this extension one phase at
 a time: a metadata only transformation boundary from reviewed task metadata to `TaskFeatures` and `RoutingRequest`, host
-vocabulary readiness outcomes, host owned staleness, cold state before the Store, and its own versioning rule.
+vocabulary readiness outcomes, host owned staleness, cold state before the Store, and its own versioning rule. Three later slices of that contract are
+implemented: feature readiness diagnostics (`TaskFeatureReadiness` in `monada.neuron.routing.features`, issue #95,
+[ADR 0037](adr/0037-feature-readiness-diagnostics.md)), decision review summaries (`DecisionReview` in
+`monada.neuron.routing.review`, issue #96, [ADR 0038](adr/0038-decision-review-summaries.md)) and canonical advice
+receipts (`monada.neuron.routing.receipt`,
+format [`routing-advice-receipt/1`](specs/routing-advice-receipt-v1.md), issue #97,
+[ADR 0039](adr/0039-canonical-routing-advice-receipts.md)); a receipt is a byte comparator over one decision, not the
+`routing-ledger-digest/1` of ADR 0031.
 
 ```text
 Forge (host)
