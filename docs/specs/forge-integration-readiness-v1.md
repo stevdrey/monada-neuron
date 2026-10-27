@@ -3,12 +3,14 @@
 **Contract identifier**: `forge-integration-readiness/1`
 **Status**: Accepted (issue #94; documentation only; normative for host adoption, decided in ADR 0033). Section 5.4
 documents the Neuron types added by issue #95 (ADR 0037), Section 5.5 those added by issue #96 (ADR 0038), and
-advice receipts are added by issue #97 (ADR 0039) as a minor, additive revision.
+advice receipts are added by issue #97 (ADR 0039) and host dispositions by issue #98 (ADR 0040), each as a minor,
+additive revision.
 **Composes**: [Forge Routing Contract v1](forge-routing-contract-v1.md) (`forge-routing/1`), unchanged
 **Decision record**: [ADR 0033](../adr/0033-phase-gated-host-adoption-boundary.md); Section 5.4 by
 [ADR 0037](../adr/0037-feature-readiness-diagnostics.md); Section 5.5 by
 [ADR 0038](../adr/0038-decision-review-summaries.md); advice receipts by
-[ADR 0039](../adr/0039-canonical-routing-advice-receipts.md)
+[ADR 0039](../adr/0039-canonical-routing-advice-receipts.md); dispositions by
+[ADR 0040](../adr/0040-host-advice-disposition.md)
 **Forge baseline**: `stevdrey/monada-forge` at commit [`56c35e05bb94d4d97e49b59c138fbaed66036ecd`](https://github.com/stevdrey/monada-forge/commit/56c35e05bb94d4d97e49b59c138fbaed66036ecd) (2026-10-21)
 
 This document tells a host application, Monada Forge in particular, how to opt into Neuron's routing advice one phase at a
@@ -119,8 +121,10 @@ it.
   [`routing-advice-receipt/1`](routing-advice-receipt-v1.md)): a canonical copy of what was advised, for byte comparison
   only. It is not proof that anything ran or was accepted, not authentication, not a signature and not a routing ledger
   digest.
-- A disposition (`proposed, owned by issue #98`): what a human did with advice. It is not execution, not authorization and
-  not quality evidence.
+- An `AdviceDisposition` (`implemented by issue #98`, [ADR 0040](../adr/0040-host-advice-disposition.md)): what a human
+  did with advice before anything ran, one of `Followed`, `AlternativeProposed`, `Deferred` or `Declined`. It is not
+  execution, not authorization and not quality evidence, and it awards no credit. An `AlternativeProposed` with any
+  `AlternativeStanding` is a request to the host's own authorization, never a route grant.
 - Catalog availability (`AVAILABLE`, `UNAVAILABLE`, `UNKNOWN`) and `fallbackPriority`: snapshot values that `decide` uses
   for eligibility and ordering. They do not authorize a route; Forge revalidates availability before executing.
 - Resource estimates: observations with provenance. They do not authorize spend; hypothetical cost is evaluation tooling
@@ -177,7 +181,7 @@ not been reached makes no claim about Forge.
 | --- | --- | --- | --- | --- |
 | **Phase 2 preview** (conditional on Forge Phase 2) | source provenance, scope limits, acceptance criteria | host minted ids, a reviewed `stageKind` from a fixed list, a public draft epoch accessor, the three fingerprints, the `evaluationPolicy` constant, a preview `HardRequirements` constant, a static catalog of at least one route, workspace observations | `TaskFeatures`, `RoutingRequest`, `RouteCatalog`, `LexicographicRoutingPolicy.reference()`, `RoutingStateDefinition.reference()`, `RoutingPreference.empty(...)`, `RoutingPolicy.decide` (unverified advice) | `category` until picked; observations when not collected; no `TrustedRoutingProfile` required; no execution, no outcome |
 | **Phase 3 first adapter** (conditional on Forge Phase 3) | contract tests, secret handling, execution policy tests | a real catalog from authorized adapters, per request `HardRequirements` from the host execution policy, the overflow switch, a host selected `TrustedRoutingProfile` | the Phase 2 calls, plus `RoutingReasoningStage` with `TrustedRoutingProfile.lexicographic(parameters, definition)`, built from the `PolicyParameters` and `RoutingStateDefinition` the host holds as its own configuration (v1 Section 18.1), not from the policy instance, for verified advice (the stage is a `CognitiveStage`, so it runs inside a `NeuronRuntime` cycle with a host `RoutingInputResolver` and a `Proposition` domain, v1 Section 24.2, not as a bare call); the host keeps local outcome entries keyed by `DecisionRef` (no Neuron call) | `RoutingPreference` still empty; `cutoff` still 0; no Store |
-| **Phase 4 delivery loop** (conditional on Forge Phase 4) | end to end evidence, deterministic stop conditions | judged results and corrections in the local outcome entries; receipt correlation by `AdviceReceipt` bytes or `sha256()` (`implemented by issue #97`); dispositions (`proposed, owned by issue #98`) | the Phase 3 calls; still no feedback into Neuron | `RoutingPreference` still empty; advice still earns zero credit |
+| **Phase 4 delivery loop** (conditional on Forge Phase 4) | end to end evidence, deterministic stop conditions | judged results and corrections in the local outcome entries; receipt correlation by `AdviceReceipt` bytes or `sha256()` (`implemented by issue #97`); dispositions by `AdviceDisposition` (`implemented by issue #98`) | the Phase 3 calls; still no feedback into Neuron | `RoutingPreference` still empty; advice still earns zero credit |
 | **Phase 5 learning** (conditional on Forge Phase 5) | reproducible comparisons, provenance, measured value | the Resonance Store, the adapter artifact, one `RoutingStateStore` per `StatePartition`, Store exports with ledger sequences, checkpoint persistence (`proposed, owned by issues #100, #101`) | adapter `StoreExperienceTranslator`, `RoutingFeedbackPolicy.derive`, `RoutingStateStore`, `RoutingStateCheckpoint`, `rebuildFrom`; `decide` now receives a Store built `RoutingPreference` with a real `cutoff` | nothing by design; `Abstain(STATE_INCOMPATIBLE)` becomes possible for the first time |
 
 ### 3.3 Rules that hold at every gate
@@ -504,7 +508,7 @@ Stale advice is discarded and re requested:
 - rebuild `TaskFeatures` and the fingerprints from the current draft.
 
 The old decision, and its `AdviceReceipt` if the host kept one (`implemented by issue #97`), remains history. It may never receive a
-disposition (`proposed, owned by issue #98`) and may never receive credit. Nothing in Neuron is told about the staleness,
+disposition (`implemented by issue #98`) and may never receive credit. Nothing in Neuron is told about the staleness,
 because Neuron holds no state between calls before Phase 5 and, at Phase 5, the Store ledger simply never sees an outcome
 for the stale attempt.
 
@@ -535,7 +539,7 @@ from it, but it is not a `RoutingOutcome` and nothing in Neuron reads it. Advice
 
 The host updates local entries with judged results and corrections. A correction replaces an earlier judgment in host
 storage; there is no ledger to supersede yet. Receipts (`implemented by issue #97`) and dispositions
-(`proposed, owned by issue #98`) correlate with these entries by `DecisionRef`; they add no credit.
+(`implemented by issue #98`) correlate with these entries by `DecisionRef`; they add no credit.
 
 ### 7.3 Phase 5: Store export, feedback, state and checkpoints (conditional on Forge Phase 5)
 
@@ -615,9 +619,12 @@ feature bound is v1 Section 15, `TaskFeatures.MAX_TAGS`, and the estimates per r
 
 ### 9.2 Proposals owned by later issues
 
-New limits are proposals only, each owned by its issue, and none is part of `forge-integration-readiness/1`:
+New limits are proposals only, each owned by its issue, and no proposal is part of `forge-integration-readiness/1`.
+An entry that its issue has since marked `implemented` stays listed here so the history reads in one place; when it adds
+no numeric limit, as #98 does, there is nothing to move into the Section 9.1 table:
 
-- disposition shape and its fail closed combinations, `proposed, owned by issue #98`;
+- disposition shape and its fail closed combinations, `implemented by issue #98` ([ADR 0040](../adr/0040-host-advice-disposition.md)),
+  which introduces no numeric limit: a disposition holds a `DecisionRef`, a receipt digest and at most one `RouteKey`;
 - comparison delta bounds, `proposed, owned by issue #99`;
 - checkpoint byte format `routing-checkpoint/1`, oversize and corrupt input rules, `proposed, owned by issue #100`;
 - recovery preflight blockers and precedence, `proposed, owned by issue #101`;
@@ -792,15 +799,16 @@ with the same numbers (v1 Section 1 cites Store issues 99 and 100), which are ne
 - `implemented by issue #96, Section 5.5`: human review summaries of a `RoutingDecision`.
 - `implemented by issue #97`: versioned advice receipts, `AdviceReceipt` in `monada.neuron.routing.receipt`, format
   [`routing-advice-receipt/1`](routing-advice-receipt-v1.md).
-- `proposed, owned by issue #98`: host disposition of advice.
+- `implemented by issue #98`: host disposition of advice, `AdviceDisposition` in `monada.neuron.routing.disposition`,
+  contract version `routing-advice-disposition/1` ([ADR 0040](../adr/0040-host-advice-disposition.md)).
 - `proposed, owned by issue #99`: scenario comparison preview.
 - `proposed, owned by issue #100`: checkpoint codec.
 - `proposed, owned by issue #101`: checkpoint recovery diagnostics.
 - `proposed, owned by issue #102`: the Forge like external host fixture that enforces the host guard in code.
 - `proposed, owned by issue #103`: the host scenario evaluation suite.
 
-Receipts (`implemented by issue #97`) joined the never permission list of Section 2.2 with a minor bump. When
-dispositions (`proposed, owned by issue #98`) land, their names join it too and this contract takes another minor bump.
+Receipts (`implemented by issue #97`) joined the never permission list of Section 2.2 with a minor bump, and
+dispositions (`implemented by issue #98`) joined it with another.
 
 ### 11.3 Versioning and migration rule
 
@@ -826,9 +834,12 @@ dispositions (`proposed, owned by issue #98`) land, their names join it too and 
 - Every relative link in this document resolves in this repository; every Forge link resolves at commit
   `56c35e05bb94d4d97e49b59c138fbaed66036ecd`.
 - No sentence states or implies that a Forge phase beyond 1 is implemented.
-- In the issue #94 revision, every mention of issues #95 to #103 carried `proposed, owned by issue`; issues #98 to #103
+- In the issue #94 revision, every mention of issues #95 to #103 carried `proposed, owned by issue`; issues #99 to #103
   still carry `proposed`, #95 is `implemented by issue #95, Section 5.4`, #96 is
-  `implemented by issue #96, Section 5.5` and #97 is `implemented by issue #97`.
+  `implemented by issue #96, Section 5.5`, #97 is `implemented by issue #97` and #98 is `implemented by issue #98`.
+- The issue #98 revision adds `AdviceDisposition` to the never permission list of Section 2.2 and marks the Phase 4 row,
+  Sections 6.2, 7.2, 9.2 and 11.2 as implemented; it adds no type of this contract's own, no numeric limit and no field
+  table classification change ([ADR 0040](../adr/0040-host-advice-disposition.md)).
 - The issue #94 revision introduced no new type, value or numeric limit; the issue #95 revision adds the Section 5.4
   types in Neuron and the issue #96 revision adds the Section 5.5 types, neither changing any field table classification
   or adding a numeric limit. The issue #97 revision documents the receipt cap of `routing-advice-receipt/1` in

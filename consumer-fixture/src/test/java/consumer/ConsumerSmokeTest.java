@@ -4,6 +4,8 @@ import monada.neuron.monad.CognitiveCycleTermination;
 import monada.neuron.resonance.AdaptiveBatchResonanceEvaluator;
 import monada.neuron.routing.RoutingDecision;
 import monada.neuron.resonance.BatchResonanceEvaluator;
+import monada.neuron.routing.disposition.AdviceDisposition;
+import monada.neuron.routing.disposition.DispositionResult;
 import monada.neuron.routing.features.FeatureDimension;
 import monada.neuron.routing.features.FeatureReadinessAssessment;
 import monada.neuron.routing.receipt.AdviceReceipt;
@@ -78,6 +80,16 @@ class ConsumerSmokeTest {
 
         assertEquals(AdviceReceipt.of(ConsumerSmoke.routeOneStage()), decoded.receipt());
         assertInstanceOf(RoutingDecision.Selected.class, decoded.receipt().decision());
+    }
+
+    // covers: AC-9
+    @Test
+    void adviceDispositionsAreAvailableThroughThePublishedArtifact() {
+        var bound = assertInstanceOf(DispositionResult.Bound.class, ConsumerSmoke.dispositionFollowed());
+
+        var followed = assertInstanceOf(AdviceDisposition.Followed.class, bound.disposition());
+        assertTrue(followed.refersTo(AdviceReceipt.of(ConsumerSmoke.routeOneStage())));
+        assertEquals("route-a", followed.advice().advisedRoute().orElseThrow().routeId());
     }
 
     @Test

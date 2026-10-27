@@ -20,6 +20,8 @@ import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteDescriptor;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.routing.disposition.AdviceDisposition;
+import monada.neuron.routing.disposition.DispositionResult;
 import monada.neuron.routing.features.FeatureDimension;
 import monada.neuron.routing.features.FeatureReadinessAssessment;
 import monada.neuron.routing.features.TaskFeatureReadiness;
@@ -116,6 +118,11 @@ public final class ModuleConsumer {
         require(AdviceReceipt.decode(receipt.bytes()) instanceof DecodeResult.Decoded d && d.receipt().equals(receipt)
                         && d.receipt().decision().equals(levelA),
                 "an advice receipt must decode to an equal receipt: " + receipt);
+
+        var disposition = AdviceDisposition.followed(receipt, levelA.provenance().decisionRef());
+        require(disposition instanceof DispositionResult.Bound b && b.disposition() instanceof AdviceDisposition.Followed f
+                        && f.refersTo(receipt),
+                "a followed disposition must bind to the Level A receipt: " + disposition);
 
         System.out.println("[module-consumer] " + self.getName() + " reads " + neuron.getName()
                 + " (automatic=" + neuron.getDescriptor().isAutomatic() + ", location="
