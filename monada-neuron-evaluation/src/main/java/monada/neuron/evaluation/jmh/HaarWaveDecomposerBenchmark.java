@@ -22,7 +22,7 @@ import java.util.SplittableRandom;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Scalar baseline of the Haar multiresolution decomposer (issue #124, ADR 0037): one full-depth decomposition
+ * Scalar baseline of the Haar multiresolution decomposer (issue #124, ADR 0040): one full-depth decomposition
  * ({@code L = log2 N}) of the same seeded window as {@link DftWaveDecomposerBenchmark}, end to end (energy, the O(N)
  * level passes and pattern construction). See {@code docs/benchmarks/wave-decomposer-reference.md}.
  */

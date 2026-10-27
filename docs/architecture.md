@@ -565,7 +565,7 @@ issue #122, [ADR 0035](adr/0035-compact-immutable-spectral-pattern.md)) together
 the host-implemented `WaveEncoder<S>` seam and the deterministic scalar `DftWaveDecomposer` reference, which returns a
 typed `DecompositionResult` (issue #123, [ADR 0036](adr/0036-deterministic-dft-reference-decomposer.md)), and the
 opt-in fixed-depth `HaarWaveDecomposer` multiresolution strategy with scale-local `levelEnergy` (issue #124,
-[ADR 0037](adr/0037-haar-multiresolution-decomposer.md)). Every other name below is a proposal owned by issues #125 to
+[ADR 0040](adr/0040-haar-multiresolution-decomposer.md)). Every other name below is a proposal owned by issues #125 to
 #130.
 
 ```text

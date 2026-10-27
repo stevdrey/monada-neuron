@@ -1,4 +1,4 @@
-# ADR 0037: Haar Multiresolution Decomposer
+# ADR 0040: Haar Multiresolution Decomposer
 
 ## Status
 

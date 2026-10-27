@@ -5,7 +5,7 @@ import monada.neuron.spectral.DecompositionResult.DecompositionRejected;
 
 /**
  * Scalar reference multiresolution decomposer: the orthonormal Haar wavelet of contract {@code ncm-wave-cognition/1}
- * sections 2.1, 5.2 and 6 (ADR 0037).
+ * sections 2.1, 5.2 and 6 (ADR 0040).
  *
  * <p><b>Definition.</b> Each level halves the current approximation: {@code a_m = (x_{2m} + x_{2m+1}) / √2} and
  * {@code d_m = (x_{2m} − x_{2m+1}) / √2}, first over the samples (level {@code 1}), then over the previous

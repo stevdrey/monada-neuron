@@ -68,7 +68,7 @@ noisier session, so the time difference is not attributed to the change.
 
 What does one full-depth `HaarWaveDecomposer` decomposition cost next to the DFT reference at the same fixed `N`
 (contract section 5.1 expects O(N)), and does it keep bounded, linear working memory
-([ADR 0037](../adr/0037-haar-multiresolution-decomposer.md))?
+([ADR 0040](../adr/0040-haar-multiresolution-decomposer.md))?
 
 ### Workload and command
 

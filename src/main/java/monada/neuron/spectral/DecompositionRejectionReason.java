@@ -21,7 +21,7 @@ public enum DecompositionRejectionReason {
     /**
      * The sample count does not fit the basis length rule: a Haar decomposition of depth {@code L} needs a
      * power-of-two {@code N} with {@code 2^L <= N} (contract fixture N4, {@code N = 6}). The wave is never padded,
-     * truncated or decomposed to a shallower depth instead (ADR 0037).
+     * truncated or decomposed to a shallower depth instead (ADR 0040).
      */
     SAMPLE_COUNT_UNSUPPORTED
 }

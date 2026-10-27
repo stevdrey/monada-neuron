@@ -353,7 +353,7 @@ later issues proceed. Its bounded, immutable spectral value types (`monada.neuro
 reference `DftWaveDecomposer` over explicit host-encoded `SampledWave` windows (issue #123,
 [ADR 0036](docs/adr/0036-deterministic-dft-reference-decomposer.md)) and the opt-in O(N) Haar multiresolution strategy
 `HaarWaveDecomposer`, which reports scale and position, never hertz (issue #124,
-[ADR 0037](docs/adr/0037-haar-multiresolution-decomposer.md)); the other stages are not.
+[ADR 0040](docs/adr/0040-haar-multiresolution-decomposer.md)); the other stages are not.
 
 ## Design Principles
 

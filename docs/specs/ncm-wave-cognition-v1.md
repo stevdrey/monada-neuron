@@ -166,7 +166,7 @@ enum DecompositionRejectionReason { ENERGY_OUT_OF_RANGE, SAMPLE_RATE_OUT_OF_RANG
 interface WaveDecomposer { SpectralBasis basis(); DecompositionResult decompose(SampledWave wave); }
 final class DftWaveDecomposer implements WaveDecomposer { }         // scalar reference of section 5.2
 
-// #124 (implemented; ADR 0037)
+// #124 (implemented; ADR 0040)
 final class HaarWaveDecomposer implements WaveDecomposer { HaarWaveDecomposer(int levels) { } }  // fixed depth 1..12
 // SpectralPattern.levelEnergy(int level): retained energy of one level (scale-local energy)
 
@@ -272,7 +272,7 @@ pipeline as text.
   subnormal bin spacing, ADR 0035) and `ENERGY_OUT_OF_RANGE` when `Σ x_n²` exceeds
   `SpectralPattern.MAX_SOURCE_ENERGY = Double.MAX_VALUE / 2` (headroom so the recomputed retained energy stays finite)
   or is nonzero but below `Double.MIN_NORMAL`. Silent samples decompose to zero magnitudes.
-- **Haar strategy** (#124, `HaarWaveDecomposer`, implemented; [ADR 0037](../adr/0037-haar-multiresolution-decomposer.md)):
+- **Haar strategy** (#124, `HaarWaveDecomposer`, implemented; [ADR 0040](../adr/0040-haar-multiresolution-decomposer.md)):
   orthonormal Haar, `a = (x_{2m} + x_{2m+1}) / √2`, `d = (x_{2m} − x_{2m+1}) / √2` with `√2 = StrictMath.sqrt(2.0)`,
   ascending `m`, applied to the approximation of each level, levels `1..L`. The depth `L` (`1..maxLevels`) is fixed
   per decomposer. `N` must be a power of two with `2^L ≤ N`; any other length (fixture N4, `N = 6`; also `N = 1` or
@@ -472,7 +472,7 @@ performance.
 | `maxSamples` | 4,096 | Largest workload (Section 14); direct DFT at 4,096 is about 16.8 M multiply-adds per window | #123 |
 | `maxComponentsDft` | 2,049 | `floor(maxSamples/2) + 1` single-sided bins | #122 |
 | `maxComponentsHaar` | 4,096 | `maxSamples`: a complete Haar pattern of `N` samples has `N` coefficients at any level count | #122 |
-| `maxLevels` (Haar) | 12 | `log2 4096`; implemented as `SpectralScale.MAX_HAAR_LEVELS`, the decomposer depth is fixed per instance (ADR 0037) | #124 |
+| `maxLevels` (Haar) | 12 | `log2 4096`; implemented as `SpectralScale.MAX_HAAR_LEVELS`, the decomposer depth is fixed per instance (ADR 0040) | #124 |
 | `maxConcepts` | 256 | Largest workload | #127 |
 | `maxDepth` | 3 | Largest workload | #127 |
 | `maxCandidatesPerLevel` | 16 | Bounded diagnostics per depth | #127 |
