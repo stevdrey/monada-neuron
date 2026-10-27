@@ -26,10 +26,14 @@ phase used). Questions left open by the sketch of section 3.4:
 
 - **Sealed result**, mirroring `DecompositionResult` and `ComparisonResult` (ADR 0041):
   `SynthesisResult permits Reconstructed, NotInvertible`, both exposing `status()` and `retainedEnergyFraction()`.
-  - `Reconstructed(status, samples, retainedEnergyFraction, reconstructedEnergy, maxAbsoluteError, rmsError,
-    relativeEnergyError)`, status `EXACT` or `LOSSY`. Samples are copied once and never escape (`samples()` copies,
-    `sample(i)` reads); signed zeros are canonicalized, so equal results are equal values. The three errors are
-    present or absent together.
+  - `Reconstructed`, status `EXACT` or `LOSSY`, with `samples`, `retainedEnergyFraction`, `reconstructedEnergy`,
+    `maxAbsoluteError`, `rmsError` and `relativeEnergyError`. It is a final value class rather than a record, like
+    `SpectralPattern` (ADR 0035): the public factory `Reconstructed.of(...)` copies the samples, while the synthesizer
+    hands over the array it just built through a package-private owning factory, so a synthesis allocates its output
+    once. Samples never escape (`samples()` copies, `sample(i)` reads); signed zeros are canonicalized, so equal
+    results are equal values.
+  - Invariants checked at construction: an `EXACT` result has `retainedEnergyFraction == 1`; the three errors are
+    present or absent together; when present, `rmsError <= maxAbsoluteError`.
   - `NotInvertible(NotInvertibleReason, retainedEnergyFraction, detail)` carries no samples; its detail is bounded
     (256 chars) and never contains sample data.
 - **Status is structural.** `EXACT` iff the pattern holds every key of its frame (`componentCount ==
@@ -42,7 +46,8 @@ phase used). Questions left open by the sketch of section 3.4:
 - **Inverse DFT.** Single-sided, conjugate-symmetric for real samples, rectangular window, time origin at the first
   sample, `N` from the frame: `x̂_n = c_0 + Σ_{0<k<N/2} m_k · cos(2π·k·n/N + φ_k) + c_{N/2} · (−1)^n`. Real bins
   (DC, even-`N` Nyquist) are applied by sign, without a `cos(π)` rounding. Complex bins precompute `m · cos φ` and
-  `m · sin φ` (`StrictMath`) and read the decomposer's twiddle table with exact integer residues. Order: components
+  `m · sin φ` (`StrictMath`) and read the decomposer's twiddle table (one helper, `SpectralArithmetic.fillTwiddles`, used by both) with exact
+  integer residues. Order: components
   ascending, samples ascending inside, so each sample sums its bins in ascending `k`. Every stored phase is used;
   `phaseDefined` is never read. O(N·k) ≤ O(N²) time, O(N) memory (output and two lazily built twiddle tables).
 - **Inverse Haar.** Retained coefficients (sign from the phase) are scattered into one dense `N`-array in canonical
@@ -51,18 +56,26 @@ phase used). Questions left open by the sketch of section 3.4:
   approximation not yet read). O(N) time and memory, no trigonometry.
 - **Diagnostics and units.**
   - `retainedEnergyFraction = min(1, retainedEnergy / sourceEnergy)`, `1` for silence, dimensionless, from the
-    pattern alone; reported by both variants. The clamp only removes the Parseval noise ADR 0035 already allows.
+    pattern alone; reported by both variants. A complete pattern reports exactly `1`: `SpectralPattern` already
+    rejects a complete pattern whose retained energy differs from its source energy beyond the Parseval allowance,
+    so the remaining difference is rounding. The clamp at `1` removes the same noise from above.
   - `reconstructedEnergy = Σ x̂_n²`, squared sample units, always reported: for an orthonormal path it equals the
     retained energy within rounding, a check that needs no original.
   - With the original: `maxAbsoluteError = max |x̂_n − x_n|` and `rmsError = √(Σ (x̂_n − x_n)² / N)` in sample units,
-    `relativeEnergyError = |Σ x̂_n² − Σ x_n²| / Σ x_n²`, dimensionless, `0` for silence.
+    `relativeEnergyError = |Σ x̂_n² − Σ x_n²| / Σ x_n²`, dimensionless, `0` for silence. The RMS is clamped to the
+    peak against an ulp of rounding in the mean.
   - Squares near the energy bound can overflow (`|x| ≤ √(Double.MAX_VALUE / 2)`, so a residual squared may not be
-    finite). Energies use `SpectralArithmetic.sumOfSquares` and the RMS is evaluated in the same power-of-two scaled
-    domain, so every value is finite for every valid pattern.
+    finite). Energies use `SpectralArithmetic.sumOfSquares`; the peak and RMS of `x̂ − x`
+    (`peakDifference`, `rootMeanSquareDifference`) and the relative energy error (`relativeEnergyDifference`, both
+    sums scaled by one common exponent, so a subnormal energy does not underflow to `0`) live in
+    `SpectralArithmetic` with the same power-of-two rule. Every value is finite for every valid pattern, and no
+    residual array is allocated.
 - **Original samples are the decomposed `SampledWave`.** `synthesize(pattern, original)` requires equal sample count,
   sample rate, unit and provenance, and an energy equal to `sourceEnergy` within the pattern's Parseval allowance
   (the allowance is now one helper, `SpectralArithmetic.energyAllowance`, shared with `SpectralPattern`). A mismatch
-  is a caller bug (`IllegalArgumentException`), consistent with the section 11.2 split. `synthesize(pattern)` reports
+  is a caller bug (`IllegalArgumentException`), consistent with the section 11.2 split. Silence must match exactly,
+  as in `SpectralPattern`: an original whose samples are all `0` only for a pattern of source energy `0`, and the
+  reverse. Silence is judged by the samples, because the energy of subnormal samples can underflow to `0`. `synthesize(pattern)` reports
   empty errors, never estimated ones.
 - **One stateless class.** `WaveSynthesizer` dispatches on the basis with an exhaustive switch. Unlike decomposers,
   the synthesizer needs no configuration (depth and length are in the frame) and there is no second backend; an
@@ -95,7 +108,8 @@ phase used). Questions left open by the sketch of section 3.4:
   `0.8` within `1e-12`. Dropping any single component is never `EXACT`; extreme magnitudes stay finite.
 - Cost: measured against decomposition at fixed `N` in
   [wave-decomposer-reference.md](../benchmarks/wave-decomposer-reference.md).
-- The test-only inverse of ADR 0040 is replaced by `WaveSynthesizer`.
+- The test-only Haar inverse of ADR 0040 stays in the decomposer's tests, so the decomposer is never checked only by
+  the synthesizer it round-trips with; `WaveSynthesizer` has its own closed-form checks (P9, N8).
 - `Signal`, `FrequencyState`, `ScalarResonanceMetric`, `SpectralPattern` semantics and the canonical stage kinds are
   unchanged. Synthesis is library-only: nothing in the cycle calls it.
 

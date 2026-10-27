@@ -218,9 +218,9 @@ enum AbstentionReason { LOW_CONFIDENCE, LOW_MARGIN, INCOMPATIBLE_INPUT, UNKNOWN_
 // #126 (implemented; ADR 0042 records the deviations from the first sketch)
 sealed interface SynthesisResult permits Reconstructed, NotInvertible {   // both nested in SynthesisResult
     SynthesisStatus status(); double retainedEnergyFraction(); }
-record Reconstructed(SynthesisStatus status, double[] samples, double retainedEnergyFraction,  // EXACT or LOSSY
-                     double reconstructedEnergy, OptionalDouble maxAbsoluteError, OptionalDouble rmsError,
-                     OptionalDouble relativeEnergyError) { }
+final class Reconstructed {   // EXACT or LOSSY; Reconstructed.of(...) copies, the synthesizer hands over its array
+    SynthesisStatus status(); double[] samples(); double retainedEnergyFraction(); double reconstructedEnergy();
+    OptionalDouble maxAbsoluteError(); OptionalDouble rmsError(); OptionalDouble relativeEnergyError(); }
 record NotInvertible(NotInvertibleReason reason, double retainedEnergyFraction, String detail) { }
 enum SynthesisStatus { EXACT, LOSSY, NOT_INVERTIBLE }
 enum NotInvertibleReason { MISSING_APPROXIMATION }
@@ -508,9 +508,11 @@ formulas, units and deviations from the sketch of Section 3.4 follow the list.
 
 Implementation (#126, ADR 0042):
 
-- **Result.** A sealed `SynthesisResult`: `Reconstructed(status EXACT | LOSSY, samples, retainedEnergyFraction,
-  reconstructedEnergy, maxAbsoluteError, rmsError, relativeEnergyError)` or `NotInvertible(reason,
-  retainedEnergyFraction, detail)`, mirroring `DecompositionResult`. Additions to the sketch: `rmsError` and
+- **Result.** A sealed `SynthesisResult`: `Reconstructed` (status `EXACT | LOSSY`, samples, `retainedEnergyFraction`,
+  `reconstructedEnergy`, `maxAbsoluteError`, `rmsError`, `relativeEnergyError`; a final value class so the synthesizer
+  hands over its output without a second copy) or `NotInvertible(reason, retainedEnergyFraction, detail)`, mirroring
+  `DecompositionResult`. An `EXACT` result reports `retainedEnergyFraction` exactly `1` (a complete pattern's energy
+  is already validated within the Parseval allowance), and `rmsError <= maxAbsoluteError` always holds. Additions to the sketch: `rmsError` and
   `reconstructedEnergy` (issue #126 asks for RMS and energy checks) and the typed reason
   `NotInvertibleReason.MISSING_APPROXIMATION`, the only `NOT_INVERTIBLE` case in v1: a Haar pattern missing **any**
   coefficient of its final approximation. Dropped detail coefficients and any dropped DFT bin, including DC, are
@@ -528,7 +530,8 @@ Implementation (#126, ADR 0042):
   valid pattern.
 - **Original samples.** Supplied as the `SampledWave` that was decomposed. A wave whose sample count, sample rate,
   unit or provenance differs from the pattern, or whose energy differs from `sourceEnergy` beyond the Parseval
-  tolerance, is a caller bug (`IllegalArgumentException`), never a silent comparison with other samples.
+  tolerance, is a caller bug (`IllegalArgumentException`), never a silent comparison with other samples. Silence
+  must match exactly: all-zero samples only for a pattern of source energy `0`, and the reverse.
 
 ## 10. Cognitive-Stage Wiring and Feedback
 

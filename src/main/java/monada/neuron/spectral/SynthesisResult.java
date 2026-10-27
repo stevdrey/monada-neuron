@@ -16,7 +16,9 @@ public sealed interface SynthesisResult permits SynthesisResult.Reconstructed, S
 
     /**
      * Returns the pattern's retained energy divided by its source energy, clamped to {@code [0, 1]} against
-     * numerical noise; {@code 1} for silent samples (source energy {@code 0}). Dimensionless.
+     * numerical noise; {@code 1} for silent samples (source energy {@code 0}) and for a complete pattern, whose
+     * retained energy {@link SpectralPattern} already validated to equal the source energy within the Parseval
+     * allowance. Dimensionless.
      */
     double retainedEnergyFraction();
 
@@ -24,23 +26,72 @@ public sealed interface SynthesisResult permits SynthesisResult.Reconstructed, S
      * Reconstructed samples, in the unit of the decomposed samples, one per index of the pattern's frame, with the
      * pattern's time origin (its first sample).
      *
-     * <p>The error diagnostics compare with the original samples and are present only when the caller supplied them;
-     * otherwise all three are empty, never estimated. They are present or absent together.
+     * <p>A final value class rather than a record, like {@link SpectralPattern} (ADR 0035): the public factory
+     * {@link #of} copies the samples, while the synthesizer hands over the array it just built without a second copy.
+     * No internal array escapes: {@link #samples()} returns a copy and {@link #sample(int)} reads without allocating.
      *
-     * @param status {@link SynthesisStatus#EXACT} or {@link SynthesisStatus#LOSSY}
-     * @param samples reconstructed samples, finite; copied
-     * @param retainedEnergyFraction retained energy over source energy, in {@code [0, 1]}
-     * @param reconstructedEnergy {@code Σ x̂_n²} of the reconstructed samples, in squared sample units
-     * @param maxAbsoluteError {@code max |x̂_n − x_n|}, in sample units
-     * @param rmsError {@code √(Σ (x̂_n − x_n)² / N)}, in sample units
-     * @param relativeEnergyError {@code |Σ x̂_n² − Σ x_n²| / Σ x_n²}, dimensionless; {@code 0} when both are {@code 0}
+     * <p>Invariants, checked at construction:
+     * <ul>
+     *   <li>the status is {@code EXACT} or {@code LOSSY}; an {@code EXACT} result retains all of the source energy,
+     *       so its {@link #retainedEnergyFraction()} is exactly {@code 1};</li>
+     *   <li>the error diagnostics compare with the original samples and are present only when the caller supplied
+     *       them, otherwise all three are empty, never estimated; they are present or absent together;</li>
+     *   <li>when present, {@code rmsError <= maxAbsoluteError} (an RMS never exceeds the peak).</li>
+     * </ul>
      */
-    record Reconstructed(SynthesisStatus status, double[] samples, double retainedEnergyFraction,
-                         double reconstructedEnergy, OptionalDouble maxAbsoluteError, OptionalDouble rmsError,
-                         OptionalDouble relativeEnergyError) implements SynthesisResult {
+    final class Reconstructed implements SynthesisResult {
 
-        /** Validates the status, the value ranges and the error presence rule, and copies the samples. */
-        public Reconstructed {
+        private final SynthesisStatus status;
+        private final double[] samples;
+        private final double retainedEnergyFraction;
+        private final double reconstructedEnergy;
+        private final OptionalDouble maxAbsoluteError;
+        private final OptionalDouble rmsError;
+        private final OptionalDouble relativeEnergyError;
+
+        private Reconstructed(SynthesisStatus status, double[] samples, double retainedEnergyFraction,
+                              double reconstructedEnergy, OptionalDouble maxAbsoluteError, OptionalDouble rmsError,
+                              OptionalDouble relativeEnergyError) {
+            this.status = status;
+            this.samples = samples;
+            this.retainedEnergyFraction = retainedEnergyFraction;
+            this.reconstructedEnergy = reconstructedEnergy;
+            this.maxAbsoluteError = maxAbsoluteError;
+            this.rmsError = rmsError;
+            this.relativeEnergyError = relativeEnergyError;
+        }
+
+        /**
+         * Creates a reconstruction, copying the samples once.
+         *
+         * @param status {@link SynthesisStatus#EXACT} or {@link SynthesisStatus#LOSSY}
+         * @param samples reconstructed samples, {@code 1..SpectralPattern.MAX_SAMPLE_COUNT} finite values; copied
+         * @param retainedEnergyFraction retained energy over source energy, in {@code [0, 1]}; {@code 1} for
+         *                               {@code EXACT}
+         * @param reconstructedEnergy {@code Σ x̂_n²} of the reconstructed samples, in squared sample units
+         * @param maxAbsoluteError {@code max |x̂_n − x_n|}, in sample units
+         * @param rmsError {@code √(Σ (x̂_n − x_n)² / N)}, in sample units, at most {@code maxAbsoluteError}
+         * @param relativeEnergyError {@code |Σ x̂_n² − Σ x_n²| / Σ x_n²}, dimensionless; {@code 0} when both are
+         *                            {@code 0}
+         * @return the reconstruction
+         * @throws IllegalArgumentException if any invariant is violated
+         */
+        public static Reconstructed of(SynthesisStatus status, double[] samples, double retainedEnergyFraction,
+                                       double reconstructedEnergy, OptionalDouble maxAbsoluteError,
+                                       OptionalDouble rmsError, OptionalDouble relativeEnergyError) {
+            Objects.requireNonNull(samples, "samples must not be null");
+            return ofOwned(status, samples.clone(), retainedEnergyFraction, reconstructedEnergy, maxAbsoluteError,
+                    rmsError, relativeEnergyError);
+        }
+
+        /**
+         * Creates a reconstruction that takes ownership of a freshly allocated array, for the synthesizer in this
+         * package. The caller must not keep or mutate the array; signed zeros are canonicalized in place and every
+         * rule of {@link #of} is validated.
+         */
+        static Reconstructed ofOwned(SynthesisStatus status, double[] samples, double retainedEnergyFraction,
+                                     double reconstructedEnergy, OptionalDouble maxAbsoluteError,
+                                     OptionalDouble rmsError, OptionalDouble relativeEnergyError) {
             Objects.requireNonNull(status, "status must not be null");
             Objects.requireNonNull(samples, "samples must not be null");
             Objects.requireNonNull(maxAbsoluteError, "maxAbsoluteError must not be null");
@@ -54,29 +105,43 @@ public sealed interface SynthesisResult permits SynthesisResult.Reconstructed, S
                         + SpectralPattern.MAX_SAMPLE_COUNT + "], got: " + samples.length);
             }
             requireFraction(retainedEnergyFraction);
+            if (status == SynthesisStatus.EXACT && retainedEnergyFraction != 1.0) {
+                throw new IllegalArgumentException(
+                        "an EXACT reconstruction retains all source energy, got fraction: " + retainedEnergyFraction);
+            }
             requireNonNegative(reconstructedEnergy, "reconstructedEnergy");
             if (maxAbsoluteError.isPresent() != rmsError.isPresent()
                     || maxAbsoluteError.isPresent() != relativeEnergyError.isPresent()) {
                 throw new IllegalArgumentException("error diagnostics must be all present or all absent");
             }
             if (maxAbsoluteError.isPresent()) {
-                requireNonNegative(maxAbsoluteError.getAsDouble(), "maxAbsoluteError");
-                requireNonNegative(rmsError.getAsDouble(), "rmsError");
+                double max = maxAbsoluteError.getAsDouble();
+                double rms = rmsError.getAsDouble();
+                requireNonNegative(max, "maxAbsoluteError");
+                requireNonNegative(rms, "rmsError");
                 requireNonNegative(relativeEnergyError.getAsDouble(), "relativeEnergyError");
+                if (rms > max) {
+                    throw new IllegalArgumentException(
+                            "rmsError " + rms + " must not exceed maxAbsoluteError " + max);
+                }
             }
-            var copy = new double[samples.length];
             for (int i = 0; i < samples.length; i++) {
                 double sample = samples[i];
                 if (!Double.isFinite(sample)) {
                     throw new IllegalArgumentException("sample at index " + i + " must be finite, got: " + sample);
                 }
-                copy[i] = SpectralArithmetic.canonicalZero(sample);
+                samples[i] = SpectralArithmetic.canonicalZero(sample);
             }
-            samples = copy;
+            return new Reconstructed(status, samples, retainedEnergyFraction, reconstructedEnergy, maxAbsoluteError,
+                    rmsError, relativeEnergyError);
+        }
+
+        @Override
+        public SynthesisStatus status() {
+            return status;
         }
 
         /** Returns a copy of the reconstructed samples. */
-        @Override
         public double[] samples() {
             return samples.clone();
         }
@@ -89,6 +154,31 @@ public sealed interface SynthesisResult permits SynthesisResult.Reconstructed, S
         /** Returns reconstructed sample {@code i} without allocating. */
         public double sample(int i) {
             return samples[Objects.checkIndex(i, samples.length)];
+        }
+
+        @Override
+        public double retainedEnergyFraction() {
+            return retainedEnergyFraction;
+        }
+
+        /** Returns {@code Σ x̂_n²} of the reconstructed samples, in squared sample units. */
+        public double reconstructedEnergy() {
+            return reconstructedEnergy;
+        }
+
+        /** Returns {@code max |x̂_n − x_n|} in sample units, or empty when no original was supplied. */
+        public OptionalDouble maxAbsoluteError() {
+            return maxAbsoluteError;
+        }
+
+        /** Returns {@code √(Σ (x̂_n − x_n)² / N)} in sample units, or empty when no original was supplied. */
+        public OptionalDouble rmsError() {
+            return rmsError;
+        }
+
+        /** Returns {@code |Σ x̂_n² − Σ x_n²| / Σ x_n²}, dimensionless, or empty when no original was supplied. */
+        public OptionalDouble relativeEnergyError() {
+            return relativeEnergyError;
         }
 
         @Override

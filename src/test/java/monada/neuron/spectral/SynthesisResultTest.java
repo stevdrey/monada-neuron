@@ -19,7 +19,7 @@ class SynthesisResultTest {
     @Test
     void reconstructedCopiesSamplesAndCanonicalizesZeros() {
         var samples = new double[] {1.0, -0.0, 2.0};
-        var result = new Reconstructed(SynthesisStatus.EXACT, samples, 1.0, 5.0, NONE, NONE, NONE);
+        var result = Reconstructed.of(SynthesisStatus.EXACT, samples, 1.0, 5.0, NONE, NONE, NONE);
         samples[0] = 99.0;
 
         assertArrayEquals(new double[] {1.0, 0.0, 2.0}, result.samples());
@@ -31,16 +31,16 @@ class SynthesisResultTest {
 
     @Test
     void reconstructedIsAValue() {
-        var first = new Reconstructed(SynthesisStatus.LOSSY, new double[] {1.0, 2.0}, 0.5, 5.0,
+        var first = Reconstructed.of(SynthesisStatus.LOSSY, new double[] {1.0, 2.0}, 0.5, 5.0,
                 OptionalDouble.of(0.1), OptionalDouble.of(0.05), OptionalDouble.of(0.2));
-        var second = new Reconstructed(SynthesisStatus.LOSSY, new double[] {1.0, 2.0}, 0.5, 5.0,
+        var second = Reconstructed.of(SynthesisStatus.LOSSY, new double[] {1.0, 2.0}, 0.5, 5.0,
                 OptionalDouble.of(0.1), OptionalDouble.of(0.05), OptionalDouble.of(0.2));
 
         assertEquals(first, second);
         assertEquals(first.hashCode(), second.hashCode());
-        assertNotEquals(first, new Reconstructed(SynthesisStatus.EXACT, new double[] {1.0, 2.0}, 0.5, 5.0,
+        assertNotEquals(first, Reconstructed.of(SynthesisStatus.EXACT, new double[] {1.0, 2.0}, 1.0, 5.0,
                 OptionalDouble.of(0.1), OptionalDouble.of(0.05), OptionalDouble.of(0.2)));
-        assertNotEquals(first, new Reconstructed(SynthesisStatus.LOSSY, new double[] {1.0, 2.5}, 0.5, 5.0,
+        assertNotEquals(first, Reconstructed.of(SynthesisStatus.LOSSY, new double[] {1.0, 2.5}, 0.5, 5.0,
                 OptionalDouble.of(0.1), OptionalDouble.of(0.05), OptionalDouble.of(0.2)));
     }
 
@@ -48,29 +48,36 @@ class SynthesisResultTest {
     void reconstructedRejectsInvalidValues() {
         double[] one = {1.0};
         assertThrows(IllegalArgumentException.class,
-                () -> new Reconstructed(SynthesisStatus.NOT_INVERTIBLE, one, 1.0, 1.0, NONE, NONE, NONE));
+                () -> Reconstructed.of(SynthesisStatus.NOT_INVERTIBLE, one, 1.0, 1.0, NONE, NONE, NONE));
         assertThrows(IllegalArgumentException.class,
-                () -> new Reconstructed(SynthesisStatus.EXACT, new double[0], 1.0, 0.0, NONE, NONE, NONE));
-        assertThrows(IllegalArgumentException.class, () -> new Reconstructed(SynthesisStatus.EXACT,
+                () -> Reconstructed.of(SynthesisStatus.EXACT, new double[0], 1.0, 0.0, NONE, NONE, NONE));
+        assertThrows(IllegalArgumentException.class, () -> Reconstructed.of(SynthesisStatus.EXACT,
                 new double[SpectralPattern.MAX_SAMPLE_COUNT + 1], 1.0, 0.0, NONE, NONE, NONE));
         assertThrows(IllegalArgumentException.class,
-                () -> new Reconstructed(SynthesisStatus.EXACT, new double[] {Double.NaN}, 1.0, 1.0, NONE, NONE,
+                () -> Reconstructed.of(SynthesisStatus.EXACT, new double[] {Double.NaN}, 1.0, 1.0, NONE, NONE,
                         NONE));
         assertThrows(IllegalArgumentException.class,
-                () -> new Reconstructed(SynthesisStatus.EXACT, one, 1.5, 1.0, NONE, NONE, NONE));
+                () -> Reconstructed.of(SynthesisStatus.LOSSY, one, 1.5, 1.0, NONE, NONE, NONE));
         assertThrows(IllegalArgumentException.class,
-                () -> new Reconstructed(SynthesisStatus.EXACT, one, -0.1, 1.0, NONE, NONE, NONE));
+                () -> Reconstructed.of(SynthesisStatus.LOSSY, one, -0.1, 1.0, NONE, NONE, NONE));
         assertThrows(IllegalArgumentException.class,
-                () -> new Reconstructed(SynthesisStatus.EXACT, one, 1.0, Double.POSITIVE_INFINITY, NONE, NONE,
+                () -> Reconstructed.of(SynthesisStatus.EXACT, one, 1.0, Double.POSITIVE_INFINITY, NONE, NONE,
                         NONE));
-        assertThrows(IllegalArgumentException.class, () -> new Reconstructed(SynthesisStatus.EXACT, one, 1.0, 1.0,
+        assertThrows(IllegalArgumentException.class, () -> Reconstructed.of(SynthesisStatus.EXACT, one, 1.0, 1.0,
                 OptionalDouble.of(0.0), NONE, NONE));
-        assertThrows(IllegalArgumentException.class, () -> new Reconstructed(SynthesisStatus.EXACT, one, 1.0, 1.0,
+        assertThrows(IllegalArgumentException.class, () -> Reconstructed.of(SynthesisStatus.EXACT, one, 1.0, 1.0,
                 OptionalDouble.of(-1.0), OptionalDouble.of(0.0), OptionalDouble.of(0.0)));
+        assertThrows(IllegalArgumentException.class, () -> Reconstructed.of(SynthesisStatus.EXACT, one, 0.2, 1.0,
+                NONE, NONE, NONE), "EXACT retains all source energy");
+        assertThrows(IllegalArgumentException.class, () -> Reconstructed.of(SynthesisStatus.LOSSY, one, 0.5, 1.0,
+                OptionalDouble.of(1.0), OptionalDouble.of(5.0), OptionalDouble.of(0.1)), "RMS above the peak");
+        assertThrows(IllegalArgumentException.class, () -> Reconstructed.of(SynthesisStatus.LOSSY, one, 0.5, 1.0,
+                OptionalDouble.of(0.0), OptionalDouble.of(Double.MIN_VALUE), OptionalDouble.of(0.0)),
+                "a zero peak admits only a zero RMS");
         assertThrows(NullPointerException.class,
-                () -> new Reconstructed(null, one, 1.0, 1.0, NONE, NONE, NONE));
+                () -> Reconstructed.of(null, one, 1.0, 1.0, NONE, NONE, NONE));
         assertThrows(NullPointerException.class,
-                () -> new Reconstructed(SynthesisStatus.EXACT, one, 1.0, 1.0, null, NONE, NONE));
+                () -> Reconstructed.of(SynthesisStatus.EXACT, one, 1.0, 1.0, null, NONE, NONE));
     }
 
     @Test

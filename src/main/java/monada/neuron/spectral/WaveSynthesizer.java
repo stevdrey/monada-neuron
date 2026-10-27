@@ -33,8 +33,10 @@ import monada.neuron.spectral.SynthesisResult.Reconstructed;
  * and one dense coefficient array).
  *
  * <p><b>Fidelity.</b> Every result reports the retained-energy fraction ({@link SpectralPattern#retainedEnergy()} over
- * {@link SpectralPattern#sourceEnergy()}, {@code 1} for silence), computable from the pattern alone, and every
- * reconstruction its energy {@code Σ x̂_n²}. Errors against the original samples ({@code max |x̂ − x|}, RMS and
+ * {@link SpectralPattern#sourceEnergy()}, {@code 1} for silence and exactly {@code 1} for a complete pattern, whose
+ * energy the pattern already validated within the Parseval allowance), computable from the pattern alone, and every
+ * reconstruction its energy {@code Σ x̂_n²}. The original must match the pattern's silence exactly (both energies
+ * {@code 0}, or neither). Errors against the original samples ({@code max |x̂ − x|}, RMS and
  * relative energy error) are reported only by {@link #synthesize(SpectralPattern, SampledWave)}; they are never
  * estimated. Energies and RMS are summed with the power-of-two scaling of {@link SpectralArithmetic}, so they stay
  * finite for every valid pattern.
@@ -45,8 +47,6 @@ import monada.neuron.spectral.SynthesisResult.Reconstructed;
  * semantics.
  */
 public final class WaveSynthesizer {
-
-    private static final double TWO_PI = 2.0 * StrictMath.PI;
 
     private static final double SQRT_2 = StrictMath.sqrt(2.0);
 
@@ -83,7 +83,8 @@ public final class WaveSynthesizer {
     }
 
     private SynthesisResult reconstruct(SpectralPattern pattern, SampledWave original) {
-        double fraction = retainedEnergyFraction(pattern);
+        boolean complete = pattern.componentCount() == pattern.frame().componentCapacity();
+        double fraction = complete ? 1.0 : retainedEnergyFraction(pattern);
         if (pattern.basis() == SpectralBasis.HAAR) {
             int approximationCount = pattern.sampleCount() >> pattern.scale().levels();
             int present = leadingApproximationCount(pattern);
@@ -96,27 +97,28 @@ public final class WaveSynthesizer {
             case DFT -> inverseDft(pattern);
             case HAAR -> inverseHaar(pattern);
         };
-        var status = pattern.componentCount() == pattern.frame().componentCapacity()
-                ? SynthesisStatus.EXACT : SynthesisStatus.LOSSY;
+        var status = complete ? SynthesisStatus.EXACT : SynthesisStatus.LOSSY;
         double energy = SpectralArithmetic.sumOfSquares(samples, SpectralArithmetic.peakMagnitude(samples));
         if (original == null) {
-            return new Reconstructed(status, samples, fraction, energy, OptionalDouble.empty(),
+            return Reconstructed.ofOwned(status, samples, fraction, energy, OptionalDouble.empty(),
                     OptionalDouble.empty(), OptionalDouble.empty());
         }
         double[] x = original.sampleArray();
-        var residual = new double[samples.length];
-        for (int i = 0; i < samples.length; i++) {
-            residual[i] = samples[i] - x[i];
-        }
-        double maxError = SpectralArithmetic.peakMagnitude(residual);
-        double originalEnergy = SpectralArithmetic.sumOfSquares(x, SpectralArithmetic.peakMagnitude(x));
-        // A silent original has source energy 0, so every magnitude is 0 and the reconstruction is silent too.
-        double relativeEnergyError = originalEnergy == 0.0 ? 0.0 : Math.abs(energy - originalEnergy) / originalEnergy;
-        return new Reconstructed(status, samples, fraction, energy, OptionalDouble.of(maxError),
-                OptionalDouble.of(rootMeanSquare(residual, maxError)), OptionalDouble.of(relativeEnergyError));
+        double maxError = SpectralArithmetic.peakDifference(samples, x);
+        // Rounding of the mean can lift the RMS an ulp above the peak; mathematically it never exceeds it.
+        double rmsError = Math.min(maxError, SpectralArithmetic.rootMeanSquareDifference(samples, x, maxError));
+        // requireOriginalOf admits a silent original only for a silent pattern, whose reconstruction is silent too.
+        double relativeEnergyError = SpectralArithmetic.relativeEnergyDifference(samples, x);
+        return Reconstructed.ofOwned(status, samples, fraction, energy, OptionalDouble.of(maxError),
+                OptionalDouble.of(rmsError), OptionalDouble.of(relativeEnergyError));
     }
 
-    /** Requires the original to be the wave the pattern was decomposed from, as far as the pattern can tell. */
+    /**
+     * Requires the original to be the wave the pattern was decomposed from, as far as the pattern can tell. Silence
+     * must match exactly, as in {@link SpectralPattern}: an original whose samples are all {@code 0} only for a pattern
+     * of source energy {@code 0}, and the reverse. Silence is judged by the samples, not by their energy, which can
+     * underflow to {@code 0} for subnormal samples.
+     */
     private void requireOriginalOf(SpectralPattern pattern, SampledWave original) {
         if (original.sampleCount() != pattern.sampleCount()
                 || Double.compare(original.sampleRate(), pattern.sampleRate()) != 0
@@ -129,7 +131,12 @@ public final class WaveSynthesizer {
                     + " does not match the pattern provenance " + pattern.provenance());
         }
         double[] x = original.sampleArray();
-        double energy = SpectralArithmetic.sumOfSquares(x, SpectralArithmetic.peakMagnitude(x));
+        double peak = SpectralArithmetic.peakMagnitude(x);
+        if ((peak == 0.0) != (pattern.sourceEnergy() == 0.0)) {
+            throw new IllegalArgumentException("original peak " + peak + " and pattern sourceEnergy "
+                    + pattern.sourceEnergy() + " must both be 0 or both be nonzero");
+        }
+        double energy = SpectralArithmetic.sumOfSquares(x, peak);
         double scale = Math.max(energy, pattern.sourceEnergy());
         double allowed = SpectralArithmetic.energyAllowance(scale,
                 pattern.sampleCount() + pattern.componentCount() + 4.0);
@@ -139,7 +146,7 @@ public final class WaveSynthesizer {
         }
     }
 
-    /** Returns {@code min(1, retained / source)}, {@code 1} when the source energy is {@code 0}. */
+    /** Returns {@code min(1, retained / source)} for an incomplete pattern, {@code 1} when the source energy is 0. */
     private double retainedEnergyFraction(SpectralPattern pattern) {
         double source = pattern.sourceEnergy();
         return source == 0.0 ? 1.0 : Math.min(1.0, pattern.retainedEnergy() / source);
@@ -176,14 +183,9 @@ public final class WaveSynthesizer {
                 }
             } else {
                 if (cos == null) {
-                    // Same table as DftWaveDecomposer: StrictMath of (2π · m) / N for the N residues m.
                     cos = new double[n];
                     sin = new double[n];
-                    for (int m = 0; m < n; m++) {
-                        double angle = (TWO_PI * m) / n;
-                        cos[m] = StrictMath.cos(angle);
-                        sin[m] = StrictMath.sin(angle);
-                    }
+                    SpectralArithmetic.fillTwiddles(cos, sin);
                 }
                 double re = magnitude * StrictMath.cos(phase);
                 double im = magnitude * StrictMath.sin(phase);
@@ -232,18 +234,5 @@ public final class WaveSynthesizer {
     /** Returns the signed value of a real-valued component: {@code −magnitude} for phase {@code π}. */
     private double signed(double magnitude, double phase) {
         return phase == StrictMath.PI ? -magnitude : magnitude;
-    }
-
-    /** Returns {@code √(Σ v² / N)} scaled by the exponent of {@code peak}, so neither the squares nor the sum overflow. */
-    private double rootMeanSquare(double[] values, double peak) {
-        if (peak == 0.0) {
-            return 0.0;
-        }
-        int exponent = SpectralArithmetic.scaleExponent(peak);
-        double sum = 0.0;
-        for (double value : values) {
-            sum += SpectralArithmetic.scaledSquare(value, exponent);
-        }
-        return Math.scalb(StrictMath.sqrt(sum / values.length), exponent);
     }
 }

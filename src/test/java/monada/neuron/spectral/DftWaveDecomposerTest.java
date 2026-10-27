@@ -7,6 +7,11 @@ import org.junit.jupiter.api.Test;
 import java.util.function.IntToDoubleFunction;
 
 import static monada.neuron.spectral.SpectralFixtures.PROVENANCE;
+import static monada.neuron.spectral.SpectralFixtures.bits;
+import static monada.neuron.spectral.SpectralFixtures.p4Wave;
+import static monada.neuron.spectral.SpectralFixtures.randomWave;
+import static monada.neuron.spectral.SpectralFixtures.samples;
+import static monada.neuron.spectral.SpectralFixtures.wave8;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -346,43 +351,5 @@ class DftWaveDecomposerTest {
             }
             assertEquals(0.0, pattern.magnitude(i), tolerance, "off-bin magnitude of bin " + pattern.index(i));
         }
-    }
-
-    private static SampledWave p4Wave() {
-        return wave8(n -> StrictMath.cos(2 * PI * n / 8.0) + 0.5 * StrictMath.cos(2 * PI * 3 * n / 8.0 + PI / 4));
-    }
-
-    private static SampledWave wave8(IntToDoubleFunction formula) {
-        return new SampledWave(samples(8, formula), 8.0, SampleUnit.HERTZ, PROVENANCE);
-    }
-
-    /**
-     * Seeded samples in {@code [-10, 10)} from a fixed 64-bit LCG (Knuth's MMIX constants) and explicit arithmetic, so
-     * the golden fixture depends on no JDK random-number implementation.
-     */
-    private static SampledWave randomWave(int n, long seed) {
-        var samples = new double[n];
-        long state = seed;
-        for (int i = 0; i < n; i++) {
-            state = state * 6364136223846793005L + 1442695040888963407L;
-            samples[i] = -10.0 + 20.0 * ((state >>> 11) * 0x1.0p-53);
-        }
-        return new SampledWave(samples, n, SampleUnit.HERTZ, PROVENANCE);
-    }
-
-    private static double[] samples(int n, IntToDoubleFunction formula) {
-        var samples = new double[n];
-        for (int i = 0; i < n; i++) {
-            samples[i] = formula.applyAsDouble(i);
-        }
-        return samples;
-    }
-
-    private static long[] bits(double[] values) {
-        var bits = new long[values.length];
-        for (int i = 0; i < values.length; i++) {
-            bits[i] = Double.doubleToRawLongBits(values[i]);
-        }
-        return bits;
     }
 }

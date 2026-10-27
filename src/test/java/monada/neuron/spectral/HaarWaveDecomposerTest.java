@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Test;
 import java.util.function.IntToDoubleFunction;
 
 import static monada.neuron.spectral.SpectralFixtures.PROVENANCE;
+import static monada.neuron.spectral.SpectralFixtures.bits;
+import static monada.neuron.spectral.SpectralFixtures.randomWave;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -225,8 +227,7 @@ class HaarWaveDecomposerTest {
                 assertEquals(provenance, pattern.provenance());
                 assertEquals(pattern.frame().componentCapacity(), pattern.componentCount());
 
-                double[] restored = assertInstanceOf(SynthesisResult.Reconstructed.class,
-                        new WaveSynthesizer().synthesize(pattern)).samples();
+                double[] restored = inverseHaar(pattern);
                 double tolerance = 1e-9 * Math.max(1.0, SpectralArithmetic.peakMagnitude(wave.samples()));
                 for (int i = 0; i < n; i++) {
                     assertEquals(wave.sample(i), restored[i], tolerance, "sample " + i + " of N=" + n);
@@ -395,6 +396,32 @@ class HaarWaveDecomposerTest {
         return hash;
     }
 
+    /**
+     * Test-only inverse of contract section 5.2 for complete patterns, written independently of {@link WaveSynthesizer}
+     * so the decomposer is not checked by the code it is round-tripped with.
+     */
+    private static double[] inverseHaar(SpectralPattern pattern) {
+        int n = pattern.sampleCount();
+        int depth = pattern.scale().levels();
+        var current = new double[n];
+        int length = n >> depth;
+        for (int m = 0; m < length; m++) {
+            current[m] = coefficient(pattern, 0, m);
+        }
+        for (int level = depth; level >= 1; level--) {
+            var next = new double[n];
+            for (int m = 0; m < length; m++) {
+                double a = current[m];
+                double d = coefficient(pattern, level, m);
+                next[2 * m] = (a + d) / SQRT_2;
+                next[2 * m + 1] = (a - d) / SQRT_2;
+            }
+            current = next;
+            length *= 2;
+        }
+        return current;
+    }
+
     private static double coefficient(SpectralPattern pattern, int level, int index) {
         int i = slot(pattern, level, index);
         return pattern.phase(i) == PI ? -pattern.magnitude(i) : pattern.magnitude(i);
@@ -467,24 +494,5 @@ class HaarWaveDecomposerTest {
             samples[i] = formula.applyAsDouble(i);
         }
         return new SampledWave(samples, n, SampleUnit.HERTZ, PROVENANCE);
-    }
-
-    /** Seeded samples in {@code [-10, 10)} from the fixed 64-bit LCG of {@code DftWaveDecomposerTest}. */
-    private static SampledWave randomWave(int n, long seed) {
-        var samples = new double[n];
-        long state = seed;
-        for (int i = 0; i < n; i++) {
-            state = state * 6364136223846793005L + 1442695040888963407L;
-            samples[i] = -10.0 + 20.0 * ((state >>> 11) * 0x1.0p-53);
-        }
-        return new SampledWave(samples, n, SampleUnit.HERTZ, PROVENANCE);
-    }
-
-    private static long[] bits(double[] values) {
-        var bits = new long[values.length];
-        for (int i = 0; i < values.length; i++) {
-            bits[i] = Double.doubleToRawLongBits(values[i]);
-        }
-        return bits;
     }
 }

@@ -11,6 +11,11 @@ import java.util.function.IntToDoubleFunction;
 import java.util.stream.IntStream;
 
 import static monada.neuron.spectral.SpectralFixtures.PROVENANCE;
+import static monada.neuron.spectral.SpectralFixtures.bits;
+import static monada.neuron.spectral.SpectralFixtures.p4Wave;
+import static monada.neuron.spectral.SpectralFixtures.randomWave;
+import static monada.neuron.spectral.SpectralFixtures.samples;
+import static monada.neuron.spectral.SpectralFixtures.wave8;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -282,6 +287,36 @@ class WaveSynthesizerTest {
         assertThrows(NullPointerException.class, () -> synthesizer.synthesize(null, wave));
     }
 
+    @Test
+    void silenceOfTheOriginalMustMatchThePattern() {
+        var tinyPattern = SpectralPattern.of(SpectralFixtures.DFT_8, 8 * Double.MIN_VALUE, PROVENANCE,
+                new int[] {0}, new int[] {0}, new double[] {Double.MIN_VALUE}, new double[] {0.0});
+        var silent = wave8(n -> 0.0);
+        assertThrows(IllegalArgumentException.class, () -> synthesizer.synthesize(tinyPattern, silent),
+                "a silent original is not the source of a pattern with nonzero magnitudes");
+
+        var silentPattern = dftOf(silent);
+        var tinyWave = wave8(n -> n == 0 ? Double.MIN_VALUE : 0.0);
+        assertThrows(IllegalArgumentException.class, () -> synthesizer.synthesize(silentPattern, tinyWave),
+                "a silent pattern is not the decomposition of a nonzero original");
+    }
+
+    @Test
+    void exactReportsTheFullFractionAndRmsNeverExceedsThePeak() {
+        for (int n : new int[] {8, 255, 256}) {
+            var wave = randomWave(n, 77L + n);
+            var result = reconstructed(synthesizer.synthesize(dftOf(wave), wave));
+            assertEquals(1.0, result.retainedEnergyFraction());
+            assertTrue(result.rmsError().orElseThrow() <= result.maxAbsoluteError().orElseThrow());
+        }
+        var constant = wave8(n -> 3.0);
+        var lossy = reconstructed(synthesizer.synthesize(drop(dftOf(constant), i -> i == 0), constant));
+        double peak = lossy.maxAbsoluteError().orElseThrow();
+        assertEquals(3.0, peak, EXACT);
+        assertTrue(lossy.rmsError().orElseThrow() <= peak, "equal residuals: RMS reaches the peak, never above it");
+        assertEquals(3.0, lossy.rmsError().orElseThrow(), EXACT);
+    }
+
     private void assertDftRoundTrip(SampledWave wave) {
         var pattern = dftOf(wave);
         var result = reconstructed(synthesizer.synthesize(pattern, wave));
@@ -339,40 +374,5 @@ class WaveSynthesizerTest {
             hash = 31 * hash + Double.doubleToRawLongBits(result.sample(i));
         }
         return hash;
-    }
-
-    private static SampledWave p4Wave() {
-        return wave8(n -> StrictMath.cos(2 * PI * n / 8.0) + 0.5 * StrictMath.cos(2 * PI * 3 * n / 8.0 + PI / 4));
-    }
-
-    private static SampledWave wave8(IntToDoubleFunction formula) {
-        return new SampledWave(samples(8, formula), 8.0, SampleUnit.HERTZ, PROVENANCE);
-    }
-
-    /** Seeded samples in {@code [-10, 10)} from the fixed 64-bit LCG of {@code DftWaveDecomposerTest}. */
-    private static SampledWave randomWave(int n, long seed) {
-        var samples = new double[n];
-        long state = seed;
-        for (int i = 0; i < n; i++) {
-            state = state * 6364136223846793005L + 1442695040888963407L;
-            samples[i] = -10.0 + 20.0 * ((state >>> 11) * 0x1.0p-53);
-        }
-        return new SampledWave(samples, n, SampleUnit.HERTZ, PROVENANCE);
-    }
-
-    private static double[] samples(int n, IntToDoubleFunction formula) {
-        var samples = new double[n];
-        for (int i = 0; i < n; i++) {
-            samples[i] = formula.applyAsDouble(i);
-        }
-        return samples;
-    }
-
-    private static long[] bits(double[] values) {
-        var bits = new long[values.length];
-        for (int i = 0; i < values.length; i++) {
-            bits[i] = Double.doubleToRawLongBits(values[i]);
-        }
-        return bits;
     }
 }

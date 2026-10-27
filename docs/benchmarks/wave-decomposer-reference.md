@@ -120,37 +120,40 @@ O(N²) for the inverse DFT and O(N) for the inverse Haar.
 - The same seeded window as above, decomposed once in setup into a **complete** pattern (DFT, or Haar at full depth
   `L = log2 N`), `N ∈ {8, 64, 256, 1024, 4096}`.
 - Measured operation: `WaveSynthesizer.synthesize(pattern)` without the original: inverse transform, reconstructed
-  energy and result construction (with its validation and sample copy). Nothing is cached between calls.
+  energy and result construction (with its validation; the result takes over the output array without a copy).
+  Nothing is cached between calls.
 - `WaveSynthesizerBenchmark` (same JMH settings), run in one session with both decomposer benchmarks:
 
 ```bash
 ./gradlew :monada-neuron-evaluation:jmh -PjmhArgs="-prof gc Wave(Synthesizer|Decomposer)Benchmark"
 ```
 
-Environment as in the table above; Neuron commit `d374cc2+dirty` (the #126 working tree before its first commit).
+Environment as in the table above; Neuron commit `9417260+dirty` (the review fixes of PR #169 before their commit).
+The first run, at `d374cc2+dirty`, still copied the samples into the result: 1,072 to 524,404 B/op for DFT and 320 to
+98,464 B/op for Haar, with times within the error bars below.
 
 ### Results
 
 | N | DFT synthesis (µs/op) | DFT synthesis (B/op) | DFT decomposition (µs/op) | DFT decomposition (B/op) | Haar synthesis (µs/op) | Haar synthesis (B/op) | Haar decomposition (µs/op) | Haar decomposition (B/op) |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 8 | 0.35 ± 0.12 | 1,072 | 0.39 ± 0.13 | 952 | 0.086 ± 0.003 | 320 | 0.12 ± 0.02 | 408 |
-| 64 | 4.3 ± 0.3 | 8,240 | 4.4 ± 1.0 | 6,104 | 0.48 ± 0.01 | 1,672 | 0.63 ± 0.09 | 1,976 |
-| 256 | 44 ± 1 | 32,816 | 43 ± 2 | 23,768 | 1.8 ± 0.2 | 6,288 | 2.9 ± 0.1 | 7,352 |
-| 1,024 | 540 ± 6 | 131,123 | 449 ± 14 | 94,427 | 8.4 ± 0.5 | 24,728 | 12.8 ± 1.6 | 28,856 |
-| 4,096 | 10,657 ± 1,053 | 524,404 | 10,765 ± 990 | 377,116 | 35 ± 1 | 98,464 | 58 ± 10 | 114,872 |
+| 8 | 0.47 ± 0.11 | 992 | 0.35 ± 0.02 | 952 | 0.080 ± 0.006 | 240 | 0.12 ± 0.01 | 408 |
+| 64 | 5.4 ± 2.0 | 7,712 | 4.5 ± 0.3 | 6,104 | 0.54 ± 0.07 | 1,144 | 0.65 ± 0.23 | 1,976 |
+| 256 | 48 ± 4 | 30,752 | 46 ± 1 | 23,768 | 1.7 ± 0.3 | 4,224 | 3.3 ± 0.1 | 7,352 |
+| 1,024 | 681 ± 72 | 122,917 | 467 ± 14 | 94,427 | 7.4 ± 0.8 | 16,520 | 14.1 ± 2.3 | 28,856 |
+| 4,096 | 11,641 ± 889 | 491,626 | 11,223 ± 218 | 377,119 | 32 ± 3 | 65,680 | 61 ± 10 | 114,872 |
 
 ### Reading the results
 
-- **DFT.** Synthesis costs the same as decomposition within about 20 % at every `N` (the same `N · k ≈ N²/2` multiply-adds over the
-  same twiddle table), so a round trip is about twice one decomposition. Allocation is O(N), about 128 bytes per
-  sample: the output, the twiddle tables and the result's copy of the samples are about 32 bytes per sample, and the
-  rest is the `StrictMath` argument-reduction buffer of the `2N` table entries and the `2k` per-bin phase terms.
-- **Haar.** O(N): ×4.1 to ×4.8 per ×4 in `N`, about 8.5 ns per sample at `N = 4096`, below the decomposition, which
-  also recomputes the pattern's validation and Parseval energy. Allocation is exactly 24 bytes per sample: the dense
-  coefficient array, the output and the result's copy, plus a constant.
-- The result record copies the samples once (records cannot take ownership through the canonical constructor); it is
-  one O(N) array, kept for immutability.
-- The DFT decomposition rows reproduce the earlier baselines within their error bars.
+- **DFT.** Synthesis does the same `N · k ≈ N²/2` multiply-adds over the same twiddle table as decomposition, and
+  costs about the same: within 4 % at `N = 256` and `4096`, more at small `N` (fixed per-call costs) and at
+  `N = 1024`, where this run measured ×1.5 with a wide error bar (the first run measured ×1.2). A round trip is
+  about twice one decomposition. Allocation is O(N), about 120 bytes per sample: the output and the two twiddle
+  tables are 24 bytes per sample, and the rest is the `StrictMath` argument-reduction buffer of the `2N` table entries
+  and the `2k` per-bin phase terms.
+- **Haar.** O(N): ×4.2 to ×4.4 per ×4 in `N` above `N = 64`, about 8 ns per sample at `N = 4096`, half the
+  decomposition, which also recomputes the pattern's validation and Parseval energy. Allocation is exactly 16 bytes
+  per sample (the dense coefficient array and the output, which the result takes over) plus a constant.
+- The DFT and Haar decomposition rows reproduce the earlier baselines within their error bars.
 
 ## Limitations
 

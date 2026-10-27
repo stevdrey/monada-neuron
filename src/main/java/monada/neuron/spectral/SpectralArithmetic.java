@@ -10,6 +10,8 @@ package monada.neuron.spectral;
  */
 final class SpectralArithmetic {
 
+    private static final double TWO_PI = 2.0 * StrictMath.PI;
+
     private SpectralArithmetic() {
     }
 
@@ -63,6 +65,65 @@ final class SpectralArithmetic {
             sum += scaledSquare(value, exponent);
         }
         return unscaleEnergy(sum, exponent);
+    }
+
+    /** Returns {@code max |a[i] − b[i]|} over equal-length arrays, {@code 0} when they are equal. */
+    static double peakDifference(double[] a, double[] b) {
+        double peak = 0.0;
+        for (int i = 0; i < a.length; i++) {
+            peak = Math.max(peak, Math.abs(a[i] - b[i]));
+        }
+        return peak;
+    }
+
+    /**
+     * Returns {@code √(Σ (a[i] − b[i])² / n)} with the scaling rule, evaluated in the scaled domain so neither the
+     * squares nor the sum overflow; {@code 0} when {@code peak}, the {@link #peakDifference}, is {@code 0}.
+     */
+    static double rootMeanSquareDifference(double[] a, double[] b, double peak) {
+        if (peak == 0.0) {
+            return 0.0;
+        }
+        int exponent = scaleExponent(peak);
+        double sum = 0.0;
+        for (int i = 0; i < a.length; i++) {
+            sum += scaledSquare(a[i] - b[i], exponent);
+        }
+        return Math.scalb(StrictMath.sqrt(sum / a.length), exponent);
+    }
+
+    /**
+     * Returns {@code |Σ a[i]² − Σ b[i]²| / Σ b[i]²} with both sums scaled by the exponent of their common peak, so the
+     * ratio is neither lost to underflow nor overflowed (it is invariant under a common power-of-two scale); {@code 0}
+     * when both arrays are silent. {@code b} must not be silent unless {@code a} is.
+     */
+    static double relativeEnergyDifference(double[] a, double[] b) {
+        double peak = Math.max(peakMagnitude(a), peakMagnitude(b));
+        if (peak == 0.0) {
+            return 0.0;
+        }
+        int exponent = scaleExponent(peak);
+        double first = 0.0;
+        double second = 0.0;
+        for (int i = 0; i < a.length; i++) {
+            first += scaledSquare(a[i], exponent);
+            second += scaledSquare(b[i], exponent);
+        }
+        return Math.abs(first - second) / second;
+    }
+
+    /**
+     * Fills the DFT twiddle tables: {@code cos[m] = StrictMath.cos((2π · m) / N)} and the same for {@code sin}, for the
+     * {@code N = cos.length} residues {@code m}. The decomposer and the synthesizer read the same values, so a round
+     * trip uses one definition of every angle.
+     */
+    static void fillTwiddles(double[] cos, double[] sin) {
+        int n = cos.length;
+        for (int m = 0; m < n; m++) {
+            double angle = (TWO_PI * m) / n;
+            cos[m] = StrictMath.cos(angle);
+            sin[m] = StrictMath.sin(angle);
+        }
     }
 
     /**
