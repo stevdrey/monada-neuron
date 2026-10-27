@@ -24,6 +24,8 @@ import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteDescriptor;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.routing.disposition.AdviceDisposition;
+import monada.neuron.routing.disposition.DispositionResult;
 import monada.neuron.routing.features.FeatureDimension;
 import monada.neuron.routing.features.FeatureReadinessAssessment;
 import monada.neuron.routing.features.TaskFeatureReadiness;
@@ -130,5 +132,11 @@ public final class ConsumerSmoke {
     /** Advice receipt: canonical bytes of a Level A decision, read back strictly by the host. */
     public static DecodeResult receiptRoundTrip() {
         return AdviceReceipt.decode(AdviceReceipt.of(routeOneStage()).bytes());
+    }
+
+    /** Advice disposition: the host records that a person followed the Level A advice, before anything runs. */
+    public static DispositionResult dispositionFollowed() {
+        var receipt = AdviceReceipt.of(routeOneStage());
+        return AdviceDisposition.followed(receipt, receipt.decision().provenance().decisionRef());
     }
 }

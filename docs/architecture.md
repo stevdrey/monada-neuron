@@ -525,7 +525,11 @@ implemented: feature readiness diagnostics (`TaskFeatureReadiness` in `monada.ne
 receipts (`monada.neuron.routing.receipt`,
 format [`routing-advice-receipt/1`](specs/routing-advice-receipt-v1.md), issue #97,
 [ADR 0039](adr/0039-canonical-routing-advice-receipts.md)); a receipt is a byte comparator over one decision, not the
-`routing-ledger-digest/1` of ADR 0031.
+`routing-ledger-digest/1` of ADR 0031. Host dispositions of advice (`AdviceDisposition` in
+`monada.neuron.routing.disposition`, contract version `routing-advice-disposition/1`, issue #98,
+[ADR 0040](adr/0040-host-advice-disposition.md)) record what a person did with a receipt before anything ran, by its
+`DecisionRef` and digest only; a disposition is intent, not authorization, invocation or acceptance, and it reaches no
+state and earns no credit.
 
 ```text
 Forge (host)
