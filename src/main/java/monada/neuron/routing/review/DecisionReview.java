@@ -133,7 +133,7 @@ public sealed interface DecisionReview
         Objects.requireNonNull(reason, "reason must not be null");
         int count = 0;
         for (EligibilityReport.Exclusion exclusion : decision().exclusions()) {
-            if (names(exclusion, reason)) {
+            if (exclusion.primaryReason() == reason || exclusion.additionalReasons().contains(reason)) {
                 count++;
             }
         }
@@ -191,10 +191,6 @@ public sealed interface DecisionReview
             notices.add(ReviewNotice.STAGE_KIND_NOT_RECORDED);
         }
         return List.copyOf(notices);
-    }
-
-    private static boolean names(EligibilityReport.Exclusion exclusion, EligibilityReason reason) {
-        return exclusion.primaryReason() == reason || exclusion.additionalReasons().contains(reason);
     }
 
     /**
