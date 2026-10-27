@@ -72,6 +72,15 @@ tasks.register<JavaExec>("runForgeRoutingEvaluation") {
     args(quotedBenchmarkArgs())
 }
 
+// Spectral resonance H2 (Issue #125, gate G2; protocol pre-registered in docs/benchmarks/spectral-resonance-h2.md).
+tasks.register<JavaExec>("runSpectralResonanceH2") {
+    group = "benchmark"
+    description = "Evaluates H2: spectral resonance aggregate vs the scalar control on held-out concept pairs (Issue #125)"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("monada.neuron.evaluation.wave.SpectralResonanceH2Runner")
+    args(quotedBenchmarkArgs())
+}
+
 tasks.register<JavaExec>("jmh") {
     group = "benchmark"
     description = "Runs JMH microbenchmarks"

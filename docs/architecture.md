@@ -559,7 +559,7 @@ static, derived-not-consumed and adaptive controls in the evaluation module only
 adaptation on synthetic fixtures and coverage gaps on chosen-route-only Store exports, and makes no online routing quality,
 cost or accuracy claim.
 
-## NCM Wave Cognition Extension (specified; value types, DFT reference and Haar strategy)
+## NCM Wave Cognition Extension (specified; value types, DFT reference, Haar strategy and spectral resonance)
 
 Epic #120 explores an experimental, opt-in path from explicit numeric samples to hierarchical next-concept hypotheses.
 [NCM Wave Cognition Experiment Contract v1](specs/ncm-wave-cognition-v1.md) (`ncm-wave-cognition/1`, issue #121) and
@@ -569,8 +569,13 @@ issue #122, [ADR 0035](adr/0035-compact-immutable-spectral-pattern.md)) together
 the host-implemented `WaveEncoder<S>` seam and the deterministic scalar `DftWaveDecomposer` reference, which returns a
 typed `DecompositionResult` (issue #123, [ADR 0036](adr/0036-deterministic-dft-reference-decomposer.md)), and the
 opt-in fixed-depth `HaarWaveDecomposer` multiresolution strategy with scale-local `levelEnergy` (issue #124,
-[ADR 0040](adr/0040-haar-multiresolution-decomposer.md)). Every other name below is a proposal owned by issues #125 to
-#130.
+[ADR 0040](adr/0040-haar-multiresolution-decomposer.md)), and `SpectralResonanceDynamics` in
+`monada.neuron.resonance`, a mechanism separate from `ScalarResonanceMetric` that compares two compatible patterns by
+an O(n + m) band merge and returns a typed `ComparisonResult` (issue #125,
+[ADR 0041](adr/0041-spectral-resonance-dynamics.md)). Gate G2 is **no-go**: on the pre-registered concept fixture the
+spectral aggregate does not beat the scalar control
+([spectral-resonance-h2.md](benchmarks/spectral-resonance-h2.md)), so resonance is a diagnostic only and #127 proceeds
+without resonance features. Every other name below is a proposal owned by issues #126 to #130.
 
 ```text
 Host / modality encoder -> SampledWave (meaning, rate, unit, provenance: host owned)

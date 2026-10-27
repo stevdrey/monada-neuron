@@ -2,7 +2,11 @@ package monada.neuron.spectral;
 
 import monada.neuron.model.FrequencyState;
 import monada.neuron.monad.CognitiveStageKind;
+import monada.neuron.resonance.BandContribution;
+import monada.neuron.resonance.ComparisonResult;
+import monada.neuron.resonance.DominantComponentProjection;
 import monada.neuron.resonance.ScalarResonanceMetric;
+import monada.neuron.resonance.SpectralResonanceDynamics;
 import monada.neuron.signal.Signal;
 import org.junit.jupiter.api.Test;
 
@@ -42,11 +46,13 @@ class SpectralCompatibilityTest {
     }
 
     @Test
-    void decompositionTakesExplicitSamplesNeverSignals() {
+    void spectralTypesTakeExplicitSamplesOrPatternsNeverSignals() {
         assertEquals(List.of("samples:double[]", "sampleRate:double", "unit:SampleUnit",
                 "provenance:WaveProvenance"), components(SampledWave.class));
         for (Class<?> type : List.of(SampledWave.class, WaveEncoder.class, WaveDecomposer.class,
-                DftWaveDecomposer.class, HaarWaveDecomposer.class, DecompositionResult.class)) {
+                DftWaveDecomposer.class, HaarWaveDecomposer.class, DecompositionResult.class,
+                SpectralResonanceDynamics.class, ComparisonResult.class, ComparisonResult.SpectralComparison.class,
+                ComparisonResult.Incompatible.class, BandContribution.class, DominantComponentProjection.class)) {
             for (Method method : type.getMethods()) {
                 assertFalse(Arrays.asList(method.getParameterTypes()).contains(Signal.class),
                         type.getSimpleName() + "." + method.getName() + " must not accept a Signal");
