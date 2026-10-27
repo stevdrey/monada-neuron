@@ -2,10 +2,11 @@
 
 **Contract identifier**: `forge-integration-readiness/1`
 **Status**: Accepted (issue #94; documentation only; normative for host adoption, decided in ADR 0033). Section 5.4
-documents the Neuron types added by issue #95 (ADR 0037).
+documents the Neuron types added by issue #95 (ADR 0037), and Section 5.5 those added by issue #96 (ADR 0038).
 **Composes**: [Forge Routing Contract v1](forge-routing-contract-v1.md) (`forge-routing/1`), unchanged
 **Decision record**: [ADR 0033](../adr/0033-phase-gated-host-adoption-boundary.md); Section 5.4 by
-[ADR 0037](../adr/0037-feature-readiness-diagnostics.md)
+[ADR 0037](../adr/0037-feature-readiness-diagnostics.md); Section 5.5 by
+[ADR 0038](../adr/0038-decision-review-summaries.md)
 **Forge baseline**: `stevdrey/monada-forge` at commit [`56c35e05bb94d4d97e49b59c138fbaed66036ecd`](https://github.com/stevdrey/monada-forge/commit/56c35e05bb94d4d97e49b59c138fbaed66036ecd) (2026-10-21)
 
 This document tells a host application, Monada Forge in particular, how to opt into Neuron's routing advice one phase at a
@@ -13,7 +14,8 @@ time. It names the first useful slice, the gate for each later phase, who owns e
 reviewed task draft is turned into the existing `TaskFeatures` and `RoutingRequest`, what "ready" means before a catalog or
 a Store exists, and how stale metadata is handled. It composes the routing contract v1; it introduces no type of its own,
 no value of an existing type, no numeric limit and no new version of `forge-routing/1`. Section 5.4 describes the Neuron
-types added by issue #95 (feature readiness diagnostics), which this contract documents but does not define.
+types added by issue #95 (feature readiness diagnostics) and Section 5.5 those added by issue #96 (decision review
+summaries), which this contract documents but does not define.
 
 Every Forge phase beyond Phase 1 is written in the conditional. Forge `main` at the pinned commit has Phases 0 and 1 only,
 and its roadmap says the Phase 1 manual desktop verification is still partly pending. Nothing here changes Forge's roadmap
@@ -126,6 +128,9 @@ it.
 - A `FeatureReadinessAssessment` and its severities (`INFORMATION`, `MISSING_FOR_HOST_PREVIEW`,
   `INCONSISTENT_WITH_REQUEST`), Section 5.4: a report of which feature fields are known. A report with nothing missing
   and nothing inconsistent is not `READY`, not eligibility and not authorization.
+- A `DecisionReview` of any variant, its `ExclusionGroup`s and its `ReviewNotice` codes, Section 5.5: a view of one
+  decision. It holds only that decision, so a `Selected` review is advice exactly as the decision is, and every review
+  carries `RECHECK_BEFORE_EXECUTION`. A review with no warning notice is not `READY` and not authorization.
 
 ## 3. Phase Gates
 
@@ -402,6 +407,60 @@ Diagnostics are information only: they are never eligibility, readiness, authent
   nothing about the stage kind or any other field. It treats the result like the Section 5.2 version mismatch backstop.
 - **Independent of advice.** `decide`, `RouteEligibilityFilter`, `RoutingPreference` and ranking never read an assessment,
   and an assessment never changes what `decide` returns. Unknown values stay unknown: nothing is defaulted or inferred.
+
+### 5.5 Decision review summaries
+
+After `decide`, a host may turn the decision into a structured review for the person who accepts or declines the advice.
+The call is `DecisionReview.from(decision)` in `monada.neuron.routing.review` (issue #96,
+[ADR 0038](../adr/0038-decision-review-summaries.md)). It is pure: it reads only the decision, does no I/O and keeps no
+state. It is a projection of that decision, not a second ranking, and it never recomputes eligibility.
+
+A review is information only: it is never eligibility, readiness, authentication or authorization, and the selected route stays advice that the host must recheck before execution.
+
+- **Result.** A sealed `DecisionReview` with one variant per decision variant: `Selected`, `Abstain` and
+  `NoEligibleRoute`. Each holds only its decision, the same instance (`decision()`), so equal decisions give equal
+  reviews. An abstention is its own type, and a host `switch` over the three must handle it. A null decision throws.
+- **Shared accessors.** `decisionRef()`, `catalogVersion()`, `policyId()` and `policyVersion()` echo the decision's
+  provenance. `contractVersion()` is the library constant `routing-decision/1`, the contract the decision records
+  implement, not a value read from the decision. State binding, policy parameters and cohort binding stay reachable only
+  through `decision()`.
+- **Selected.** `route()`, `executionMode()`, `basis()`, `overflowUsed()`, `ranking()`, `rankingTruncated()` and
+  `decisiveRule()`. `ranking()` is the decision's own candidate list, never reordered, padded or extended, and
+  `decisiveRule()` is the winner's placement rule (empty for a sole route).
+- **Abstain.** `reason()`, `eligible()` (every eligible route in canonical order, unranked), `ranking()`,
+  `rankingTruncated()` and `stateMismatches()`. For `STATE_INCOMPATIBLE` the ranking is empty, because ordering never ran.
+  An eligible route beyond rank 8 is in `eligible()` and never in `ranking()`. An abstention has no decisive rule.
+- **Exclusion groups.** `exclusionGroups()` on every variant returns one `ExclusionGroup` per primary reason present, in
+  `EligibilityReason` precedence order. Each group lists the decision's own `EligibilityReport.Exclusion` records with
+  that primary reason, in canonical route order, additional reasons intact. Together the groups hold every exclusion
+  exactly once. `excludedCount(reason)` counts exclusions that name a reason as primary or additional.
+- **Notices.** `notices()` returns `ReviewNotice` codes, unique and in declaration order (display order, not severity),
+  each derived from one field the decision records:
+
+| Notice | Present when |
+| --- | --- |
+| `RECHECK_BEFORE_EXECUTION` | always, on every variant |
+| `OVERFLOW_ROUTE_SELECTED` | `Selected` with `overflowUsed` |
+| `RANKING_TRUNCATED` | `Selected` or `Abstain` with `candidatesTruncated` |
+| `STATE_INCOMPATIBLE` | provenance validation is `Incompatible` |
+| `STATE_NEWER_THAN_CUTOFF` | the `Incompatible` reasons contain `PROCESSED_CUTOFF_NEWER` |
+| `AVAILABILITY_UNKNOWN` | some exclusion names `AVAILABILITY_UNKNOWN`, as primary or additional |
+| `REQUIRED_LIMIT_UNKNOWN` | some exclusion names `REQUIRED_LIMIT_UNKNOWN`, as primary or additional |
+| `LEARNED_PREFERENCE_NOT_APPLIED` | `Selected` with `LEARNED_PREFERENCE` in `rulesSkipped` (routine at cold start) |
+| `RESOURCE_OBJECTIVE_NOT_APPLIED` | `Selected`, an objective in the recorded parameters, and `RESOURCE_OBJECTIVE` in `rulesSkipped` |
+| `STAGE_KIND_NOT_RECORDED` | provenance `stageKind` is empty, on any variant |
+
+- **No invented causes.** `RESOURCE_OBJECTIVE_NOT_APPLIED` means the objective refined no tied group: estimates were
+  unknown or incomparable, or no tie was left to refine. The decision does not record which, so the host says "not
+  applied" without a cause. Learned preference and resource notices appear only on `Selected`, the only variant that
+  records `rulesSkipped`. A `NotEvaluated` state on `NoEligibleRoute` raises no state notice.
+- **Codes, not wording.** Every value is an enum constant or an identifier the decision already carries; there is no task
+  text and no English sentence to depend on. Forge owns the wording and its localization.
+- **Beside the feature assessment.** A review does not include the Section 5.4 assessment. A host that wants to show
+  "what we knew" next to "what was advised" shows the `FeatureReadinessAssessment` it built for the request beside the
+  review; neither reads the other.
+- **Cost.** Groups, counts and notices are rebuilt on each call, linear in at most 32 exclusions and 8 candidates. A host
+  that renders often keeps what it got.
 
 ## 6. Staleness, Re Check and Re Request
 
@@ -722,7 +781,7 @@ Every reference to a later issue in this document is marked `proposed, owned by 
 with the same numbers (v1 Section 1 cites Store issues 99 and 100), which are never meant here:
 
 - `implemented by issue #95, Section 5.4`: feature readiness diagnostics over `TaskFeatures` before advice is shown.
-- `proposed, owned by issue #96`: human review summaries of a `RoutingDecision`.
+- `implemented by issue #96, Section 5.5`: human review summaries of a `RoutingDecision`.
 - `proposed, owned by issue #97`: versioned advice receipts.
 - `proposed, owned by issue #98`: host disposition of advice.
 - `proposed, owned by issue #99`: scenario comparison preview.
@@ -758,10 +817,12 @@ the never permission list of Section 2.2 and this contract takes a minor bump.
 - Every relative link in this document resolves in this repository; every Forge link resolves at commit
   `56c35e05bb94d4d97e49b59c138fbaed66036ecd`.
 - No sentence states or implies that a Forge phase beyond 1 is implemented.
-- In the issue #94 revision, every mention of issues #95 to #103 carried `proposed, owned by issue`; issues #96 to #103
-  still carry `proposed`, and #95 is `implemented by issue #95, Section 5.4`.
+- In the issue #94 revision, every mention of issues #95 to #103 carried `proposed, owned by issue`; issues #97 to #103
+  still carry `proposed`, #95 is `implemented by issue #95, Section 5.4`, and #96 is
+  `implemented by issue #96, Section 5.5`.
 - The issue #94 revision introduced no new type, value or numeric limit; the issue #95 revision adds the Section 5.4
-  types in Neuron, without changing any field table classification or adding a numeric limit.
+  types in Neuron and the issue #96 revision adds the Section 5.5 types, neither changing any field table classification
+  or adding a numeric limit.
 
 ### 12.2 Documentation updates
 

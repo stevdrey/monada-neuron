@@ -25,6 +25,8 @@ import monada.neuron.routing.features.FeatureReadinessAssessment;
 import monada.neuron.routing.features.TaskFeatureReadiness;
 import monada.neuron.routing.features.TaskFeatures;
 import monada.neuron.routing.feedback.CohortKey;
+import monada.neuron.routing.review.DecisionReview;
+import monada.neuron.routing.review.ReviewNotice;
 import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
 
@@ -102,6 +104,11 @@ public final class ModuleConsumer {
         require(readiness instanceof FeatureReadinessAssessment.Assessed a && a.diagnostics().size() == 8
                         && a.missingForHostPreview().equals(List.of(FeatureDimension.CATEGORY)),
                 "feature readiness must report eight rows with CATEGORY missing: " + readiness);
+
+        var review = DecisionReview.from(levelA);
+        require(review instanceof DecisionReview.Selected selected && selected.route().routeId().equals("route-a")
+                        && review.notices().contains(ReviewNotice.RECHECK_BEFORE_EXECUTION),
+                "a Level A review must be Selected and carry RECHECK_BEFORE_EXECUTION: " + review);
 
         System.out.println("[module-consumer] " + self.getName() + " reads " + neuron.getName()
                 + " (automatic=" + neuron.getDescriptor().isAutomatic() + ", location="
