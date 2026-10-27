@@ -40,8 +40,6 @@ import monada.neuron.spectral.DecompositionResult.DecompositionRejected;
  */
 public final class DftWaveDecomposer implements WaveDecomposer {
 
-    private static final double TWO_PI = 2.0 * StrictMath.PI;
-
     /** Creates the stateless reference decomposer. */
     public DftWaveDecomposer() {
     }
@@ -98,11 +96,7 @@ public final class DftWaveDecomposer implements WaveDecomposer {
         if (lastComplex >= 1) {
             var cos = new double[n];
             var sin = new double[n];
-            for (int m = 0; m < n; m++) {
-                double angle = (TWO_PI * m) / n;
-                cos[m] = StrictMath.cos(angle);
-                sin[m] = StrictMath.sin(angle);
-            }
+            SpectralArithmetic.fillTwiddles(cos, sin);
             for (int k = 1; k <= lastComplex; k++) {
                 double re = 0.0;
                 double im = 0.0;

@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Test;
 import java.util.function.IntToDoubleFunction;
 
 import static monada.neuron.spectral.SpectralFixtures.PROVENANCE;
+import static monada.neuron.spectral.SpectralFixtures.bits;
+import static monada.neuron.spectral.SpectralFixtures.randomWave;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -394,7 +396,10 @@ class HaarWaveDecomposerTest {
         return hash;
     }
 
-    /** Test-only inverse of contract section 5.2 for complete patterns; the reference synthesizer is #126. */
+    /**
+     * Test-only inverse of contract section 5.2 for complete patterns, written independently of {@link WaveSynthesizer}
+     * so the decomposer is not checked by the code it is round-tripped with.
+     */
     private static double[] inverseHaar(SpectralPattern pattern) {
         int n = pattern.sampleCount();
         int depth = pattern.scale().levels();
@@ -489,24 +494,5 @@ class HaarWaveDecomposerTest {
             samples[i] = formula.applyAsDouble(i);
         }
         return new SampledWave(samples, n, SampleUnit.HERTZ, PROVENANCE);
-    }
-
-    /** Seeded samples in {@code [-10, 10)} from the fixed 64-bit LCG of {@code DftWaveDecomposerTest}. */
-    private static SampledWave randomWave(int n, long seed) {
-        var samples = new double[n];
-        long state = seed;
-        for (int i = 0; i < n; i++) {
-            state = state * 6364136223846793005L + 1442695040888963407L;
-            samples[i] = -10.0 + 20.0 * ((state >>> 11) * 0x1.0p-53);
-        }
-        return new SampledWave(samples, n, SampleUnit.HERTZ, PROVENANCE);
-    }
-
-    private static long[] bits(double[] values) {
-        var bits = new long[values.length];
-        for (int i = 0; i < values.length; i++) {
-            bits[i] = Double.doubleToRawLongBits(values[i]);
-        }
-        return bits;
     }
 }

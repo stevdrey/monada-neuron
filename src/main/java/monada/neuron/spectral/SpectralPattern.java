@@ -508,7 +508,7 @@ public final class SpectralPattern {
     private void requireEnergyConsistent(double energy) {
         double scale = Math.max(sourceEnergy, energy);
         double roundingUlps = frame.sampleCount() + levels.length + 4.0;
-        double allowed = Math.max(ENERGY_TOLERANCE * scale, roundingUlps * Math.ulp(scale));
+        double allowed = SpectralArithmetic.energyAllowance(scale, roundingUlps);
         if (energy - sourceEnergy > allowed) {
             throw new IllegalArgumentException("retained energy " + energy + " exceeds sourceEnergy " + sourceEnergy
                     + " beyond the allowed difference " + allowed);

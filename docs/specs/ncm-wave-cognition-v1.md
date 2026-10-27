@@ -1,7 +1,7 @@
 # NCM Wave Cognition Experiment Contract v1
 
 **Contract identifier**: `ncm-wave-cognition/1`
-**Status**: Accepted (issue #121; experimental and opt-in; implemented in part by #122, #123, #124 and #125, see Sections 4 to 7)
+**Status**: Accepted (issue #121; experimental and opt-in; implemented in part by #122, #123, #124, #125 and #126, see Sections 4 to 7 and 9)
 **Parent**: Epic #120, Hierarchical Wave Cognition
 **Decision record**: [ADR 0034](../adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md)
 **Composes, unchanged**: [ADR 0001](../adr/0001-cognition-memory-boundary.md),
@@ -90,6 +90,23 @@ separate tests.
 A value is reported in hertz only when it is a physical frequency in this table. A wavelet coefficient is a scale and
 position, not a frequency (#124's non-goal). A learned feature is not a wave component.
 
+### 2.2 Invertibility and the limits of the analogy
+
+A prism can recombine its spectrum into the same beam; a pattern recombines into the same samples only when it is
+complete. Which outputs are invertible is fixed by the representation (Section 9, ADR 0042):
+
+| Pattern | Synthesis |
+| --- | --- |
+| Complete DFT (every bin `0..floor(N/2)`) | `EXACT` within Section 12.4: the samples are real, so the single-sided bins plus conjugate symmetry determine them |
+| Complete Haar (final approximation and every detail level) | `EXACT` within Section 12.4: the transform is orthonormal |
+| DFT or Haar with dropped components, final approximation complete | `LOSSY`: dropped components are synthesized as zero; the result reconstructs the retained components only |
+| Haar missing any final-approximation coefficient | `NOT_INVERTIBLE` (`MISSING_APPROXIMATION`): no samples |
+
+The analogy stops at the numbers. Synthesis reproduces samples, not what they mean: an `EXACT` reconstruction says the
+pattern still holds the window, not that any concept read from it is right, and a `LOSSY` one says nothing about which
+dropped components mattered. Content above the Nyquist limit was folded before decomposition (fixture N7), so a
+round trip reproduces the aliased samples, never the host's pre-sampling source.
+
 ## 3. Architecture Contract
 
 ### 3.1 Diagram with owners
@@ -105,7 +122,8 @@ Neuron, cycle-local, pure and deterministic
   SpectralResonanceDynamics.compare(p1, p2)             -> SpectralComparison | Incompatible     (#125)
   NextConceptPredictor.predict(evidence, hierarchy, model snapshot)
                                                          -> ConceptPrediction (candidates | Abstain(reason))  (#127)
-  WaveSynthesizer.synthesize(SpectralPattern)           -> SynthesisResult (EXACT | LOSSY | NOT_INVERTIBLE)  (#126)
+  WaveSynthesizer.synthesize(SpectralPattern[, SampledWave original])
+                                                         -> Reconstructed (EXACT | LOSSY) | NotInvertible(reason)  (#126)
         |
         v  optional, host composed (#128)
   existing CognitiveStage positions (no new kind) -> typed result -> later stages / ActionOutcome
@@ -197,10 +215,17 @@ sealed interface ConceptPrediction permits ConceptCandidates, ConceptAbstention 
 record ConceptCandidate(int conceptOrdinal, int depth, double score, double margin, List<Integer> supportingComponents) { }
 enum AbstentionReason { LOW_CONFIDENCE, LOW_MARGIN, INCOMPATIBLE_INPUT, UNKNOWN_CONCEPT, BUDGET_EXHAUSTED }
 
-// #126
-record SynthesisResult(SynthesisStatus status, double[] samples, double retainedEnergyFraction,
-                       OptionalDouble maxAbsoluteError, OptionalDouble relativeEnergyError) { }
+// #126 (implemented; ADR 0042 records the deviations from the first sketch)
+sealed interface SynthesisResult permits Reconstructed, NotInvertible {   // both nested in SynthesisResult
+    SynthesisStatus status(); double retainedEnergyFraction(); }
+final class Reconstructed {   // EXACT or LOSSY; Reconstructed.of(...) copies, the synthesizer hands over its array
+    SynthesisStatus status(); double[] samples(); double retainedEnergyFraction(); double reconstructedEnergy();
+    OptionalDouble maxAbsoluteError(); OptionalDouble rmsError(); OptionalDouble relativeEnergyError(); }
+record NotInvertible(NotInvertibleReason reason, double retainedEnergyFraction, String detail) { }
 enum SynthesisStatus { EXACT, LOSSY, NOT_INVERTIBLE }
+enum NotInvertibleReason { MISSING_APPROXIMATION }
+final class WaveSynthesizer { SynthesisResult synthesize(SpectralPattern pattern) { }
+                              SynthesisResult synthesize(SpectralPattern pattern, SampledWave original) { } }
 ```
 
 `FrequencyState` is not extended. A projection from a `SpectralPattern` to one `FrequencyState` (for example, the
@@ -460,7 +485,11 @@ evidence and the previous concept; the fixtures (Section 12.3) define the label 
 When integrated (Section 10) candidates become `Hypothesis` values scored downstream by the existing evaluation policy
 (ADR 0020); the predictor's own score may enter only as an explicitly configured resonance-like support component.
 
-## 9. `WaveSynthesizer` (proposed, owned by issue #126)
+## 9. `WaveSynthesizer` (implemented by issue #126)
+
+Implemented in `monada.neuron.spectral` as a stateless scalar reference, `WaveSynthesizer`
+([ADR 0042](../adr/0042-reference-wave-synthesizer.md)). The rules of this section are normative; the precise
+formulas, units and deviations from the sketch of Section 3.4 follow the list.
 
 - `EXACT` is decided structurally: an inverse DFT from a complete single-sided DFT pattern (all bins `0..floor(N/2)`
   present), with the conjugate-symmetric reconstruction for real input, or an inverse Haar from a complete multilevel
@@ -476,6 +505,33 @@ When integrated (Section 10) candidates become `Hypothesis` values scored downst
 - A pattern that is incomplete in a way the reference cannot invert (for example, a Haar pattern missing its final
   approximation) returns `NOT_INVERTIBLE` with no samples.
 - Synthesis reconstructs samples. It does not generate images, audio, text or concept semantics (#126 non-goal).
+
+Implementation (#126, ADR 0042):
+
+- **Result.** A sealed `SynthesisResult`: `Reconstructed` (status `EXACT | LOSSY`, samples, `retainedEnergyFraction`,
+  `reconstructedEnergy`, `maxAbsoluteError`, `rmsError`, `relativeEnergyError`; a final value class so the synthesizer
+  hands over its output without a second copy) or `NotInvertible(reason, retainedEnergyFraction, detail)`, mirroring
+  `DecompositionResult`. An `EXACT` result reports `retainedEnergyFraction` exactly `1` (a complete pattern's energy
+  is already validated within the Parseval allowance), and `rmsError <= maxAbsoluteError` always holds. Additions to the sketch: `rmsError` and
+  `reconstructedEnergy` (issue #126 asks for RMS and energy checks) and the typed reason
+  `NotInvertibleReason.MISSING_APPROXIMATION`, the only `NOT_INVERTIBLE` case in v1: a Haar pattern missing **any**
+  coefficient of its final approximation. Dropped detail coefficients and any dropped DFT bin, including DC, are
+  `LOSSY`, synthesized as zero.
+- **Inverse DFT.** `x̂_n = c_0 + Σ_{0<k<N/2} m_k · cos(2π·k·n/N + φ_k) + c_{N/2} · (−1)^n`, `c` the signed value of a
+  real bin (`−m` for phase `π`), the Nyquist term only for even `N`; the factor `2` of each conjugate pair is part of
+  the normalized magnitude (Section 6). Complex bins use `m · cos φ` and `m · sin φ` with the twiddle table and exact
+  residues of the decomposer (Section 5.2). Components ascending, samples ascending inside, `StrictMath`. O(N·k) ≤
+  O(N²) time, O(N) memory.
+- **Inverse Haar.** `x_{2m} = (a_m + d_m) / √2`, `x_{2m+1} = (a_m − d_m) / √2`, levels `L..1`, in place. O(N).
+- **Fidelity units.** `retainedEnergyFraction` is dimensionless, clamped to `[0, 1]` against numerical noise.
+  `reconstructedEnergy = Σ x̂_n²` is in squared sample units. With the original: `maxAbsoluteError = max |x̂_n − x_n|`
+  and `rmsError = √(Σ (x̂_n − x_n)² / N)` in sample units, `relativeEnergyError = |Σ x̂_n² − Σ x_n²| / Σ x_n²`
+  dimensionless (`0` for silence). Sums use the power-of-two scaling of Section 6, so every value is finite for every
+  valid pattern.
+- **Original samples.** Supplied as the `SampledWave` that was decomposed. A wave whose sample count, sample rate,
+  unit or provenance differs from the pattern, or whose energy differs from `sourceEnergy` beyond the Parseval
+  tolerance, is a caller bug (`IllegalArgumentException`), never a silent comparison with other samples. Silence
+  must match exactly: all-zero samples only for a pattern of source energy `0`, and the reverse.
 
 ## 10. Cognitive-Stage Wiring and Feedback
 
@@ -752,6 +808,7 @@ issue is updated to cite this table before it starts. #124 and #125 may proceed 
 - Epic #120 and child issues #122 to #130.
 - [ADR 0034](../adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md): NCM is hierarchy and prediction, not the prism.
 - [ADR 0041](../adr/0041-spectral-resonance-dynamics.md): spectral resonance dynamics (#125).
+- [ADR 0042](../adr/0042-reference-wave-synthesizer.md): reference wave synthesizer (#126).
 - [ADR 0001](../adr/0001-cognition-memory-boundary.md): cognition and memory boundary.
 - [ADR 0005](../adr/0005-signals-without-identifiers.md): signals without identifiers.
 - [ADR 0006](../adr/0006-deterministic-scalar-resonance-metric.md): deterministic scalar resonance metric.
