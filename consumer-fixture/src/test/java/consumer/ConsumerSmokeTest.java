@@ -6,6 +6,8 @@ import monada.neuron.routing.RoutingDecision;
 import monada.neuron.resonance.BatchResonanceEvaluator;
 import monada.neuron.routing.features.FeatureDimension;
 import monada.neuron.routing.features.FeatureReadinessAssessment;
+import monada.neuron.routing.receipt.AdviceReceipt;
+import monada.neuron.routing.receipt.DecodeResult;
 import monada.neuron.routing.review.DecisionReview;
 import monada.neuron.routing.review.ReviewNotice;
 import org.junit.jupiter.api.Test;
@@ -67,6 +69,15 @@ class ConsumerSmokeTest {
 
         assertEquals("route-a", review.route().routeId());
         assertTrue(review.notices().contains(ReviewNotice.RECHECK_BEFORE_EXECUTION), review.notices().toString());
+    }
+
+    // covers: AC-10
+    @Test
+    void adviceReceiptsAreAvailableThroughThePublishedArtifact() {
+        var decoded = assertInstanceOf(DecodeResult.Decoded.class, ConsumerSmoke.receiptRoundTrip());
+
+        assertEquals(AdviceReceipt.of(ConsumerSmoke.routeOneStage()), decoded.receipt());
+        assertInstanceOf(RoutingDecision.Selected.class, decoded.receipt().decision());
     }
 
     @Test
