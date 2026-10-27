@@ -111,8 +111,8 @@ bin. Patterns come from `DftWaveDecomposer`, complete and untruncated.
 | JVM flags | `--add-modules=jdk.incubator.vector` (evaluation module default), G1, default heap (3,832 MB max) |
 | OS / architecture | Linux 7.2 (Fedora 44), x86_64 |
 | CPU | AMD Ryzen 7 7730U with Radeon Graphics, 16 available processors (the evaluation is single-threaded) |
-| Neuron commit | the noise-seed fix on top of `40ad504` (see *Correction* below), after the pre-registration commit `054f804` |
-| Run | about 15 s wall clock for the full protocol; a rerun gave bit-identical numbers |
+| Neuron commit | `9e20e6a` (clean tree; the noise-seed correction `ca465cf` and the review fixes, after the pre-registration commit `054f804`) |
+| Run | about 15 s wall clock for the full protocol; two runs on `9e20e6a` gave bit-identical reports (only the timestamp and heap size differ) |
 
 ## Checks
 
@@ -121,7 +121,7 @@ All five semantic checks pass, so the verdict below can be trusted:
 | Check | Observed |
 | --- | --- |
 | `fixtures.p10-p12-n6` | P10 aggregate and coherence 1; P11 interference −1 and aggregate 0; P12 interference `6.1e-17`, aggregate 0.5 and coherence 1; N6 `SAMPLE_RATE` and `BASIS`; tolerance `1e-12` |
-| `splits.disjoint` | 7 splits with distinct seeds; 14,336 windows at 20 dB, none shared across splits |
+| `splits.disjoint` | 7 splits with distinct seeds; 14,336 clean windows (SHA-256 of the pre-noise samples, so equal content is caught whatever the noise), none shared across splits |
 | `leakage.counterfactual` | repeat 1 re-scored with permuted labels: scores bit-identical, AUC changed (not vacuous) |
 | `determinism` | repeat 1 bootstrap re-run with the same seed is bit-identical |
 | `leakage.test-labels` | 18 guarded label sets, 0 reads before the scorer opened them |
@@ -132,11 +132,13 @@ All five semantic checks pass, so the verdict below can be trusted:
 > combined the SNR's bit pattern with an XOR, but `java.util.Random` keeps only the low 48 seed bits, and the bit
 > patterns of 20, 10 and 0 dB differ only above them. Every SNR level therefore reused one noise realization, scaled,
 > contrary to the protocol above ("only the noise stream differs"). The generator now mixes the bits with the
-> SplitMix64 finalizer (`ConceptFixtureGenerator.noiseSeed`), so each level has its own stream, as registered; a
+> SplitMix64 finalizer (`SeedDerivation.mixed`), so each level has its own stream, as registered; a
 > test checks that the three levels' noise is uncorrelated. The version stays `ncm-concept-fixture-v1` because the
 > registered definition did not change: the implementation now matches it. Every number below is from the corrected
 > rerun on the registered seeds. The verdict did not change; gate-arm AUCs moved by at most 0.012 and the lower
-> bound of the difference by at most 0.022.
+> bound of the difference by at most 0.022. The later review fixes (`9e20e6a`: clean-window disjointness, one seed
+> helper that keeps the registered derivations bit for bit, cached patterns in the counterfactual check) changed no
+> score.
 
 ### Gate arms (pooled over 20, 10 and 0 dB; 95% paired-bootstrap intervals)
 
@@ -174,8 +176,10 @@ runner to `build/reports/benchmarks/spectral-resonance-h2.{md,json}`.
   The aggregate sits near 0.5 for both, and the phase-randomized control is indistinguishable from it. This is the
   intended semantics of section 7.3 (a phase-sensitive similarity), not a defect: the aggregate measures whether two
   windows add constructively, and windows with unrelated phases do not.
-- **Frequency-shifted control.** Moving the second pattern by 32 bins leaves the aggregate near 0.5 too, as
-  expected when nothing in phase is shared.
+- **Frequency-shifted control.** Moving the second pattern by 32 bins leaves the aggregate near 0.5 too. The
+  registered shift does not clear every band: a HIGH dominant tone (64–80 Hz) lands at 96–112 Hz, on the chord tones
+  of HIGH_CHORD windows (96–120 Hz), so those pairs still share bands. Their phases are independent, so those shared
+  bands add no expected interference.
 - **What does carry concept information.** The scalar control (0.70–0.75) uses the dominant bin's frequency ratio.
   The phase-blind `magnitude` cosine reaches 0.80–0.81 at 20 dB but falls under the scalar control at 0 dB, where
   noise spreads energy over every bin. Coherence is weakly informative (0.53–0.63 per SNR level). These are observations on one
