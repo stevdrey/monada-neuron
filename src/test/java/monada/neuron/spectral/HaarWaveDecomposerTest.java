@@ -225,7 +225,8 @@ class HaarWaveDecomposerTest {
                 assertEquals(provenance, pattern.provenance());
                 assertEquals(pattern.frame().componentCapacity(), pattern.componentCount());
 
-                double[] restored = inverseHaar(pattern);
+                double[] restored = assertInstanceOf(SynthesisResult.Reconstructed.class,
+                        new WaveSynthesizer().synthesize(pattern)).samples();
                 double tolerance = 1e-9 * Math.max(1.0, SpectralArithmetic.peakMagnitude(wave.samples()));
                 for (int i = 0; i < n; i++) {
                     assertEquals(wave.sample(i), restored[i], tolerance, "sample " + i + " of N=" + n);
@@ -392,29 +393,6 @@ class HaarWaveDecomposerTest {
             hash = 31 * hash + Double.doubleToRawLongBits(pattern.phase(i));
         }
         return hash;
-    }
-
-    /** Test-only inverse of contract section 5.2 for complete patterns; the reference synthesizer is #126. */
-    private static double[] inverseHaar(SpectralPattern pattern) {
-        int n = pattern.sampleCount();
-        int depth = pattern.scale().levels();
-        var current = new double[n];
-        int length = n >> depth;
-        for (int m = 0; m < length; m++) {
-            current[m] = coefficient(pattern, 0, m);
-        }
-        for (int level = depth; level >= 1; level--) {
-            var next = new double[n];
-            for (int m = 0; m < length; m++) {
-                double a = current[m];
-                double d = coefficient(pattern, level, m);
-                next[2 * m] = (a + d) / SQRT_2;
-                next[2 * m + 1] = (a - d) / SQRT_2;
-            }
-            current = next;
-            length *= 2;
-        }
-        return current;
     }
 
     private static double coefficient(SpectralPattern pattern, int level, int index) {

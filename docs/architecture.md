@@ -575,7 +575,11 @@ an O(n + m) band merge and returns a typed `ComparisonResult` (issue #125,
 [ADR 0041](adr/0041-spectral-resonance-dynamics.md)). Gate G2 is **no-go**: on the pre-registered concept fixture the
 spectral aggregate does not beat the scalar control
 ([spectral-resonance-h2.md](benchmarks/spectral-resonance-h2.md)), so resonance is a diagnostic only and #127 proceeds
-without resonance features. Every other name below is a proposal owned by issues #126 to #130.
+without resonance features. The scalar reference `WaveSynthesizer` inverts complete DFT and Haar patterns (`EXACT`),
+synthesizes truncated ones with dropped components as zero (`LOSSY`) and refuses a Haar pattern without its final
+approximation (`NOT_INVERTIBLE`), with retained-energy and, when the original window is supplied, error diagnostics
+(issue #126, [ADR 0042](adr/0042-reference-wave-synthesizer.md); gate G1s go for both paths). Every other name below
+is a proposal owned by issues #127 to #130.
 
 ```text
 Host / modality encoder -> SampledWave (meaning, rate, unit, provenance: host owned)

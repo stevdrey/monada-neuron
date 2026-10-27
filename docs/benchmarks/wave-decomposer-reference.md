@@ -1,4 +1,4 @@
-# Reference Wave Decomposer Baselines (Issues #123 and #124)
+# Reference Wave Decomposer and Synthesizer Baselines (Issues #123, #124 and #126)
 
 ## Question
 
@@ -106,6 +106,51 @@ Environment as in the table above; Neuron commit `d3edc8a+dirty` (the #124 worki
   `StrictMath` argument-reduction allocation.
 - The two strategies answer different questions (global frequency bins vs scale and position), so the ratio is a
   resource comparison only, not a reason to prefer one; choosing one remains a host decision.
+
+## Reference synthesis (issue #126)
+
+### Question
+
+What does one inverse by the scalar reference `WaveSynthesizer` cost next to the decomposition that produced its
+pattern, at the same fixed `N` ([ADR 0042](../adr/0042-reference-wave-synthesizer.md))? Contract section 9 expects
+O(N²) for the inverse DFT and O(N) for the inverse Haar.
+
+### Workload and command
+
+- The same seeded window as above, decomposed once in setup into a **complete** pattern (DFT, or Haar at full depth
+  `L = log2 N`), `N ∈ {8, 64, 256, 1024, 4096}`.
+- Measured operation: `WaveSynthesizer.synthesize(pattern)` without the original: inverse transform, reconstructed
+  energy and result construction (with its validation and sample copy). Nothing is cached between calls.
+- `WaveSynthesizerBenchmark` (same JMH settings), run in one session with both decomposer benchmarks:
+
+```bash
+./gradlew :monada-neuron-evaluation:jmh -PjmhArgs="-prof gc Wave(Synthesizer|Decomposer)Benchmark"
+```
+
+Environment as in the table above; Neuron commit `d374cc2+dirty` (the #126 working tree before its first commit).
+
+### Results
+
+| N | DFT synthesis (µs/op) | DFT synthesis (B/op) | DFT decomposition (µs/op) | DFT decomposition (B/op) | Haar synthesis (µs/op) | Haar synthesis (B/op) | Haar decomposition (µs/op) | Haar decomposition (B/op) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | 0.35 ± 0.12 | 1,072 | 0.39 ± 0.13 | 952 | 0.086 ± 0.003 | 320 | 0.12 ± 0.02 | 408 |
+| 64 | 4.3 ± 0.3 | 8,240 | 4.4 ± 1.0 | 6,104 | 0.48 ± 0.01 | 1,672 | 0.63 ± 0.09 | 1,976 |
+| 256 | 44 ± 1 | 32,816 | 43 ± 2 | 23,768 | 1.8 ± 0.2 | 6,288 | 2.9 ± 0.1 | 7,352 |
+| 1,024 | 540 ± 6 | 131,123 | 449 ± 14 | 94,427 | 8.4 ± 0.5 | 24,728 | 12.8 ± 1.6 | 28,856 |
+| 4,096 | 10,657 ± 1,053 | 524,404 | 10,765 ± 990 | 377,116 | 35 ± 1 | 98,464 | 58 ± 10 | 114,872 |
+
+### Reading the results
+
+- **DFT.** Synthesis costs the same as decomposition within about 20 % at every `N` (the same `N · k ≈ N²/2` multiply-adds over the
+  same twiddle table), so a round trip is about twice one decomposition. Allocation is O(N), about 128 bytes per
+  sample: the output, the twiddle tables and the result's copy of the samples are about 32 bytes per sample, and the
+  rest is the `StrictMath` argument-reduction buffer of the `2N` table entries and the `2k` per-bin phase terms.
+- **Haar.** O(N): ×4.1 to ×4.8 per ×4 in `N`, about 8.5 ns per sample at `N = 4096`, below the decomposition, which
+  also recomputes the pattern's validation and Parseval energy. Allocation is exactly 24 bytes per sample: the dense
+  coefficient array, the output and the result's copy, plus a constant.
+- The result record copies the samples once (records cannot take ownership through the canonical constructor); it is
+  one O(N) array, kept for immutability.
+- The DFT decomposition rows reproduce the earlier baselines within their error bars.
 
 ## Limitations
 

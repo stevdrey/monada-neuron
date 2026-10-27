@@ -1,6 +1,6 @@
 /**
  * Experimental, opt-in spectral value types of the NCM wave cognition contract ({@code ncm-wave-cognition/1},
- * {@code docs/specs/ncm-wave-cognition-v1.md}, ADR 0034 to ADR 0036 and ADR 0040).
+ * {@code docs/specs/ncm-wave-cognition-v1.md}, ADR 0034 to ADR 0036, ADR 0040 and ADR 0042).
  *
  * <p>A {@link monada.neuron.spectral.SpectralPattern} is bounded, immutable, cycle-local data: the components a
  * decomposer found in one window of host samples, with the basis, scale, sampling metadata and provenance needed to
@@ -22,6 +22,13 @@
  * {@link monada.neuron.spectral.SpectralPattern#levelEnergy(int) scale-local energy}. Fourier and wavelet patterns
  * never share a frame, so they cannot be compared as if their components were the same bins. No public type here
  * accepts a {@code Signal}: samples are never derived from one.
+ *
+ * <p><b>Synthesis.</b> The scalar reference {@link monada.neuron.spectral.WaveSynthesizer} inverts a pattern into
+ * samples (ADR 0042): {@link monada.neuron.spectral.SynthesisStatus#EXACT} only for a complete pattern,
+ * {@link monada.neuron.spectral.SynthesisStatus#LOSSY} when components were dropped, and a typed
+ * {@link monada.neuron.spectral.SynthesisResult.NotInvertible} for a Haar pattern without its final approximation.
+ * It reports the retained-energy fraction and, when the original wave is supplied, the reconstruction errors. It
+ * reconstructs samples only, never meaning.
  *
  * <p>Construction errors, including a malformed {@code SampledWave}, are caller bugs and throw
  * {@link java.lang.IllegalArgumentException} or {@link java.lang.NullPointerException}; a valid wave outside a

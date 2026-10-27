@@ -358,7 +358,11 @@ reference `DftWaveDecomposer` over explicit host-encoded `SampledWave` windows (
 issue #125, [ADR 0041](docs/adr/0041-spectral-resonance-dynamics.md)). Its pre-registered H2 evaluation is a
 **no-go** for gate G2: on the seeded concept fixture the phase-sensitive aggregate is at chance and below the scalar
 control, so spectral resonance stays diagnostics-only
-([spectral-resonance-h2.md](docs/benchmarks/spectral-resonance-h2.md)). The other stages are not implemented.
+([spectral-resonance-h2.md](docs/benchmarks/spectral-resonance-h2.md)). The scalar reference `WaveSynthesizer` inverts
+complete DFT and Haar patterns `EXACT`ly within the contract tolerance, reports truncated ones as `LOSSY` with
+retained-energy and error diagnostics, and refuses a Haar pattern without its approximation as `NOT_INVERTIBLE`
+(gate G1s go for both paths; issue #126, [ADR 0042](docs/adr/0042-reference-wave-synthesizer.md)). The other stages
+are not implemented.
 
 ## Design Principles
 

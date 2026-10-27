@@ -64,4 +64,13 @@ final class SpectralArithmetic {
         }
         return unscaleEnergy(sum, exponent);
     }
+
+    /**
+     * Returns the largest difference allowed between two energies of magnitude {@code scale}: the larger of
+     * {@link SpectralPattern#ENERGY_TOLERANCE} relative to {@code scale} and {@code roundingUlps} ULPs at
+     * {@code scale}. The ULP term only dominates for (near-)subnormal energies, whose relative precision is reduced.
+     */
+    static double energyAllowance(double scale, double roundingUlps) {
+        return Math.max(SpectralPattern.ENERGY_TOLERANCE * scale, roundingUlps * Math.ulp(scale));
+    }
 }
