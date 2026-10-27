@@ -337,6 +337,11 @@ locator derived on access. `SampleUnit` and `WaveProvenance` are delivered by #1
 
 ## 7. `SpectralResonanceDynamics` (implemented by issue #125)
 
+Gate G2 was evaluated by #125 under the protocol pre-registered in
+[spectral-resonance-h2.md](../benchmarks/spectral-resonance-h2.md): **no-go**. The aggregate is at chance on the
+concept fixture, whose phases are uniform per window, and below the scalar control in every repeat, so spectral
+resonance stays a diagnostic only (Section 15).
+
 ### 7.1 Separation from the scalar metric
 
 `SpectralResonanceDynamics` is a new, explicitly named mechanism. `ResonanceMetric` and `ScalarResonanceMetric`

@@ -119,7 +119,7 @@ public final class SpectralResonanceH2Runner {
                     .append(repeat.pairsPerLevel()).append(" pairs per level, ").append(repeat.positives())
                     .append(" same-concept)\n\n");
             sb.append("| Arm | Gate | Pooled AUC | 95% interval |");
-            protocol.snrLevels().forEach(snr -> sb.append(' ').append(format(snr)).append(" dB |"));
+            protocol.snrLevels().forEach(snr -> sb.append(' ').append(decibels(snr)).append(" dB |"));
             sb.append("\n| :--- | :--- | ---: | :--- |");
             protocol.snrLevels().forEach(snr -> sb.append(" ---: |"));
             sb.append('\n');
@@ -180,6 +180,11 @@ public final class SpectralResonanceH2Runner {
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to write H2 reports", e);
         }
+    }
+
+    /** Renders an SNR level without trailing zeros, such as {@code 20} or {@code 2.5}. */
+    private static String decibels(double snr) {
+        return snr == StrictMath.rint(snr) ? Long.toString((long) snr) : Double.toString(snr);
     }
 
     private static String value(String[] args, int index, String option) {

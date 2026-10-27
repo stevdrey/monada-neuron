@@ -353,7 +353,12 @@ later issues proceed. Its bounded, immutable spectral value types (`monada.neuro
 reference `DftWaveDecomposer` over explicit host-encoded `SampledWave` windows (issue #123,
 [ADR 0036](docs/adr/0036-deterministic-dft-reference-decomposer.md)) and the opt-in O(N) Haar multiresolution strategy
 `HaarWaveDecomposer`, which reports scale and position, never hertz (issue #124,
-[ADR 0040](docs/adr/0040-haar-multiresolution-decomposer.md)); the other stages are not.
+[ADR 0040](docs/adr/0040-haar-multiresolution-decomposer.md)), and the separate `SpectralResonanceDynamics`
+(per-band alignment, signed interference, a `[0, 1]` aggregate and phase coherence between two compatible patterns;
+issue #125, [ADR 0041](docs/adr/0041-spectral-resonance-dynamics.md)). Its pre-registered H2 evaluation is a
+**no-go** for gate G2: on the seeded concept fixture the phase-sensitive aggregate is at chance and below the scalar
+control, so spectral resonance stays diagnostics-only
+([spectral-resonance-h2.md](docs/benchmarks/spectral-resonance-h2.md)). The other stages are not implemented.
 
 ## Design Principles
 
