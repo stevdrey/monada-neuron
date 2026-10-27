@@ -299,10 +299,50 @@ class HaarWaveDecomposerTest {
     }
 
     @Test
+    void multiLevelWindowsAtTheExactEnergyBoundsAreAcceptedAndJustOutsideRejected() {
+        var decomposer = new HaarWaveDecomposer(2);
+        // [x, x, x, -x] has energy 4x²; at L = 2 it decomposes to approximation x, level 2 detail x, level 1 [0, √2·x].
+        double lowest = Math.scalb(1.0, -512);  // 4x² = 2^-1022 = Double.MIN_NORMAL exactly
+        var small = decompose(decomposer, boundaryWave(lowest));
+
+        assertEquals(Double.MIN_NORMAL, small.sourceEnergy());
+        assertEquals(small.sourceEnergy(), small.retainedEnergy(),
+                SpectralPattern.ENERGY_TOLERANCE * Double.MIN_NORMAL);
+        assertEquals(lowest, coefficient(small, 0, 0), Math.ulp(lowest) * 2);
+        assertEquals(lowest, coefficient(small, 2, 0), Math.ulp(lowest) * 2);
+        assertRejected(decomposer, boundaryWave(Math.nextDown(lowest)),
+                DecompositionRejectionReason.ENERGY_OUT_OF_RANGE);
+
+        double highest = StrictMath.sqrt(SpectralPattern.MAX_SOURCE_ENERGY / 4.0);
+        while (SpectralArithmetic.sumOfSquares(boundaryWave(highest).samples(), highest)
+                > SpectralPattern.MAX_SOURCE_ENERGY) {
+            highest = Math.nextDown(highest);
+        }
+        var large = decompose(decomposer, boundaryWave(highest));
+
+        assertTrue(Double.isFinite(large.retainedEnergy()));
+        assertEquals(large.sourceEnergy(), large.retainedEnergy(),
+                SpectralPattern.ENERGY_TOLERANCE * large.sourceEnergy());
+        assertEquals(highest, coefficient(large, 0, 0), Math.ulp(highest) * 2);
+        double above = highest;
+        while (SpectralArithmetic.sumOfSquares(boundaryWave(above).samples(), above)
+                <= SpectralPattern.MAX_SOURCE_ENERGY) {
+            above = Math.nextUp(above);
+        }
+        assertRejected(decomposer, boundaryWave(above), DecompositionRejectionReason.ENERGY_OUT_OF_RANGE);
+    }
+
+    private static SampledWave boundaryWave(double x) {
+        return new SampledWave(new double[] {x, x, x, -x}, 4.0, SampleUnit.HERTZ, PROVENANCE);
+    }
+
+    @Test
     void extremeMagnitudesNeverEscapeAsExceptions() {
         long state = 0x5EED_0124L;
         for (int trial = 0; trial < 20_000; trial++) {
-            int n = 2 << (trial % 3);
+            int n = 2 << (trial % 5 == 4 ? 5 : trial % 5);  // 2, 4, 8, 16, 64
+            int maxDepth = Integer.numberOfTrailingZeros(n);
+            int depth = 1 + (trial / 5) % maxDepth;  // every depth up to full, so multi-level passes are covered
             var samples = new double[n];
             for (int i = 0; i < n; i++) {
                 state = state * 6364136223846793005L + 1442695040888963407L;
@@ -311,7 +351,7 @@ class HaarWaveDecomposerTest {
                 samples[i] = Math.scalb(unit, exponent);
             }
             var wave = new SampledWave(samples, n, SampleUnit.HERTZ, PROVENANCE);
-            var result = new HaarWaveDecomposer(1).decompose(wave);
+            var result = new HaarWaveDecomposer(depth).decompose(wave);
             if (result instanceof DecompositionRejected rejected) {
                 assertEquals(DecompositionRejectionReason.ENERGY_OUT_OF_RANGE, rejected.reason());
             }
@@ -386,13 +426,19 @@ class HaarWaveDecomposerTest {
         return pattern.locator(slot(pattern, level, index));
     }
 
+    /**
+     * Slot of a key in a complete Haar pattern from the canonical layout: level 0 at {@code 0}, level {@code j >= 1} at
+     * {@code N/2^L + N - N/2^(j-1)}. The key stored there is asserted, so the layout is checked, not assumed.
+     */
     private static int slot(SpectralPattern pattern, int level, int index) {
-        for (int i = 0; i < pattern.componentCount(); i++) {
-            if (pattern.level(i) == level && pattern.index(i) == index) {
-                return i;
-            }
+        int n = pattern.sampleCount();
+        int levelStart = level == 0 ? 0 : (n >> pattern.scale().levels()) + n - (n >> (level - 1));
+        int i = levelStart + index;
+        if (pattern.level(i) != level || pattern.index(i) != index) {
+            throw new AssertionError("slot " + i + " holds (" + pattern.level(i) + ", " + pattern.index(i)
+                    + "), expected (" + level + ", " + index + ")");
         }
-        throw new AssertionError("no component (" + level + ", " + index + ")");
+        return i;
     }
 
     /** Sign of the detail coefficient whose support holds an impulse: + in the first half of the support, − else. */

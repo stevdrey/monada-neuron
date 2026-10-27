@@ -27,7 +27,9 @@ levels `1..L` for the details, sample-position locators and the real-valued phas
 
 - **`HaarWaveDecomposer(int levels)`** is a stateless, thread-safe `WaveDecomposer` with a **fixed depth**
   `L in 1..12`; an out-of-range depth is a caller bug (`IllegalArgumentException`). Every pattern it produces carries
-  the same `SpectralScale(L)`, so two patterns of equal sample count from one decomposer share a frame.
+  the same `SpectralScale(L)`. Two of its patterns share a frame only when their windows also have the same sample
+  count, sample rate and unit, which come from the wave, not from the decomposer; #125 treats any frame mismatch,
+  including a different rate, as `Incompatible` (fixture N6).
 - **Length policy: reject, never pad, never clamp.** A wave whose `N` is not a power of two, or with `2^L > N`
   (including `N = 1`), is `DecompositionRejected(SAMPLE_COUNT_UNSUPPORTED)`, a new constant of
   `DecompositionRejectionReason` (fixture N4: `N = 6`). Window lengths are chosen by the host encoder.
