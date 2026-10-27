@@ -46,17 +46,17 @@ class SpectralResonanceH2EvaluationTest {
 
     @Test
     void runnerWritesTheReportAndMapsFailuresToExitCodes(@TempDir Path directory) throws Exception {
-        assertEquals(0, SpectralResonanceH2Runner.report(() -> SpectralResonanceH2Runner.run(SMALL, true),
-                directory));
+        var runner = new SpectralResonanceH2Runner();
+        assertEquals(0, runner.report(() -> runner.run(SMALL, true), directory));
         String markdown = Files.readString(directory.resolve("spectral-resonance-h2.md"));
         assertTrue(markdown.contains("## H2 Results"));
         assertTrue(markdown.indexOf("## H2 Results") < markdown.indexOf("## Run Configuration"));
         assertTrue(Files.readString(directory.resolve("spectral-resonance-h2.json")).contains("\"h2\": {"));
 
-        assertEquals(SpectralResonanceH2Runner.HARNESS_FAILURE, SpectralResonanceH2Runner.report(() -> {
+        assertEquals(SpectralResonanceH2Runner.HARNESS_FAILURE, runner.report(() -> {
             throw new IllegalStateException("boom");
         }, directory));
         assertEquals(SpectralResonanceH2Runner.INVALID_ARGUMENTS,
-                SpectralResonanceH2Runner.execute(new String[] {"--unknown"}));
+                runner.execute(new String[] {"--unknown"}));
     }
 }

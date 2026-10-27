@@ -23,7 +23,8 @@ import java.util.Random;
  *   <li>Additive Gaussian noise of variance {@code P / 10^(SNR/10)}, {@code P} the clean window's mean square, from
  *       Box-Muller over {@link Random#nextDouble()} with {@code StrictMath}. {@code java.util.Random} is specified
  *       by Java SE, so a seed reproduces on every JDK ({@code nextGaussian} changed in JDK 17 and is not used). The
- *       tone stream is independent of the SNR, so one seed gives the same clean windows at every SNR.</li>
+ *       tone stream is independent of the SNR, so one seed gives the same clean windows at every SNR; the noise stream
+ *       is seeded by {@link #noiseSeed}, so it differs across SNR levels.</li>
  *   <li>Sequences start at a uniform leaf and follow the fixed first-order {@link #TRANSITIONS} table.</li>
  * </ul>
  *
@@ -112,7 +113,7 @@ public final class ConceptFixtureGenerator {
                     + sequences + ", " + windowsPerSequence);
         }
         var tones = new Random(seed);
-        var noise = new Random(seed ^ NOISE_SALT ^ Double.doubleToLongBits(snrDb));
+        var noise = new Random(noiseSeed(seed, snrDb));
         double noiseScale = StrictMath.pow(10.0, -snrDb / 10.0);
         int total = Math.multiplyExact(sequences, windowsPerSequence);
         var windows = new ArrayList<FixtureWindow>(total);
@@ -135,6 +136,18 @@ public final class ConceptFixtureGenerator {
             }
         }
         return new ConceptSplit(role, seed, snrDb, windows, new SplitLabels(labels, role == SplitRole.TEST));
+    }
+
+    /**
+     * Derives the noise seed of one split and SNR level. {@code java.util.Random} keeps only the low 48 seed bits, and
+     * the bit patterns of whole-decibel levels such as 20, 10 and 0 differ only above them, so the SNR bits are mixed
+     * with the SplitMix64 finalizer before seeding; otherwise every level would share one noise stream.
+     */
+    long noiseSeed(long seed, double snrDb) {
+        long z = seed ^ NOISE_SALT ^ Double.doubleToLongBits(snrDb);
+        z = (z ^ (z >>> 30)) * 0xBF58_476D_1CE4_E5B9L;
+        z = (z ^ (z >>> 27)) * 0x94D0_49BB_1331_11EBL;
+        return z ^ (z >>> 31);
     }
 
     private int nextLeaf(int current, double draw) {

@@ -38,19 +38,19 @@ public final class SpectralResonanceH2Runner {
 
     private static final String NAME = "spectral-resonance-h2";
 
-    private SpectralResonanceH2Runner() {
+    SpectralResonanceH2Runner() {
     }
 
-    /** CLI entrypoint; exits with {@link #execute}'s status when it is not 0. */
+    /** CLI entrypoint; exits with {@link #execute}'s status of a new runner when it is not 0. */
     public static void main(String[] args) {
-        int status = execute(args);
+        int status = new SpectralResonanceH2Runner().execute(args);
         if (status != 0) {
             System.exit(status);
         }
     }
 
     /** Parses the arguments, runs, prints and writes the report; returns the exit status. */
-    static int execute(String[] args) {
+    int execute(String[] args) {
         var quick = false;
         var outputDir = Path.of("build/reports/benchmarks");
         try {
@@ -77,7 +77,7 @@ public final class SpectralResonanceH2Runner {
      * Runs an evaluation, prints its report and writes it; returns 0 when every check passed, {@link #CHECK_FAILED}
      * when one failed and {@link #HARNESS_FAILURE} when running or writing threw.
      */
-    static int report(Supplier<SpectralResonanceH2Report> evaluation, Path outputDir) {
+    int report(Supplier<SpectralResonanceH2Report> evaluation, Path outputDir) {
         SpectralResonanceH2Report report;
         try {
             report = evaluation.get();
@@ -95,7 +95,7 @@ public final class SpectralResonanceH2Runner {
     }
 
     /** Runs the evaluation under {@code protocol} and assembles the report. */
-    static SpectralResonanceH2Report run(Protocol protocol, boolean quick) {
+    SpectralResonanceH2Report run(Protocol protocol, boolean quick) {
         var h2 = new SpectralResonanceH2Evaluation(protocol, quick);
         Outcome outcome = h2.run();
         var environment = new WaveRunEnvironment();
@@ -108,7 +108,7 @@ public final class SpectralResonanceH2Runner {
                 resultsJson(protocol, outcome), resultsMarkdown(protocol, outcome));
     }
 
-    static String resultsMarkdown(Protocol protocol, Outcome outcome) {
+    String resultsMarkdown(Protocol protocol, Outcome outcome) {
         var sb = new StringBuilder("## H2 Results\n\n");
         sb.append("G2 verdict: **").append(outcome.go() ? "GO" : "NO-GO").append("** (margin ")
                 .append(format(protocol.margin())).append("; every repeat's lower bound of AUC(aggregate) - "
@@ -141,7 +141,7 @@ public final class SpectralResonanceH2Runner {
         return sb.toString();
     }
 
-    static String resultsJson(Protocol protocol, Outcome outcome) {
+    String resultsJson(Protocol protocol, Outcome outcome) {
         var sb = new StringBuilder("{ \"margin\": ").append(protocol.margin())
                 .append(", \"go\": ").append(outcome.go()).append(", \"snrLevelsDb\": ")
                 .append(protocol.snrLevels()).append(", \"repeats\": [");
@@ -168,7 +168,7 @@ public final class SpectralResonanceH2Runner {
     }
 
     /** Writes {@code spectral-resonance-h2.json} and {@code .md} into {@code outputDir}. */
-    static void write(SpectralResonanceH2Report report, Path outputDir) {
+    void write(SpectralResonanceH2Report report, Path outputDir) {
         try {
             Files.createDirectories(outputDir);
             var json = outputDir.resolve(NAME + ".json");
@@ -183,11 +183,11 @@ public final class SpectralResonanceH2Runner {
     }
 
     /** Renders an SNR level without trailing zeros, such as {@code 20} or {@code 2.5}. */
-    private static String decibels(double snr) {
+    private String decibels(double snr) {
         return snr == StrictMath.rint(snr) ? Long.toString((long) snr) : Double.toString(snr);
     }
 
-    private static String value(String[] args, int index, String option) {
+    private String value(String[] args, int index, String option) {
         if (index >= args.length) {
             throw new IllegalArgumentException(option + " requires a value");
         }

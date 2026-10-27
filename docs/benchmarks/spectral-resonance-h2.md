@@ -111,7 +111,7 @@ bin. Patterns come from `DftWaveDecomposer`, complete and untruncated.
 | JVM flags | `--add-modules=jdk.incubator.vector` (evaluation module default), G1, default heap (3,832 MB max) |
 | OS / architecture | Linux 7.2 (Fedora 44), x86_64 |
 | CPU | AMD Ryzen 7 7730U with Radeon Graphics, 16 available processors (the evaluation is single-threaded) |
-| Neuron commit | `5c56e14` (clean tree; the harness commit, after the pre-registration commit `054f804`) |
+| Neuron commit | the noise-seed fix on top of `40ad504` (see *Correction* below), after the pre-registration commit `054f804` |
 | Run | about 15 s wall clock for the full protocol; a rerun gave bit-identical numbers |
 
 ## Checks
@@ -128,15 +128,25 @@ All five semantic checks pass, so the verdict below can be trusted:
 
 ## Results
 
+> **Correction.** The first results (commit `40ad504`) were produced with a generator defect: the noise seed
+> combined the SNR's bit pattern with an XOR, but `java.util.Random` keeps only the low 48 seed bits, and the bit
+> patterns of 20, 10 and 0 dB differ only above them. Every SNR level therefore reused one noise realization, scaled,
+> contrary to the protocol above ("only the noise stream differs"). The generator now mixes the bits with the
+> SplitMix64 finalizer (`ConceptFixtureGenerator.noiseSeed`), so each level has its own stream, as registered; a
+> test checks that the three levels' noise is uncorrelated. The version stays `ncm-concept-fixture-v1` because the
+> registered definition did not change: the implementation now matches it. Every number below is from the corrected
+> rerun on the registered seeds. The verdict did not change; gate-arm AUCs moved by at most 0.012 and the lower
+> bound of the difference by at most 0.022.
+
 ### Gate arms (pooled over 20, 10 and 0 dB; 95% paired-bootstrap intervals)
 
 | Repeat | Same-concept pairs | `aggregate` | `scalar` | `aggregate − scalar` | Lower bound > 0.10? |
 | ---: | ---: | --- | --- | --- | --- |
-| 1 | 264 / 1,024 | 0.514 [0.474, 0.558] | 0.701 [0.663, 0.739] | −0.187 [−0.241, −0.129] | no |
-| 2 | 249 / 1,024 | 0.506 [0.463, 0.548] | 0.719 [0.679, 0.756] | −0.213 [−0.270, −0.158] | no |
-| 3 | 248 / 1,024 | 0.494 [0.451, 0.537] | 0.732 [0.695, 0.768] | −0.239 [−0.294, −0.180] | no |
-| 4 | 247 / 1,024 | 0.502 [0.457, 0.544] | 0.707 [0.666, 0.746] | −0.205 [−0.263, −0.146] | no |
-| 5 | 270 / 1,024 | 0.541 [0.499, 0.580] | 0.749 [0.714, 0.782] | −0.208 [−0.257, −0.158] | no |
+| 1 | 264 / 1,024 | 0.502 [0.465, 0.540] | 0.713 [0.675, 0.749] | −0.211 [−0.263, −0.160] | no |
+| 2 | 249 / 1,024 | 0.508 [0.469, 0.546] | 0.720 [0.682, 0.756] | −0.212 [−0.264, −0.159] | no |
+| 3 | 248 / 1,024 | 0.495 [0.457, 0.535] | 0.733 [0.696, 0.769] | −0.238 [−0.289, −0.187] | no |
+| 4 | 247 / 1,024 | 0.492 [0.450, 0.531] | 0.702 [0.661, 0.740] | −0.210 [−0.265, −0.153] | no |
+| 5 | 270 / 1,024 | 0.542 [0.504, 0.580] | 0.747 [0.712, 0.781] | −0.205 [−0.253, −0.156] | no |
 
 **G2 verdict: NO-GO.** In every repeat the spectral aggregate is at chance and *below* the scalar control, with the
 whole interval of the difference below zero. H2 is refuted. Under contract Section 15, spectral resonance stays a
@@ -148,10 +158,10 @@ These arms were pre-registered as informational and do not change the verdict.
 
 | Arm | Pooled AUC, repeats 1–5 | Repeat 1 at 20 / 10 / 0 dB |
 | --- | --- | --- |
-| `coherence` | 0.571, 0.563, 0.578, 0.577, 0.580 | 0.596 / 0.590 / 0.559 |
-| `magnitude` (phase ignored) | 0.648, 0.641, 0.635, 0.644, 0.647 | 0.810 / 0.744 / 0.625 |
-| `aggregate.phase-randomized` | 0.499, 0.491, 0.514, 0.494, 0.514 | 0.454 / 0.531 / 0.510 |
-| `aggregate.frequency-shifted` | 0.526, 0.492, 0.503, 0.497, 0.512 | 0.545 / 0.532 / 0.512 |
+| `coherence` | 0.591, 0.578, 0.592, 0.583, 0.574 | 0.610 / 0.592 / 0.613 |
+| `magnitude` (phase ignored) | 0.650, 0.640, 0.635, 0.642, 0.646 | 0.810 / 0.741 / 0.646 |
+| `aggregate.phase-randomized` | 0.499, 0.487, 0.513, 0.483, 0.507 | 0.451 / 0.532 / 0.510 |
+| `aggregate.frequency-shifted` | 0.514, 0.485, 0.524, 0.507, 0.483 | 0.502 / 0.510 / 0.521 |
 
 The full per-repeat, per-SNR tables (including the per-SNR intervals of the gate difference) are written by the
 runner to `build/reports/benchmarks/spectral-resonance-h2.{md,json}`.
@@ -168,7 +178,7 @@ runner to `build/reports/benchmarks/spectral-resonance-h2.{md,json}`.
   expected when nothing in phase is shared.
 - **What does carry concept information.** The scalar control (0.70–0.75) uses the dominant bin's frequency ratio.
   The phase-blind `magnitude` cosine reaches 0.80–0.81 at 20 dB but falls under the scalar control at 0 dB, where
-  noise spreads energy over every bin. Coherence is weakly informative (0.54–0.62 per SNR level). These are observations on one
+  noise spreads energy over every bin. Coherence is weakly informative (0.53–0.63 per SNR level). These are observations on one
   fixture, not tested hypotheses. Making a phase-blind spectral similarity the system under test would need a new
   protocol version with its own pre-registered margin; this report does not do that.
 - **Not a claim about concepts.** Every number is a property of `ncm-concept-fixture-v1`. Correlation between two

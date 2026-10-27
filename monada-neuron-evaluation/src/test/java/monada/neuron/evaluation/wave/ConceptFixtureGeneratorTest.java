@@ -65,6 +65,40 @@ class ConceptFixtureGeneratorTest {
     }
 
     @Test
+    void noiseStreamsDifferAcrossTheRegisteredSnrLevels() {
+        double[] clean = generator.generate(SplitRole.TEST, SEED, 300.0, 1, 1).windows().getFirst().wave().samples();
+        double[] levels = {20.0, 10.0, 0.0};
+        var noises = new double[levels.length][];
+        for (int l = 0; l < levels.length; l++) {
+            double[] noisy = generator.generate(SplitRole.TEST, SEED, levels[l], 1, 1).windows().getFirst().wave()
+                    .samples();
+            noises[l] = new double[clean.length];
+            for (int n = 0; n < clean.length; n++) {
+                noises[l][n] = noisy[n] - clean[n];
+            }
+        }
+        // A shared stream would make the noise of one level a scaled copy of another (correlation 1).
+        for (int a = 0; a < levels.length; a++) {
+            for (int b = a + 1; b < levels.length; b++) {
+                assertTrue(StrictMath.abs(correlation(noises[a], noises[b])) < 0.5,
+                        levels[a] + " dB and " + levels[b] + " dB share a noise stream");
+            }
+        }
+    }
+
+    private double correlation(double[] x, double[] y) {
+        double xy = 0.0;
+        double xx = 0.0;
+        double yy = 0.0;
+        for (int n = 0; n < x.length; n++) {
+            xy += x[n] * y[n];
+            xx += x[n] * x[n];
+            yy += y[n] * y[n];
+        }
+        return xy / StrictMath.sqrt(xx * yy);
+    }
+
+    @Test
     void dominantToneLiesInTheConceptBand() {
         ConceptSplit split = generator.generate(SplitRole.TRAINING, SEED, 300.0, 4, 16);
         var decomposer = new DftWaveDecomposer();
