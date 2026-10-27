@@ -13,7 +13,11 @@ enum H2Arm {
     MAGNITUDE("magnitude", false),
     /** Aggregate after replacing every complex-bin phase of both patterns with a seeded uniform phase. */
     AGGREGATE_PHASE_RANDOMIZED("aggregate.phase-randomized", false),
-    /** Aggregate with the second pattern's complex bins moved up by {@code 32} bins. */
+    /**
+     * Aggregate with the second pattern's complex bins moved up by {@code 32} bins. The shift does not clear every
+     * band: a HIGH dominant tone (64–80 Hz) lands at 96–112 Hz, on the chord tones of HIGH_CHORD windows (96–120 Hz),
+     * so those pairs still share bands, with independent phases.
+     */
     AGGREGATE_FREQUENCY_SHIFTED("aggregate.frequency-shifted", false);
 
     private final String label;

@@ -1,6 +1,7 @@
 package monada.neuron.evaluation.wave;
 
 import monada.neuron.evaluation.metrics.EvaluationCheck;
+import monada.neuron.evaluation.wave.ConceptFixtureGenerator.ConceptSplit;
 import monada.neuron.evaluation.wave.SpectralResonanceH2Evaluation.Outcome;
 import monada.neuron.evaluation.wave.SpectralResonanceH2Evaluation.Protocol;
 import org.junit.jupiter.api.Test;
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -45,6 +47,21 @@ class SpectralResonanceH2EvaluationTest {
     }
 
     @Test
+    void disjointnessCatchesSharedCleanWindowsUnderDifferentNoise() {
+        var generator = new ConceptFixtureGenerator();
+        // Same tone seed, different SNR: identical clean windows, different noisy samples.
+        ConceptSplit first = generator.generate(SplitRole.TRAINING, 0x7E57_0001L, 20.0, 2, 4);
+        ConceptSplit second = generator.generate(SplitRole.TEST, 0x7E57_0001L, 0.0, 2, 4);
+        ConceptSplit other = generator.generate(SplitRole.TEST, 0x7E57_0002L, 20.0, 2, 4);
+        var evaluation = new SpectralResonanceH2Evaluation(SMALL, true);
+
+        assertFalse(Arrays.equals(first.windows().getFirst().wave().samples(),
+                second.windows().getFirst().wave().samples()));
+        assertFalse(evaluation.disjointnessCheck(List.of(1L, 2L), List.of(first, second)).passed());
+        assertTrue(evaluation.disjointnessCheck(List.of(1L, 2L), List.of(first, other)).passed());
+    }
+
+    @Test
     void runnerWritesTheReportAndMapsFailuresToExitCodes(@TempDir Path directory) throws Exception {
         var runner = new SpectralResonanceH2Runner();
         assertEquals(0, runner.report(() -> runner.run(SMALL, true), directory));
@@ -55,6 +72,9 @@ class SpectralResonanceH2EvaluationTest {
 
         assertEquals(SpectralResonanceH2Runner.HARNESS_FAILURE, runner.report(() -> {
             throw new IllegalStateException("boom");
+        }, directory));
+        assertEquals(SpectralResonanceH2Runner.HARNESS_FAILURE, runner.report(() -> {
+            throw new AssertionError("an Error is a harness failure, not a failed check");
         }, directory));
         assertEquals(SpectralResonanceH2Runner.INVALID_ARGUMENTS,
                 runner.execute(new String[] {"--unknown"}));

@@ -23,13 +23,9 @@ import monada.neuron.spectral.SpectralPhase;
 import monada.neuron.spectral.SpectralScale;
 import monada.neuron.spectral.WaveProvenance;
 
-import java.nio.ByteBuffer;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -78,6 +74,7 @@ final class SpectralResonanceH2Evaluation {
     private final DominantComponentProjection projection = new DominantComponentProjection();
     private final ScalarResonanceMetric scalar = new ScalarResonanceMetric();
     private final RankStatistics statistics = new RankStatistics();
+    private final SeedDerivation seeds = new SeedDerivation();
 
     SpectralResonanceH2Evaluation(Protocol protocol, boolean quick) {
         this.protocol = Objects.requireNonNull(protocol, "protocol must not be null");
@@ -94,13 +91,13 @@ final class SpectralResonanceH2Evaluation {
     Outcome run() {
         var checks = new ArrayList<EvaluationCheck>();
         checks.add(fixtureCheck());
-        checks.add(disjointnessCheck());
 
         var repeats = new ArrayList<RepeatResult>();
         var labelSets = new ArrayList<SplitLabels>();
         for (int r = 0; r < protocol.testSeeds().size(); r++) {
             repeats.add(repeat(r, labelSets));
         }
+        checks.add(disjointnessCheck(repeats));
         checks.add(counterfactualCheck(repeats.getFirst(), labelSets));
         checks.add(determinismCheck(repeats.getFirst()));
         int earlyReads = labelSets.stream().mapToInt(SplitLabels::earlyReads).sum();
@@ -126,8 +123,10 @@ final class SpectralResonanceH2Evaluation {
 
         // Every arm scores every pair before any label is read.
         var scores = new double[ARMS.size()][levels * pairsPerLevel];
+        var patterns = new ArrayList<SpectralPattern[]>();
         for (int s = 0; s < levels; s++) {
-            double[][] levelScores = score(splits.get(s), pairing, phaseSeed(seed, s));
+            patterns.add(patterns(splits.get(s)));
+            double[][] levelScores = score(splits.get(s), patterns.getLast(), pairing, phaseSeed(seed, s));
             for (int arm = 0; arm < ARMS.size(); arm++) {
                 System.arraycopy(levelScores[arm], 0, scores[arm], s * pairsPerLevel, pairsPerLevel);
             }
@@ -142,23 +141,17 @@ final class SpectralResonanceH2Evaluation {
                 positive[s * pairsPerLevel + i] = labels.label(pairing[2 * i]) == labels.label(pairing[2 * i + 1]);
             }
         }
-        return summarize(r, seed, splits, pairing, scores, positive);
+        // Only the first repeat's patterns are kept: the counterfactual check re-scores it without decomposing again.
+        return summarize(r, seed, splits, r == 0 ? patterns : List.of(), pairing, scores, positive);
     }
 
-    private RepeatResult summarize(int r, long seed, List<ConceptSplit> splits, int[] pairing, double[][] scores,
-                                   boolean[] positive) {
+    private RepeatResult summarize(int r, long seed, List<ConceptSplit> splits, List<SpectralPattern[]> patterns,
+                                   int[] pairing, double[][] scores, boolean[] positive) {
         int pairsPerLevel = pairing.length / 2;
         int levels = splits.size();
-        // A pair slot is one cluster: it contributes its pair at every SNR level, whose clean windows are shared.
-        var pooledClusters = new int[pairsPerLevel][levels];
-        for (int i = 0; i < pairsPerLevel; i++) {
-            for (int s = 0; s < levels; s++) {
-                pooledClusters[i][s] = s * pairsPerLevel + i;
-            }
-        }
         long bootstrapSeed = protocol.bootstrapSeed() + r + 1;
-        double[][] pooled = statistics.bootstrap(scores, positive, pooledClusters, protocol.resamples(),
-                bootstrapSeed);
+        double[][] pooled = statistics.bootstrap(scores, positive, pooledClusters(pairsPerLevel, levels),
+                protocol.resamples(), bootstrapSeed);
 
         var arms = new ArrayList<ArmResult>();
         for (H2Arm arm : ARMS) {
@@ -188,18 +181,44 @@ final class SpectralResonanceH2Evaluation {
         for (int i = 0; i < pairsPerLevel; i++) {
             positives += positive[i] ? 1 : 0;
         }
-        return new RepeatResult(r + 1, seed, splits, pairing, scores, positive, pooled, arms, difference,
+        return new RepeatResult(r + 1, seed, splits, patterns, pairing, scores, positive, pooled, arms, difference,
                 levelDifferences, positives, pairsPerLevel);
     }
 
-    /** Scores every pair of one split on every arm, reading only the waves. */
-    private double[][] score(ConceptSplit split, int[] pairing, long phaseSeed) {
-        int windows = split.windows().size();
-        var patterns = new SpectralPattern[windows];
-        var randomized = new SpectralPattern[windows];
-        var phases = new Random(phaseSeed);
-        for (int w = 0; w < windows; w++) {
+    /**
+     * A pair slot is one cluster: it contributes its pair at every SNR level, whose clean windows are shared. Pair
+     * {@code i} of level {@code s} is at {@code s · pairsPerLevel + i}.
+     */
+    private int[][] pooledClusters(int pairsPerLevel, int levels) {
+        var clusters = new int[pairsPerLevel][levels];
+        for (int i = 0; i < pairsPerLevel; i++) {
+            for (int s = 0; s < levels; s++) {
+                clusters[i][s] = s * pairsPerLevel + i;
+            }
+        }
+        return clusters;
+    }
+
+    /** Decomposes every window of one split, in window order. */
+    private SpectralPattern[] patterns(ConceptSplit split) {
+        var patterns = new SpectralPattern[split.windows().size()];
+        for (int w = 0; w < patterns.length; w++) {
             patterns[w] = decompose(split.windows().get(w).wave());
+        }
+        return patterns;
+    }
+
+    /**
+     * Scores every pair of one split on every arm from its decomposed {@code patterns}. The split, labels included,
+     * is passed so that a label read by an arm would be counted by its guard.
+     */
+    private double[][] score(ConceptSplit split, SpectralPattern[] patterns, int[] pairing, long phaseSeed) {
+        if (patterns.length != split.windows().size()) {
+            throw new IllegalArgumentException("one pattern per window is required");
+        }
+        var randomized = new SpectralPattern[patterns.length];
+        var phases = new Random(phaseSeed);
+        for (int w = 0; w < patterns.length; w++) {
             randomized[w] = withRandomPhases(patterns[w], phases);
         }
         int pairs = pairing.length / 2;
@@ -291,7 +310,7 @@ final class SpectralResonanceH2Evaluation {
         for (int i = 0; i < order.length; i++) {
             order[i] = i;
         }
-        var random = new Random(seed ^ PAIRING_SALT);
+        var random = new Random(seeds.derive(seed, PAIRING_SALT, 0));
         for (int i = order.length - 1; i > 0; i--) {
             int j = random.nextInt(i + 1);
             int swap = order[i];
@@ -302,7 +321,7 @@ final class SpectralResonanceH2Evaluation {
     }
 
     private long phaseSeed(long seed, int level) {
-        return seed ^ PHASE_SALT ^ level;
+        return seeds.derive(seed, PHASE_SALT, level);
     }
 
     private int[] levelPairs(int level, int pairsPerLevel) {
@@ -323,11 +342,13 @@ final class SpectralResonanceH2Evaluation {
         var permutedPositive = new boolean[first.positive().length];
         for (int s = 0; s < first.splits().size(); s++) {
             ConceptSplit split = first.splits().get(s);
-            SplitLabels permuted = split.labels().permuted(new Random(first.seed() ^ PERMUTATION_SALT ^ s));
+            SplitLabels permuted = split.labels().permuted(new Random(seeds.derive(first.seed(), PERMUTATION_SALT,
+                    s)));
             var counterfactual = new ConceptSplit(split.role(), split.seed(), split.snrDb(), split.windows(),
                     permuted);
             labelSets.add(permuted);
-            double[][] scores = score(counterfactual, first.pairing(), phaseSeed(first.seed(), s));
+            double[][] scores = score(counterfactual, first.patterns().get(s), first.pairing(),
+                    phaseSeed(first.seed(), s));
             for (int arm = 0; arm < ARMS.size(); arm++) {
                 scoresIdentical &= Arrays.equals(scores[arm],
                         Arrays.copyOfRange(first.scores()[arm], s * pairsPerLevel, (s + 1) * pairsPerLevel));
@@ -350,65 +371,57 @@ final class SpectralResonanceH2Evaluation {
 
     /** Re-runs the first repeat's pooled bootstrap and requires bit-identical resample values. */
     private Check determinismCheck(RepeatResult first) {
-        int pairsPerLevel = first.pairsPerLevel();
-        int levels = first.splits().size();
-        var clusters = new int[pairsPerLevel][levels];
-        for (int i = 0; i < pairsPerLevel; i++) {
-            for (int s = 0; s < levels; s++) {
-                clusters[i][s] = s * pairsPerLevel + i;
-            }
-        }
-        double[][] again = statistics.bootstrap(first.scores(), first.positive(), clusters, protocol.resamples(),
+        double[][] again = statistics.bootstrap(first.scores(), first.positive(),
+                pooledClusters(first.pairsPerLevel(), first.splits().size()), protocol.resamples(),
                 protocol.bootstrapSeed() + 1);
         boolean identical = Arrays.deepEquals(again, first.pooled());
         return new Check("determinism", identical, "repeat 1 bootstrap re-run with the same seed is "
                 + (identical ? "bit-identical" : "DIFFERENT") + "; re-scoring is covered by leakage.counterfactual");
     }
 
-    /** Checks the generated splits use distinct seeds and share no window. */
-    private Check disjointnessCheck() {
+    /**
+     * Checks that the training, threshold-selection and test splits use distinct seeds and share no clean window. The
+     * test splits are the repeats' own (their first SNR level; clean windows do not depend on the SNR).
+     */
+    private Check disjointnessCheck(List<RepeatResult> repeats) {
         var seeds = new ArrayList<Long>();
         seeds.add(protocol.trainingSeed());
         seeds.add(protocol.thresholdSeed());
-        seeds.addAll(protocol.testSeeds());
-        boolean distinctSeeds = seeds.stream().distinct().count() == seeds.size();
-
         double snr = protocol.snrLevels().getFirst();
-        var owners = new HashMap<String, Long>();
+        var splits = new ArrayList<ConceptSplit>();
+        splits.add(generator.generate(SplitRole.TRAINING, protocol.trainingSeed(), snr, protocol.sequences(),
+                protocol.windowsPerSequence()));
+        splits.add(generator.generate(SplitRole.THRESHOLD_SELECTION, protocol.thresholdSeed(), snr,
+                protocol.sequences(), protocol.windowsPerSequence()));
+        for (RepeatResult repeat : repeats) {
+            seeds.add(repeat.seed());
+            splits.add(repeat.splits().getFirst());
+        }
+        return disjointnessCheck(seeds, splits);
+    }
+
+    /**
+     * Checks that {@code seeds} are distinct and that no clean window digest of one split appears in another; equal
+     * clean content is caught whatever noise each split adds.
+     */
+    Check disjointnessCheck(List<Long> seeds, List<ConceptSplit> splits) {
+        boolean distinctSeeds = seeds.stream().distinct().count() == seeds.size();
+        var owners = new HashMap<String, Integer>();
         int shared = 0;
         int windows = 0;
-        var roles = new ArrayList<SplitRole>();
-        roles.add(SplitRole.TRAINING);
-        roles.add(SplitRole.THRESHOLD_SELECTION);
-        protocol.testSeeds().forEach(ignored -> roles.add(SplitRole.TEST));
-        for (int i = 0; i < seeds.size(); i++) {
-            ConceptSplit split = generator.generate(roles.get(i), seeds.get(i), snr, protocol.sequences(),
-                    protocol.windowsPerSequence());
-            for (var window : split.windows()) {
+        for (int i = 0; i < splits.size(); i++) {
+            for (var window : splits.get(i).windows()) {
                 windows++;
-                Long previous = owners.putIfAbsent(digest(window.wave().samples()), seeds.get(i));
-                if (previous != null && previous.longValue() != seeds.get(i)) {
+                Integer previous = owners.putIfAbsent(window.cleanDigest(), i);
+                if (previous != null && previous != i) {
                     shared++;
                 }
             }
         }
         return new Check("splits.disjoint", distinctSeeds && shared == 0,
-                seeds.size() + " splits (training, threshold selection, " + protocol.testSeeds().size()
+                splits.size() + " splits (training, threshold selection, " + (splits.size() - 2)
                         + " test repeats) with " + (distinctSeeds ? "distinct" : "REPEATED") + " seeds; "
-                        + windows + " windows at " + snr + " dB, " + shared + " shared across splits");
-    }
-
-    private String digest(double[] samples) {
-        try {
-            var digest = MessageDigest.getInstance("SHA-256");
-            var buffer = ByteBuffer.allocate(Long.BYTES * samples.length);
-            for (double sample : samples) {
-                buffer.putLong(Double.doubleToRawLongBits(sample));
-            }
-            return HexFormat.of().formatHex(digest.digest(buffer.array()));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 is required by every Java SE platform", e);
-        }
+                        + windows + " clean windows, " + shared + " shared across splits");
     }
 
     /** Recomputes the contract fixtures owned by #125 that gate G2 names (P10, P11, P12, N6), section 12.4. */
@@ -545,8 +558,13 @@ final class SpectralResonanceH2Evaluation {
     record ArmResult(H2Arm arm, double auc, Interval interval, double[] levelAucs) {
     }
 
-    /** Everything one repeat produced; scores and labels stay in memory for the checks only. */
-    record RepeatResult(int number, long seed, List<ConceptSplit> splits, int[] pairing, double[][] scores,
+    /**
+     * Everything one repeat produced; scores and labels stay in memory for the checks only. {@code patterns} holds the
+     * decomposed windows per SNR level for the first repeat, which the counterfactual check re-scores, and is empty
+     * for the others.
+     */
+    record RepeatResult(int number, long seed, List<ConceptSplit> splits, List<SpectralPattern[]> patterns,
+                        int[] pairing, double[][] scores,
                         boolean[] positive, double[][] pooled, List<ArmResult> arms, Interval difference,
                         List<Interval> levelDifferences, int positives, int pairsPerLevel) {
 

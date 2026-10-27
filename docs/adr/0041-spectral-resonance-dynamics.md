@@ -37,7 +37,8 @@ section 3.4:
 - **Band key and diagnostics.** `BandContribution(level, index, firstMagnitude, secondMagnitude, phaseDifference,
   alignment, interference, phasesDefined)`:
   - It adds `level` to the sketch, because a Haar key is `(level, index)`.
-  - It adds the two magnitudes and the phase-defined flag, so every summary value can be recomputed from the bands.
+  - It adds the two magnitudes and the phase-defined flag, so every summary value can be recomputed from the bands
+    while `firstNorm · secondNorm` is a normal double (see *Numerics*).
   - `SpectralComparison` carries the shared bands in ascending key order, both full norms, the counts of
     unshared components, `aggregate` and `coherence`.
 - **Two-pointer matching.** One merge over the canonical, duplicate-free key order that `SpectralPattern` guarantees.
@@ -53,7 +54,9 @@ section 3.4:
     exponent of its largest magnitude. The scaling is exact, so the result is bit-identical to the unscaled formula
     whenever that formula does not underflow, and it stays meaningful for subnormal energies.
   - **Finiteness.** `SpectralPattern` bounds energy by `MAX_SOURCE_ENERGY = Double.MAX_VALUE / 2`. That bounds every
-    squared magnitude and squared norm, so raw interference terms and norms are finite.
+    squared magnitude and squared norm, so raw interference terms and norms are finite. They are unscaled, so for
+    energies near the bottom of the double range they underflow: recomputing the aggregate from them needs
+    `firstNorm · secondNorm` to be a normal double, while the reported aggregate and coherence stay meaningful.
   - **Clamping.** The normalized sum is clamped to `[−1, 1]` and the coherence to `[0, 1]`, against a few ulps of
     rounding.
   - **Determinism.** Sums run in ascending key order with `StrictMath`. Results are bit-reproducible and symmetric

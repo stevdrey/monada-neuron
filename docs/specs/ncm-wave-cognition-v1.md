@@ -379,7 +379,8 @@ Implementation rules (#125, [ADR 0041](../adr/0041-spectral-resonance-dynamics.m
 - **Matching** is one two-pointer pass over the canonical, duplicate-free `(level, index)` order of both patterns:
   O(n + m) time, no sort or hashing, at most `min(n, m)` `BandContribution`s in ascending key order. The result also
   carries both norms and the counts of components only one pattern retains, so the aggregate and the coherence can be
-  recomputed from the bands.
+  recomputed from the bands while `firstNorm · secondNorm` is a normal double; below that the unscaled diagnostics
+  underflow, but the reported aggregate and coherence (computed with power-of-two scaling) stay meaningful.
 - **Phase difference** is `SpectralPhase.wrap(φ1 − φ2)`; a difference of `π` is `π` in both orders. Interference uses
   every stored phase; only the coherence reads `phaseDefined`.
 - **Numerics.** The aggregate ratio and the coherence are summed with each pattern's magnitudes scaled by `2^-e`,

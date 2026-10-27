@@ -1,6 +1,7 @@
 package monada.neuron.evaluation.knowledge;
 
 import com.sun.management.OperatingSystemMXBean;
+import monada.neuron.evaluation.metrics.HostProbes;
 
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
@@ -24,7 +25,6 @@ final class RunEnvironment {
     /** Salt of {@code env.hostId}, so the id cannot be matched against plain host-name hashes from elsewhere. */
     static final String HOST_ID_SALT = "monada-neuron-host-v1:";
 
-    private static final int MAX_CPUINFO_BYTES = 256 * 1024;
     private static final int HOST_ID_HEX_LENGTH = 16;
 
     private final Path cpuInfo;
@@ -97,17 +97,7 @@ final class RunEnvironment {
 
     /** Returns the first {@code model name} of the CPU information file. */
     String cpuModel() {
-        try (var input = Files.newInputStream(cpuInfo)) {
-            var text = new String(input.readNBytes(MAX_CPUINFO_BYTES), StandardCharsets.UTF_8);
-            return text.lines()
-                    .filter(line -> line.startsWith("model name"))
-                    .map(line -> line.substring(line.indexOf(':') + 1).strip())
-                    .filter(model -> !model.isEmpty())
-                    .findFirst()
-                    .orElse("unknown (no model name in " + cpuInfo + ")");
-        } catch (IOException | RuntimeException e) {
-            return "unknown (" + cpuInfo + " unreadable)";
-        }
+        return new HostProbes().cpuModel(cpuInfo);
     }
 
     /**

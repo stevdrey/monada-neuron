@@ -43,9 +43,11 @@ import java.util.Objects;
  * <p><b>Numerics.</b> The aggregate ratio and the coherence are summed with each pattern's magnitudes scaled by
  * {@code 2^-e}, {@code e} the exponent of that pattern's largest magnitude. The scaling is exact, so the result is
  * bit-identical to the unscaled formula whenever that formula neither underflows nor overflows, and it stays
- * meaningful for subnormal energies. The raw norms and interference terms are finite because a pattern's energy is
- * bounded by {@link SpectralPattern#MAX_SOURCE_ENERGY}, which bounds every squared magnitude and every squared norm by
- * it as well. Rounding can push the normalized sum a few ulps past {@code ±1} and the coherence past {@code 1}; both
+ * meaningful for subnormal energies. The reported norms and per-band interference terms are unscaled. They are finite
+ * because a pattern's energy is bounded by {@link SpectralPattern#MAX_SOURCE_ENERGY}, which bounds every squared
+ * magnitude and every squared norm by it as well, but for very small energies they can underflow: the aggregate can
+ * be recomputed from them only while {@code firstNorm · secondNorm} stays a normal double (about {@code 1e-308} and
+ * up), whereas the reported aggregate and coherence never lose their meaning. Rounding can push the normalized sum a few ulps past {@code ±1} and the coherence past {@code 1}; both
  * are clamped. Sums run in ascending key order with {@code StrictMath}, so equal inputs give bit-identical results,
  * and swapping the patterns gives the same aggregate and coherence and negated phase differences (except at
  * {@code π}, which is its own negation in {@code (-π, π]}).
@@ -87,7 +89,7 @@ public final class SpectralResonanceDynamics {
         int i = 0;
         int j = 0;
         while (i < firstCount && j < secondCount) {
-            int order = compareKeys(first.level(i), first.index(i), second.level(j), second.index(j));
+            int order = BandKeys.compare(first.level(i), first.index(i), second.level(j), second.index(j));
             if (order < 0) {
                 i++;
             } else if (order > 0) {
@@ -149,11 +151,6 @@ public final class SpectralResonanceDynamics {
                     "unit differs: " + first.unit() + " vs " + second.unit());
         }
         return null;
-    }
-
-    private int compareKeys(int firstLevel, int firstIndex, int secondLevel, int secondIndex) {
-        int byLevel = Integer.compare(firstLevel, secondLevel);
-        return byLevel != 0 ? byLevel : Integer.compare(firstIndex, secondIndex);
     }
 
     /** Exponent of the largest magnitude, or {@code 0} for an all-zero pattern (whose scaled values stay 0). */

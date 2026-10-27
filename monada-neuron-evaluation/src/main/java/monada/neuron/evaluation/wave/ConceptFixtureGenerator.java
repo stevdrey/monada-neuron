@@ -4,7 +4,11 @@ import monada.neuron.spectral.SampleUnit;
 import monada.neuron.spectral.SampledWave;
 import monada.neuron.spectral.WaveProvenance;
 
+import java.nio.ByteBuffer;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -24,7 +28,7 @@ import java.util.Random;
  *       Box-Muller over {@link Random#nextDouble()} with {@code StrictMath}. {@code java.util.Random} is specified
  *       by Java SE, so a seed reproduces on every JDK ({@code nextGaussian} changed in JDK 17 and is not used). The
  *       tone stream is independent of the SNR, so one seed gives the same clean windows at every SNR; the noise stream
- *       is seeded by {@link #noiseSeed}, so it differs across SNR levels.</li>
+ *       is seeded by {@link SeedDerivation#mixed}, so it differs across SNR levels.</li>
  *   <li>Sequences start at a uniform leaf and follow the fixed first-order {@link #TRANSITIONS} table.</li>
  * </ul>
  *
@@ -65,6 +69,7 @@ public final class ConceptFixtureGenerator {
     private static final long NOISE_SALT = 0x4E4F_4953_455FL;
     private static final double TWO_PI = 2.0 * StrictMath.PI;
 
+    private final SeedDerivation seeds = new SeedDerivation();
     private final double lowMin;
     private final double lowMax;
     private final double highMin;
@@ -113,7 +118,7 @@ public final class ConceptFixtureGenerator {
                     + sequences + ", " + windowsPerSequence);
         }
         var tones = new Random(seed);
-        var noise = new Random(noiseSeed(seed, snrDb));
+        var noise = new Random(seeds.mixed(seed, NOISE_SALT, snrDb));
         double noiseScale = StrictMath.pow(10.0, -snrDb / 10.0);
         int total = Math.multiplyExact(sequences, windowsPerSequence);
         var windows = new ArrayList<FixtureWindow>(total);
@@ -126,28 +131,17 @@ public final class ConceptFixtureGenerator {
                 }
                 FixtureConcept concept = FixtureConcept.LEAVES.get(leaf);
                 double[] samples = cleanWindow(concept, tones);
+                String cleanDigest = digest(samples);
                 addNoise(samples, noiseScale, noise);
                 var provenance = new WaveProvenance(ENCODER_ID, 1, String.format(Locale.ROOT,
                         "%s/%s/seed-%x/snr-%s/s%d/w%d", VERSION, role, seed, snrDb, sequence, position),
                         (long) position * SAMPLE_COUNT);
                 windows.add(new FixtureWindow(sequence, position,
-                        new SampledWave(samples, SAMPLE_RATE, SampleUnit.HERTZ, provenance)));
+                        new SampledWave(samples, SAMPLE_RATE, SampleUnit.HERTZ, provenance), cleanDigest));
                 labels[windows.size() - 1] = concept;
             }
         }
         return new ConceptSplit(role, seed, snrDb, windows, new SplitLabels(labels, role == SplitRole.TEST));
-    }
-
-    /**
-     * Derives the noise seed of one split and SNR level. {@code java.util.Random} keeps only the low 48 seed bits, and
-     * the bit patterns of whole-decibel levels such as 20, 10 and 0 differ only above them, so the SNR bits are mixed
-     * with the SplitMix64 finalizer before seeding; otherwise every level would share one noise stream.
-     */
-    long noiseSeed(long seed, double snrDb) {
-        long z = seed ^ NOISE_SALT ^ Double.doubleToLongBits(snrDb);
-        z = (z ^ (z >>> 30)) * 0xBF58_476D_1CE4_E5B9L;
-        z = (z ^ (z >>> 27)) * 0x94D0_49BB_1331_11EBL;
-        return z ^ (z >>> 31);
     }
 
     private int nextLeaf(int current, double draw) {
@@ -201,6 +195,19 @@ public final class ConceptFixtureGenerator {
         }
     }
 
+    /** SHA-256 of the samples' raw bits, in hexadecimal. */
+    private String digest(double[] samples) {
+        try {
+            var buffer = ByteBuffer.allocate(Long.BYTES * samples.length);
+            for (double sample : samples) {
+                buffer.putLong(Double.doubleToRawLongBits(sample));
+            }
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(buffer.array()));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is required by every Java SE platform", e);
+        }
+    }
+
     private double uniform(Random random, double min, double max) {
         return min + (max - min) * random.nextDouble();
     }
@@ -221,17 +228,21 @@ public final class ConceptFixtureGenerator {
     }
 
     /**
-     * One generated window: its position in the split's sequences and its wave. It carries no label.
+     * One generated window: its position in the split's sequences, its wave and a digest of its clean samples. It
+     * carries no label.
      *
      * @param sequence sequence index
      * @param position window index in the sequence
-     * @param wave the samples with provenance
+     * @param wave the noisy samples with provenance
+     * @param cleanDigest SHA-256 of the clean (pre-noise) samples' raw bits, in hexadecimal; equal clean content
+     *        gives equal digests whatever the noise, so split disjointness is checked on it
      */
-    public record FixtureWindow(int sequence, int position, SampledWave wave) {
+    public record FixtureWindow(int sequence, int position, SampledWave wave, String cleanDigest) {
 
-        /** Requires the wave. */
+        /** Requires the wave and the digest. */
         public FixtureWindow {
             Objects.requireNonNull(wave, "wave must not be null");
+            Objects.requireNonNull(cleanDigest, "cleanDigest must not be null");
         }
     }
 

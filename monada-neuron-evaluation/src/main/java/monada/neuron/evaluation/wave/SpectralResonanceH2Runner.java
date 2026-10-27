@@ -2,6 +2,7 @@ package monada.neuron.evaluation.wave;
 
 import monada.neuron.evaluation.metrics.EnvironmentMetadata;
 import monada.neuron.evaluation.metrics.EvaluationReport;
+import monada.neuron.evaluation.metrics.HostProbes;
 import monada.neuron.evaluation.wave.SpectralResonanceH2Evaluation.ArmResult;
 import monada.neuron.evaluation.wave.SpectralResonanceH2Evaluation.Outcome;
 import monada.neuron.evaluation.wave.SpectralResonanceH2Evaluation.Protocol;
@@ -83,7 +84,8 @@ public final class SpectralResonanceH2Runner {
             report = evaluation.get();
             System.out.println(report.toMarkdown());
             write(report, outputDir);
-        } catch (RuntimeException failure) {
+        } catch (RuntimeException | Error failure) {
+            // An Error (out of memory, stack overflow) is a harness failure too, never a check verdict.
             System.err.println("The H2 harness failed; no verdict was reached: " + failure);
             return HARNESS_FAILURE;
         }
@@ -98,10 +100,10 @@ public final class SpectralResonanceH2Runner {
     SpectralResonanceH2Report run(Protocol protocol, boolean quick) {
         var h2 = new SpectralResonanceH2Evaluation(protocol, quick);
         Outcome outcome = h2.run();
-        var environment = new WaveRunEnvironment();
+        var probes = new HostProbes();
         var metadata = new LinkedHashMap<>(outcome.metadata());
-        metadata.put("env.cpuModel", environment.cpuModel());
-        metadata.put("neuron.commit", environment.commit(Path.of("").toAbsolutePath()));
+        metadata.put("env.cpuModel", probes.cpuModel(Path.of("/proc/cpuinfo")));
+        metadata.put("neuron.commit", probes.gitCommit(Path.of("").toAbsolutePath()));
         var evaluation = new EvaluationReport(Instant.now(), EnvironmentMetadata.current(), h2.runConfiguration(),
                 List.of(), SpectralResonanceH2Report.TITLE);
         return new SpectralResonanceH2Report(evaluation, outcome.checks(), metadata,

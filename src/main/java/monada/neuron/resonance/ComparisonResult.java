@@ -13,7 +13,9 @@ public sealed interface ComparisonResult
     /**
      * Measured relation between two compatible patterns (contract {@code ncm-wave-cognition/1} section 7.3).
      *
-     * <p>The bands, the norms and the counts are enough to recompute both summary values:
+     * <p>The bands, the norms and the counts are enough to recompute both summary values whenever
+     * {@code firstNorm · secondNorm} is a normal double. The summary values themselves are computed with power-of-two
+     * scaling and stay meaningful below that limit, where the unscaled norms and interference terms underflow:
      *
      * <pre>{@code
      * aggregate = (1 + Σ interference / (firstNorm · secondNorm)) / 2      0 when either norm is 0
@@ -43,7 +45,7 @@ public sealed interface ComparisonResult
             for (int i = 1; i < bands.size(); i++) {
                 BandContribution previous = bands.get(i - 1);
                 BandContribution current = bands.get(i);
-                if (compareKeys(previous.level(), previous.index(), current.level(), current.index()) >= 0) {
+                if (BandKeys.compare(previous.level(), previous.index(), current.level(), current.index()) >= 0) {
                     throw new IllegalArgumentException("bands must be in strictly ascending (level, index) order "
                             + "at position " + i);
                 }
@@ -56,11 +58,6 @@ public sealed interface ComparisonResult
             }
             requireUnit(aggregate, "aggregate");
             requireUnit(coherence, "coherence");
-        }
-
-        private static int compareKeys(int firstLevel, int firstIndex, int secondLevel, int secondIndex) {
-            int byLevel = Integer.compare(firstLevel, secondLevel);
-            return byLevel != 0 ? byLevel : Integer.compare(firstIndex, secondIndex);
         }
 
         private static void requireNorm(double norm, String name) {

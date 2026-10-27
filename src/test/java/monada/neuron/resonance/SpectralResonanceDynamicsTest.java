@@ -241,6 +241,19 @@ class SpectralResonanceDynamicsTest {
     }
 
     @Test
+    void unscaledDiagnosticsUnderflowBelowTheRecomputationLimit() {
+        // ‖m1‖·‖m2‖ ≈ 1e-400 is not representable: the documented recomputation limit, not a wrong aggregate.
+        SpectralPattern pattern = sparse(new int[] {1}, new double[] {1e-200}, new double[] {0.0});
+        SpectralComparison comparison = compared(pattern, pattern);
+
+        assertAll(
+                () -> assertEquals(1.0, comparison.aggregate()),
+                () -> assertEquals(1.0, comparison.coherence()),
+                () -> assertEquals(0.0, comparison.bands().getFirst().interference()),
+                () -> assertEquals(0.0, comparison.firstNorm() * comparison.secondNorm()));
+    }
+
+    @Test
     void isSymmetricAndBitReproducible() {
         SpectralPattern first = decompose(64, 11L);
         SpectralPattern second = decompose(64, 12L);
