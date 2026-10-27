@@ -1,7 +1,7 @@
 # NCM Wave Cognition Experiment Contract v1
 
 **Contract identifier**: `ncm-wave-cognition/1`
-**Status**: Accepted (issue #121; experimental and opt-in; implemented in part by #122, #123 and #124, see Sections 4 to 6)
+**Status**: Accepted (issue #121; experimental and opt-in; implemented in part by #122, #123, #124 and #125, see Sections 4 to 7)
 **Parent**: Epic #120, Hierarchical Wave Cognition
 **Decision record**: [ADR 0034](../adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md)
 **Composes, unchanged**: [ADR 0001](../adr/0001-cognition-memory-boundary.md),
@@ -179,10 +179,16 @@ record WaveComponent(int level, int index, double magnitude, double phase, boole
                      double locator) { }                  // locator: frequency for DFT, position for HAAR
 enum LocatorUnit { HERTZ, CYCLES_PER_INDEX, SAMPLE_POSITION }
 
-// #125
-sealed interface ComparisonResult permits SpectralComparison, Incompatible { }
-record BandContribution(int index, double alignment, double phaseDifference, double interference) { }
-record SpectralComparison(List<BandContribution> bands, double aggregate, double coherence) { }
+// #125 (implemented; ADR 0041 records the deviations from the first sketch)
+sealed interface ComparisonResult permits SpectralComparison, Incompatible { }    // both nested in ComparisonResult
+record SpectralComparison(List<BandContribution> bands, double firstNorm, double secondNorm,
+                          int firstOnlyCount, int secondOnlyCount, double aggregate, double coherence) { }
+record Incompatible(IncompatibilityReason reason, String detail) { }
+enum IncompatibilityReason { VERSION, BASIS, SCALE, SAMPLE_COUNT, SAMPLE_RATE, UNIT }
+record BandContribution(int level, int index, double firstMagnitude, double secondMagnitude,
+                        double phaseDifference, double alignment, double interference, boolean phasesDefined) { }
+final class SpectralResonanceDynamics { ComparisonResult compare(SpectralPattern first, SpectralPattern second) { } }
+final class DominantComponentProjection { FrequencyState project(SpectralPattern dftPattern) { } }
 
 // #127
 record ConceptNode(int ordinal, long conceptCode, int parentOrdinal, int depth) { }
@@ -198,8 +204,8 @@ enum SynthesisStatus { EXACT, LOSSY, NOT_INVERTIBLE }
 ```
 
 `FrequencyState` is not extended. A projection from a `SpectralPattern` to one `FrequencyState` (for example, the
-dominant component) may be offered by #125 (deferred from #122, ADR 0035) as an explicit, documented, lossy helper so
-the single-wave path can be compared as a control (H2); it is never implicit.
+dominant component) is offered by #125 (deferred from #122, ADR 0035) as `DominantComponentProjection`, an explicit,
+documented, lossy helper so the single-wave path can be compared as a control (H2); it is never implicit (Section 7.4).
 
 ## 4. Input Schema
 
@@ -329,7 +335,7 @@ locator derived on access. `SampleUnit` and `WaveProvenance` are delivered by #1
 - **Compact**: a later optimized layout (parallel primitive arrays, as `FrequencyStateBatch` does) is allowed behind the
   same value semantics; the public record stays the reference.
 
-## 7. `SpectralResonanceDynamics` (proposed, owned by issue #125)
+## 7. `SpectralResonanceDynamics` (implemented by issue #125)
 
 ### 7.1 Separation from the scalar metric
 
@@ -339,7 +345,9 @@ locator derived on access. `SampleUnit` and `WaveProvenance` are delivered by #1
 ### 7.2 Compatibility
 
 Two patterns are comparable only when `version`, `basis`, `scale`, `sampleCount`, `sampleRate` and `unit` are equal.
-Otherwise the result is `Incompatible(reason)`. There is no interpolation, padding or rate conversion.
+Otherwise the result is `Incompatible(reason, detail)`, with `reason` the first differing field in that order
+(`IncompatibilityReason`), so a pair always gets the same reason. There is no interpolation, padding or rate
+conversion.
 
 ### 7.3 Reference quantities
 
@@ -358,8 +366,31 @@ coherence      = |Σ_k w_k · e^{iΔφ_k}| / Σ_k w_k,  w_k = m1_k · m2_k, over
 
 The aggregate is the normalized real part of the spectral
 cross-correlation mapped to `[0, 1]`; it is symmetric. Negative interference is a diagnostic of destructive phase
-relation and is **never** written to the Store as a score. #125 may add weights per band; each must be documented and
-default to the reference above.
+relation and is **never** written to the Store as a score. #125 adds no band weights (unit weights beyond the
+magnitudes); a later weighting must be documented and default to the reference above.
+
+Implementation rules (#125, [ADR 0041](../adr/0041-spectral-resonance-dynamics.md)):
+
+- **Matching** is one two-pointer pass over the canonical, duplicate-free `(level, index)` order of both patterns:
+  O(n + m) time, no sort or hashing, at most `min(n, m)` `BandContribution`s in ascending key order. The result also
+  carries both norms and the counts of components only one pattern retains, so the aggregate and the coherence can be
+  recomputed from the bands.
+- **Phase difference** is `SpectralPhase.wrap(φ1 − φ2)`; a difference of `π` is `π` in both orders. Interference uses
+  every stored phase; only the coherence reads `phaseDefined`.
+- **Numerics.** The aggregate ratio and the coherence are summed with each pattern's magnitudes scaled by `2^-e`,
+  `e` the exponent of its largest magnitude. This is exact, so the result is bit-identical to the unscaled formula
+  when that formula does not underflow. The energy bound of Section 6 keeps every raw interference term and norm
+  finite. The normalized sum is clamped to `[−1, 1]` and the coherence to `[0, 1]` against rounding.
+- **Reference values.** Uncorrelated patterns (no shared energy) have aggregate `0.5` and coherence `0`. Alignment
+  is a magnitude ratio and ignores phase; coherence measures phase-difference consistency and implies nothing about
+  frequency.
+
+### 7.4 Dominant-component projection
+
+`DominantComponentProjection.project(pattern)` returns the largest-magnitude component of a DFT pattern, ties to the
+lower bin, as `FrequencyState(magnitude, locator, phase)`, and `FrequencyState.ZERO` for a silent or empty pattern. It
+rejects Haar patterns (`IllegalArgumentException`): a Haar locator is a position (Section 2.1). It is the scalar
+control of H2 (Section 14.2) and is never applied implicitly.
 
 ## 8. Hierarchical NCM (proposed, owned by issue #127)
 
@@ -476,7 +507,7 @@ performance.
 | `maxConcepts` | 256 | Largest workload | #127 |
 | `maxDepth` | 3 | Largest workload | #127 |
 | `maxCandidatesPerLevel` | 16 | Bounded diagnostics per depth | #127 |
-| `maxPatternsPerComparisonBatch` | 1,024 | Largest workload | #125 |
+| `maxPatternsPerComparisonBatch` | 1,024 | Largest workload; deferred by #125, which ships no batch API (callers compare pairs; one-against-many drifts towards ranking, ADR 0041) | #125 |
 
 ### 11.2 Determinism
 
@@ -710,6 +741,7 @@ issue is updated to cite this table before it starts. #124 and #125 may proceed 
 
 - Epic #120 and child issues #122 to #130.
 - [ADR 0034](../adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md): NCM is hierarchy and prediction, not the prism.
+- [ADR 0041](../adr/0041-spectral-resonance-dynamics.md): spectral resonance dynamics (#125).
 - [ADR 0001](../adr/0001-cognition-memory-boundary.md): cognition and memory boundary.
 - [ADR 0005](../adr/0005-signals-without-identifiers.md): signals without identifiers.
 - [ADR 0006](../adr/0006-deterministic-scalar-resonance-metric.md): deterministic scalar resonance metric.
