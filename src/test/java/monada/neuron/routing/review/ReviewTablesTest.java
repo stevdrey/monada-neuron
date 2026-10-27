@@ -14,6 +14,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -171,7 +172,7 @@ class ReviewTablesTest {
                         List.of(StateMismatch.MAPPING_VERSION_MISMATCH, StateMismatch.PROCESSED_CUTOFF_NEWER),
                         List.of(RECHECK_BEFORE_EXECUTION, STATE_INCOMPATIBLE, STATE_NEWER_THAN_CUTOFF)),
                 Arguments.of("every mismatch but stale",
-                        List.of(StateMismatch.values()).subList(0, StateMismatch.values().length - 1),
+                        List.copyOf(EnumSet.complementOf(EnumSet.of(StateMismatch.PROCESSED_CUTOFF_NEWER))),
                         List.of(RECHECK_BEFORE_EXECUTION, STATE_INCOMPATIBLE)),
                 Arguments.of("every mismatch", List.of(StateMismatch.values()),
                         List.of(RECHECK_BEFORE_EXECUTION, STATE_INCOMPATIBLE, STATE_NEWER_THAN_CUTOFF)));

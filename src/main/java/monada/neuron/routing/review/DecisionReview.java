@@ -11,6 +11,7 @@ import monada.neuron.routing.StateMismatch;
 import monada.neuron.routing.StateValidation;
 import monada.neuron.routing.catalog.EligibilityReason;
 import monada.neuron.routing.catalog.EligibilityReport;
+import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteKey;
 
 import java.util.ArrayList;
@@ -28,7 +29,8 @@ import java.util.Optional;
  * <p>A review holds nothing but its decision. Exclusion groups, counts and {@link ReviewNotice} codes are derived from
  * it on every call, and the ranking is the decision's own, so a review can never rank again, drop an exclusion
  * reason or claim a fact the decision does not record. Equal decisions give equal reviews. Each call is linear in
- * the decision's bounded lists (at most 32 exclusions and 8 candidates), with no I/O, shared state or threads.
+ * the decision's bounded lists (at most {@value RouteCatalog#MAX_ROUTES} exclusions and
+ * {@value RoutingDecision#MAX_CANDIDATES} candidates), with no I/O, shared state or threads.
  *
  * <p>A review is information only: it is never eligibility, readiness, authentication or authorization, and the
  * selected route stays advice that the host must recheck before execution.
@@ -126,7 +128,7 @@ public sealed interface DecisionReview
      * Counts the excluded routes that name a reason, as primary or additional.
      *
      * @param reason the reason to count
-     * @return the number of exclusions naming {@code reason}, 0 to 32
+     * @return the number of exclusions naming {@code reason}, 0 to {@value RouteCatalog#MAX_ROUTES}
      * @throws NullPointerException if {@code reason} is null
      */
     default int excludedCount(EligibilityReason reason) {
