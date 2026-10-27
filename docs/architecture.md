@@ -529,7 +529,10 @@ format [`routing-advice-receipt/1`](specs/routing-advice-receipt-v1.md), issue #
 `monada.neuron.routing.disposition`, contract version `routing-advice-disposition/1`, issue #98,
 [ADR 0040](adr/0040-host-advice-disposition.md)) record what a person did with a receipt before anything ran, by its
 `DecisionRef` and digest only; a disposition is intent, not authorization, invocation or acceptance, and it reaches no
-state and earns no credit.
+state and earns no credit. Scenario comparison previews (`ScenarioComparator` in `monada.neuron.routing.comparison`, issue #99,
+[ADR 0043](adr/0043-routing-scenario-comparison.md)) decide two caller supplied scenarios through
+`TrustedRoutingAdvice` and report them side by side; a pair across scope, task, stage kind, feature schema,
+evaluation policy or cutoff is `Incomparable` and has no delta, and every preview is labelled hypothetical.
 
 ```text
 Forge (host)
