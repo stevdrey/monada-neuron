@@ -16,5 +16,12 @@ public enum DecompositionRejectionReason {
      * {@code floor(N/2) * sampleRate} overflows, or the bin spacing {@code sampleRate / N} is subnormal, so distinct
      * bins would share a locator.
      */
-    SAMPLE_RATE_OUT_OF_RANGE
+    SAMPLE_RATE_OUT_OF_RANGE,
+
+    /**
+     * The sample count does not fit the basis length rule: a Haar decomposition of depth {@code L} needs a
+     * power-of-two {@code N} with {@code 2^L <= N} (contract fixture N4, {@code N = 6}). The wave is never padded,
+     * truncated or decomposed to a shallower depth instead (ADR 0040).
+     */
+    SAMPLE_COUNT_UNSUPPORTED
 }

@@ -1,7 +1,7 @@
 # NCM Wave Cognition Experiment Contract v1
 
 **Contract identifier**: `ncm-wave-cognition/1`
-**Status**: Accepted (issue #121; experimental and opt-in; implemented in part by #122 and #123, see Sections 4 to 6)
+**Status**: Accepted (issue #121; experimental and opt-in; implemented in part by #122, #123 and #124, see Sections 4 to 6)
 **Parent**: Epic #120, Hierarchical Wave Cognition
 **Decision record**: [ADR 0034](../adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md)
 **Composes, unchanged**: [ADR 0001](../adr/0001-cognition-memory-boundary.md),
@@ -161,9 +161,14 @@ interface WaveEncoder<S> { SampledWave encode(S source); }          // host-impl
 sealed interface DecompositionResult permits Decomposed, DecompositionRejected { }
 record Decomposed(SpectralPattern pattern) { }
 record DecompositionRejected(DecompositionRejectionReason reason, String detail) { }
-enum DecompositionRejectionReason { ENERGY_OUT_OF_RANGE, SAMPLE_RATE_OUT_OF_RANGE }
+enum DecompositionRejectionReason { ENERGY_OUT_OF_RANGE, SAMPLE_RATE_OUT_OF_RANGE,
+                                    SAMPLE_COUNT_UNSUPPORTED }    // last one added by #124
 interface WaveDecomposer { SpectralBasis basis(); DecompositionResult decompose(SampledWave wave); }
 final class DftWaveDecomposer implements WaveDecomposer { }         // scalar reference of section 5.2
+
+// #124 (implemented; ADR 0040)
+final class HaarWaveDecomposer implements WaveDecomposer { HaarWaveDecomposer(int levels) { } }  // fixed depth 1..12
+// SpectralPattern.levelEnergy(int level): retained energy of one level (scale-local energy)
 
 // #122 (implemented; ADR 0035 records the deviations from the first sketch)
 final class SpectralPattern { /* parallel primitive arrays; of(frame, sourceEnergy, provenance, arrays | List<WaveComponent>) */ }
@@ -267,9 +272,19 @@ pipeline as text.
   subnormal bin spacing, ADR 0035) and `ENERGY_OUT_OF_RANGE` when `Σ x_n²` exceeds
   `SpectralPattern.MAX_SOURCE_ENERGY = Double.MAX_VALUE / 2` (headroom so the recomputed retained energy stays finite)
   or is nonzero but below `Double.MIN_NORMAL`. Silent samples decompose to zero magnitudes.
-- **Haar strategy** (#124): orthonormal Haar, `a = (x_{2m} + x_{2m+1}) / √2`, `d = (x_{2m} − x_{2m+1}) / √2`, applied
-  to the approximation of each level, levels `1..L` with `L ≤ log2 N`. Requires `N` a power of two; any other length is
-  rejected (fixture N4), never padded silently.
+- **Haar strategy** (#124, `HaarWaveDecomposer`, implemented; [ADR 0040](../adr/0040-haar-multiresolution-decomposer.md)):
+  orthonormal Haar, `a = (x_{2m} + x_{2m+1}) / √2`, `d = (x_{2m} − x_{2m+1}) / √2` with `√2 = StrictMath.sqrt(2.0)`,
+  ascending `m`, applied to the approximation of each level, levels `1..L`. The depth `L` (`1..maxLevels`) is fixed
+  per decomposer. `N` must be a power of two with `2^L ≤ N`; any other length (fixture N4, `N = 6`; also `N = 1` or
+  `2^L > N`) is the typed rejection `SAMPLE_COUNT_UNSUPPORTED`, never padded, truncated or decomposed to a shallower
+  depth. `ENERGY_OUT_OF_RANGE` follows the DFT rule above (one shared predicate); the sample rate only travels into
+  the frame. Cost: O(N) time and memory (one in-place working array of `N/2`, no trigonometry); comparison with the
+  DFT at fixed `N` in [wave-decomposer-reference.md](../benchmarks/wave-decomposer-reference.md).
+- **Multiresolution conventions** (#124): level `0` is the final approximation (`N / 2^L` coefficients, locator
+  `m · 2^L`); detail level `j` has `N / 2^j` coefficients with support `[m · 2^j, (m + 1) · 2^j)` and locator
+  `m · 2^j`. A level is a dyadic scale and a locator a sample position, never a frequency. Rejection instead of
+  padding is a deliberate trade-off: any boundary extension (zero, periodic, symmetric) adds detail energy at the
+  padded edge that the samples do not contain, at every scale.
 - Neither strategy is the default for existing hosts. Choosing one is a host decision.
 
 ## 6. `SpectralPattern` (implemented by issue #122)
@@ -308,6 +323,9 @@ locator derived on access. `SampleUnit` and `WaveProvenance` are delivered by #1
   is `(sampleCount + componentCount + 4)` ULPs at the energy scale instead; a `sourceEnergy` of `0` (silent samples)
   admits only zero magnitudes. The retained energy is summed with magnitudes scaled by a power of two, so a representable subnormal
   energy is not lost to squaring underflow.
+- **Scale-local energy** (#124): `levelEnergy(level)` is the energy retained at one level, summed in canonical order
+  with the same power-of-two scaling; for a DFT pattern (only level `0`) it equals `retainedEnergy()`, and for Haar the
+  level energies add up to `retainedEnergy()` within rounding. A level outside the frame is rejected.
 - **Compact**: a later optimized layout (parallel primitive arrays, as `FrequencyStateBatch` does) is allowed behind the
   same value semantics; the public record stays the reference.
 
@@ -454,7 +472,7 @@ performance.
 | `maxSamples` | 4,096 | Largest workload (Section 14); direct DFT at 4,096 is about 16.8 M multiply-adds per window | #123 |
 | `maxComponentsDft` | 2,049 | `floor(maxSamples/2) + 1` single-sided bins | #122 |
 | `maxComponentsHaar` | 4,096 | `maxSamples`: a complete Haar pattern of `N` samples has `N` coefficients at any level count | #122 |
-| `maxLevels` (Haar) | 12 | `log2 4096` | #124 |
+| `maxLevels` (Haar) | 12 | `log2 4096`; implemented as `SpectralScale.MAX_HAAR_LEVELS`, the decomposer depth is fixed per instance (ADR 0040) | #124 |
 | `maxConcepts` | 256 | Largest workload | #127 |
 | `maxDepth` | 3 | Largest workload | #127 |
 | `maxCandidatesPerLevel` | 16 | Bounded diagnostics per depth | #127 |
@@ -601,7 +619,10 @@ the registered margins and adds none for H2 to H6. Changing a margin after seein
   without it), the same scoring inputs and thresholds rule, flat over the leaf concepts, at the same work budget. It is
   the control for H4, so that comparison changes only the hierarchy. Delivered by #127. B remains the spectral-only
   baseline and is not used to evaluate H4.
-- **D**: C with Haar and coherence features. Delivered by #130.
+- **D**: C with Haar and coherence features. Delivered by #130. Ablation configuration: the host constructs
+  `new HaarWaveDecomposer(L)` explicitly (for the medium workload `N = 256`, any `L` in `1..8`, reported with the
+  run) next to `DftWaveDecomposer`; nothing selects wavelets by default, and dropping D (G1h no-go) removes only
+  that construction.
 - **E**: C or D with validated feedback. Delivered by #129 for G5, reused by #130.
 - Scalar control for H2: `ScalarResonanceMetric` on the dominant-component projection. Delivered by #125 for G2.
 

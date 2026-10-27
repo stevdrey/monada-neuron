@@ -329,6 +329,33 @@ public final class SpectralPattern {
         return retainedEnergy;
     }
 
+    /**
+     * Returns the energy the retained components of one level carry: the scale-local energy of a Haar pattern
+     * ({@code Σ c²} over the level's coefficients; level {@code 0} is the final approximation), or for a DFT, whose
+     * only level is {@code 0}, the same value as {@link #retainedEnergy()}. A level with no retained component has
+     * energy {@code 0}. Each level is summed in canonical order with its own power-of-two scaling, so the level
+     * energies add up to {@link #retainedEnergy()} within rounding, not bit for bit. The level is located by binary
+     * search over the sorted keys, so the cost is O(log k) plus the level's size, with no allocation.
+     *
+     * @param level component level, {@code 0..scale().levels()}
+     * @return the retained energy of that level
+     * @throws IllegalArgumentException if the level is not a level of this pattern's frame
+     */
+    public double levelEnergy(int level) {
+        if (level < 0 || level > frame.scale().levels()) {
+            throw new IllegalArgumentException(
+                    "level must be in [0, " + frame.scale().levels() + "], got: " + level);
+        }
+        int start = firstIndexAtOrAbove(level);
+        int end = start;
+        double peak = 0.0;
+        while (end < levels.length && levels[end] == level) {
+            peak = Math.max(peak, magnitudes[end]);
+            end++;
+        }
+        return energyOf(start, end, peak);
+    }
+
     @Override
     public boolean equals(Object other) {
         return this == other || other instanceof SpectralPattern that
@@ -429,23 +456,46 @@ public final class SpectralPattern {
             throw new IllegalArgumentException(
                     "sourceEnergy 0 means silent samples, so every magnitude must be 0, got maximum " + maxMagnitude);
         }
-        if (maxMagnitude == 0.0) {
-            requireEnergyConsistent(0.0);
-            return 0.0;
-        }
-        int exponent = SpectralArithmetic.scaleExponent(maxMagnitude);
-        double sum = 0.0;
-        boolean dft = frame.basis() == SpectralBasis.DFT;
-        for (int i = 0; i < magnitudes.length; i++) {
-            double squared = SpectralArithmetic.scaledSquare(magnitudes[i], exponent);
-            sum += dft && !frame.isRealDftBin(indices[i]) ? squared / 2.0 : squared;
-        }
-        double energy = SpectralArithmetic.unscaleEnergy(dft ? frame.sampleCount() * sum : sum, exponent);
+        double energy = energyOf(0, magnitudes.length, maxMagnitude);
         if (!Double.isFinite(energy)) {
             throw new IllegalArgumentException("retained energy overflows for magnitudes of " + frame);
         }
         requireEnergyConsistent(energy);
         return energy;
+    }
+
+    /**
+     * Returns the energy of components {@code [start, end)}, whose largest magnitude is {@code peak}: {@code Σ m²} for
+     * Haar and {@code N · (Σ real-bin m² + Σ other m² / 2)} for DFT, summed in canonical order with magnitudes scaled
+     * by {@code 2^-e}, {@code e} the exponent of {@code peak}. {@code 0} when {@code peak} is {@code 0}.
+     */
+    private double energyOf(int start, int end, double peak) {
+        if (peak == 0.0) {
+            return 0.0;
+        }
+        int exponent = SpectralArithmetic.scaleExponent(peak);
+        double sum = 0.0;
+        boolean dft = frame.basis() == SpectralBasis.DFT;
+        for (int i = start; i < end; i++) {
+            double squared = SpectralArithmetic.scaledSquare(magnitudes[i], exponent);
+            sum += dft && !frame.isRealDftBin(indices[i]) ? squared / 2.0 : squared;
+        }
+        return SpectralArithmetic.unscaleEnergy(dft ? frame.sampleCount() * sum : sum, exponent);
+    }
+
+    /** Returns the first component index whose level is at least {@code level} (lower bound over sorted levels). */
+    private int firstIndexAtOrAbove(int level) {
+        int low = 0;
+        int high = levels.length;
+        while (low < high) {
+            int middle = (low + high) >>> 1;
+            if (levels[middle] < level) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        return low;
     }
 
     /**

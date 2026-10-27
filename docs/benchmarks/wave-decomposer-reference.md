@@ -1,4 +1,4 @@
-# Reference DFT Wave Decomposer Baseline (Issue #123)
+# Reference Wave Decomposer Baselines (Issues #123 and #124)
 
 ## Question
 
@@ -61,6 +61,51 @@ noisier session, so the time difference is not attributed to the change.
   window instead of `N²`, with the same values the contract formula names.
 - Error bars are wide at small N and at 4,096 on this laptop CPU (frequency scaling); a rerun is expected to vary
   by that much, not by orders of magnitude.
+
+## Haar multiresolution strategy (issue #124)
+
+### Question
+
+What does one full-depth `HaarWaveDecomposer` decomposition cost next to the DFT reference at the same fixed `N`
+(contract section 5.1 expects O(N)), and does it keep bounded, linear working memory
+([ADR 0040](../adr/0040-haar-multiresolution-decomposer.md))?
+
+### Workload and command
+
+- The same seeded window as above (`SplittableRandom(0x5EED_0123)`, `[-10, 10]`, `sampleRate = N` Hz), full depth
+  `L = log2 N`, `N ∈ {8, 64, 256, 1024, 4096}`.
+- Measured operation: `HaarWaveDecomposer.decompose(wave)`: length check, source energy, the `L` level passes, frame
+  and `SpectralPattern` construction (validation and Parseval check). Nothing is cached between calls.
+- `HaarWaveDecomposerBenchmark` (same JMH settings as `DftWaveDecomposerBenchmark`), run in the same session as the
+  DFT so both rows share one environment:
+
+```bash
+./gradlew :monada-neuron-evaluation:jmh -PjmhArgs="-prof gc WaveDecomposerBenchmark"
+```
+
+Environment as in the table above; Neuron commit `d3edc8a+dirty` (the #124 working tree before its first commit).
+
+### Results
+
+| N | Levels | Haar time (µs/op) | Haar allocation (B/op) | DFT time, same session (µs/op) | DFT allocation (B/op) | DFT / Haar time |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | 3 | 0.12 ± 0.01 | 408 | 0.38 ± 0.06 | 952 | ×3 |
+| 64 | 6 | 0.64 ± 0.05 | 1,976 | 4.7 ± 0.4 | 6,104 | ×7 |
+| 256 | 8 | 2.8 ± 0.3 | 7,352 | 47 ± 5 | 23,768 | ×17 |
+| 1,024 | 10 | 12.9 ± 1.1 | 28,856 | 490 ± 37 | 94,427 | ×38 |
+| 4,096 | 12 | 62 ± 5 | 114,872 | 12,242 ± 2,190 | 377,126 | ×198 |
+
+### Reading the results
+
+- **Time** grows by ×4.5 to ×4.8 per ×4 in `N`: linear, plus fixed per-call costs at small `N`. About 15 ns per
+  sample at `N = 4096`, most of it the energy sum, the pattern's validation and its Parseval recomputation, which
+  are also O(N). The DFT rows reproduce the earlier baseline within its error bars.
+- **Allocation** is O(N) and deterministic: about 28 bytes per sample, exactly the four output arrays (24 bytes per
+  coefficient, taken over by the pattern) plus the single `N / 2` working array (4 bytes per sample), and a constant
+  for the frame, pattern and result. There is no quadratic buffer and, unlike the DFT, no trigonometric call, so no
+  `StrictMath` argument-reduction allocation.
+- The two strategies answer different questions (global frequency bins vs scale and position), so the ratio is a
+  resource comparison only, not a reason to prefer one; choosing one remains a host decision.
 
 ## Limitations
 
