@@ -1,7 +1,7 @@
 # Next-Concept G3 Evaluation (Issue #127, gate G3)
 
 **Contract**: `ncm-wave-cognition/1`, Sections 8, 12.3, 13 (H3, H4, H6), 14.2 and 15 (G3)
-**Status**: protocol pre-registered in this commit, before any held-out result; results pending
+**Status**: protocol pre-registered in commit `9071893`, before any held-out result; results below (G3: **no-go**)
 
 This document is the pre-registration that contract Section 13 requires: the margins, the minimum coverage, the gate
 rule, the selection procedures, every seed and the arms are committed here **before** the first commit that contains a
@@ -113,6 +113,129 @@ guarded label read before the scorer opened it).
 ./gradlew :monada-neuron-evaluation:runNextConceptG3
 ```
 
+## Environment
+
+| Item | Value |
+| --- | --- |
+| Contract / generator | `ncm-wave-cognition/1`, `ncm-concept-fixture-v1` |
+| JDK | OpenJDK 27 (Azul Zulu 27), JMH 1.37 for the cost table |
+| JVM flags | `--add-modules=jdk.incubator.vector` (evaluation module default), G1, default heap (3,832 MB max) |
+| OS / architecture | Linux 7.2 (Fedora 44), x86_64 |
+| CPU | AMD Ryzen 7 7730U with Radeon Graphics, 16 available processors (the evaluation is single-threaded) |
+| Neuron commit | `9071893` (clean tree; the pre-registration commit) |
+| Run | about 20 s wall clock for the full protocol; two runs gave bit-identical reports (only the timestamp differs) |
+
+## Checks
+
+All five semantic checks pass, so the verdict below can be trusted:
+
+| Check | Observed |
+| --- | --- |
+| `fixtures.p15-n9-n12` | P15 4/4 leaves predicted coarse then fine; N9 `UNKNOWN_CONCEPT`; N12 cyclic hierarchy rejected |
+| `splits.disjoint` | 7 splits with distinct seeds; 14,336 clean windows, none shared across splits |
+| `leakage.counterfactual` | repeat 1 re-answered with permuted labels: answers bit-identical, C's covered accuracy changed |
+| `determinism` | repeat 1 regenerated, re-answered and re-bootstrapped bit-identically |
+| `leakage.test-labels` | 18 guarded label sets, 0 reads before the scorer opened them |
+
 ## Results
 
-Pending: computed only after this pre-registration is committed.
+### Selection (non-test data)
+
+| Item | Value |
+| --- | --- |
+| Temperature | `0.02` (training NLL 3,329; `0.01`: 3,466, `0.05`: 3,854, larger values worse) |
+| C thresholds | `τ_conf = [0, 0]`, `τ_margin = [0.3, 0.1]` (depth 0, depth 1) |
+| C on the threshold-selection split | leaf coverage 0.752, covered accuracy 0.413 |
+| C-flat thresholds | `τ_conf = 0.40`, `τ_margin = 0`; coverage 0.674, covered accuracy 0.416 |
+| Control A | always `LOW_PURE` |
+| Snapshot | 6,400 bytes (6 centroids of 129 bins, counts) |
+
+### Gate quantities (pooled over 20, 10 and 0 dB; 95% paired-bootstrap intervals)
+
+| Repeat | C leaf coverage | H3: acc(C) − acc(A) | H6: acc(C covered) − acc(C forced) | N11 vs 20 dB non-coverage | Gate |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | 0.756 | 0.173 [0.139, 0.209] | 0.015 [0.007, 0.024] | 0.183 vs 0.249 | fail |
+| 2 | 0.773 | 0.156 [0.123, 0.187] | 0.016 [0.008, 0.023] | 0.183 vs 0.230 | fail |
+| 3 | 0.747 | 0.182 [0.155, 0.211] | 0.016 [0.007, 0.024] | 0.183 vs 0.268 | fail |
+| 4 | 0.753 | 0.179 [0.148, 0.210] | 0.014 [0.007, 0.021] | 0.183 vs 0.265 | fail |
+| 5 | 0.744 | 0.146 [0.109, 0.184] | 0.018 [0.011, 0.025] | 0.183 vs 0.276 | fail |
+
+Margins: H3 lower bound > 0.15 with coverage ≥ 0.60; H6 lower bound > 0.05 and N11 non-coverage above 20 dB.
+
+**G3 verdict: NO-GO.** Coverage is met in every repeat, but the H3 lower bound exceeds 0.15 only in repeats 3 and 4,
+and H6 fails in every repeat on both conditions: abstaining adds only about 0.015 leaf accuracy, and C leaves fewer
+pure-noise windows uncovered (18%) than 20 dB windows (23–28%). Under contract Section 15, #128 does not start; the
+predictor stays a library-only experiment.
+
+**H4 (informational): refuted.** `acc(C) − acc(C-flat)` is −0.005 to −0.009 with every interval below 0 (upper bounds
+−0.0001 to −0.0021); C-flat answers fewer windows (coverage 0.66–0.69 against C's 0.74–0.77), so the comparison is at
+the coverage the pre-registered selection reached, not exactly equal coverage.
+
+### Accuracy per arm (pooled; next leaf)
+
+| Repeat | C covered | A | A-oracle (info) | B | C forced top-1 | C-flat covered | C depth-0 accuracy |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 0.413 | 0.242 | 0.493 | 0.410 | 0.397 | 0.421 | 0.694 |
+| 2 | 0.424 | 0.267 | 0.499 | 0.414 | 0.408 | 0.431 | 0.703 |
+| 3 | 0.420 | 0.237 | 0.512 | 0.420 | 0.404 | 0.429 | 0.705 |
+| 4 | 0.406 | 0.233 | 0.497 | 0.403 | 0.392 | 0.414 | 0.700 |
+| 5 | 0.404 | 0.255 | 0.488 | 0.412 | 0.386 | 0.408 | 0.684 |
+
+A is evaluated on C's covered windows (the H3 pairing). Calibration: forced top-1 leaf ECE 0.012–0.034, covered leaf
+0.011–0.032, depth 0 0.023–0.037; almost every score lies in `[0.3, 0.5)`. Per SNR level, C's covered accuracy is
+0.42–0.45 at 20 and 10 dB and 0.36–0.38 at 0 dB. Abstention precision against C's forced errors is 0.64–0.67 and
+recall 0.25–0.28; almost every uncovered window is coarse-only (1,360–1,547 per repeat), abstentions are 16–33.
+The full per-repeat, per-SNR tables, reliability bins and risk-coverage curves are written by the runner to
+`build/reports/benchmarks/next-concept-g3.{md,json}`.
+
+### Reading the results
+
+- **Where the accuracy comes from.** C's next-leaf accuracy (about 0.41) sits between A (about 0.25) and the
+  informational A-oracle (about 0.50), which knows the true current leaf; the transition table caps next-leaf
+  accuracy near 0.5. C's depth-0 accuracy (about 0.70) equals its forced top-2 leaf accuracy: the band is identified
+  almost perfectly (the band's next-window mass is 0.70 under the table), but pure and chord leaves are barely
+  separated by a magnitude centroid, because tone frequencies vary continuously over each band and a chord tone often
+  falls inside the pure band.
+- **Why abstention is uninformative.** Scores barely vary (almost all in `[0.3, 0.5)`), so thresholds sort windows weakly;
+  the selected depth-1 margin mostly turns leaf answers into coarse-only ones. A likely explanation for N11, not tested
+  here: a noise window's flat magnitude spectrum is about equally far from every centroid, so its posterior falls
+  back to the transition prior, which is confident enough to answer.
+- **Hierarchy.** At the coverage the pre-registered selection reached, the flat decision over the same scores is
+  slightly more accurate: on this fixture the hierarchy helps identify the band but its per-depth thresholds do not
+  improve leaf selection.
+- **Not a claim about concepts.** Every number is a property of `ncm-concept-fixture-v1` and of this phase-blind
+  centroid model without resonance features. A feature that separates pure from chord windows (for example a
+  frequency-ratio feature) would need a new protocol version with its own pre-registered margins.
+
+## Cost of one prediction (JMH)
+
+```bash
+./gradlew :monada-neuron-evaluation:jmh -PjmhArgs="-prof gc NextConceptPredictorBenchmark"
+```
+
+`NextConceptPredictorBenchmark` (`monada.neuron.evaluation.jmh`): average time, 1 fork, 3 warm-up and 5 measurement
+iterations of 1 s, `-prof gc`. The model is trained once per trial on two seeded random windows per leaf; the query
+carries a previous leaf. The measured call is `predict` end to end: checks, feature, one comparison per concept, the
+transition mix, the descent and the result values.
+
+| Workload | Concepts / leaves / levels | Bins | Time (µs/op) | Allocation (B/op) | Snapshot |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `MEDIUM` | 6 / 4 / 2 | 129 | 3.50 ± 0.49 | 3,032 | 6.4 kB |
+| `LARGE` | 256 / 192 / 3 | 2,049 | 522 ± 22 | 34,683 | about 4.5 MB |
+
+- **Time** is dominated by the comparisons, O(concepts · bins): 256 × 2,049 ≈ 525 k multiply-adds at `LARGE`, about
+  1 ns each, plus the O(leaves²) transition mix (36,864 terms). At the medium workload one prediction costs about a
+  twelfth of one DFT decomposition (44 µs, [wave-decomposer-reference.md](wave-decomposer-reference.md)).
+- **Allocation** is O(concepts + bins) per call: the feature and score arrays, the prior row, the candidate records
+  and lists. Nothing scales with the transition table.
+- In the G3 run every prediction made 6 comparisons, scored 4 candidates and visited 2 levels (1.99 to 2.00 on
+  average; abstentions stop at depth 0). No optimization is made or justified: G3 is no-go.
+
+## Limitations
+
+- One fixture family with continuous tone frequencies, one machine, one JMH fork. The verdict is binding for G3 under
+  this protocol and says nothing about other encoders or features.
+- Windows inside one sequence share its transition process; the intervals assume sequence slots are independent.
+- C-flat's coverage could not be matched exactly to C's on the registered grid (0.674 against 0.752 on the
+  threshold-selection split), so H4 compares at slightly different coverages.
+- C runs without resonance features (G2 no-go) and ignores phase entirely.

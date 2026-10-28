@@ -361,8 +361,14 @@ control, so spectral resonance stays diagnostics-only
 ([spectral-resonance-h2.md](docs/benchmarks/spectral-resonance-h2.md)). The scalar reference `WaveSynthesizer` inverts
 complete DFT and Haar patterns `EXACT`ly within the contract tolerance, reports truncated ones as `LOSSY` with
 retained-energy and error diagnostics, and refuses a Haar pattern without its approximation as `NOT_INVERTIBLE`
-(gate G1s go for both paths; issue #126, [ADR 0042](docs/adr/0042-reference-wave-synthesizer.md)). The other stages
-are not implemented.
+(gate G1s go for both paths; issue #126, [ADR 0042](docs/adr/0042-reference-wave-synthesizer.md)). The bounded,
+deterministic `NextConceptPredictor` (`monada.neuron.reasoning.concept`, issue #127,
+[ADR 0043](docs/adr/0043-hierarchical-next-concept-predictor.md)) proposes host-labeled concepts coarse to fine over a
+validated `ConceptHierarchy` and a caller-owned `ConceptModel` snapshot, with typed abstention. Its pre-registered G3
+evaluation is a **no-go**: C beats the no-spectral baseline by less than the registered margin in three of five
+repeats, its abstention adds almost no accuracy, and it abstains less on pure noise than on clean evidence
+([next-concept-g3.md](docs/benchmarks/next-concept-g3.md)), so cycle integration (#128) does not start. The other
+stages are not implemented.
 
 ## Design Principles
 

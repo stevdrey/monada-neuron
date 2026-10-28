@@ -94,13 +94,15 @@ in the Store.
 - Hosts and evaluations can propose concept hypotheses from labeled spectral evidence with explicit abstention; the
   single-wave path and every existing type are unchanged.
 - Calibration, coverage and the value of the hierarchy are empirical questions answered by the G3 report
-  ([next-concept-g3.md](../benchmarks/next-concept-g3.md)); a no-go there stops #128.
+  ([next-concept-g3.md](../benchmarks/next-concept-g3.md)). G3 is **no-go**: H3 misses its margin in three of five
+  repeats, abstention is not informative (H6), and a flat decision over the same scores is slightly more accurate
+  (H4). #128 does not start; the predictor stays a library-only experiment.
 - The model snapshot is about `8 · concepts · bins` bytes (4.2 MB at the largest bounds).
 - Phase information is unused by this predictor.
 
 ## Follow-Up
 
-- #128 (only if G3 is go): wire the predictor into an existing reasoning stage; decide in its own ADR whether
+- #128 (blocked: G3 is no-go): would wire the predictor into an existing reasoning stage; decide in its own ADR whether
   spectral components need an `Evidence` variant.
 - #129: outcome feedback producing a new snapshot (ADR 0021 pattern).
 - #130: Haar features (control D) and the large-workload resource measurements.

@@ -1,7 +1,7 @@
 # NCM Wave Cognition Experiment Contract v1
 
 **Contract identifier**: `ncm-wave-cognition/1`
-**Status**: Accepted (issue #121; experimental and opt-in; implemented in part by #122, #123, #124, #125 and #126, see Sections 4 to 7 and 9)
+**Status**: Accepted (issue #121; experimental and opt-in; implemented in part by #122, #123, #124, #125, #126 and #127, see Sections 4 to 9)
 **Parent**: Epic #120, Hierarchical Wave Cognition
 **Decision record**: [ADR 0034](../adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md)
 **Composes, unchanged**: [ADR 0001](../adr/0001-cognition-memory-boundary.md),
@@ -208,12 +208,20 @@ record BandContribution(int level, int index, double firstMagnitude, double seco
 final class SpectralResonanceDynamics { ComparisonResult compare(SpectralPattern first, SpectralPattern second) { } }
 final class DominantComponentProjection { FrequencyState project(SpectralPattern dftPattern) { } }
 
-// #127
+// #127 (implemented in monada.neuron.reasoning.concept; ADR 0043 records the deviations from the first sketch)
 record ConceptNode(int ordinal, long conceptCode, int parentOrdinal, int depth) { }
-record ConceptHierarchy(int domain, List<ConceptNode> nodes) { }
-sealed interface ConceptPrediction permits ConceptCandidates, ConceptAbstention { }
+final class ConceptHierarchy { static ConceptHierarchy of(int domain, List<ConceptNode> nodes) { } }  // CSR layout
+sealed interface ConceptPrediction permits ConceptCandidates, ConceptAbstention { }   // both nested
+record ConceptCandidates(List<ConceptLevel> levels, Optional<AbstentionReason> refinementStop,
+                         Optional<ConceptLevel> stoppedLevel, ConceptScores scoreTable, PredictionWork work) { }
+record ConceptAbstention(AbstentionReason reason, List<ConceptLevel> diagnostics, Optional<ConceptScores> scores,
+                         PredictionWork work, String detail) { }
+record ConceptLevel(int depth, List<ConceptCandidate> ranked) { }
 record ConceptCandidate(int conceptOrdinal, int depth, double score, double margin, List<Integer> supportingComponents) { }
 enum AbstentionReason { LOW_CONFIDENCE, LOW_MARGIN, INCOMPATIBLE_INPUT, UNKNOWN_CONCEPT, BUDGET_EXHAUSTED }
+final class ConceptModel { }          // caller-owned snapshot: centroids, transition counts, temperature, thresholds
+final class ConceptModelTrainer { ConceptModel train(hierarchy, frame, List<LabeledSequence>, double temperature) { } }
+final class NextConceptPredictor { ConceptPrediction predict(ConceptQuery, ConceptModel, PredictionBudget) { } }
 
 // #126 (implemented; ADR 0042 records the deviations from the first sketch)
 sealed interface SynthesisResult permits Reconstructed, NotInvertible {   // both nested in SynthesisResult
@@ -427,7 +435,17 @@ lower bin, as `FrequencyState(magnitude, locator, phase)`, and `FrequencyState.Z
 rejects Haar patterns (`IllegalArgumentException`): a Haar locator is a position (Section 2.1). It is the scalar
 control of H2 (Section 14.2) and is never applied implicitly.
 
-## 8. Hierarchical NCM (proposed, owned by issue #127)
+## 8. Hierarchical NCM (implemented by issue #127)
+
+Implemented in `monada.neuron.reasoning.concept` ([ADR 0043](../adr/0043-hierarchical-next-concept-predictor.md)).
+Gate G3 was evaluated by #127 under the protocol pre-registered in
+[next-concept-g3.md](../benchmarks/next-concept-g3.md): **no-go**. H3 misses its margin in three of five repeats, H6
+fails in every repeat (abstention adds about 0.015 leaf accuracy, and N11 noise is left uncovered less often than
+20 dB evidence), and H4 is refuted (C-flat is slightly more accurate at a lower coverage). #128 does not start
+(Section 15). Refinements of this section, recorded in ADR 0043: thresholds are per depth; a coarse-only result
+carries its `refinementStop` reason and the failing level as diagnostics; failures are tested margin first, so exact
+ties are `LOW_MARGIN`; the minimal snapshot is a phase-blind magnitude centroid per concept plus Laplace-smoothed leaf
+transition counts and a softmax temperature, with no resonance feature because G2 is no-go.
 
 ### 8.1 Concept hierarchy
 
@@ -755,7 +773,7 @@ around by widening scope.
 | G1h | #124 | H1h holds; determinism is exact | Haar is excluded: #126 inverts DFT patterns only, control D is dropped, and the report says so; G2 and G3 are unaffected |
 | G1s | #126 | H1s holds for each synthesis path in scope (DFT always; Haar only when G1h is go); determinism is exact | Evaluated per path: a failing path stays out of #128, which integrates with the passing path or without synthesis, and the report says so; G2 and G3 are unaffected |
 | G2 | #125 (with the generator and scalar control) | H2 holds | Spectral resonance stays a diagnostic only; #127 may still proceed without resonance features, and the report says so |
-| G3 | #127 (with controls A, B, C and C-flat) | H3 and H6 hold on the medium workload | **Stop before #128**; publish the negative result; no cycle integration |
+| G3 | #127 (with controls A, B, C and C-flat) | H3 and H6 hold on the medium workload | **Stop before #128**; publish the negative result; no cycle integration. **Evaluated: no-go** ([next-concept-g3.md](../benchmarks/next-concept-g3.md)) |
 | G4 | #128 | All existing tests pass unchanged; N13 holds; budgets honored | Revert to library-only use; no default change |
 | G5 | #129 (H5 with control E), #130 | H5 holds or is reported negative; #130 publishes the go/no-go report with every control | The report's decision is binding for further investment |
 
@@ -809,6 +827,7 @@ issue is updated to cite this table before it starts. #124 and #125 may proceed 
 - [ADR 0034](../adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md): NCM is hierarchy and prediction, not the prism.
 - [ADR 0041](../adr/0041-spectral-resonance-dynamics.md): spectral resonance dynamics (#125).
 - [ADR 0042](../adr/0042-reference-wave-synthesizer.md): reference wave synthesizer (#126).
+- [ADR 0043](../adr/0043-hierarchical-next-concept-predictor.md): hierarchical next-concept predictor (#127).
 - [ADR 0001](../adr/0001-cognition-memory-boundary.md): cognition and memory boundary.
 - [ADR 0005](../adr/0005-signals-without-identifiers.md): signals without identifiers.
 - [ADR 0006](../adr/0006-deterministic-scalar-resonance-metric.md): deterministic scalar resonance metric.
