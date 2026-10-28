@@ -8,6 +8,7 @@ import monada.neuron.routing.RoutingStateDefinition;
 import monada.neuron.routing.TrustedRoutingAdvice;
 import monada.neuron.routing.TrustedRoutingProfile;
 import monada.neuron.routing.catalog.RouteCatalog;
+import monada.neuron.routing.catalog.RouteEligibilityFilter;
 import monada.neuron.routing.catalog.RoutingRequest;
 import org.junit.jupiter.api.Test;
 
@@ -57,9 +58,11 @@ class ScenarioVerificationTest {
 
     // covers: AC-4
     @Test
-    void trustedAdviceReturnsThePolicysDecisionUnchanged() {
-        assertEquals(REFERENCE.decide(request, catalog(), cold(request)),
-                new TrustedRoutingAdvice().decide(REFERENCE, TrustedRoutingProfile.lexicographic(REFERENCE), input));
+    void trustedAdviceReturnsThePolicysDecisionUnchangedWithTheReportItWasCheckedAgainst() {
+        var verified = new TrustedRoutingAdvice().decide(REFERENCE, TrustedRoutingProfile.lexicographic(REFERENCE), input);
+
+        assertEquals(REFERENCE.decide(request, catalog(), cold(request)), verified.decision());
+        assertEquals(new RouteEligibilityFilter().evaluate(request, catalog()), verified.report());
     }
 
     @Test
@@ -112,8 +115,8 @@ class ScenarioVerificationTest {
 
         assertThrows(IllegalArgumentException.class, () -> new RoutingScenario(renamed, profile, input));
         assertThrows(IllegalArgumentException.class, () -> new TrustedRoutingAdvice().decide(renamed, profile, input));
-        assertEquals(A, ((RoutingDecision.Selected) new TrustedRoutingAdvice().decide(REFERENCE, profile, input))
-                .route());
+        assertEquals(A, ((RoutingDecision.Selected) new TrustedRoutingAdvice().decide(REFERENCE, profile, input)
+                .decision()).route());
     }
 
     // covers: AC-4

@@ -22,9 +22,16 @@ public record EligibilityChange(RouteKey route, RouteStanding before, RouteStand
             throw new IllegalArgumentException("an eligibility change needs different standings, got " + before
                     + " for " + route);
         }
-        if (before instanceof RouteStanding.Excluded(var exclusion) && !exclusion.key().equals(route)
-                || after instanceof RouteStanding.Excluded(var exclusion2) && !exclusion2.key().equals(route)) {
-            throw new IllegalArgumentException("an exclusion of another route cannot describe " + route);
+        if (!describes(before, route) || !describes(after, route)) {
+            throw new IllegalArgumentException("a standing of another route cannot describe " + route);
         }
+    }
+
+    private boolean describes(RouteStanding standing, RouteKey route) {
+        return switch (standing) {
+            case RouteStanding.Eligible(var eligible) -> eligible.key().equals(route);
+            case RouteStanding.Excluded(var exclusion) -> exclusion.key().equals(route);
+            case RouteStanding.NotInCatalog ignored -> true;
+        };
     }
 }

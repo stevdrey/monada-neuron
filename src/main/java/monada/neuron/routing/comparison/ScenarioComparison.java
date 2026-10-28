@@ -42,6 +42,9 @@ public sealed interface ScenarioComparison permits ScenarioComparison.Compared, 
     record Compared(RoutingDecision before, RoutingDecision after, List<ScenarioDifference> differences,
             ScenarioDelta delta) implements ScenarioComparison {
 
+        /** Stateless; shared so every comparison checks its delta the same way. */
+        private static final DeltaDerivation DERIVATION = new DeltaDerivation();
+
         /** Validates and copies. */
         public Compared {
             Objects.requireNonNull(before, "before must not be null");
@@ -51,7 +54,7 @@ public sealed interface ScenarioComparison permits ScenarioComparison.Compared, 
             if (differences.stream().anyMatch(ScenarioDifference::breaksComparability)) {
                 throw new IllegalArgumentException("compared scenarios cannot differ in " + differences);
             }
-            if (!delta.equals(ScenarioDelta.between(before, after, delta.eligibilityChanges()))) {
+            if (!delta.equals(DERIVATION.between(before, after, delta.eligibilityChanges()))) {
                 throw new IllegalArgumentException("the delta contradicts the decisions it describes: " + delta);
             }
         }

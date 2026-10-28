@@ -24,7 +24,11 @@ import java.util.Objects;
  */
 public final class ScenarioComparator {
 
+    /** Field-less, so one instance serves every absent route. */
+    private static final RouteStanding NOT_IN_CATALOG = new RouteStanding.NotInCatalog();
+
     private final TrustedRoutingAdvice advice = new TrustedRoutingAdvice();
+    private final DeltaDerivation derivation = new DeltaDerivation();
 
     /**
      * Decides both scenarios and compares them.
@@ -38,14 +42,16 @@ public final class ScenarioComparator {
     public ScenarioComparison compare(RoutingScenario before, RoutingScenario after) {
         Objects.requireNonNull(before, "before must not be null");
         Objects.requireNonNull(after, "after must not be null");
-        RoutingDecision beforeDecision = advice.decide(before.policy(), before.profile(), before.input());
-        RoutingDecision afterDecision = advice.decide(after.policy(), after.profile(), after.input());
+        TrustedRoutingAdvice.Verified beforeSide = advice.decide(before.policy(), before.profile(), before.input());
+        TrustedRoutingAdvice.Verified afterSide = advice.decide(after.policy(), after.profile(), after.input());
+        RoutingDecision beforeDecision = beforeSide.decision();
+        RoutingDecision afterDecision = afterSide.decision();
         List<ScenarioDifference> differences = differences(before.input(), after.input(), beforeDecision, afterDecision);
         if (differences.stream().anyMatch(ScenarioDifference::breaksComparability)) {
             return new ScenarioComparison.Incomparable(beforeDecision, afterDecision, differences);
         }
-        var delta = ScenarioDelta.between(beforeDecision, afterDecision,
-                eligibilityChanges(before.input(), beforeDecision, after.input(), afterDecision));
+        var delta = derivation.between(beforeDecision, afterDecision,
+                eligibilityChanges(before.input(), beforeSide, after.input(), afterSide));
         return new ScenarioComparison.Compared(beforeDecision, afterDecision, differences, delta);
     }
 
@@ -64,7 +70,7 @@ public final class ScenarioComparator {
         mark(found, ScenarioDifference.CUTOFF, a.cutoff() != b.cutoff());
         mark(found, ScenarioDifference.CATALOG, !before.catalog().equals(after.catalog()));
         mark(found, ScenarioDifference.REQUIREMENTS, !a.requirements().equals(b.requirements()));
-        mark(found, ScenarioDifference.OVERFLOW_PERMISSION, a.overflowPermitted() != b.overflowPermitted());
+        mark(found, ScenarioDifference.OVERFLOW_ADMISSION, a.overflowPermitted() != b.overflowPermitted());
         mark(found, ScenarioDifference.FEATURES, !a.features().equals(b.features()));
         mark(found, ScenarioDifference.REQUEST_CONTEXT, !a.sourceFingerprint().equals(b.sourceFingerprint())
                 || !a.contextFingerprint().equals(b.contextFingerprint())
@@ -88,45 +94,60 @@ public final class ScenarioComparator {
     }
 
     /**
-     * Walks both catalogs in canonical route order. Each decision's exclusions are a canonically ordered subset of its
-     * own catalog, so one cursor per exclusion list pairs every route with its standing without a lookup.
+     * Walks both catalogs in canonical route order. Each side's eligible routes and its decision's exclusions are
+     * disjoint, canonically ordered subsets of its own catalog that together cover it (the validator checked the
+     * exclusions against the same report), so one cursor per list pairs every route with its standing without a lookup.
      */
-    private List<EligibilityChange> eligibilityChanges(
-            RoutingInput before, RoutingDecision beforeDecision, RoutingInput after, RoutingDecision afterDecision) {
-        List<CatalogEntry> beforeEntries = before.catalog().entries();
-        List<CatalogEntry> afterEntries = after.catalog().entries();
-        List<EligibilityReport.Exclusion> beforeExcluded = beforeDecision.exclusions();
-        List<EligibilityReport.Exclusion> afterExcluded = afterDecision.exclusions();
+    private List<EligibilityChange> eligibilityChanges(RoutingInput before, TrustedRoutingAdvice.Verified beforeSide,
+            RoutingInput after, TrustedRoutingAdvice.Verified afterSide) {
+        var was = new Standings(before, beforeSide);
+        var now = new Standings(after, afterSide);
         var changes = new ArrayList<EligibilityChange>();
-        int beforeEntry = 0;
-        int afterEntry = 0;
-        int beforeExclusion = 0;
-        int afterExclusion = 0;
-        while (beforeEntry < beforeEntries.size() || afterEntry < afterEntries.size()) {
-            RouteKey beforeKey = beforeEntry < beforeEntries.size() ? beforeEntries.get(beforeEntry).key() : null;
-            RouteKey afterKey = afterEntry < afterEntries.size() ? afterEntries.get(afterEntry).key() : null;
-            int order = beforeKey == null ? 1 : afterKey == null ? -1 : beforeKey.compareTo(afterKey);
-            RouteKey key = order <= 0 ? beforeKey : afterKey;
-            RouteStanding was = new RouteStanding.NotInCatalog();
-            RouteStanding now = new RouteStanding.NotInCatalog();
-            if (order <= 0) {
-                boolean excluded = beforeExclusion < beforeExcluded.size()
-                        && beforeExcluded.get(beforeExclusion).key().equals(key);
-                was = excluded ? new RouteStanding.Excluded(beforeExcluded.get(beforeExclusion++))
-                        : new RouteStanding.Eligible();
-                beforeEntry++;
-            }
-            if (order >= 0) {
-                boolean excluded = afterExclusion < afterExcluded.size()
-                        && afterExcluded.get(afterExclusion).key().equals(key);
-                now = excluded ? new RouteStanding.Excluded(afterExcluded.get(afterExclusion++))
-                        : new RouteStanding.Eligible();
-                afterEntry++;
-            }
-            if (!was.equals(now)) {
-                changes.add(new EligibilityChange(key, was, now));
+        while (was.hasNext() || now.hasNext()) {
+            int order = !was.hasNext() ? 1 : !now.hasNext() ? -1 : was.key().compareTo(now.key());
+            RouteKey key = order <= 0 ? was.key() : now.key();
+            RouteStanding wasStanding = order <= 0 ? was.next() : NOT_IN_CATALOG;
+            RouteStanding nowStanding = order >= 0 ? now.next() : NOT_IN_CATALOG;
+            if (!wasStanding.equals(nowStanding)) {
+                changes.add(new EligibilityChange(key, wasStanding, nowStanding));
             }
         }
         return changes;
+    }
+
+    /** A cursor over one side's catalog, yielding each route's standing in canonical route order. */
+    private static final class Standings {
+
+        private final List<CatalogEntry> entries;
+        private final List<EligibilityReport.EligibleRoute> eligible;
+        private final List<EligibilityReport.Exclusion> excluded;
+        private int entry;
+        private int eligibleAt;
+        private int excludedAt;
+
+        Standings(RoutingInput input, TrustedRoutingAdvice.Verified side) {
+            this.entries = input.catalog().entries();
+            this.eligible = side.report().eligible();
+            this.excluded = side.decision().exclusions();
+        }
+
+        boolean hasNext() {
+            return entry < entries.size();
+        }
+
+        RouteKey key() {
+            return entries.get(entry).key();
+        }
+
+        RouteStanding next() {
+            RouteKey key = entries.get(entry++).key();
+            if (excludedAt < excluded.size() && excluded.get(excludedAt).key().equals(key)) {
+                return new RouteStanding.Excluded(excluded.get(excludedAt++));
+            }
+            if (eligibleAt < eligible.size() && eligible.get(eligibleAt).key().equals(key)) {
+                return new RouteStanding.Eligible(eligible.get(eligibleAt++));
+            }
+            throw new IllegalStateException("the verified report neither admits nor excludes catalog route " + key);
+        }
     }
 }

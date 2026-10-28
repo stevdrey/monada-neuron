@@ -1,6 +1,7 @@
 package monada.neuron.routing.comparison;
 
 import monada.neuron.routing.AbstainReason;
+import monada.neuron.routing.RankedCandidate;
 import monada.neuron.routing.RoutingDecision;
 import monada.neuron.routing.RoutingInput;
 import monada.neuron.routing.StateMismatch;
@@ -28,6 +29,8 @@ import static monada.neuron.routing.comparison.ComparisonFixtures.catalog;
 import static monada.neuron.routing.comparison.ComparisonFixtures.cohort;
 import static monada.neuron.routing.comparison.ComparisonFixtures.cold;
 import static monada.neuron.routing.comparison.ComparisonFixtures.cost;
+import static monada.neuron.routing.comparison.ComparisonFixtures.eligible;
+import static monada.neuron.routing.comparison.ComparisonFixtures.eligibleOverflow;
 import static monada.neuron.routing.comparison.ComparisonFixtures.entry;
 import static monada.neuron.routing.comparison.ComparisonFixtures.learned;
 import static monada.neuron.routing.comparison.ComparisonFixtures.overflow;
@@ -81,7 +84,7 @@ class ScenarioComparatorTest {
         assertEquals(B, assertInstanceOf(RoutingDecision.Selected.class, comparison.after()).route());
         assertTrue(comparison.delta().rankingChanged());
         var exclusion = new EligibilityReport.Exclusion(A, EligibilityReason.ROUTE_UNAVAILABLE, List.of());
-        assertEquals(List.of(new EligibilityChange(A, new RouteStanding.Eligible(), new RouteStanding.Excluded(exclusion))),
+        assertEquals(List.of(new EligibilityChange(A, eligible(A), new RouteStanding.Excluded(exclusion))),
                 comparison.delta().eligibilityChanges());
     }
 
@@ -145,8 +148,8 @@ class ScenarioComparatorTest {
         var changes = compared(before, after).delta().eligibilityChanges();
 
         assertEquals(List.of(
-                new EligibilityChange(A, new RouteStanding.Eligible(), new RouteStanding.NotInCatalog()),
-                new EligibilityChange(B, new RouteStanding.NotInCatalog(), new RouteStanding.Eligible())), changes);
+                new EligibilityChange(A, eligible(A), new RouteStanding.NotInCatalog()),
+                new EligibilityChange(B, new RouteStanding.NotInCatalog(), eligible(B))), changes);
     }
 
     // covers: AC-3
@@ -234,6 +237,26 @@ class ScenarioComparatorTest {
         assertFalse(comparison.delta().rankingChanged());
     }
 
+    // covers: AC-4
+    @Test
+    void aRankingThatStopsBeingTruncatedChangesEvenWithEqualVisibleRoutes() {
+        RoutingScenario before = scenario(request(), wide("cat-w9", 9));
+        RoutingScenario after = scenario(request(), wide("cat-w8", 8));
+
+        var comparison = compared(before, after);
+
+        var was = assertInstanceOf(RoutingDecision.Selected.class, comparison.before());
+        var now = assertInstanceOf(RoutingDecision.Selected.class, comparison.after());
+        assertTrue(was.candidatesTruncated());
+        assertFalse(now.candidatesTruncated());
+        assertEquals(was.candidates().stream().map(RankedCandidate::key).toList(),
+                now.candidates().stream().map(RankedCandidate::key).toList());
+        assertEquals(RouteChange.SAME_ROUTE, comparison.delta().routeChange());
+        assertTrue(comparison.delta().rankingChanged());
+        assertEquals(List.of(new EligibilityChange(route(8), eligible(route(8)), new RouteStanding.NotInCatalog())),
+                comparison.delta().eligibilityChanges());
+    }
+
     // covers: AC-6 (unknown resource), AC-2 (policy parameters)
     @Test
     void anUnknownEstimateLeavesTheCostObjectiveUnapplied() {
@@ -256,19 +279,33 @@ class ScenarioComparatorTest {
 
     // covers: AC-4
     @Test
-    void overflowPermissionChangesStandingWithItsRecordedReason() {
+    void overflowAdmissionChangesStandingWithItsRecordedReason() {
         RouteCatalog catalog = catalog("cat-o", entry(A, 1, 0), overflow(B, 1, 1));
         RoutingScenario before = scenario(request(), catalog);
         RoutingScenario after = scenario(request().overflow(true), catalog);
 
         var comparison = compared(before, after);
 
-        assertEquals(List.of(ScenarioDifference.OVERFLOW_PERMISSION), comparison.differences());
+        assertEquals(List.of(ScenarioDifference.OVERFLOW_ADMISSION), comparison.differences());
         var exclusion = new EligibilityReport.Exclusion(B, EligibilityReason.OVERFLOW_NOT_PERMITTED, List.of());
         assertEquals(List.of(exclusion), comparison.before().exclusions());
-        assertEquals(List.of(new EligibilityChange(B, new RouteStanding.Excluded(exclusion), new RouteStanding.Eligible())),
+        assertEquals(List.of(new EligibilityChange(B, new RouteStanding.Excluded(exclusion), eligibleOverflow(B))),
                 comparison.delta().eligibilityChanges());
         assertEquals(RouteChange.SAME_ROUTE, comparison.delta().routeChange());
+    }
+
+    // covers: AC-2, AC-4
+    @Test
+    void aRouteThatBecomesOverflowOnlyChangesStandingWhileStayingEligible() {
+        RoutingScenario before = scenario(request().overflow(true), catalog("cat-1", entry(A, 1, 0), entry(B, 1, 1)));
+        RoutingScenario after = scenario(request().overflow(true), catalog("cat-2", entry(A, 1, 0), overflow(B, 1, 1)));
+
+        var comparison = compared(before, after);
+
+        assertEquals(List.of(ScenarioDifference.CATALOG), comparison.differences());
+        assertEquals(List.of(), comparison.after().exclusions());
+        assertEquals(List.of(new EligibilityChange(B, eligible(B), eligibleOverflow(B))),
+                comparison.delta().eligibilityChanges());
     }
 
     // covers: AC-2
@@ -346,9 +383,9 @@ class ScenarioComparatorTest {
 
         var changes = comparison.delta().eligibilityChanges();
         assertEquals(ScenarioDelta.MAX_ELIGIBILITY_CHANGES, changes.size());
-        assertEquals(new EligibilityChange(route(0), new RouteStanding.Eligible(), new RouteStanding.NotInCatalog()),
+        assertEquals(new EligibilityChange(route(0), eligible(route(0)), new RouteStanding.NotInCatalog()),
                 changes.getFirst());
-        assertEquals(new EligibilityChange(route(63), new RouteStanding.NotInCatalog(), new RouteStanding.Eligible()),
+        assertEquals(new EligibilityChange(route(63), new RouteStanding.NotInCatalog(), eligible(route(63))),
                 changes.getLast());
     }
 }

@@ -24,8 +24,8 @@ public enum ScenarioDifference {
     CATALOG(false),
     /** The request's hard requirements. */
     REQUIREMENTS(false),
-    /** Whether the request permits overflow routes. */
-    OVERFLOW_PERMISSION(false),
+    /** Whether the request admits overflow routes to eligibility. */
+    OVERFLOW_ADMISSION(false),
     /** Any task feature; listed beside {@link #FEATURE_SCHEMA} when the schema version differs too. */
     FEATURES(false),
     /** The source, context or constraints fingerprint. */

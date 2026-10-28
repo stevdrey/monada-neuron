@@ -99,21 +99,25 @@ class ComparisonValueTypesTest {
 
     @Test
     void eligibilityChangesAreRealCanonicalAndBounded() {
-        var eligible = new RouteStanding.Eligible();
+        var eligible = new RouteStanding.Eligible(new EligibilityReport.EligibleRoute(A, "sandboxed", false));
         var absent = new RouteStanding.NotInCatalog();
         assertThrows(IllegalArgumentException.class, () -> new EligibilityChange(A, eligible, eligible));
         var otherRoute = new RouteStanding.Excluded(
                 new EligibilityReport.Exclusion(B, EligibilityReason.ROUTE_UNAVAILABLE, List.of()));
         assertThrows(IllegalArgumentException.class, () -> new EligibilityChange(A, eligible, otherRoute));
+        var otherEligible = new RouteStanding.Eligible(new EligibilityReport.EligibleRoute(B, "sandboxed", false));
+        assertThrows(IllegalArgumentException.class, () -> new EligibilityChange(A, absent, otherEligible));
+        assertThrows(NullPointerException.class, () -> new RouteStanding.Eligible(null));
 
         var a = new EligibilityChange(A, eligible, absent);
-        var b = new EligibilityChange(B, eligible, absent);
+        var b = new EligibilityChange(B, otherEligible, absent);
         assertThrows(IllegalArgumentException.class,
                 () -> new ScenarioDelta(RouteChange.SAME_ROUTE, true, false, false, List.of(b, a)));
 
         List<EligibilityChange> tooMany = new ArrayList<>();
         for (int i = 0; i <= ScenarioDelta.MAX_ELIGIBILITY_CHANGES; i++) {
-            tooMany.add(new EligibilityChange(route(i), eligible, absent));
+            var standing = new RouteStanding.Eligible(new EligibilityReport.EligibleRoute(route(i), "sandboxed", false));
+            tooMany.add(new EligibilityChange(route(i), standing, absent));
         }
         assertThrows(IllegalArgumentException.class,
                 () -> new ScenarioDelta(RouteChange.SAME_ROUTE, true, false, false, tooMany));

@@ -9,6 +9,7 @@ import monada.neuron.routing.RoutingStateDefinition;
 import monada.neuron.routing.TrustedRoutingProfile;
 import monada.neuron.routing.catalog.Availability;
 import monada.neuron.routing.catalog.CatalogEntry;
+import monada.neuron.routing.catalog.EligibilityReport;
 import monada.neuron.routing.catalog.HardRequirements;
 import monada.neuron.routing.catalog.OverflowClass;
 import monada.neuron.routing.catalog.ResourceEstimate;
@@ -130,6 +131,16 @@ final class ComparisonFixtures {
                 .tier(tier)
                 .overflowClass(OverflowClass.OVERFLOW)
                 .build(), Availability.AVAILABLE, fallbackPriority);
+    }
+
+    /** The standing of a fixture route the filter admits in mode {@code sandboxed}, as a primary route. */
+    static RouteStanding eligible(RouteKey key) {
+        return new RouteStanding.Eligible(new EligibilityReport.EligibleRoute(key, "sandboxed", false));
+    }
+
+    /** The standing of a fixture route the filter admits in mode {@code sandboxed}, only as overflow. */
+    static RouteStanding eligibleOverflow(RouteKey key) {
+        return new RouteStanding.Eligible(new EligibilityReport.EligibleRoute(key, "sandboxed", true));
     }
 
     static CatalogEntry entry(RouteKey key, int tier, int fallbackPriority) {

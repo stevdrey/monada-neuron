@@ -22,10 +22,6 @@ public record RoutingScenario(RoutingPolicy policy, TrustedRoutingProfile profil
         Objects.requireNonNull(policy, "policy must not be null");
         Objects.requireNonNull(profile, "profile must not be null");
         Objects.requireNonNull(input, "input must not be null");
-        if (!profile.policyId().equals(policy.policyId()) || !profile.policyVersion().equals(policy.policyVersion())) {
-            throw new IllegalArgumentException("the profile hosts policy " + profile.policyId() + "/"
-                    + profile.policyVersion() + " but the scenario was given " + policy.policyId() + "/"
-                    + policy.policyVersion());
-        }
+        profile.requireHosts(policy);
     }
 }

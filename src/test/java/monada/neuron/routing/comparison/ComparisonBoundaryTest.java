@@ -10,11 +10,13 @@ import java.lang.reflect.RecordComponent;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** A preview reaches no state, credit, memory, receipt or disposition type and names no spend, quality or permission. */
 class ComparisonBoundaryTest {
@@ -23,7 +25,7 @@ class ComparisonBoundaryTest {
             "monada.neuron.routing.feedback", "monada.neuron.routing.outcome", "monada.neuron.routing.receipt",
             "monada.neuron.routing.disposition", "monada.neuron.resonance");
 
-    private static final List<String> FORBIDDEN = List.of("authoriz", "approv", "grant", "permit", "apply", "applied",
+    private static final List<String> FORBIDDEN = List.of("authoriz", "approv", "grant", "permit", "permiss", "apply", "applied",
             "bill", "cost", "price", "spend", "saving", "improv", "better", "worse", "quality", "credit", "feedback",
             "reward", "ledger");
 
@@ -32,6 +34,9 @@ class ComparisonBoundaryTest {
             ScenarioComparison.class, ScenarioDelta.class, ScenarioDifference.class);
 
     private static final Path SOURCES = Path.of("src/main/java/monada/neuron/routing/comparison");
+
+    /** The trusted composition every preview runs; it must stay as free of those packages as the preview itself. */
+    private static final Path TRUSTED_ADVICE = Path.of("src/main/java/monada/neuron/routing/TrustedRoutingAdvice.java");
 
     private static List<Class<?>> publicTypes() {
         List<Class<?>> types = new ArrayList<>(TOP_LEVEL);
@@ -57,19 +62,23 @@ class ComparisonBoundaryTest {
         }
         List<String> expected = new ArrayList<>(TOP_LEVEL.stream().map(type -> type.getSimpleName() + ".java").toList());
         expected.add("package-info.java");
+        expected.add("DeltaDerivation.java");
         assertEquals(expected.stream().sorted().toList(), files);
     }
 
     // covers: AC-5
     @Test
-    void noSourceFileImportsStateCreditMemoryReceiptOrDispositionPackages() throws IOException {
-        List<Path> sources;
+    void noSourceLineReachesStateCreditMemoryReceiptOrDispositionPackages() throws IOException {
+        List<Path> sources = new ArrayList<>();
         try (var listing = Files.list(SOURCES)) {
-            sources = listing.sorted().toList();
+            listing.sorted().forEach(sources::add);
         }
+        sources.add(TRUSTED_ADVICE);
         for (Path source : sources) {
             for (String line : Files.readAllLines(source)) {
-                if (!line.startsWith("import ")) {
+                String code = line.strip();
+                // Imports and fully qualified references alike; prose may name a package without reaching it.
+                if (code.startsWith("*") || code.startsWith("/*") || code.startsWith("//")) {
                     continue;
                 }
                 for (String banned : BANNED_PACKAGES) {
@@ -111,12 +120,12 @@ class ComparisonBoundaryTest {
 
     // covers: AC-5
     @Test
-    void theComparatorKeepsNoStateBesidesTheTrustedAdvice() {
+    void theComparatorKeepsNoStateBesidesItsStatelessCollaborators() {
         Field[] fields = ScenarioComparator.class.getDeclaredFields();
-        assertEquals(1, fields.length);
-        assertEquals("TrustedRoutingAdvice", fields[0].getType().getSimpleName());
+        assertEquals(List.of("DeltaDerivation", "RouteStanding", "TrustedRoutingAdvice"),
+                Arrays.stream(fields).map(field -> field.getType().getSimpleName()).sorted().toList());
         for (Field field : fields) {
-            assertFalse(Modifier.isStatic(field.getModifiers()) && !Modifier.isFinal(field.getModifiers()));
+            assertTrue(Modifier.isFinal(field.getModifiers()), field.getName());
         }
     }
 }
