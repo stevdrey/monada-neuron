@@ -123,8 +123,10 @@ guarded label read before the scorer opened it).
 | JVM flags | `--add-modules=jdk.incubator.vector` (evaluation module default), G1, default heap (3,832 MB max) |
 | OS / architecture | Linux 7.2 (Fedora 44), x86_64 |
 | CPU | AMD Ryzen 7 7730U with Radeon Graphics, 16 available processors (the evaluation is single-threaded) |
-| Neuron commit | `9071893` (clean tree; the pre-registration commit) |
-| Run | about 20 s wall clock for the full protocol; two runs gave bit-identical reports (only the timestamp differs) |
+| Pre-registration commit | `9071893`: margins, seeds, grids and rules committed before any held-out result |
+| Execution commit (results below) | `e9e1004` (clean tree): C-flat paired with C's score tables, `h4.paired-inputs` check |
+| Superseded execution | `9071893` (clean tree): C-flat ran its own history; only its H4 values differ (see the correction note) |
+| Run | about 20 s wall clock for the full protocol; two runs at `e9e1004` gave bit-identical results (only the timestamp and the JVM's total heap differ) |
 
 ## Checks
 
