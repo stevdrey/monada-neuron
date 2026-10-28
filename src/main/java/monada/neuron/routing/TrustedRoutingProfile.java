@@ -45,6 +45,21 @@ public record TrustedRoutingProfile(
     }
 
     /**
+     * Requires that this profile hosts the policy's identity: the one check every trusted composition runs before it
+     * decides.
+     *
+     * @param policy the policy the host composes with this profile
+     * @throws IllegalArgumentException if the policy's id or version differs from the profile's
+     */
+    public void requireHosts(RoutingPolicy policy) {
+        Objects.requireNonNull(policy, "policy must not be null");
+        if (!policyId.equals(policy.policyId()) || !policyVersion.equals(policy.policyVersion())) {
+            throw new IllegalArgumentException("the profile hosts policy " + policyId + "/" + policyVersion
+                    + " but was given " + policy.policyId() + "/" + policy.policyVersion());
+        }
+    }
+
+    /**
      * Profile for the reference policy identity, verified against configuration the host supplies separately from the
      * policy object.
      *

@@ -44,6 +44,8 @@ import java.util.Optional;
  */
 public final class RoutingReasoningStage implements CognitiveStage {
 
+    /** The trusted path's whole composition: decide, filter, validate against the profile identity, verify. */
+    private final TrustedRoutingAdvice trusted = new TrustedRoutingAdvice();
     private final RouteEligibilityFilter filter = new RouteEligibilityFilter();
     private final RoutingDecisionValidator validator = new RoutingDecisionValidator();
     private final RoutingDecisionVerifier verifier;
@@ -82,11 +84,7 @@ public final class RoutingReasoningStage implements CognitiveStage {
             RoutingPolicy policy, TrustedRoutingProfile profile, RoutingInputResolver resolver, int domain) {
         this(policy, Objects.requireNonNull(profile, "profile must not be null").verifier(), Optional.of(profile),
                 resolver, domain);
-        if (!profile.policyId().equals(policy.policyId()) || !profile.policyVersion().equals(policy.policyVersion())) {
-            throw new IllegalArgumentException("the profile hosts policy " + profile.policyId() + "/"
-                    + profile.policyVersion() + " but the stage was given " + policy.policyId() + "/"
-                    + policy.policyVersion());
-        }
+        profile.requireHosts(policy);
     }
 
     private RoutingReasoningStage(RoutingPolicy policy, RoutingDecisionVerifier verifier,
@@ -131,17 +129,9 @@ public final class RoutingReasoningStage implements CognitiveStage {
                 .orElseThrow(() -> new IllegalStateException("routing needs a host execution context"));
         RoutingInput input = Objects.requireNonNull(resolver.resolve(hostContext), "resolver result must not be null")
                 .orElseThrow(() -> new IllegalStateException("the host could not resolve routing inputs"));
-        RoutingDecision decision = Objects.requireNonNull(
-                policy.decide(input.request(), input.catalog(), input.preference()), "decision must not be null");
-        EligibilityReport report = filter.evaluate(input.request(), input.catalog());
-        // On the trusted path every decision is checked against the profile's identity, not the policy object's, which
-        // could report another identity after construction.
-        if (profile.isPresent()) {
-            validator.validate(decision, input, profile.get().policyId(), profile.get().policyVersion(), report);
-        } else {
-            validator.validate(decision, input, policy, report);
-        }
-        verifier.verify(decision, input, report);
+        RoutingDecision decision = profile.isPresent()
+                ? trusted.decideHosted(policy, profile.get(), input).decision()
+                : legacyDecision(input);
         if (decision instanceof RoutingDecision.Selected selected) {
             List<CatalogEntry> entries = input.catalog().entries();
             int index = 0;
@@ -153,5 +143,15 @@ public final class RoutingReasoningStage implements CognitiveStage {
                     decision, new HypothesisSet(List.of(hypothesis), HypothesisLimits.DEFAULT));
         }
         return new RoutingCognitiveStageResult(decision, HypothesisSet.EMPTY);
+    }
+
+    /** The legacy path: validated against the policy's live identity, then self-reported verification. */
+    private RoutingDecision legacyDecision(RoutingInput input) {
+        RoutingDecision decision = Objects.requireNonNull(
+                policy.decide(input.request(), input.catalog(), input.preference()), "decision must not be null");
+        EligibilityReport report = filter.evaluate(input.request(), input.catalog());
+        validator.validate(decision, input, policy, report);
+        verifier.verify(decision, input, report);
+        return decision;
     }
 }

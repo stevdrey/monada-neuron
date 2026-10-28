@@ -4,6 +4,9 @@ import monada.neuron.monad.CognitiveCycleTermination;
 import monada.neuron.resonance.AdaptiveBatchResonanceEvaluator;
 import monada.neuron.routing.RoutingDecision;
 import monada.neuron.resonance.BatchResonanceEvaluator;
+import monada.neuron.routing.comparison.RouteChange;
+import monada.neuron.routing.comparison.ScenarioComparison;
+import monada.neuron.routing.comparison.ScenarioDifference;
 import monada.neuron.routing.disposition.AdviceDisposition;
 import monada.neuron.routing.disposition.DispositionResult;
 import monada.neuron.routing.features.FeatureDimension;
@@ -90,6 +93,15 @@ class ConsumerSmokeTest {
         var followed = assertInstanceOf(AdviceDisposition.Followed.class, bound.disposition());
         assertTrue(followed.refersTo(AdviceReceipt.of(ConsumerSmoke.routeOneStage())));
         assertEquals("route-a", followed.advice().advisedRoute().orElseThrow().routeId());
+    }
+
+    @Test
+    void scenarioComparisonsAreAvailableThroughThePublishedArtifact() {
+        var compared = assertInstanceOf(ScenarioComparison.Compared.class, ConsumerSmoke.compareUnavailableRoute());
+
+        assertEquals(List.of(ScenarioDifference.CATALOG), compared.differences());
+        assertEquals(RouteChange.NO_LONGER_SELECTED, compared.delta().routeChange());
+        assertInstanceOf(RoutingDecision.NoEligibleRoute.class, compared.after());
     }
 
     @Test
