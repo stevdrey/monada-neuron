@@ -562,7 +562,7 @@ static, derived-not-consumed and adaptive controls in the evaluation module only
 adaptation on synthetic fixtures and coverage gaps on chosen-route-only Store exports, and makes no online routing quality,
 cost or accuracy claim.
 
-## NCM Wave Cognition Extension (specified; value types, DFT reference, Haar strategy and spectral resonance)
+## NCM Wave Cognition Extension (specified; value types, DFT reference, Haar strategy, spectral resonance, synthesis and the next-concept predictor)
 
 Epic #120 explores an experimental, opt-in path from explicit numeric samples to hierarchical next-concept hypotheses.
 [NCM Wave Cognition Experiment Contract v1](specs/ncm-wave-cognition-v1.md) (`ncm-wave-cognition/1`, issue #121) and
@@ -581,8 +581,13 @@ spectral aggregate does not beat the scalar control
 without resonance features. The scalar reference `WaveSynthesizer` inverts complete DFT and Haar patterns (`EXACT`),
 synthesizes truncated ones with dropped components as zero (`LOSSY`) and refuses a Haar pattern without its final
 approximation (`NOT_INVERTIBLE`), with retained-energy and, when the original window is supplied, error diagnostics
-(issue #126, [ADR 0042](adr/0042-reference-wave-synthesizer.md); gate G1s go for both paths). Every other name below
-is a proposal owned by issues #127 to #130.
+(issue #126, [ADR 0042](adr/0042-reference-wave-synthesizer.md); gate G1s go for both paths). The
+`NextConceptPredictor` in `monada.neuron.reasoning.concept` scores a phase-blind magnitude feature against per-concept
+centroids of a caller-owned `ConceptModel`, mixes it with smoothed transition counts and descends a validated
+`ConceptHierarchy` coarse to fine with typed abstention (issue #127,
+[ADR 0043](adr/0043-hierarchical-next-concept-predictor.md)). Gate G3 is **no-go**
+([next-concept-g3.md](benchmarks/next-concept-g3.md)): the predictor stays a library-only experiment and cycle
+integration (#128) does not start. Every other name below is a proposal owned by issues #128 to #130.
 
 ```text
 Host / modality encoder -> SampledWave (meaning, rate, unit, provenance: host owned)
