@@ -267,6 +267,8 @@ class TemporalReplayTest {
                 () -> assertEquals(digests.state(state), digests.state(restored.store())),
                 () -> assertEquals(scratch.rebuilds().rebuilds(), checkpointed.rebuilds().rebuilds()),
                 () -> assertTrue(checkpointed.rebuilds().fromCheckpoint() > 0),
+                // every checkpoint kept went through routing-checkpoint/1 first
+                () -> assertEquals(checkpointed.rebuilds().checkpoints(), checkpointed.rebuilds().codecRoundTrips()),
                 () -> assertTrue(checkpointed.rebuilds().compactedEntries() > 0),
                 () -> assertTrue(state.ledger().size() < state.ledgerDigest().entries()),
                 () -> assertTrue(checkpointed.rebuilds().replayedObservations()

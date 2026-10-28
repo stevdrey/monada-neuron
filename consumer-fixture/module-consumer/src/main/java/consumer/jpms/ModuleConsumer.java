@@ -13,6 +13,8 @@ import monada.neuron.routing.RoutingPreference;
 import monada.neuron.routing.adaptation.AdaptiveStateDefinition;
 import monada.neuron.routing.adaptation.RoutingStateStore;
 import monada.neuron.routing.adaptation.StatePartition;
+import monada.neuron.routing.adaptation.codec.CheckpointCodec;
+import monada.neuron.routing.adaptation.codec.CheckpointDecodeResult;
 import monada.neuron.routing.catalog.Availability;
 import monada.neuron.routing.catalog.CatalogEntry;
 import monada.neuron.routing.catalog.HardRequirements;
@@ -101,6 +103,12 @@ public final class ModuleConsumer {
         require(adaptive instanceof RoutingDecision.Selected s
                         && s.provenance().state().mappingVersion().equals("adaptive-routing-state/1"),
                 "adaptive snapshot routing must select with the reference mapping: " + adaptive);
+
+        store.advanceCutoff(0);
+        var checkpoint = store.checkpoint(adaptivePolicy);
+        require(CheckpointCodec.decode(CheckpointCodec.encode(checkpoint)) instanceof CheckpointDecodeResult.Decoded c
+                        && c.checkpoint().equals(checkpoint),
+                "a routing checkpoint must decode to an equal checkpoint: " + checkpoint.processedCutoff());
 
         var readiness = new TaskFeatureReadiness().assess(
                 TaskFeatures.builder().stageKind("implement").languages(List.of("java")).build(), "implement",

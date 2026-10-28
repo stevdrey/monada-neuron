@@ -17,6 +17,8 @@ import monada.neuron.routing.RoutingPreference;
 import monada.neuron.routing.adaptation.AdaptiveStateDefinition;
 import monada.neuron.routing.adaptation.RoutingStateStore;
 import monada.neuron.routing.adaptation.StatePartition;
+import monada.neuron.routing.adaptation.codec.CheckpointCodec;
+import monada.neuron.routing.adaptation.codec.CheckpointDecodeResult;
 import monada.neuron.routing.catalog.Availability;
 import monada.neuron.routing.catalog.CatalogEntry;
 import monada.neuron.routing.catalog.HardRequirements;
@@ -132,6 +134,15 @@ public final class ConsumerSmoke {
     /** Advice receipt: canonical bytes of a Level A decision, read back strictly by the host. */
     public static DecodeResult receiptRoundTrip() {
         return AdviceReceipt.decode(AdviceReceipt.of(routeOneStage()).bytes());
+    }
+
+    /** Checkpoint codec: a host turns a bound store's checkpoint into bytes it owns and reads them back strictly. */
+    public static CheckpointDecodeResult checkpointRoundTrip() {
+        var store = new RoutingStateStore(AdaptiveStateDefinition.reference(),
+                new StatePartition("scope", "eval", "1"));
+        store.bind(List.of(new CohortKey("scope", "implement", "UNKNOWN", new RouteKey("route-a", 1))));
+        store.advanceCutoff(0);
+        return CheckpointCodec.decode(CheckpointCodec.encode(store.checkpoint("policy", "1")));
     }
 
     /** Advice disposition: the host records that a person followed the Level A advice, before anything runs. */
