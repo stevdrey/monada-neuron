@@ -81,6 +81,15 @@ tasks.register<JavaExec>("runSpectralResonanceH2") {
     args(quotedBenchmarkArgs())
 }
 
+// Next-concept G3 (Issue #127, gate G3; protocol pre-registered in docs/benchmarks/next-concept-g3.md).
+tasks.register<JavaExec>("runNextConceptG3") {
+    group = "benchmark"
+    description = "Evaluates H3, H4 and H6: hierarchical next-concept prediction vs controls A, B and C-flat (Issue #127)"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("monada.neuron.evaluation.wave.NextConceptG3Runner")
+    args(quotedBenchmarkArgs())
+}
+
 tasks.register<JavaExec>("jmh") {
     group = "benchmark"
     description = "Runs JMH microbenchmarks"

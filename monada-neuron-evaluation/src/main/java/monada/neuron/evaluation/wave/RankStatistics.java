@@ -5,7 +5,7 @@ import java.util.Objects;
 import java.util.Random;
 
 /**
- * Tie-aware rank AUC and a seeded, paired cluster bootstrap over primitive arrays.
+ * Tie-aware rank AUC, ratio statistics and a seeded, paired cluster bootstrap over primitive arrays.
  *
  * <p>The AUC is the Mann-Whitney statistic {@code P(positive > negative) + 0.5 · P(tie)}, computed by sorting the
  * positive and the negative scores separately and merging them: O(n log n) time, two primitive arrays. A resample
@@ -115,6 +115,61 @@ final class RankStatistics {
             }
         }
         return result;
+    }
+
+    /**
+     * Returns {@code B} bootstrap ratio statistics per arm: {@code result[arm][b] = Σ numerators[arm][i] /
+     * Σ denominators[arm][i]} over the items of resample {@code b} ({@code 0} when the denominator sum is {@code 0}).
+     * Clusters are drawn exactly as in {@link #bootstrap}, so equal seeds draw equal resamples. An accuracy on a
+     * subset is a ratio with 0/1 correctness on the subset as numerator and subset membership as denominator.
+     *
+     * @param numerators per arm, the numerator of every item
+     * @param denominators per arm, the denominator of every item
+     * @param clusters per cluster, the items it contributes
+     * @param resamples number of resamples {@code B}
+     * @param seed resampling seed
+     */
+    double[][] bootstrapRatios(double[][] numerators, double[][] denominators, int[][] clusters, int resamples,
+                               long seed) {
+        Objects.requireNonNull(numerators, "numerators must not be null");
+        Objects.requireNonNull(denominators, "denominators must not be null");
+        if (numerators.length != denominators.length) {
+            throw new IllegalArgumentException("one denominator per numerator arm is required");
+        }
+        if (resamples < 1 || clusters.length == 0) {
+            throw new IllegalArgumentException("resamples and clusters must be positive");
+        }
+        var random = new Random(seed);
+        var result = new double[numerators.length][resamples];
+        var drawn = new int[clusters.length];
+        for (int b = 0; b < resamples; b++) {
+            for (int c = 0; c < clusters.length; c++) {
+                drawn[c] = random.nextInt(clusters.length);
+            }
+            for (int arm = 0; arm < numerators.length; arm++) {
+                double numerator = 0.0;
+                double denominator = 0.0;
+                for (int cluster : drawn) {
+                    for (int item : clusters[cluster]) {
+                        numerator += numerators[arm][item];
+                        denominator += denominators[arm][item];
+                    }
+                }
+                result[arm][b] = denominator == 0.0 ? 0.0 : numerator / denominator;
+            }
+        }
+        return result;
+    }
+
+    /** Returns {@code Σ numerators / Σ denominators} over every item, {@code 0} for a zero denominator sum. */
+    double ratio(double[] numerators, double[] denominators) {
+        double numerator = 0.0;
+        double denominator = 0.0;
+        for (int i = 0; i < numerators.length; i++) {
+            numerator += numerators[i];
+            denominator += denominators[i];
+        }
+        return denominator == 0.0 ? 0.0 : numerator / denominator;
     }
 
     /** Returns the {@code [lower, upper]} 95% percentile interval of resample values (the input is not changed). */
