@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
-import java.util.function.IntUnaryOperator;
 
 /**
  * Bounded, deterministic, coarse-to-fine next-concept predictor (contract {@code ncm-wave-cognition/1} section 8,
@@ -118,12 +117,10 @@ public final class NextConceptPredictor {
         }
         double[] path = new double[concepts];
         double temperature = model.temperature();
-        evidenceGroup(model, similarity, path, temperature, hierarchy.rootCount(), k -> hierarchy.root(k));
+        evidenceGroup(hierarchy, model, similarity, path, temperature, ConceptNode.ROOT);
         for (int a = 0; a < concepts; a++) {
-            int parent = a;
-            if (hierarchy.childCount(parent) > 0) {
-                evidenceGroup(model, similarity, path, temperature, hierarchy.childCount(parent),
-                        k -> hierarchy.child(parent, k));
+            if (hierarchy.childCount(a) > 0) {
+                evidenceGroup(hierarchy, model, similarity, path, temperature, a);
             }
             int up = hierarchy.node(a).parentOrdinal();
             if (up >= 0) {
@@ -171,39 +168,46 @@ public final class NextConceptPredictor {
         return new ConceptScores(similarity, current, next);
     }
 
-    /** Writes the sibling-normalized evidence weights of one group into {@code path}. */
-    private void evidenceGroup(ConceptModel model, double[] similarity, double[] path, double temperature,
-                                      int size, IntUnaryOperator member) {
+    /**
+     * Writes the sibling-normalized evidence weights of one group into {@code path}: the children of {@code parent},
+     * or the roots for {@link ConceptNode#ROOT}.
+     */
+    private void evidenceGroup(ConceptHierarchy hierarchy, ConceptModel model, double[] similarity, double[] path,
+                               double temperature, int parent) {
+        int size = parent < 0 ? hierarchy.rootCount() : hierarchy.childCount(parent);
         double best = Double.NEGATIVE_INFINITY;
         for (int k = 0; k < size; k++) {
-            int a = member.applyAsInt(k);
+            int a = member(hierarchy, parent, k);
             if (model.exemplarCount(a) > 0) {
                 best = Math.max(best, similarity[a]);
             }
         }
         if (best == Double.NEGATIVE_INFINITY) {
             for (int k = 0; k < size; k++) {
-                path[member.applyAsInt(k)] = 1.0 / size;
+                path[member(hierarchy, parent, k)] = 1.0 / size;
             }
             return;
         }
         double sum = 0.0;
         for (int k = 0; k < size; k++) {
-            int a = member.applyAsInt(k);
+            int a = member(hierarchy, parent, k);
             double weight = model.exemplarCount(a) > 0 ? StrictMath.exp((similarity[a] - best) / temperature) : 0.0;
             path[a] = weight;
             sum += weight;
         }
         for (int k = 0; k < size; k++) {
-            path[member.applyAsInt(k)] /= sum;
+            path[member(hierarchy, parent, k)] /= sum;
         }
     }
 
-    /** Returns the transition-count row of the previous concept (summed over its leaves), or the leaf marginal. */
+    /**
+     * Returns the transition-count row of the previous concept (summed over its leaves), or the leaf marginal. The
+     * marginal is the model's own array, returned without a copy: callers only read the row.
+     */
     private long[] priorRow(ConceptHierarchy hierarchy, ConceptModel model, int previous) {
         int leaves = hierarchy.leafCount();
         if (previous < 0) {
-            return model.leafCountsView().clone();
+            return model.leafCountsView();
         }
         long[] transitions = model.transitionsView();
         long[] row = new long[leaves];
@@ -281,7 +285,7 @@ public final class NextConceptPredictor {
             int concept = member(hierarchy, parent, k);
             double score = parentMass > 0.0 ? Math.clamp(scores.nextScore(concept) / parentMass, 0.0, 1.0) : 0.0;
             int at = filled;
-            while (at > 0 && before(score, concept, topScores[at - 1], top[at - 1])) {
+            while (at > 0 && compareRank(score, concept, topScores[at - 1], top[at - 1]) < 0) {
                 at--;
             }
             if (at >= keep) {
@@ -302,11 +306,6 @@ public final class NextConceptPredictor {
                     supporting(model, evidence, feature, top[r])));
         }
         return new ConceptLevel(depth, ranked);
-    }
-
-    private boolean before(double score, int concept, double otherScore, int otherConcept) {
-        int byScore = Double.compare(score, otherScore);
-        return byScore > 0 || (byScore == 0 && concept < otherConcept);
     }
 
     /**
@@ -356,7 +355,15 @@ public final class NextConceptPredictor {
      * {@link ConceptLevel}'s validation, and reads no predictor state.
      */
     static int rank(ConceptCandidate first, ConceptCandidate second) {
-        int byScore = Double.compare(second.score(), first.score());
-        return byScore != 0 ? byScore : Integer.compare(first.conceptOrdinal(), second.conceptOrdinal());
+        return compareRank(first.score(), first.conceptOrdinal(), second.score(), second.conceptOrdinal());
+    }
+
+    /**
+     * The ordering of {@link #rank} over raw values, so the bounded selection and the candidate validation share one
+     * rule: negative when {@code (score, ordinal)} ranks before {@code (otherScore, otherOrdinal)}.
+     */
+    private static int compareRank(double score, int ordinal, double otherScore, int otherOrdinal) {
+        int byScore = Double.compare(otherScore, score);
+        return byScore != 0 ? byScore : Integer.compare(ordinal, otherOrdinal);
     }
 }

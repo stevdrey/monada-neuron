@@ -87,6 +87,9 @@ final class NextConceptG3Evaluation {
     static final SpectralFrame FRAME = new SpectralFrame(SpectralBasis.DFT, SpectralScale.SINGLE,
             ConceptFixtureGenerator.SAMPLE_COUNT, ConceptFixtureGenerator.SAMPLE_RATE, SampleUnit.HERTZ);
 
+    /** SNR level whose leaf non-coverage the N11 noise windows must exceed (gate rule). */
+    static final double CLEAN_SNR_DB = 20.0;
+
     private static final long PERMUTATION_SALT = 0x5045_524DL;
     private static final int NO_CONCEPT = -1;
     private static final List<String> ARMS = List.of("C", "A", "A-oracle", "B", "C-forced", "C-flat");
@@ -141,7 +144,7 @@ final class NextConceptG3Evaluation {
         }
         checks.add(disjointnessCheck(training, repeats));
         checks.add(counterfactualCheck(repeats.getFirst(), selection, labelSets));
-        checks.add(determinismCheck(repeats.getFirst(), selection, noiseUncovered));
+        checks.add(determinismCheck(repeats.getFirst(), selection, labelSets, noiseUncovered));
         int earlyReads = labelSets.stream().mapToInt(SplitLabels::earlyReads).sum();
         checks.add(new Check("leakage.test-labels", earlyReads == 0,
                 labelSets.size() + " guarded held-out label sets; " + earlyReads
@@ -247,7 +250,11 @@ final class NextConceptG3Evaluation {
         return new double[] {covered / (double) answerable, covered == 0 ? 0.0 : correct / (double) covered};
     }
 
-    /** Negative log-likelihood of the true current leaf under the spectral posterior, no previous concept. */
+    /**
+     * Negative log-likelihood of the true current leaf under the spectral posterior, no previous concept. As
+     * pre-registered it is measured on the training windows the centroids were fitted on, so it is in-sample and
+     * favours low temperatures; the limitation is recorded in {@code docs/benchmarks/next-concept-g3.md}.
+     */
     private double currentLeafNll(List<Split> training, ConceptModel model) {
         double nll = 0.0;
         for (Split split : training) {
@@ -312,10 +319,47 @@ final class NextConceptG3Evaluation {
     // ---------------------------------------------------------------- arms
 
     /**
-     * Runs C over every sequence of a split in stream order. The query for window {@code p} carries C's own
-     * prediction for window {@code p − 1} (made at step {@code p − 2}); none at the start or after an abstention.
+     * Runs C over every sequence of a split in stream order, feeding back its selected concept (coarse included).
      */
     Decisions runC(Split split, ConceptModel model) {
+        return run(split, model, (w, prediction, decisions) -> {
+            decisions.record(w, prediction, hierarchy);
+            return switch (prediction) {
+                case ConceptCandidates candidates -> candidates.selected().conceptOrdinal();
+                case ConceptAbstention ignored -> NO_CONCEPT;
+            };
+        });
+    }
+
+    /**
+     * Runs C-flat: the same predictor call as C (without C's thresholds), its next-leaf scores ranked flat over the
+     * leaves; it answers the top leaf when its margin and score reach the flat thresholds.
+     */
+    Decisions runFlat(Split split, ConceptModel model, double confidence, double margin) {
+        return run(split, model.withThresholds(ConceptThresholds.NONE), (w, prediction, decisions) -> {
+            int answer = NO_CONCEPT;
+            if (prediction.scores().isPresent()) {
+                ConceptScores scores = prediction.scores().get();
+                int[] ranked = rankedLeaves(scores, false);
+                double top = scores.nextScore(ranked[0]);
+                double runnerUp = ranked.length > 1 ? scores.nextScore(ranked[1]) : 0.0;
+                if (top - runnerUp >= margin && top >= confidence) {
+                    answer = ranked[0];
+                }
+                decisions.leafScore[w] = top;
+            }
+            decisions.leaf[w] = answer;
+            decisions.comparisons += prediction.work().comparisons();
+            return answer;
+        });
+    }
+
+    /**
+     * The one sequential loop of C and C-flat. The query for window {@code p} carries the arm's own answer for window
+     * {@code p − 1} (made at step {@code p − 2}); none at a sequence start or after the arm gave no answer. Sharing
+     * the loop keeps both arms on exactly the same conditioning (H4).
+     */
+    private Decisions run(Split split, ConceptModel model, AnswerRule rule) {
         int n = split.patterns().length;
         var decisions = new Decisions(n);
         int length = protocol.windowsPerSequence();
@@ -325,52 +369,19 @@ final class NextConceptG3Evaluation {
             for (int w = start; w < start + length; w++) {
                 ConceptPrediction prediction = predictor.predict(new ConceptQuery(split.patterns()[w], forPrevious),
                         model, PredictionBudget.DEFAULT);
-                decisions.record(w, prediction, hierarchy);
-                forPrevious = forCurrent;
-                forCurrent = switch (prediction) {
-                    case ConceptCandidates candidates ->
-                            OptionalLong.of(hierarchy.node(candidates.selected().conceptOrdinal()).conceptCode());
-                    case ConceptAbstention ignored -> OptionalLong.empty();
-                };
-            }
-        }
-        return decisions;
-    }
-
-    /**
-     * Runs C-flat: the same predictor call as C (without C's thresholds), its next-leaf scores ranked flat over the
-     * leaves; it answers the top leaf when its margin and score reach the flat thresholds.
-     */
-    Decisions runFlat(Split split, ConceptModel model, double confidence, double margin) {
-        ConceptModel unthresholded = model.withThresholds(ConceptThresholds.NONE);
-        int n = split.patterns().length;
-        var decisions = new Decisions(n);
-        int length = protocol.windowsPerSequence();
-        for (int start = 0; start < n; start += length) {
-            OptionalLong forPrevious = OptionalLong.empty();
-            OptionalLong forCurrent = OptionalLong.empty();
-            for (int w = start; w < start + length; w++) {
-                ConceptPrediction prediction = predictor.predict(new ConceptQuery(split.patterns()[w], forPrevious),
-                        unthresholded, PredictionBudget.DEFAULT);
-                int answer = NO_CONCEPT;
-                if (prediction.scores().isPresent()) {
-                    ConceptScores scores = prediction.scores().get();
-                    int[] ranked = rankedLeaves(scores, false);
-                    double top = scores.nextScore(ranked[0]);
-                    double runnerUp = ranked.length > 1 ? scores.nextScore(ranked[1]) : 0.0;
-                    if (top - runnerUp >= margin && top >= confidence) {
-                        answer = ranked[0];
-                    }
-                    decisions.leafScore[w] = top;
-                }
-                decisions.leaf[w] = answer;
-                decisions.comparisons += prediction.work().comparisons();
+                int answer = rule.answer(w, prediction, decisions);
                 forPrevious = forCurrent;
                 forCurrent = answer == NO_CONCEPT ? OptionalLong.empty()
                         : OptionalLong.of(hierarchy.node(answer).conceptCode());
             }
         }
         return decisions;
+    }
+
+    /** How an arm records one prediction and which concept it answers ({@link #NO_CONCEPT} for none). */
+    @FunctionalInterface
+    private interface AnswerRule {
+        int answer(int w, ConceptPrediction prediction, Decisions decisions);
     }
 
     /** Runs B: the leaf whose centroid is nearest to the current window, as the next concept; it always answers. */
@@ -485,10 +496,9 @@ final class NextConceptG3Evaluation {
                 correctness[3][item] = b[w] == next;
                 correctness[4][item] = forcedCorrect[item] == 1.0;
                 correctness[5][item] = flatCorrect[item] == 1.0;
-                int parent = hierarchy.node(next).parentOrdinal();
                 rootCovered[item] = c.root[w] != NO_CONCEPT;
                 rootIncluded[item] = rootCovered[item];
-                rootCorrect[item] = c.root[w] == parent;
+                rootCorrect[item] = c.root[w] == rootOf(next);
                 rootScores[item] = c.rootScore[w];
                 top2Correct[item] = c.forced[w] == next || c.forcedSecond[w] == next;
                 forcedScores[item] = c.forcedScore[w];
@@ -533,7 +543,7 @@ final class NextConceptG3Evaluation {
             rootAccuracyByLevel[s] = accuracyOn(rootCorrect, rootIncluded, s, perLevel, levels);
             top2ByLevel[s] = accuracyOn(top2Correct, included, s, perLevel, levels);
         }
-        double cleanUncovered = 1.0 - coverageByLevel[snrIndex(20.0)];
+        double cleanUncovered = 1.0 - coverageByLevel[protocol.snrLevels().indexOf(CLEAN_SNR_DB)];
         int abstained = 0;
         int coarseOnly = 0;
         long comparisons = 0;
@@ -562,9 +572,13 @@ final class NextConceptG3Evaluation {
                 riskCoverage, abstentionPrecision, abstentionRecall, gate);
     }
 
-    private int snrIndex(double snr) {
-        int index = protocol.snrLevels().indexOf(snr);
-        return index < 0 ? 0 : index;
+    /** Returns the depth-0 ancestor of a concept (the concept itself for a root). */
+    private int rootOf(int ordinal) {
+        int current = ordinal;
+        while (!hierarchy.node(current).isRoot()) {
+            current = hierarchy.node(current).parentOrdinal();
+        }
+        return current;
     }
 
     /** Accuracy of {@code correct} over {@code included} items of level {@code s} ({@code s == levels}: pooled). */
@@ -751,7 +765,11 @@ final class NextConceptG3Evaluation {
                 + "; N12 cyclic hierarchy " + (n12 ? "rejected" : "ACCEPTED"));
     }
 
-    /** Training, threshold-selection and test splits have distinct seeds and share no clean window. */
+    /**
+     * Training, threshold-selection and test splits have distinct seeds and share no clean window. The generator
+     * draws a split's tones independently of its SNR, so one seed gives the same clean windows at every SNR level and
+     * the first level covers all clean content; the label-free N11 windows come from their own seed and carry none.
+     */
     private Check disjointnessCheck(List<Split> training, List<RepeatResult> repeats) {
         var seedList = new ArrayList<Long>();
         var splitList = new ArrayList<ConceptSplit>();
@@ -796,8 +814,12 @@ final class NextConceptG3Evaluation {
     }
 
     /** Regenerates and re-answers the first repeat and re-runs its bootstrap; everything must be bit-identical. */
-    private Check determinismCheck(RepeatResult first, Selection selection, double noiseUncovered) {
+    private Check determinismCheck(RepeatResult first, Selection selection, List<SplitLabels> labelSets,
+                                   double noiseUncovered) {
         List<Split> splits = splits(SplitRole.TEST, first.seed());
+        for (Split split : splits) {
+            labelSets.add(split.split().labels());
+        }
         Answers again = answer(splits, selection);
         for (Split split : splits) {
             split.split().labels().openForScoring();
@@ -1054,13 +1076,16 @@ final class NextConceptG3Evaluation {
                     List<Double> snrLevels, int sequences, int windowsPerSequence, long noiseSeed, double h3Margin,
                     double h3MinCoverage, double h6Margin, double h4Margin, double selectionCoverage) {
 
-        /** Copies the lists and requires at least one repeat and one SNR level. */
+        /**
+         * Copies the lists and requires at least one repeat, the {@link #CLEAN_SNR_DB} level the N11 rule compares
+         * against, one resample and sequences of at least two windows.
+         */
         Protocol {
             testSeeds = List.copyOf(testSeeds);
             snrLevels = List.copyOf(snrLevels);
-            if (testSeeds.isEmpty() || snrLevels.isEmpty() || resamples < 1 || windowsPerSequence < 2) {
-                throw new IllegalArgumentException("a protocol needs a repeat, an SNR level, a resample and "
-                        + "sequences of at least two windows");
+            if (testSeeds.isEmpty() || !snrLevels.contains(CLEAN_SNR_DB) || resamples < 1 || windowsPerSequence < 2) {
+                throw new IllegalArgumentException("a protocol needs a repeat, the " + CLEAN_SNR_DB + " dB level, a "
+                        + "resample and sequences of at least two windows");
             }
         }
 

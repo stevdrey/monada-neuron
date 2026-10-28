@@ -90,7 +90,7 @@ public final class ConceptModelTrainer {
             }
         }
         for (int concept = 0; concept < concepts; concept++) {
-            normalize(centroids, concept * bins, bins);
+            features.normalize(centroids, concept * bins, bins);
         }
         return new ConceptModel(hierarchy, frame, centroids, exemplarCounts, transitions, leafCounts, temperature,
                 ConceptThresholds.NONE);
@@ -111,28 +111,6 @@ public final class ConceptModelTrainer {
         if (pattern.version() != SpectralPattern.CURRENT_VERSION || !pattern.frame().equals(frame)) {
             throw new IllegalArgumentException("training pattern does not match the model frame: "
                     + pattern.frame() + " (version " + pattern.version() + "), expected " + frame);
-        }
-    }
-
-    /** Scales one centroid sum to unit norm with a power-of-two prescale; a zero sum stays zero. */
-    private void normalize(double[] values, int offset, int length) {
-        double peak = 0.0;
-        for (int k = 0; k < length; k++) {
-            peak = Math.max(peak, values[offset + k]);
-        }
-        if (peak == 0.0) {
-            return;
-        }
-        int exponent = Math.getExponent(peak);
-        double sum = 0.0;
-        for (int k = 0; k < length; k++) {
-            double scaled = Math.scalb(values[offset + k], -exponent);
-            values[offset + k] = scaled;
-            sum += scaled * scaled;
-        }
-        double norm = StrictMath.sqrt(sum);
-        for (int k = 0; k < length; k++) {
-            values[offset + k] /= norm;
         }
     }
 }

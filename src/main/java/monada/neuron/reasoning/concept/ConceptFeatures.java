@@ -32,18 +32,37 @@ final class ConceptFeatures {
         if (peak == 0.0) {
             return false;
         }
+        for (int i = 0; i < pattern.componentCount(); i++) {
+            feature[pattern.index(i)] = pattern.magnitude(i);
+        }
+        normalize(feature, 0, feature.length);
+        return true;
+    }
+
+    /**
+     * Scales {@code values[offset, offset + length)} to unit Euclidean norm in place: a {@code 2^-e} prescale by the
+     * exponent of the largest value, then the ascending sum of squares. A zero range stays zero. The trainer uses it
+     * for centroids, so features and centroids are normalized by one rule.
+     */
+    void normalize(double[] values, int offset, int length) {
+        double peak = 0.0;
+        for (int k = 0; k < length; k++) {
+            peak = Math.max(peak, values[offset + k]);
+        }
+        if (peak == 0.0) {
+            return;
+        }
         int exponent = Math.getExponent(peak);
         double sum = 0.0;
-        for (int i = 0; i < pattern.componentCount(); i++) {
-            double scaled = Math.scalb(pattern.magnitude(i), -exponent);
-            feature[pattern.index(i)] = scaled;
+        for (int k = 0; k < length; k++) {
+            double scaled = Math.scalb(values[offset + k], -exponent);
+            values[offset + k] = scaled;
             sum += scaled * scaled;
         }
         double norm = StrictMath.sqrt(sum);
-        for (int k = 0; k < feature.length; k++) {
-            feature[k] /= norm;
+        for (int k = 0; k < length; k++) {
+            values[offset + k] /= norm;
         }
-        return true;
     }
 
     /** Returns the dot product in ascending bin order. */

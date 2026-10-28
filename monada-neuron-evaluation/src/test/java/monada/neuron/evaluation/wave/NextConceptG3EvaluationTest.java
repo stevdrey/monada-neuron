@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The G3 harness on a small protocol whose seeds are not the registered ones. */
@@ -56,6 +57,16 @@ class NextConceptG3EvaluationTest {
         // A answers one fixed leaf, so on covered windows its accuracy is the share of that next leaf.
         assertTrue(outcome.selection().mostFrequentNext() >= 2);
         assertEquals(SMALL.selectionCoverage() <= outcome.selection().coverage(), outcome.selection().reached());
+        // Determinism and counterfactual reruns guard their label sets too: test, permuted and regenerated.
+        assertTrue(outcome.checks().getLast().detail().startsWith(3 * SMALL.snrLevels().size() + " guarded"),
+                outcome.checks().getLast().detail());
+    }
+
+    @Test
+    void aProtocolWithoutTheCleanLevelIsRejected() {
+        assertThrows(IllegalArgumentException.class, () -> new Protocol(0x7E57_0001L, 0x7E57_0002L,
+                List.of(0x7E57_1001L), 0x7E57_B007L, 100, List.of(10.0, 0.0), 8, 32, 0x7E57_0011L, 0.15, 0.60, 0.05,
+                0.0, 0.70));
     }
 
     @Test

@@ -99,6 +99,8 @@ in the Store.
   (H4). #128 does not start; the predictor stays a library-only experiment.
 - The model snapshot is about `8 · concepts · bins` bytes (4.2 MB at the largest bounds).
 - Phase information is unused by this predictor.
+- The G3 temperature was selected in-sample on the training windows (as pre-registered), so the reported calibration
+  is pessimistic; a held-out temperature choice needs a new protocol.
 
 ## Follow-Up
 

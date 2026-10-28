@@ -135,7 +135,7 @@ All five semantic checks pass, so the verdict below can be trusted:
 | `splits.disjoint` | 7 splits with distinct seeds; 14,336 clean windows, none shared across splits |
 | `leakage.counterfactual` | repeat 1 re-answered with permuted labels: answers bit-identical, C's covered accuracy changed |
 | `determinism` | repeat 1 regenerated, re-answered and re-bootstrapped bit-identically |
-| `leakage.test-labels` | 18 guarded label sets, 0 reads before the scorer opened them |
+| `leakage.test-labels` | 21 guarded label sets (test, permuted and regenerated), 0 reads before the scorer opened them |
 
 ## Results
 
@@ -239,3 +239,8 @@ transition mix, the descent and the result values.
 - C-flat's coverage could not be matched exactly to C's on the registered grid (0.674 against 0.752 on the
   threshold-selection split), so H4 compares at slightly different coverages.
 - C runs without resonance features (G2 no-go) and ignores phase entirely.
+- The temperature is chosen, as pre-registered, by the NLL of the current leaf on the training windows the centroids
+  were fitted on. That in-sample choice favours low temperatures and sharp scores, so the reliability bins and ECE
+  above are pessimistic about calibration on new data. The verdict does not depend on it: H3, H4 and H6 compare
+  accuracies, and the thresholds were chosen on the separate threshold-selection split. A held-out temperature
+  choice belongs to a new protocol, not to this one.
