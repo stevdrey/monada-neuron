@@ -114,7 +114,7 @@ public final class NextConceptG3Runner {
     String resultsMarkdown(Protocol protocol, Outcome outcome) {
         var sb = new StringBuilder("## G3 Results\n\n");
         sb.append("G3 verdict: **").append(outcome.go() ? "GO" : "NO-GO").append("**. H4 (informational): ")
-                .append(outcome.h4() ? "holds" : "refuted").append(". N11 leaf non-coverage: ")
+                .append(NextConceptG3Evaluation.h4Verdict(outcome.h4())).append(". N11 leaf non-coverage: ")
                 .append(format(outcome.noiseUncovered())).append(" of ").append(outcome.noiseWindows())
                 .append(" noise windows.\n\n");
         for (RepeatResult repeat : outcome.repeats()) {

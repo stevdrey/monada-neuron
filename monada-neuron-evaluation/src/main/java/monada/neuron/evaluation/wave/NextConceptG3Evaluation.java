@@ -921,9 +921,18 @@ final class NextConceptG3Evaluation {
             metadata.put(prefix + "coverage", format(repeat.coverage()) + " " + format(repeat.coverageInterval()));
             metadata.put(prefix + "gate", repeat.gatePassed() ? "pass" : "fail");
         }
-        metadata.put("h4.verdict", h4 ? "holds" : "not supported (informational)");
+        metadata.put("h4.verdict", h4Verdict(h4) + " (informational)");
         metadata.put("g3.verdict", go ? "GO" : "NO-GO (stop before #128)");
         return metadata;
+    }
+
+    /**
+     * The one wording of the H4 conclusion, shared by the metadata and the runner's summary: "holds" when every
+     * repeat's lower bound exceeds the margin, otherwise "not supported" (an interval may contain zero, so a false
+     * outcome does not refute H4).
+     */
+    static String h4Verdict(boolean holds) {
+        return holds ? "holds" : "not supported";
     }
 
     static String format(double value) {

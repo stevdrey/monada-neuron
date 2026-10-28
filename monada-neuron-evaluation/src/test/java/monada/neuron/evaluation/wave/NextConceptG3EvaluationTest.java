@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -92,6 +93,12 @@ class NextConceptG3EvaluationTest {
         String markdown = Files.readString(directory.resolve("next-concept-g3.md"));
         assertTrue(markdown.contains("## G3 Results"));
         assertTrue(markdown.indexOf("## G3 Results") < markdown.indexOf("## Run Configuration"));
+        // The summary and the metadata state the same H4 conclusion; a false outcome is "not supported".
+        assertEquals("not supported", NextConceptG3Evaluation.h4Verdict(false));
+        String h4 = NextConceptG3Evaluation.h4Verdict(report.metadata().get("h4.verdict").startsWith("holds"));
+        assertEquals(h4 + " (informational)", report.metadata().get("h4.verdict"));
+        assertTrue(markdown.contains("H4 (informational): " + h4 + "."), markdown);
+        assertFalse(markdown.contains("refuted"));
         assertTrue(Files.readString(directory.resolve("next-concept-g3.json")).contains("\"g3\": {"));
 
         assertEquals(NextConceptG3Runner.HARNESS_FAILURE, runner.report(() -> {
