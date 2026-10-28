@@ -95,7 +95,7 @@ public class NextConceptPredictorBenchmark {
         return predictor.predict(query, model, PredictionBudget.DEFAULT);
     }
 
-    private static ConceptHierarchy medium() {
+    private ConceptHierarchy medium() {
         return ConceptHierarchy.of(127, List.of(
                 new ConceptNode(0, 1, ConceptNode.ROOT, 0), new ConceptNode(1, 2, ConceptNode.ROOT, 0),
                 new ConceptNode(2, 11, 0, 1), new ConceptNode(3, 12, 0, 1),
@@ -103,7 +103,7 @@ public class NextConceptPredictorBenchmark {
     }
 
     /** 16 roots, 3 children each (48), 4 children each (192): 256 concepts. */
-    private static ConceptHierarchy large() {
+    private ConceptHierarchy large() {
         var nodes = new ArrayList<ConceptNode>();
         for (int i = 0; i < ConceptHierarchy.MAX_CONCEPTS; i++) {
             nodes.add(i < 16 ? new ConceptNode(i, i, ConceptNode.ROOT, 0)
@@ -113,7 +113,7 @@ public class NextConceptPredictorBenchmark {
         return ConceptHierarchy.of(127, nodes);
     }
 
-    private static SpectralPattern decompose(SplittableRandom random, int sampleCount) {
+    private SpectralPattern decompose(SplittableRandom random, int sampleCount) {
         var samples = new double[sampleCount];
         for (int i = 0; i < sampleCount; i++) {
             samples[i] = random.nextDouble(-10.0, 10.0);

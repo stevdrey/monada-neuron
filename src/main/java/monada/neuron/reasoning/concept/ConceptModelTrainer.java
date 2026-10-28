@@ -27,6 +27,8 @@ public final class ConceptModelTrainer {
     /** Largest number of training sequences. */
     public static final int MAX_SEQUENCES = 65_536;
 
+    private final ConceptFeatures features = new ConceptFeatures();
+
     /** Creates a stateless trainer. */
     public ConceptModelTrainer() {
     }
@@ -76,7 +78,7 @@ public final class ConceptModelTrainer {
                     transitions[previousLeaf * leaves + position]++;
                 }
                 previousLeaf = position;
-                if (ConceptFeatures.extract(window.pattern(), feature)) {
+                if (features.extract(window.pattern(), feature)) {
                     for (int concept = leaf; concept >= 0; concept = hierarchy.node(concept).parentOrdinal()) {
                         int offset = concept * bins;
                         for (int k = 0; k < bins; k++) {
@@ -94,7 +96,7 @@ public final class ConceptModelTrainer {
                 ConceptThresholds.NONE);
     }
 
-    private static int leafOf(ConceptHierarchy hierarchy, long code) {
+    private int leafOf(ConceptHierarchy hierarchy, long code) {
         OptionalInt ordinal = hierarchy.ordinalOf(code);
         if (ordinal.isEmpty()) {
             throw new IllegalArgumentException("label " + code + " is not a concept of the hierarchy");
@@ -105,7 +107,7 @@ public final class ConceptModelTrainer {
         return ordinal.getAsInt();
     }
 
-    private static void requireFrame(SpectralPattern pattern, SpectralFrame frame) {
+    private void requireFrame(SpectralPattern pattern, SpectralFrame frame) {
         if (pattern.version() != SpectralPattern.CURRENT_VERSION || !pattern.frame().equals(frame)) {
             throw new IllegalArgumentException("training pattern does not match the model frame: "
                     + pattern.frame() + " (version " + pattern.version() + "), expected " + frame);
@@ -113,7 +115,7 @@ public final class ConceptModelTrainer {
     }
 
     /** Scales one centroid sum to unit norm with a power-of-two prescale; a zero sum stays zero. */
-    private static void normalize(double[] values, int offset, int length) {
+    private void normalize(double[] values, int offset, int length) {
         double peak = 0.0;
         for (int k = 0; k < length; k++) {
             peak = Math.max(peak, values[offset + k]);

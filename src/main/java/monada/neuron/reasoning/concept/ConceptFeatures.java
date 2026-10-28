@@ -14,7 +14,8 @@ import java.util.Arrays;
  */
 final class ConceptFeatures {
 
-    private ConceptFeatures() {
+    /** Creates a stateless feature extractor. */
+    ConceptFeatures() {
     }
 
     /**
@@ -22,7 +23,7 @@ final class ConceptFeatures {
      *
      * @return {@code false} when the pattern is silent and {@code feature} was left all zero
      */
-    static boolean extract(SpectralPattern pattern, double[] feature) {
+    boolean extract(SpectralPattern pattern, double[] feature) {
         Arrays.fill(feature, 0.0);
         double peak = 0.0;
         for (int i = 0; i < pattern.componentCount(); i++) {
@@ -46,7 +47,7 @@ final class ConceptFeatures {
     }
 
     /** Returns the dot product in ascending bin order. */
-    static double dot(double[] feature, double[] centroids, int offset) {
+    double dot(double[] feature, double[] centroids, int offset) {
         double sum = 0.0;
         for (int k = 0; k < feature.length; k++) {
             sum += feature[k] * centroids[offset + k];

@@ -108,7 +108,7 @@ final class NextConceptG3Evaluation {
     }
 
     /** Returns the hierarchy of contract section 12.3: ordinal = {@link FixtureConcept} ordinal. */
-    static ConceptHierarchy fixtureHierarchy() {
+    private ConceptHierarchy fixtureHierarchy() {
         var nodes = new ArrayList<ConceptNode>();
         for (FixtureConcept concept : FixtureConcept.values()) {
             nodes.add(new ConceptNode(concept.ordinal(), concept.code(), concept.parentOrdinal(), concept.depth()));

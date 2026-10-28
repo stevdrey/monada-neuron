@@ -67,7 +67,7 @@ public final class ConceptThresholds {
         return margin[Math.min(requireDepth(depth), margin.length - 1)];
     }
 
-    private static int requireDepth(int depth) {
+    private int requireDepth(int depth) {
         return Objects.checkIndex(depth, ConceptHierarchy.MAX_DEPTH);
     }
 

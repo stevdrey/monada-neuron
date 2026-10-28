@@ -55,6 +55,8 @@ public final class NextConceptPredictor {
     /** Largest number of supporting component positions per candidate. */
     public static final int MAX_SUPPORTING_COMPONENTS = 8;
 
+    private final ConceptFeatures features = new ConceptFeatures();
+
     /** Creates a stateless predictor. */
     public NextConceptPredictor() {
     }
@@ -95,14 +97,14 @@ public final class NextConceptPredictor {
             return ConceptAbstention.early(AbstentionReason.LOW_CONFIDENCE, "the model has no exemplars");
         }
         double[] feature = new double[model.bins()];
-        if (!ConceptFeatures.extract(evidence, feature)) {
+        if (!features.extract(evidence, feature)) {
             return ConceptAbstention.early(AbstentionReason.LOW_CONFIDENCE, "the evidence carries no spectral energy");
         }
         ConceptScores scores = score(hierarchy, model, feature, previous);
         return descend(hierarchy, model, budget, evidence, feature, scores);
     }
 
-    private static ConceptScores score(ConceptHierarchy hierarchy, ConceptModel model, double[] feature,
+    private ConceptScores score(ConceptHierarchy hierarchy, ConceptModel model, double[] feature,
                                        int previous) {
         int concepts = hierarchy.size();
         int leaves = hierarchy.leafCount();
@@ -111,7 +113,7 @@ public final class NextConceptPredictor {
         double[] similarity = new double[concepts];
         for (int a = 0; a < concepts; a++) {
             if (model.exemplarCount(a) > 0) {
-                similarity[a] = Math.clamp(ConceptFeatures.dot(feature, centroids, a * bins), 0.0, 1.0);
+                similarity[a] = Math.clamp(features.dot(feature, centroids, a * bins), 0.0, 1.0);
             }
         }
         double[] path = new double[concepts];
@@ -170,7 +172,7 @@ public final class NextConceptPredictor {
     }
 
     /** Writes the sibling-normalized evidence weights of one group into {@code path}. */
-    private static void evidenceGroup(ConceptModel model, double[] similarity, double[] path, double temperature,
+    private void evidenceGroup(ConceptModel model, double[] similarity, double[] path, double temperature,
                                       int size, IntUnaryOperator member) {
         double best = Double.NEGATIVE_INFINITY;
         for (int k = 0; k < size; k++) {
@@ -198,7 +200,7 @@ public final class NextConceptPredictor {
     }
 
     /** Returns the transition-count row of the previous concept (summed over its leaves), or the leaf marginal. */
-    private static long[] priorRow(ConceptHierarchy hierarchy, ConceptModel model, int previous) {
+    private long[] priorRow(ConceptHierarchy hierarchy, ConceptModel model, int previous) {
         int leaves = hierarchy.leafCount();
         if (previous < 0) {
             return model.leafCountsView().clone();
@@ -215,7 +217,7 @@ public final class NextConceptPredictor {
         return row;
     }
 
-    private static ConceptPrediction descend(ConceptHierarchy hierarchy, ConceptModel model, PredictionBudget budget,
+    private ConceptPrediction descend(ConceptHierarchy hierarchy, ConceptModel model, PredictionBudget budget,
                                              SpectralPattern evidence, double[] feature, ConceptScores scores) {
         ConceptThresholds thresholds = model.thresholds();
         List<ConceptLevel> levels = new ArrayList<>(hierarchy.levels());
@@ -259,7 +261,7 @@ public final class NextConceptPredictor {
         }
     }
 
-    private static int member(ConceptHierarchy hierarchy, int parent, int k) {
+    private int member(ConceptHierarchy hierarchy, int parent, int k) {
         return parent < 0 ? hierarchy.root(k) : hierarchy.child(parent, k);
     }
 
@@ -267,7 +269,7 @@ public final class NextConceptPredictor {
      * Ranks one group with a bounded insertion selection of the top {@code K} (at least two, so the runner-up is
      * known even when one candidate is reported), then builds the reported candidates.
      */
-    private static ConceptLevel level(ConceptHierarchy hierarchy, ConceptModel model, PredictionBudget budget,
+    private ConceptLevel level(ConceptHierarchy hierarchy, ConceptModel model, PredictionBudget budget,
                                       SpectralPattern evidence, double[] feature, ConceptScores scores, int depth,
                                       int parent, int size, double parentMass) {
         int keep = Math.min(size, Math.max(2, budget.maxCandidatesPerLevel()));
@@ -302,7 +304,7 @@ public final class NextConceptPredictor {
         return new ConceptLevel(depth, ranked);
     }
 
-    private static boolean before(double score, int concept, double otherScore, int otherConcept) {
+    private boolean before(double score, int concept, double otherScore, int otherConcept) {
         int byScore = Double.compare(score, otherScore);
         return byScore > 0 || (byScore == 0 && concept < otherConcept);
     }
@@ -311,7 +313,7 @@ public final class NextConceptPredictor {
      * Returns the positions of the evidence components with the largest positive contribution
      * {@code f_k · c_k} to the concept's similarity, strongest first, ties to the lower position.
      */
-    private static List<Integer> supporting(ConceptModel model, SpectralPattern evidence, double[] feature,
+    private List<Integer> supporting(ConceptModel model, SpectralPattern evidence, double[] feature,
                                             int concept) {
         if (model.exemplarCount(concept) == 0) {
             return List.of();
@@ -350,7 +352,8 @@ public final class NextConceptPredictor {
 
     /**
      * Orders two candidates of one level: negative when {@code first} ranks before {@code second} (score descending,
-     * then lower ordinal).
+     * then lower ordinal). Class-level: it is the contract's ordering of candidate values (section 8.4), shared with
+     * {@link ConceptLevel}'s validation, and reads no predictor state.
      */
     static int rank(ConceptCandidate first, ConceptCandidate second) {
         int byScore = Double.compare(second.score(), first.score());
