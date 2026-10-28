@@ -39,8 +39,8 @@ public final class NextConceptG3Runner {
     static final int HARNESS_FAILURE = 4;
 
     private static final String NAME = "next-concept-g3";
-    private static final List<String> ARMS = List.of("C (covered)", "A", "A-oracle (informational)", "B",
-            "C forced top-1", "C-flat (covered)");
+    private static final List<String> ARMS = List.of("C (covered)", "A on C-covered (H3)", "A-oracle (informational)",
+            "B", "C forced top-1", "C-flat (covered)", "A (all windows)");
 
     NextConceptG3Runner() {
     }

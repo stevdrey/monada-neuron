@@ -92,7 +92,7 @@ final class NextConceptG3Evaluation {
 
     private static final long PERMUTATION_SALT = 0x5045_524DL;
     private static final int NO_CONCEPT = -1;
-    private static final List<String> ARMS = List.of("C", "A", "A-oracle", "B", "C-forced", "C-flat");
+    private static final List<String> ARMS = List.of("C", "A", "A-oracle", "B", "C-forced", "C-flat", "A-all");
 
     private final Protocol protocol;
     private final boolean quick;
@@ -144,6 +144,7 @@ final class NextConceptG3Evaluation {
         }
         checks.add(disjointnessCheck(training, repeats));
         checks.add(counterfactualCheck(repeats.getFirst(), selection, labelSets));
+        checks.add(pairedInputsCheck(repeats.getFirst(), selection));
         checks.add(determinismCheck(repeats.getFirst(), selection, labelSets, noiseUncovered));
         int earlyReads = labelSets.stream().mapToInt(SplitLabels::earlyReads).sum();
         checks.add(new Check("leakage.test-labels", earlyReads == 0,
@@ -184,8 +185,8 @@ final class NextConceptG3Evaluation {
                 for (double c1 : CONFIDENCE_GRID) {
                     for (double m1 : MARGIN_GRID) {
                         var thresholds = ConceptThresholds.of(new double[] {c0, c1}, new double[] {m0, m1});
-                        double[] covered = selectionScore(thresholdSplits, best.withThresholds(thresholds), false,
-                                0.0, 0.0);
+                        double[] covered = selectionScore(thresholdSplits,
+                                runC(thresholdSplits, best.withThresholds(thresholds)));
                         boolean meets = covered[0] >= protocol.selectionCoverage();
                         if (meets && (!reached || covered[1] > chosenAccuracy
                                 || (covered[1] == chosenAccuracy && covered[0] > chosenCoverage))) {
@@ -199,11 +200,12 @@ final class NextConceptG3Evaluation {
             }
         }
         if (!reached) {
-            double[] none = selectionScore(thresholdSplits, best, false, 0.0, 0.0);
+            double[] none = selectionScore(thresholdSplits, runC(thresholdSplits, best));
             chosenCoverage = none[0];
             chosenAccuracy = none[1];
         }
         ConceptModel model = best.withThresholds(chosen);
+        List<Decisions> chosenC = runC(thresholdSplits, model);
 
         double flatConfidence = 0.0;
         double flatMargin = 0.0;
@@ -212,7 +214,7 @@ final class NextConceptG3Evaluation {
         double gap = Double.POSITIVE_INFINITY;
         for (double c : FLAT_CONFIDENCE_GRID) {
             for (double m : FLAT_MARGIN_GRID) {
-                double[] covered = selectionScore(thresholdSplits, model, true, c, m);
+                double[] covered = selectionScore(thresholdSplits, flat(chosenC, c, m));
                 double distance = Math.abs(covered[0] - chosenCoverage);
                 if (distance < gap) {
                     gap = distance;
@@ -227,14 +229,14 @@ final class NextConceptG3Evaluation {
                 flatMargin, flatCoverage, flatAccuracy);
     }
 
-    /** Returns {@code [leaf coverage, accuracy on covered]} of C (or C-flat) on non-test splits. */
-    private double[] selectionScore(List<Split> splits, ConceptModel model, boolean flat, double flatConfidence,
-                                    double flatMargin) {
+    /** Returns {@code [leaf coverage, accuracy on covered]} of one arm's decisions on non-test splits. */
+    private double[] selectionScore(List<Split> splits, List<Decisions> decisions) {
         int covered = 0;
         int correct = 0;
         int answerable = 0;
-        for (Split split : splits) {
-            int[] leaves = flat ? runFlat(split, model, flatConfidence, flatMargin).leaf() : runC(split, model).leaf();
+        for (int s = 0; s < splits.size(); s++) {
+            Split split = splits.get(s);
+            int[] leaves = decisions.get(s).leaf();
             for (int w = 0; w < leaves.length; w++) {
                 int next = nextLabel(split, w);
                 if (next == NO_CONCEPT) {
@@ -319,47 +321,11 @@ final class NextConceptG3Evaluation {
     // ---------------------------------------------------------------- arms
 
     /**
-     * Runs C over every sequence of a split in stream order, feeding back its selected concept (coarse included).
+     * Runs C over every sequence of a split in stream order. The query for window {@code p} carries C's own
+     * selection for window {@code p − 1} (made at step {@code p − 2}, coarse included); none at a sequence start or
+     * after an abstention. It is the only autoregressive loop: C-flat reads the score tables recorded here.
      */
     Decisions runC(Split split, ConceptModel model) {
-        return run(split, model, (w, prediction, decisions) -> {
-            decisions.record(w, prediction, hierarchy);
-            return switch (prediction) {
-                case ConceptCandidates candidates -> candidates.selected().conceptOrdinal();
-                case ConceptAbstention ignored -> NO_CONCEPT;
-            };
-        });
-    }
-
-    /**
-     * Runs C-flat: the same predictor call as C (without C's thresholds), its next-leaf scores ranked flat over the
-     * leaves; it answers the top leaf when its margin and score reach the flat thresholds.
-     */
-    Decisions runFlat(Split split, ConceptModel model, double confidence, double margin) {
-        return run(split, model.withThresholds(ConceptThresholds.NONE), (w, prediction, decisions) -> {
-            int answer = NO_CONCEPT;
-            if (prediction.scores().isPresent()) {
-                ConceptScores scores = prediction.scores().get();
-                int[] ranked = rankedLeaves(scores, false);
-                double top = scores.nextScore(ranked[0]);
-                double runnerUp = ranked.length > 1 ? scores.nextScore(ranked[1]) : 0.0;
-                if (top - runnerUp >= margin && top >= confidence) {
-                    answer = ranked[0];
-                }
-                decisions.leafScore[w] = top;
-            }
-            decisions.leaf[w] = answer;
-            decisions.comparisons += prediction.work().comparisons();
-            return answer;
-        });
-    }
-
-    /**
-     * The one sequential loop of C and C-flat. The query for window {@code p} carries the arm's own answer for window
-     * {@code p − 1} (made at step {@code p − 2}); none at a sequence start or after the arm gave no answer. Sharing
-     * the loop keeps both arms on exactly the same conditioning (H4).
-     */
-    private Decisions run(Split split, ConceptModel model, AnswerRule rule) {
         int n = split.patterns().length;
         var decisions = new Decisions(n);
         int length = protocol.windowsPerSequence();
@@ -369,19 +335,58 @@ final class NextConceptG3Evaluation {
             for (int w = start; w < start + length; w++) {
                 ConceptPrediction prediction = predictor.predict(new ConceptQuery(split.patterns()[w], forPrevious),
                         model, PredictionBudget.DEFAULT);
-                int answer = rule.answer(w, prediction, decisions);
+                decisions.record(w, forPrevious, prediction, hierarchy);
                 forPrevious = forCurrent;
-                forCurrent = answer == NO_CONCEPT ? OptionalLong.empty()
-                        : OptionalLong.of(hierarchy.node(answer).conceptCode());
+                forCurrent = switch (prediction) {
+                    case ConceptCandidates candidates ->
+                            OptionalLong.of(hierarchy.node(candidates.selected().conceptOrdinal()).conceptCode());
+                    case ConceptAbstention ignored -> OptionalLong.empty();
+                };
             }
         }
         return decisions;
     }
 
-    /** How an arm records one prediction and which concept it answers ({@link #NO_CONCEPT} for none). */
-    @FunctionalInterface
-    private interface AnswerRule {
-        int answer(int w, ConceptPrediction prediction, Decisions decisions);
+    private List<Decisions> runC(List<Split> splits, ConceptModel model) {
+        var decisions = new ArrayList<Decisions>(splits.size());
+        for (Split split : splits) {
+            decisions.add(runC(split, model));
+        }
+        return decisions;
+    }
+
+    /**
+     * C-flat: C's own score table of every window (the same predictor call, hence the same previous concept and
+     * work), ranked flat over the leaves; it answers the top leaf when its margin and score reach the flat thresholds.
+     * It makes no predictor call and feeds nothing back, so H4 changes only the decision over identical inputs.
+     */
+    Decisions flat(Decisions c, double confidence, double margin) {
+        var decisions = new Decisions(c.windows());
+        for (int w = 0; w < c.windows(); w++) {
+            decisions.previous[w] = c.previous[w];
+            decisions.scores[w] = c.scores[w];
+            ConceptScores scores = c.scores[w];
+            if (scores == null) {
+                continue;
+            }
+            int[] ranked = rankedLeaves(scores, false);
+            double top = scores.nextScore(ranked[0]);
+            double runnerUp = ranked.length > 1 ? scores.nextScore(ranked[1]) : 0.0;
+            if (top - runnerUp >= margin && top >= confidence) {
+                decisions.leaf[w] = ranked[0];
+            }
+            decisions.leafScore[w] = top;
+        }
+        decisions.comparisons = c.comparisons;
+        return decisions;
+    }
+
+    private List<Decisions> flat(List<Decisions> c, double confidence, double margin) {
+        var decisions = new ArrayList<Decisions>(c.size());
+        for (Decisions arm : c) {
+            decisions.add(flat(arm, confidence, margin));
+        }
+        return decisions;
     }
 
     /** Runs B: the leaf whose centroid is nearest to the current window, as the next concept; it always answers. */
@@ -437,8 +442,9 @@ final class NextConceptG3Evaluation {
         var flat = new ArrayList<Decisions>();
         var b = new ArrayList<int[]>();
         for (Split split : splits) {
-            c.add(runC(split, selection.model()));
-            flat.add(runFlat(split, selection.model(), selection.flatConfidence(), selection.flatMargin()));
+            Decisions arm = runC(split, selection.model());
+            c.add(arm);
+            flat.add(flat(arm, selection.flatConfidence(), selection.flatMargin()));
             b.add(runB(split, selection.model()));
         }
         return new Answers(c, flat, b);
@@ -496,6 +502,7 @@ final class NextConceptG3Evaluation {
                 correctness[3][item] = b[w] == next;
                 correctness[4][item] = forcedCorrect[item] == 1.0;
                 correctness[5][item] = flatCorrect[item] == 1.0;
+                correctness[6][item] = aRight;
                 rootCovered[item] = c.root[w] != NO_CONCEPT;
                 rootIncluded[item] = rootCovered[item];
                 rootCorrect[item] = c.root[w] == rootOf(next);
@@ -528,7 +535,8 @@ final class NextConceptG3Evaluation {
         var armAccuracy = new double[ARMS.size()][levels + 1];
         for (int arm = 0; arm < ARMS.size(); arm++) {
             for (int s = 0; s <= levels; s++) {
-                armAccuracy[arm][s] = arm == 0 ? accuracyOn(correctness[0], coveredIncluded, s, perLevel, levels)
+                // C and A are paired on C's covered windows (the H3 estimand); A-all is A on every window.
+                armAccuracy[arm][s] = arm <= 1 ? accuracyOn(correctness[arm], coveredIncluded, s, perLevel, levels)
                         : arm == 5 ? accuracyOn(correctness[5], positive(flatCovered), s, perLevel, levels)
                         : accuracyOn(correctness[arm], included, s, perLevel, levels);
             }
@@ -813,6 +821,40 @@ final class NextConceptG3Evaluation {
                         : "CHANGED") + "; C covered accuracy " + (changed ? "changed" : "unchanged (vacuous)"));
     }
 
+    /**
+     * H4 changes only the decision: on the first repeat, C-flat must carry C's previous concept and score table on
+     * every window. Independently, every window where the two arms answer differently is re-scored by a fresh
+     * unthresholded predictor call with C's previous concept, and must give an equal score table.
+     */
+    private Check pairedInputsCheck(RepeatResult first, Selection selection) {
+        ConceptModel unthresholded = selection.model().withThresholds(ConceptThresholds.NONE);
+        int windows = 0;
+        int shared = 0;
+        int audited = 0;
+        int matched = 0;
+        for (int s = 0; s < first.splits().size(); s++) {
+            Split split = first.splits().get(s);
+            Decisions c = first.answers().c().get(s);
+            Decisions flat = first.answers().flat().get(s);
+            for (int w = 0; w < c.windows(); w++) {
+                windows++;
+                shared += c.scores[w] == flat.scores[w] && c.previous[w].equals(flat.previous[w]) ? 1 : 0;
+                if (c.leaf[w] == flat.leaf[w]) {
+                    continue;
+                }
+                audited++;
+                ConceptPrediction again = predictor.predict(new ConceptQuery(split.patterns()[w], c.previous[w]),
+                        unthresholded, PredictionBudget.DEFAULT);
+                matched += again.scores().orElse(null) instanceof ConceptScores scores && scores.equals(c.scores[w])
+                        ? 1 : 0;
+            }
+        }
+        return new Check("h4.paired-inputs", shared == windows && matched == audited,
+                "repeat 1: C-flat shares C's previous concept and score table on " + shared + "/" + windows
+                        + " windows; " + matched + "/" + audited + " windows with different answers re-scored "
+                        + "identically");
+    }
+
     /** Regenerates and re-answers the first repeat and re-runs its bootstrap; everything must be bit-identical. */
     private Check determinismCheck(RepeatResult first, Selection selection, List<SplitLabels> labelSets,
                                    double noiseUncovered) {
@@ -879,7 +921,7 @@ final class NextConceptG3Evaluation {
             metadata.put(prefix + "coverage", format(repeat.coverage()) + " " + format(repeat.coverageInterval()));
             metadata.put(prefix + "gate", repeat.gatePassed() ? "pass" : "fail");
         }
-        metadata.put("h4.verdict", h4 ? "holds" : "refuted (informational)");
+        metadata.put("h4.verdict", h4 ? "holds" : "not supported (informational)");
         metadata.put("g3.verdict", go ? "GO" : "NO-GO (stop before #128)");
         return metadata;
     }
@@ -910,7 +952,11 @@ final class NextConceptG3Evaluation {
     record Split(ConceptSplit split, SpectralPattern[] patterns) {
     }
 
-    /** Per-window decisions of C (or C-flat, which fills only {@code leaf}, {@code leafScore} and the work). */
+    /**
+     * Per-window decisions of C, with the previous concept each query carried and the score table it returned
+     * ({@code null} for an early abstention). C-flat fills only {@code leaf} and {@code leafScore}, and shares C's
+     * previous concepts, score tables and work.
+     */
     static final class Decisions {
         final int[] leaf;
         final int[] root;
@@ -919,6 +965,8 @@ final class NextConceptG3Evaluation {
         final double[] leafScore;
         final double[] forcedScore;
         final double[] rootScore;
+        final OptionalLong[] previous;
+        final ConceptScores[] scores;
         int abstentions;
         int coarseOnly;
         long comparisons;
@@ -937,6 +985,9 @@ final class NextConceptG3Evaluation {
             Arrays.fill(root, NO_CONCEPT);
             Arrays.fill(forced, NO_CONCEPT);
             Arrays.fill(forcedSecond, NO_CONCEPT);
+            previous = new OptionalLong[windows];
+            scores = new ConceptScores[windows];
+            Arrays.fill(previous, OptionalLong.empty());
         }
 
         int windows() {
@@ -947,7 +998,9 @@ final class NextConceptG3Evaluation {
             return leaf;
         }
 
-        void record(int w, ConceptPrediction prediction, ConceptHierarchy hierarchy) {
+        void record(int w, OptionalLong queried, ConceptPrediction prediction, ConceptHierarchy hierarchy) {
+            previous[w] = queried;
+            scores[w] = prediction.scores().orElse(null);
             comparisons += prediction.work().comparisons();
             candidates += prediction.work().candidatesScored();
             levels += prediction.work().levelsVisited();
@@ -984,7 +1037,8 @@ final class NextConceptG3Evaluation {
             return Arrays.equals(leaf, other.leaf) && Arrays.equals(root, other.root)
                     && Arrays.equals(forced, other.forced) && Arrays.equals(forcedSecond, other.forcedSecond)
                     && Arrays.equals(leafScore, other.leafScore) && Arrays.equals(forcedScore, other.forcedScore)
-                    && Arrays.equals(rootScore, other.rootScore);
+                    && Arrays.equals(rootScore, other.rootScore) && Arrays.equals(previous, other.previous)
+                    && Arrays.equals(scores, other.scores);
         }
     }
 

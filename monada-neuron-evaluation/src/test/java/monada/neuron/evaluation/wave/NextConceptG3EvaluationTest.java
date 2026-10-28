@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -34,8 +35,8 @@ class NextConceptG3EvaluationTest {
         for (EvaluationCheck check : outcome.checks()) {
             assertTrue(check.passed(), check.name() + ": " + check.detail());
         }
-        assertEquals(List.of("fixtures.p15-n9-n12", "splits.disjoint", "leakage.counterfactual", "determinism",
-                "leakage.test-labels"), outcome.checks().stream().map(EvaluationCheck::name).toList());
+        assertEquals(List.of("fixtures.p15-n9-n12", "splits.disjoint", "leakage.counterfactual",
+                "h4.paired-inputs", "determinism", "leakage.test-labels"), outcome.checks().stream().map(EvaluationCheck::name).toList());
         assertEquals("false", outcome.metadata().get("protocol.registered"));
         assertTrue(outcome.metadata().get("g3.verdict").startsWith(outcome.go() ? "GO" : "NO-GO"));
         assertTrue(outcome.metadata().get("c.features").contains("no resonance features"));
@@ -57,6 +58,20 @@ class NextConceptG3EvaluationTest {
         // A answers one fixed leaf, so on covered windows its accuracy is the share of that next leaf.
         assertTrue(outcome.selection().mostFrequentNext() >= 2);
         assertEquals(SMALL.selectionCoverage() <= outcome.selection().coverage(), outcome.selection().reached());
+        // The displayed C and A rows are the H3 estimands, paired on C's covered windows.
+        int pooled = SMALL.snrLevels().size();
+        assertEquals(repeat.cAccuracy(), repeat.armAccuracy()[0][pooled]);
+        assertEquals(repeat.aAccuracy(), repeat.armAccuracy()[1][pooled]);
+        assertTrue(repeat.armAccuracy()[6][pooled] >= 0.0 && repeat.armAccuracy()[6][pooled] <= 1.0);
+        // C-flat decides over C's own score tables and previous concepts: H4 changes only the decision.
+        for (int s = 0; s < pooled; s++) {
+            var c = repeat.answers().c().get(s);
+            var flat = repeat.answers().flat().get(s);
+            for (int w = 0; w < c.windows(); w++) {
+                assertSame(c.scores[w], flat.scores[w]);
+                assertEquals(c.previous[w], flat.previous[w]);
+            }
+        }
         // Determinism and counterfactual reruns guard their label sets too: test, permuted and regenerated.
         assertTrue(outcome.checks().getLast().detail().startsWith(3 * SMALL.snrLevels().size() + " guarded"),
                 outcome.checks().getLast().detail());

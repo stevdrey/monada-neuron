@@ -104,7 +104,8 @@ leaf non-coverage; the selected temperature and thresholds with their threshold-
 The verdict is trusted only when every check passes (exit status 0): `fixtures.p15-n9-n12` (P15 on clean centre-band
 windows with the trained model and no thresholds, N9, N12; P16 and N10 are unit-tested in core), `splits.disjoint`,
 `leakage.counterfactual` (repeat 1 re-answered with permuted labels: answers bit-identical, C's accuracy changes),
-`determinism` (repeat 1 regenerated, re-answered and re-bootstrapped bit-identically) and `leakage.test-labels` (no
+`h4.paired-inputs` (C-flat carries C's previous concept and score table on every window of repeat 1, and every window
+where the two arms answer differently is re-scored identically by a fresh predictor call), `determinism` (repeat 1 regenerated, re-answered and re-bootstrapped bit-identically) and `leakage.test-labels` (no
 guarded label read before the scorer opened it).
 
 ## Command
@@ -127,13 +128,14 @@ guarded label read before the scorer opened it).
 
 ## Checks
 
-All five semantic checks pass, so the verdict below can be trusted:
+All six semantic checks pass, so the verdict below can be trusted:
 
 | Check | Observed |
 | --- | --- |
 | `fixtures.p15-n9-n12` | P15 4/4 leaves predicted coarse then fine; N9 `UNKNOWN_CONCEPT`; N12 cyclic hierarchy rejected |
 | `splits.disjoint` | 7 splits with distinct seeds; 14,336 clean windows, none shared across splits |
 | `leakage.counterfactual` | repeat 1 re-answered with permuted labels: answers bit-identical, C's covered accuracy changed |
+| `h4.paired-inputs` | C-flat shares C's previous concept and score table on 6,144/6,144 windows; 571/571 windows with different answers re-scored identically |
 | `determinism` | repeat 1 regenerated, re-answered and re-bootstrapped bit-identically |
 | `leakage.test-labels` | 21 guarded label sets (test, permuted and regenerated), 0 reads before the scorer opened them |
 
@@ -146,7 +148,7 @@ All five semantic checks pass, so the verdict below can be trusted:
 | Temperature | `0.02` (training NLL 3,329; `0.01`: 3,466, `0.05`: 3,854, larger values worse) |
 | C thresholds | `τ_conf = [0, 0]`, `τ_margin = [0.3, 0.1]` (depth 0, depth 1) |
 | C on the threshold-selection split | leaf coverage 0.752, covered accuracy 0.413 |
-| C-flat thresholds | `τ_conf = 0.40`, `τ_margin = 0`; coverage 0.674, covered accuracy 0.416 |
+| C-flat thresholds | `τ_conf = 0.40`, `τ_margin = 0`; coverage 0.683, covered accuracy 0.415 |
 | Control A | always `LOW_PURE` |
 | Snapshot | 6,400 bytes (6 centroids of 129 bins, counts) |
 
@@ -162,26 +164,35 @@ All five semantic checks pass, so the verdict below can be trusted:
 
 Margins: H3 lower bound > 0.15 with coverage ≥ 0.60; H6 lower bound > 0.05 and N11 non-coverage above 20 dB.
 
-**G3 verdict: NO-GO.** Coverage is met in every repeat, but the H3 lower bound exceeds 0.15 only in repeats 3 and 4,
+**G3 verdict: NO-GO.** Coverage is met in every repeat, but the H3 lower bound exceeds 0.15 only in repeat 3 (0.155),
 and H6 fails in every repeat on both conditions: abstaining adds only about 0.015 leaf accuracy, and C leaves fewer
 pure-noise windows uncovered (18%) than 20 dB windows (23–28%). Under contract Section 15, #128 does not start; the
 predictor stays a library-only experiment.
 
-**H4 (informational): refuted.** `acc(C) − acc(C-flat)` is −0.005 to −0.009 with every interval below 0 (upper bounds
-−0.0001 to −0.0021); C-flat answers fewer windows (coverage 0.66–0.69 against C's 0.74–0.77), so the comparison is at
-the coverage the pre-registered selection reached, not exactly equal coverage.
+**H4 (informational): not supported.** `acc(C) − acc(C-flat)` is −0.002 to −0.006; no lower bound exceeds 0. The
+interval contains 0 in repeats 1 to 3 and lies below 0 in repeats 4 and 5 (upper bounds −0.0004 and −0.0025). C-flat
+answers fewer windows (coverage 0.67–0.69 against C's 0.74–0.77), so the comparison is at the coverage the
+pre-registered selection reached, not exactly equal coverage.
+
+**Correction (2026-10-28).** The first published H4 run let C-flat feed back its own answers as the previous concept,
+so after the arms disagreed its score tables diverged from C's. That deviated from the registered definition above
+("C's next-leaf scores from the same predictor call"). C-flat now decides over C's recorded score table of every
+window, checked by `h4.paired-inputs`. The superseded H4 values were −0.005 to −0.009 with every interval below 0
+(C-flat coverage 0.66–0.69, threshold-split coverage 0.674). The gate, H3, H6, C's numbers and every other arm are
+unchanged.
 
 ### Accuracy per arm (pooled; next leaf)
 
-| Repeat | C covered | A | A-oracle (info) | B | C forced top-1 | C-flat covered | C depth-0 accuracy |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 0.413 | 0.242 | 0.493 | 0.410 | 0.397 | 0.421 | 0.694 |
-| 2 | 0.424 | 0.267 | 0.499 | 0.414 | 0.408 | 0.431 | 0.703 |
-| 3 | 0.420 | 0.237 | 0.512 | 0.420 | 0.404 | 0.429 | 0.705 |
-| 4 | 0.406 | 0.233 | 0.497 | 0.403 | 0.392 | 0.414 | 0.700 |
-| 5 | 0.404 | 0.255 | 0.488 | 0.412 | 0.386 | 0.408 | 0.684 |
+| Repeat | C covered | A on C-covered (H3) | A (all windows) | A-oracle (info) | B | C forced top-1 | C-flat covered | C depth-0 accuracy |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 0.413 | 0.240 | 0.242 | 0.493 | 0.410 | 0.397 | 0.415 | 0.694 |
+| 2 | 0.424 | 0.268 | 0.267 | 0.499 | 0.414 | 0.408 | 0.428 | 0.703 |
+| 3 | 0.420 | 0.237 | 0.237 | 0.512 | 0.420 | 0.404 | 0.424 | 0.705 |
+| 4 | 0.406 | 0.227 | 0.233 | 0.497 | 0.403 | 0.392 | 0.411 | 0.700 |
+| 5 | 0.404 | 0.257 | 0.255 | 0.488 | 0.412 | 0.386 | 0.410 | 0.684 |
 
-A is evaluated on C's covered windows (the H3 pairing). Calibration: forced top-1 leaf ECE 0.012–0.034, covered leaf
+C covered minus A on C-covered is the H3 point estimate. A (all windows) is A over every window that has a next
+window. Calibration: forced top-1 leaf ECE 0.012–0.034, covered leaf
 0.011–0.032, depth 0 0.023–0.037; almost every score lies in `[0.3, 0.5)`. Per SNR level, C's covered accuracy is
 0.42–0.45 at 20 and 10 dB and 0.36–0.38 at 0 dB. Abstention precision against C's forced errors is 0.64–0.67 and
 recall 0.25–0.28; almost every uncovered window is coarse-only (1,360–1,547 per repeat), abstentions are 16–33.
@@ -200,9 +211,9 @@ The full per-repeat, per-SNR tables, reliability bins and risk-coverage curves a
   the selected depth-1 margin mostly turns leaf answers into coarse-only ones. A likely explanation for N11, not tested
   here: a noise window's flat magnitude spectrum is about equally far from every centroid, so its posterior falls
   back to the transition prior, which is confident enough to answer.
-- **Hierarchy.** At the coverage the pre-registered selection reached, the flat decision over the same scores is
-  slightly more accurate: on this fixture the hierarchy helps identify the band but its per-depth thresholds do not
-  improve leaf selection.
+- **Hierarchy.** At the coverage the pre-registered selection reached, the flat decision over the same score tables
+  is at least as accurate (by 0.002 to 0.006): on this fixture the hierarchy helps identify the band but its per-depth
+  thresholds do not improve leaf selection.
 - **Not a claim about concepts.** Every number is a property of `ncm-concept-fixture-v1` and of this phase-blind
   centroid model without resonance features. A feature that separates pure from chord windows (for example a
   frequency-ratio feature) would need a new protocol version with its own pre-registered margins.
@@ -236,7 +247,7 @@ transition mix, the descent and the result values.
 - One fixture family with continuous tone frequencies, one machine, one JMH fork. The verdict is binding for G3 under
   this protocol and says nothing about other encoders or features.
 - Windows inside one sequence share its transition process; the intervals assume sequence slots are independent.
-- C-flat's coverage could not be matched exactly to C's on the registered grid (0.674 against 0.752 on the
+- C-flat's coverage could not be matched exactly to C's on the registered grid (0.683 against 0.752 on the
   threshold-selection split), so H4 compares at slightly different coverages.
 - C runs without resonance features (G2 no-go) and ignores phase entirely.
 - The temperature is chosen, as pre-registered, by the NLL of the current leaf on the training windows the centroids

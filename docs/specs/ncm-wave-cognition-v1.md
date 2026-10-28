@@ -439,9 +439,9 @@ control of H2 (Section 14.2) and is never applied implicitly.
 
 Implemented in `monada.neuron.reasoning.concept` ([ADR 0043](../adr/0043-hierarchical-next-concept-predictor.md)).
 Gate G3 was evaluated by #127 under the protocol pre-registered in
-[next-concept-g3.md](../benchmarks/next-concept-g3.md): **no-go**. H3 misses its margin in three of five repeats, H6
+[next-concept-g3.md](../benchmarks/next-concept-g3.md): **no-go**. H3 misses its margin in four of five repeats, H6
 fails in every repeat (abstention adds about 0.015 leaf accuracy, and N11 noise is left uncovered less often than
-20 dB evidence), and H4 is refuted (C-flat is slightly more accurate at a lower coverage). #128 does not start
+20 dB evidence), and H4 is not supported (C-flat over the same score tables is at least as accurate, at a lower coverage). #128 does not start
 (Section 15). Refinements of this section, recorded in ADR 0043: thresholds are per depth; a coarse-only result
 carries its `refinementStop` reason and the failing level as diagnostics; failures are tested margin first, so exact
 ties are `LOW_MARGIN`; the minimal snapshot is a phase-blind magnitude centroid per concept plus Laplace-smoothed leaf

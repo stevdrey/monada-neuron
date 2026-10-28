@@ -365,7 +365,7 @@ retained-energy and error diagnostics, and refuses a Haar pattern without its ap
 deterministic `NextConceptPredictor` (`monada.neuron.reasoning.concept`, issue #127,
 [ADR 0043](docs/adr/0043-hierarchical-next-concept-predictor.md)) proposes host-labeled concepts coarse to fine over a
 validated `ConceptHierarchy` and a caller-owned `ConceptModel` snapshot, with typed abstention. Its pre-registered G3
-evaluation is a **no-go**: C beats the no-spectral baseline by less than the registered margin in three of five
+evaluation is a **no-go**: C beats the no-spectral baseline by less than the registered margin in four of five
 repeats, its abstention adds almost no accuracy, and it abstains less on pure noise than on clean evidence
 ([next-concept-g3.md](docs/benchmarks/next-concept-g3.md)), so cycle integration (#128) does not start. The other
 stages are not implemented.

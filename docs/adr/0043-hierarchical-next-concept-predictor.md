@@ -94,9 +94,9 @@ in the Store.
 - Hosts and evaluations can propose concept hypotheses from labeled spectral evidence with explicit abstention; the
   single-wave path and every existing type are unchanged.
 - Calibration, coverage and the value of the hierarchy are empirical questions answered by the G3 report
-  ([next-concept-g3.md](../benchmarks/next-concept-g3.md)). G3 is **no-go**: H3 misses its margin in three of five
-  repeats, abstention is not informative (H6), and a flat decision over the same scores is slightly more accurate
-  (H4). #128 does not start; the predictor stays a library-only experiment.
+  ([next-concept-g3.md](../benchmarks/next-concept-g3.md)). G3 is **no-go**: H3 misses its margin in four of five
+  repeats, abstention is not informative (H6), and a flat decision over the same score tables is at least as accurate
+  (H4 not supported). #128 does not start; the predictor stays a library-only experiment.
 - The model snapshot is about `8 · concepts · bins` bytes (4.2 MB at the largest bounds).
 - Phase information is unused by this predictor.
 - The G3 temperature was selected in-sample on the training windows (as pre-registered), so the reported calibration
