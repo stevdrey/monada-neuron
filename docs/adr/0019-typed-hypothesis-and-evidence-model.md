@@ -91,6 +91,9 @@ Rejected by ADR 0005 and the issue: `Signal` stays a compact transport primitive
   Both grow linearly without object explosion. A primitive/contiguous layout is deferred until a
   benchmark justifies it.
 - Evidence sequences are only meaningful within their cycle; snapshots must not outlive it.
+- Amended by ADR 0044: `Evidence` also permits `SpectralEvidence`, a host window reference (`WaveProvenance` source
+  reference and offset) under the same reference bound as `MemoryReferenceEvidence`; like a memory reference, the
+  cycle does not validate it against an occurrence.
 - Any future stage can consume typed upstream results without changing `Signal` or the context.
 - Follow-ups: optional hypothesis trace events and a compact layout if
   measurements demand it.

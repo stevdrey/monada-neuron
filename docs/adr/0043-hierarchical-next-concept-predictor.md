@@ -96,7 +96,8 @@ in the Store.
 - Calibration, coverage and the value of the hierarchy are empirical questions answered by the G3 report
   ([next-concept-g3.md](../benchmarks/next-concept-g3.md)). G3 is **no-go**: H3 misses its margin in four of five
   repeats, abstention is not informative (H6), and a flat decision over the same score tables is at least as accurate
-  (H4 not supported). #128 does not start; the predictor stays a library-only experiment.
+  (H4 not supported). Under `ncm-wave-cognition/1` #128 did not start; `/2` and ADR 0044 allow it only as an
+  experimental opt-in stage, with no default change.
 - The model snapshot is about `8 · concepts · bins` bytes (4.2 MB at the largest bounds).
 - Phase information is unused by this predictor.
 - The G3 temperature was selected in-sample on the training windows (as pre-registered), so the reported calibration
@@ -104,7 +105,7 @@ in the Store.
 
 ## Follow-Up
 
-- #128 (blocked: G3 is no-go): would wire the predictor into an existing reasoning stage; decide in its own ADR whether
-  spectral components need an `Evidence` variant.
+- #128: wires the predictor into an opt-in `REASONING` stage with a `SpectralEvidence` variant (ADR 0044,
+  `ncm-wave-cognition/2`).
 - #129: outcome feedback producing a new snapshot (ADR 0021 pattern).
 - #130: Haar features (control D) and the large-workload resource measurements.

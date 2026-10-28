@@ -58,6 +58,11 @@ final class ConceptFixtures {
 
     /** A clean window of a leaf, with seeded amplitude, frequency and phases. */
     static SpectralPattern window(long leaf, SplittableRandom random) {
+        return decompose(leafSamples(leaf, random));
+    }
+
+    /** The samples of a clean leaf window, drawing from the random source exactly as {@link #window}. */
+    static double[] leafSamples(long leaf, SplittableRandom random) {
         boolean low = leaf == LOW_PURE || leaf == LOW_CHORD;
         boolean chord = leaf == LOW_CHORD || leaf == HIGH_CHORD;
         double amplitude = 0.5 + 1.5 * random.nextDouble();
@@ -73,7 +78,7 @@ final class ConceptFixtures {
                 samples[n] += ratio * amplitude * StrictMath.cos(2.0 * StrictMath.PI * 1.5 * frequency * t + phase2);
             }
         }
-        return decompose(samples);
+        return samples;
     }
 
     /** Decomposes samples of the fixture frame. */

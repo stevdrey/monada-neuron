@@ -169,7 +169,8 @@ Margins: H3 lower bound > 0.15 with coverage ≥ 0.60; H6 lower bound > 0.05 and
 **G3 verdict: NO-GO.** Coverage is met in every repeat, but the H3 lower bound exceeds 0.15 only in repeat 3 (0.155),
 and H6 fails in every repeat on both conditions: abstaining adds only about 0.015 leaf accuracy, and C leaves fewer
 pure-noise windows uncovered (18%) than 20 dB windows (23–28%). Under contract Section 15, #128 does not start; the
-predictor stays a library-only experiment.
+predictor stays a library-only experiment. (Later amended: `ncm-wave-cognition/2` and ADR 0044 keep this verdict and
+allow #128 only as an experimental opt-in.)
 
 **H4 (informational): not supported.** `acc(C) − acc(C-flat)` is −0.002 to −0.006; no lower bound exceeds 0. The
 interval contains 0 in repeats 1 to 3 and lies below 0 in repeats 4 and 5 (upper bounds −0.0004 and −0.0025). C-flat

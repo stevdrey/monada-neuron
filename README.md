@@ -345,7 +345,7 @@ configuration or untrusted observation, and how stale metadata is handled is sta
 
 The experimental hierarchical wave cognition path of Epic #120 (explicit samples, a `WaveDecomposer` prism, spectral
 resonance, coarse-to-fine next-concept hypotheses and optional synthesis) is specified in the
-[NCM Wave Cognition Experiment Contract v1](docs/specs/ncm-wave-cognition-v1.md) (`ncm-wave-cognition/1`, issue #121,
+[NCM Wave Cognition Experiment Contract](docs/specs/ncm-wave-cognition-v1.md) (`ncm-wave-cognition/2`, issue #121,
 [ADR 0034](docs/adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md)). NCM is hierarchy and prediction over
 decomposed evidence, not the prism; the single-wave `Signal` path is unchanged, and stop/go gates decide whether
 later issues proceed. Its bounded, immutable spectral value types (`monada.neuron.spectral`, issue #122,
@@ -367,8 +367,13 @@ deterministic `NextConceptPredictor` (`monada.neuron.reasoning.concept`, issue #
 validated `ConceptHierarchy` and a caller-owned `ConceptModel` snapshot, with typed abstention. Its pre-registered G3
 evaluation is a **no-go**: C beats the no-spectral baseline by less than the registered margin in four of five
 repeats, its abstention adds almost no accuracy, and it abstains less on pure noise than on clean evidence
-([next-concept-g3.md](docs/benchmarks/next-concept-g3.md)), so cycle integration (#128) does not start. The other
-stages are not implemented.
+([next-concept-g3.md](docs/benchmarks/next-concept-g3.md)). Contract revision `/2` keeps that result and allows only an
+experimental opt-in: `WaveCognitionReasoningStage` (issue #128,
+[ADR 0044](docs/adr/0044-opt-in-wave-cognition-reasoning-stage.md)) is a `REASONING` stage a host composes explicitly;
+it resolves `SampledWave` windows from the `HostExecutionContext`, decomposes and predicts within bounded limits, and
+hands concept hypotheses with `SpectralEvidence` to `EVALUATION`. A runtime without it is unchanged, and its
+hypotheses carry no claim of predictive benefit. Feedback (#129) and the consolidated ablation (#130) are not
+implemented.
 
 ## Design Principles
 

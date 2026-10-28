@@ -115,5 +115,6 @@ phase used). Questions left open by the sketch of section 3.4:
 
 ## Follow-Up
 
-- #128 decides whether synthesis is wired into a stage (G1s go for both paths).
+- #128 decides whether synthesis is wired into a stage (G1s go for both paths): ADR 0044 wires DFT synthesis as an
+  optional fidelity diagnostic; Haar is not wired because the predictor is DFT-only.
 - A later FFT or vectorized backend extracts a synthesizer interface and states its tolerance against this reference.

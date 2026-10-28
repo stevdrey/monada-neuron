@@ -35,6 +35,9 @@ final class HypothesisFootprintModel {
             case MemoryReferenceEvidence memory -> align(HEADER + 2 * REF + 8)
                     + align(HEADER + REF + 4 + 2)                 // String
                     + align(ARRAY_HEADER + memory.reference().length()); // Latin-1 byte[]
+            case SpectralEvidence spectral -> align(HEADER + 2 * REF + 8 + 8)
+                    + align(HEADER + REF + 4 + 2)                 // String
+                    + align(ARRAY_HEADER + spectral.sourceReference().length()); // Latin-1 byte[]
         };
     }
 
