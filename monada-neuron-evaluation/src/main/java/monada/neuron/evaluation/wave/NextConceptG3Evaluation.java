@@ -111,7 +111,7 @@ final class NextConceptG3Evaluation {
     }
 
     /** Returns the hierarchy of contract section 12.3: ordinal = {@link FixtureConcept} ordinal. */
-    private ConceptHierarchy fixtureHierarchy() {
+    ConceptHierarchy fixtureHierarchy() {
         var nodes = new ArrayList<ConceptNode>();
         for (FixtureConcept concept : FixtureConcept.values()) {
             nodes.add(new ConceptNode(concept.ordinal(), concept.code(), concept.parentOrdinal(), concept.depth()));
@@ -160,7 +160,7 @@ final class NextConceptG3Evaluation {
     // ---------------------------------------------------------------- training and selection
 
     /** Chooses the temperature on the training split, then C's and C-flat's thresholds on the selection split. */
-    private Selection select(List<Split> training) {
+    Selection select(List<Split> training) {
         List<LabeledSequence> sequences = labeledSequences(training);
         ConceptModel best = null;
         double bestNll = Double.POSITIVE_INFINITY;
@@ -302,7 +302,7 @@ final class NextConceptG3Evaluation {
         return best;
     }
 
-    private List<LabeledSequence> labeledSequences(List<Split> training) {
+    List<LabeledSequence> labeledSequences(List<Split> training) {
         var sequences = new ArrayList<LabeledSequence>();
         for (Split split : training) {
             int length = protocol.windowsPerSequence();
@@ -629,7 +629,7 @@ final class NextConceptG3Evaluation {
      * A sequence slot is one cluster: it contributes its windows at every SNR level, whose clean windows are shared.
      * Window {@code w} of level {@code s} is item {@code s · perLevel + w}.
      */
-    private int[][] clusters(int levels, int perLevel) {
+    int[][] clusters(int levels, int perLevel) {
         int length = protocol.windowsPerSequence();
         int sequences = perLevel / length;
         var clusters = new int[sequences][levels * length];
@@ -645,12 +645,12 @@ final class NextConceptG3Evaluation {
     }
 
     /** Leaf ordinal of a window's ground truth; reads the (possibly guarded) labels. */
-    private int label(Split split, int w) {
+    int label(Split split, int w) {
         return split.split().labels().label(w).ordinal();
     }
 
     /** Leaf ordinal of the next window in the same sequence, or {@link #NO_CONCEPT} for a sequence's last window. */
-    private int nextLabel(Split split, int w) {
+    int nextLabel(Split split, int w) {
         return (w + 1) % protocol.windowsPerSequence() == 0 ? NO_CONCEPT : label(split, w + 1);
     }
 
@@ -670,7 +670,7 @@ final class NextConceptG3Evaluation {
 
     // ---------------------------------------------------------------- data
 
-    private List<Split> splits(SplitRole role, long seed) {
+    List<Split> splits(SplitRole role, long seed) {
         var splits = new ArrayList<Split>();
         for (double snr : protocol.snrLevels()) {
             ConceptSplit split = generator.generate(role, seed, snr, protocol.sequences(),

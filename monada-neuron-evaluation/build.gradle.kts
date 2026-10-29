@@ -90,6 +90,15 @@ tasks.register<JavaExec>("runNextConceptG3") {
     args(quotedBenchmarkArgs())
 }
 
+// Next-concept G5, first part (Issue #129, hypothesis H5; protocol pre-registered in docs/benchmarks/next-concept-g5.md).
+tasks.register<JavaExec>("runNextConceptG5") {
+    group = "benchmark"
+    description = "Evaluates H5: validated outcome feedback (control E) vs C on later held-out windows (Issue #129)"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("monada.neuron.evaluation.wave.NextConceptG5Runner")
+    args(quotedBenchmarkArgs())
+}
+
 tasks.register<JavaExec>("jmh") {
     group = "benchmark"
     description = "Runs JMH microbenchmarks"
