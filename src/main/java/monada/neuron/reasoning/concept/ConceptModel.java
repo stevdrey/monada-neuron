@@ -12,7 +12,7 @@ import java.util.Objects;
 
 /**
  * Immutable, caller-owned model snapshot of the next-concept predictor (contract {@code ncm-wave-cognition/2}
- * sections 3.3, 8.2 and 10.2, ADR 0043 and ADR 0045). It is built by {@link ConceptModelTrainer} from host-labeled
+ * sections 3.3, 8.2 and 10.2, ADR 0043 and ADR 0049). It is built by {@link ConceptModelTrainer} from host-labeled
  * sequences and is never updated in place: Neuron keeps nothing after a call, and {@link ConceptFeedbackPolicy}
  * derives a new snapshot with the next {@link #revision()} from verified outcomes, leaving this one untouched.
  *

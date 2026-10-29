@@ -13,7 +13,7 @@ import java.util.TreeMap;
 
 /**
  * Quality-gated, bounded update of a caller-owned {@link ConceptModel} from verified, attributable {@link
- * ConceptOutcome}s (contract {@code ncm-wave-cognition/2} section 10.2, ADR 0045). Stateless, pure and deterministic:
+ * ConceptOutcome}s (contract {@code ncm-wave-cognition/2} section 10.2, ADR 0049). Stateless, pure and deterministic:
  * the same snapshot, batch and cycle ordinal give a bit-identical result, and nothing is kept between calls. The
  * caller carries outcomes across cycles, approves the returned snapshot for the next cycle and keeps the previous
  * one for rollback; there is no hidden online training.

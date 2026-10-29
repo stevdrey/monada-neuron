@@ -8,7 +8,7 @@ import java.util.OptionalLong;
 
 /**
  * Caller-carried outcome of one next-concept prediction: the explicit feedback artifact of contract {@code
- * ncm-wave-cognition/2} section 10.2 (ADR 0021 cross-cycle rule, ADR 0045). The host's verifier, never the predictor,
+ * ncm-wave-cognition/2} section 10.2 (ADR 0021 cross-cycle rule, ADR 0049). The host's verifier, never the predictor,
  * decides what happened at the predicted step and says so with a {@link Verification}.
  *
  * <p>A {@link Verification#VERIFIED} outcome carries the observed leaf, the spectral pattern of the window that was

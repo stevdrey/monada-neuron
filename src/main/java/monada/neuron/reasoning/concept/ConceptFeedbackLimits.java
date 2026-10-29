@@ -8,7 +8,7 @@ import java.util.Objects;
 import java.util.TreeSet;
 
 /**
- * Bounds of {@link ConceptFeedbackPolicy} (ADR 0045): the outcomes one update may absorb, the oldest predicting cycle
+ * Bounds of {@link ConceptFeedbackPolicy} (ADR 0049): the outcomes one update may absorb, the oldest predicting cycle
  * an outcome may come from, the feedback a leaf may absorb relative to its training windows, and the verifiers whose
  * outcomes are trusted.
  *

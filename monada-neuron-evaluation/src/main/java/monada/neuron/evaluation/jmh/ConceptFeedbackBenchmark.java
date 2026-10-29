@@ -39,7 +39,7 @@ import java.util.SplittableRandom;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Scalar reference cost of {@link ConceptFeedbackPolicy#apply} (issue #129, ADR 0045), end to end: the gate, the
+ * Scalar reference cost of {@link ConceptFeedbackPolicy#apply} (issue #129, ADR 0049), end to end: the gate, the
  * centroid sums of the verified leaf and its ancestors, the copy of the learned arrays and the new snapshot's
  * fingerprint, which the next update's gate needs. See {@code docs/benchmarks/next-concept-g5.md}.
  *

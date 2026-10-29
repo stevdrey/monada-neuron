@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 /**
- * Cross-cycle feedback through the opt-in stage (contract section 10.2, ADR 0045): cycle N predicts with a snapshot,
+ * Cross-cycle feedback through the opt-in stage (contract section 10.2, ADR 0049): cycle N predicts with a snapshot,
  * the host verifies the step and applies the outcome, and cycle N+1 runs only with the snapshot the caller approved.
  */
 class ConceptFeedbackCycleTest {

@@ -17,7 +17,7 @@ protocol and are not recorded.
 ## Question
 
 Does validated outcome feedback, applied by `ConceptFeedbackPolicy` to a caller-owned `ConceptModel` snapshot
-(control **E**: C plus validated feedback, ADR 0045), improve C's next-concept predictions on **later held-out
+(control **E**: C plus validated feedback, ADR 0049), improve C's next-concept predictions on **later held-out
 windows**, without label leakage (H5)?
 
 In this repository, "later" has a fixed meaning:

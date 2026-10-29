@@ -1,4 +1,4 @@
-# ADR 0045: Bounded Outcome Feedback for Concept Model Snapshots
+# ADR 0049: Bounded Outcome Feedback for Concept Model Snapshots
 
 ## Status
 

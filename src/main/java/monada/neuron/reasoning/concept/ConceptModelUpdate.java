@@ -5,7 +5,7 @@ import java.util.Objects;
 
 /**
  * Result of {@link ConceptFeedbackPolicy#apply}: either a new snapshot the caller may approve for the next cycle, or
- * the unchanged one (ADR 0045). The previous snapshot is never modified, so keeping it is the rollback.
+ * the unchanged one (ADR 0049). The previous snapshot is never modified, so keeping it is the rollback.
  */
 public sealed interface ConceptModelUpdate permits ConceptModelUpdate.Updated, ConceptModelUpdate.Unchanged {
 

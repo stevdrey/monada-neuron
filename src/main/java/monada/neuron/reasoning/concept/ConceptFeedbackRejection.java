@@ -1,7 +1,7 @@
 package monada.neuron.reasoning.concept;
 
 /**
- * Why {@link ConceptFeedbackPolicy} did not apply an outcome (ADR 0045). Every rejection changes nothing; the checks
+ * Why {@link ConceptFeedbackPolicy} did not apply an outcome (ADR 0049). Every rejection changes nothing; the checks
  * run in the declaration order below and the first failing one is reported.
  */
 public enum ConceptFeedbackRejection {

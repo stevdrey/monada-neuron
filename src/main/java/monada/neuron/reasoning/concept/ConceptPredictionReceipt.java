@@ -8,7 +8,7 @@ import java.util.OptionalLong;
 
 /**
  * Caller-built record of one next-concept prediction, the attribution anchor of a {@link ConceptOutcome} (contract
- * {@code ncm-wave-cognition/2} section 10.2, ADR 0045). It names the exact snapshot by {@link
+ * {@code ncm-wave-cognition/2} section 10.2, ADR 0049). It names the exact snapshot by {@link
  * ConceptModel#fingerprint()}, the window by its {@link WaveProvenance} source and offset, the previous concept the
  * query carried and the selected concept. Neuron retains no receipt: the caller keeps it until the outcome is known.
  *
