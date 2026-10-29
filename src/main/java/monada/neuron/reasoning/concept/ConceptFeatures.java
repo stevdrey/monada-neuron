@@ -43,14 +43,16 @@ final class ConceptFeatures {
      * Scales {@code values[offset, offset + length)} to unit Euclidean norm in place: a {@code 2^-e} prescale by the
      * exponent of the largest value, then the ascending sum of squares. A zero range stays zero. The trainer uses it
      * for centroids, so features and centroids are normalized by one rule.
+     *
+     * @return the Euclidean norm of the range before scaling, {@code 0} for a zero range
      */
-    void normalize(double[] values, int offset, int length) {
+    double normalize(double[] values, int offset, int length) {
         double peak = 0.0;
         for (int k = 0; k < length; k++) {
             peak = Math.max(peak, values[offset + k]);
         }
         if (peak == 0.0) {
-            return;
+            return 0.0;
         }
         int exponent = Math.getExponent(peak);
         double sum = 0.0;
@@ -63,6 +65,7 @@ final class ConceptFeatures {
         for (int k = 0; k < length; k++) {
             values[offset + k] /= norm;
         }
+        return Math.scalb(norm, exponent);
     }
 
     /** Returns the dot product in ascending bin order. */
