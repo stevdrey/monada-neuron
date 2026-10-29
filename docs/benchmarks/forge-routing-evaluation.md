@@ -312,6 +312,7 @@ derived, and unchanged earlier decisions are rejected as evidence when the mutat
 | `eligibility.violations-zero` | Across all arms and stages, none of the following occurs: a reward or penalty that the observation's own fields do not admit, read directly and not through `OutcomeEvaluator` (a reward needs a validated, stage-local acceptance of the routed attempt itself, a completed invocation and every mandatory dimension passing on it; a penalty needs a stage-local, validated, settled outcome of a non-environmental, non-cancelled invocation with a mandatory dimension failing on the routed attempt); a reward or penalty without the matching evaluator candidate; credit to any cohort key other than the answered decision's (compared whole: scope, stage, cohort bucket, route); a neutral rule that moves a Node. The evaluator verdict is the one the policy acts on, so it is reported for consistency, not as independent evidence. |
 | `state.incremental-equals-rebuild` | The final adaptive state digest (cohort Nodes, support, the core `routing-ledger-digest/1` and the watermark) equals a reset copy rebuilt from every delivered observation, including after correction-triggered rebuilds, and its watermark equals the fixture horizon. |
 | `state.checkpoint-equals-rebuild` | With the `CHECKPOINT` strategy, the adaptive arm's decision trace, deliveries, derivations and state digest equal the `SCRATCH` run's. The final state rebuilt from the checkpoint it was compacted to equals it too. At least one fixture must compact its ledger and start a rebuild from a checkpoint. |
+| `state.checkpoint-codec-roundtrip` | With the `CHECKPOINT` strategy, every checkpoint is encoded to `routing-checkpoint/1` and decoded before it is kept and compacted to. At least one round trip runs, none is rejected or re-encodes to different bytes, and the run still equals the `SCRATCH` run as in `state.checkpoint-equals-rebuild`. |
 | `cases.cheap-invalid` | Few tokens with a proven security failure: gate failure, `NOT_ACCEPTED`, cost `UNAVAILABLE`, penalized and never rewarded. |
 | `cases.repaired-accepted` | 2 attempts, validated acceptance, 0.0735 USD counted once per execution (however many of its stages were routed); chain-only attribution earns no credit. |
 | `cases.unknown-usage` | Unknown and not-measured counters are counted as such, not as zero; the cost is a separate `PARTIAL` lower bound of 0.0135 USD. |
@@ -425,6 +426,8 @@ task. It reports changed decisions, gained and lost validated acceptances, and c
   - It is validated against the same verified from-scratch run as `RoutingReplay.adaptive`, because both must decide,
     deliver, derive and learn identically.
   - Its timed window includes taking checkpoints, compacting and starting rebuilds from a checkpoint.
+  - Since issue #100 the window also includes one `routing-checkpoint/1` encode, decode and re-encode per checkpoint
+    taken. The recorded results below were measured before that change and were not rerun with it.
   - Every row reports `rebuildStrategy`, `rebuilds`, `rebuildsFromCheckpoint`, `replayedObservations`, `checkpoints`,
     `compactedEntries`, the live `ledgerEntries` and the `ledgerDigestEntries` the state has accounted for.
 - **GC telemetry.** JVM-wide, so it includes the untimed validation.

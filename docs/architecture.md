@@ -533,6 +533,10 @@ state and earns no credit. Scenario comparison previews (`ScenarioComparator` in
 [ADR 0043](adr/0043-routing-scenario-comparison.md)) decide two caller supplied scenarios through
 `TrustedRoutingAdvice` and report them side by side; a pair across scope, task, stage kind, feature schema,
 evaluation policy or cutoff is `Incomparable` and has no delta, and every preview is labelled hypothetical.
+The checkpoint codec (`CheckpointCodec` in `monada.neuron.routing.adaptation.codec`, format
+[`routing-checkpoint/1`](specs/routing-checkpoint-v1.md), issue #100,
+[ADR 0044](adr/0044-routing-checkpoint-byte-codec.md)) turns a `RoutingStateCheckpoint` into bytes a host stores itself
+and reads them back strictly; its SHA-256 checksum is integrity, not authenticity, and Neuron still persists nothing.
 
 ```text
 Forge (host)

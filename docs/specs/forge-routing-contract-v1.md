@@ -1856,7 +1856,8 @@ change a decision. A rebuild from scratch, at most 4,096 observations, never rea
   rebuild from scratch.
 
 In the evaluation module, `state.checkpoint-equals-rebuild` and `TemporalReplayTest` compare the checkpointed adaptive run
-with the from-scratch run.
+with the from-scratch run; `state.checkpoint-codec-roundtrip` checks that the same run, keeping each checkpoint only after
+a `routing-checkpoint/1` round trip (issue #100), is unchanged.
 
 ### 23.6 Evidence gaps
 

@@ -43,11 +43,27 @@ class RoutingReplayEvaluationTest {
         assertTrue(names.containsAll(List.of("replay.deterministic", "leakage.future-outcomes",
                 "leakage.late-correction", "leakage.snapshot-watermark", "control.derived-not-consumed-equals-static",
                 "control.static-wiring", "control.neutral-feedback-leaves-state-unchanged",
-                "eligibility.violations-zero", "state.incremental-equals-rebuild", "cases.cheap-invalid",
+                "eligibility.violations-zero", "state.incremental-equals-rebuild", "state.checkpoint-equals-rebuild",
+                "state.checkpoint-codec-roundtrip", "cases.cheap-invalid",
                 "cases.repaired-accepted", "cases.unknown-usage", "cases.incomparable-context-and-stage",
                 "cases.currencies-not-summed", "cases.abstention-and-no-eligible-route",
                 "cases.missing-counterfactual", "cost.completeness-consistent", "adaptation.improvement-and-degradation-visible",
                 "bounds.respected")), names.toString());
+    }
+
+    @Test
+    void theCheckpointCodecCheckNeedsARoundTripAndNoRejection() {
+        var stats = ReplayRun.RebuildStats.NONE;
+        var passing = new RoutingReplayEvaluation.CheckpointEvidence("a", true, true, stats, 0, 2, false, "");
+        assertTrue(RoutingReplayEvaluation.checkpointCodecCheck(List.of(passing)).passed());
+        // no round trip ran, so the check would pass vacuously
+        var none = new RoutingReplayEvaluation.CheckpointEvidence("a", true, true, stats, 0, 0, false, "");
+        assertFalse(RoutingReplayEvaluation.checkpointCodecCheck(List.of(none)).passed());
+        var rejected = new RoutingReplayEvaluation.CheckpointEvidence("b", false, false, stats, 0, 0, true, "codec");
+        assertFalse(RoutingReplayEvaluation.checkpointCodecCheck(List.of(passing, rejected)).passed());
+        var differs = new RoutingReplayEvaluation.CheckpointEvidence("c", false, true, stats, 0, 2, false, "state");
+        assertFalse(RoutingReplayEvaluation.checkpointCodecCheck(List.of(passing, differs)).passed());
+        assertFalse(RoutingReplayEvaluation.checkpointCodecCheck(List.of()).passed());
     }
 
     @Test

@@ -13,6 +13,8 @@ import monada.neuron.routing.adaptation.RebuildResult;
 import monada.neuron.routing.adaptation.RoutingStateCheckpoint;
 import monada.neuron.routing.adaptation.RoutingStateStore;
 import monada.neuron.routing.adaptation.StateUpdate;
+import monada.neuron.routing.adaptation.codec.CheckpointCodec;
+import monada.neuron.routing.adaptation.codec.CheckpointDecodeResult;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
@@ -30,6 +32,7 @@ import monada.neuron.routing.token.OpaqueTokens;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -107,7 +110,13 @@ public final class TemporalReplay {
         return run(arm, true, RebuildStrategy.SCRATCH);
     }
 
-    /** Replays one arm with the given rebuild strategy and records every sample and feedback event. */
+    /**
+     * Replays one arm with the given rebuild strategy and records every sample and feedback event.
+     *
+     * @throws IllegalStateException with the checkpoint strategy, if {@code routing-checkpoint/1} rejects a valid
+     *         checkpoint or re-encodes its decoded copy to different bytes; the run stops, since every later decision
+     *         would start from that copy
+     */
     public ReplayRun run(ReplayArm arm, RebuildStrategy strategy) {
         return run(arm, true, strategy);
     }
@@ -123,6 +132,10 @@ public final class TemporalReplay {
      * @param arm the arm
      * @param record whether to build samples and feedback events; the measured windows skip them
      * @param strategy where correction-triggered rebuilds start; only the adaptive arm rebuilds
+     * @return the run, whose {@link ReplayRun.RebuildStats#codecRoundTrips()} counts the checkpoints that went through
+     *         {@code routing-checkpoint/1} before they were kept
+     * @throws CodecRejected with the checkpoint strategy, if the codec rejects a valid checkpoint or re-encodes its
+     *         decoded copy to different bytes
      */
     ReplayRun run(ReplayArm arm, boolean record, RebuildStrategy strategy) {
         Objects.requireNonNull(arm, "arm must not be null");
@@ -169,7 +182,7 @@ public final class TemporalReplay {
                 run.tally.build(), Optional.ofNullable(run.store),
                 new ReplayRun.RebuildStats(strategy, run.rebuilds, run.fromCheckpoint, run.replayed,
                         run.checkpointsTaken, run.compactions, run.compactedEntries, run.checkpoints.size(),
-                        keptCohorts, keptMarkers));
+                        keptCohorts, keptMarkers, run.codecRoundTrips));
     }
 
     /**
@@ -269,6 +282,7 @@ public final class TemporalReplay {
         private int checkpointsTaken;
         private int compactions;
         private int compactedEntries;
+        private int codecRoundTrips;
         /** Deliveries when the last checkpoint was taken. */
         private int checkpointedAt;
         /** The observation that asked for the pending rebuild, and the earliest sequence any request affected. */
@@ -453,10 +467,27 @@ public final class TemporalReplay {
             return derivation;
         }
 
+        /** The checkpoint after an encode and decode; bytes the codec refuses or re-encodes differently stop the run. */
+        private RoutingStateCheckpoint throughCodec(RoutingStateCheckpoint checkpoint) {
+            byte[] bytes = CheckpointCodec.encode(checkpoint);
+            switch (CheckpointCodec.decode(bytes)) {
+                case CheckpointDecodeResult.Decoded decoded -> {
+                    if (!Arrays.equals(CheckpointCodec.encode(decoded.checkpoint()), bytes)) {
+                        throw new CodecRejected("a decoded checkpoint re-encoded to different bytes");
+                    }
+                    codecRoundTrips++;
+                    return decoded.checkpoint();
+                }
+                case CheckpointDecodeResult.Rejected rejected -> throw new CodecRejected(
+                        "the codec rejected a valid checkpoint: " + rejected.reason());
+            }
+        }
+
         /**
          * With the checkpoint strategy, once {@link RebuildStrategy#CHECKPOINT_INTERVAL} observations were delivered
          * since the last checkpoint, takes one at the just-confirmed watermark, keeps the newest few and compacts the
-         * ledger to the oldest kept one.
+         * ledger to the oldest kept one. Each checkpoint goes through {@code routing-checkpoint/1} first and the decoded
+         * copy is the one kept, as a host restoring from its own storage would hold it.
          */
         void checkpointIfDue() {
             if (strategy != RebuildStrategy.CHECKPOINT
@@ -464,7 +495,7 @@ public final class TemporalReplay {
                 return;
             }
             checkpointedAt = delivered.size();
-            checkpoints.addLast(store.checkpoint(policy));
+            checkpoints.addLast(throughCodec(store.checkpoint(policy)));
             checkpointsTaken++;
             while (checkpoints.size() > RebuildStrategy.RETAINED_CHECKPOINTS) {
                 checkpoints.removeFirst();
@@ -556,5 +587,13 @@ public final class TemporalReplay {
     /** The latest known revision of an executed route's outcome and the decision it answers. */
     private record Outcome(RoutingObservation observation, RoutingDecision.Selected decision, RoutingRequest request,
             ChainOutcome chain) {
+    }
+
+    /** The checkpoint codec refused or changed a valid checkpoint during a run; the run cannot continue. */
+    static final class CodecRejected extends IllegalStateException {
+
+        CodecRejected(String message) {
+            super(message);
+        }
     }
 }

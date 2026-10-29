@@ -7,6 +7,7 @@ import monada.neuron.resonance.BatchResonanceEvaluator;
 import monada.neuron.routing.comparison.RouteChange;
 import monada.neuron.routing.comparison.ScenarioComparison;
 import monada.neuron.routing.comparison.ScenarioDifference;
+import monada.neuron.routing.adaptation.codec.CheckpointDecodeResult;
 import monada.neuron.routing.disposition.AdviceDisposition;
 import monada.neuron.routing.disposition.DispositionResult;
 import monada.neuron.routing.features.FeatureDimension;
@@ -83,6 +84,14 @@ class ConsumerSmokeTest {
 
         assertEquals(AdviceReceipt.of(ConsumerSmoke.routeOneStage()), decoded.receipt());
         assertInstanceOf(RoutingDecision.Selected.class, decoded.receipt().decision());
+    }
+
+    @Test
+    void checkpointCodecIsAvailableThroughThePublishedArtifact() {
+        var decoded = assertInstanceOf(CheckpointDecodeResult.Decoded.class, ConsumerSmoke.checkpointRoundTrip());
+
+        assertEquals(1, decoded.checkpoint().preferenceSnapshot().size());
+        assertEquals("route-a", decoded.checkpoint().preferenceSnapshot().getFirst().key().route().routeId());
     }
 
     // covers: AC-9
