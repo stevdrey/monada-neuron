@@ -17,6 +17,11 @@ import monada.neuron.routing.adaptation.RoutingStateStore;
 import monada.neuron.routing.adaptation.StatePartition;
 import monada.neuron.routing.adaptation.codec.CheckpointCodec;
 import monada.neuron.routing.adaptation.codec.CheckpointDecodeResult;
+import monada.neuron.routing.adaptation.recovery.CheckpointRecovery;
+import monada.neuron.routing.adaptation.recovery.ExportState;
+import monada.neuron.routing.adaptation.recovery.RecoveryAction;
+import monada.neuron.routing.adaptation.recovery.RecoveryAssessment;
+import monada.neuron.routing.adaptation.recovery.RecoveryPlan;
 import monada.neuron.routing.catalog.Availability;
 import monada.neuron.routing.catalog.CatalogEntry;
 import monada.neuron.routing.catalog.HardRequirements;
@@ -115,6 +120,12 @@ public final class ModuleConsumer {
         require(CheckpointCodec.decode(CheckpointCodec.encode(checkpoint)) instanceof CheckpointDecodeResult.Decoded c
                         && c.checkpoint().equals(checkpoint),
                 "a routing checkpoint must decode to an equal checkpoint: " + checkpoint.processedCutoff());
+
+        var recovery = CheckpointRecovery.assess(checkpoint, store, new ExportState.Observed(0));
+        require(recovery instanceof RecoveryAssessment.Compatible compatible
+                        && compatible.checkpointCutoff() == 0 && compatible.caveats().size() == 3
+                        && RecoveryPlan.of(recovery).steps().getFirst().action() == RecoveryAction.REPLAY_FROM_CHECKPOINT,
+                "a checkpoint of the same store must assess as Compatible and plan a replay: " + recovery);
 
         var readiness = new TaskFeatureReadiness().assess(
                 TaskFeatures.builder().stageKind("implement").languages(List.of("java")).build(), "implement",

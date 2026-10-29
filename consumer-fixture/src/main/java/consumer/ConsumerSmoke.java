@@ -19,6 +19,10 @@ import monada.neuron.routing.adaptation.RoutingStateStore;
 import monada.neuron.routing.adaptation.StatePartition;
 import monada.neuron.routing.adaptation.codec.CheckpointCodec;
 import monada.neuron.routing.adaptation.codec.CheckpointDecodeResult;
+import monada.neuron.routing.adaptation.recovery.CheckpointRecovery;
+import monada.neuron.routing.adaptation.recovery.ExportState;
+import monada.neuron.routing.adaptation.recovery.RecoveryAssessment;
+import monada.neuron.routing.adaptation.recovery.RecoveryPlan;
 import monada.neuron.routing.catalog.Availability;
 import monada.neuron.routing.catalog.CatalogEntry;
 import monada.neuron.routing.catalog.HardRequirements;
@@ -146,6 +150,21 @@ public final class ConsumerSmoke {
         store.bind(List.of(new CohortKey("scope", "implement", "UNKNOWN", new RouteKey("route-a", 1))));
         store.advanceCutoff(0);
         return CheckpointCodec.decode(CheckpointCodec.encode(store.checkpoint("policy", "1")));
+    }
+
+    /** Checkpoint recovery: the host asks, before replaying, whether its stored checkpoint fits a fresh store. */
+    public static RecoveryAssessment checkpointRecovery() {
+        var target = new RoutingStateStore(AdaptiveStateDefinition.reference(),
+                new StatePartition("scope", "eval", "1"));
+        return CheckpointRecovery.assess(checkpointRoundTrip(), target, new ExportState.Observed(0));
+    }
+
+    /** Checkpoint recovery: the plan for a checkpoint whose bytes did not decode never discards learning. */
+    public static RecoveryPlan checkpointRecoveryPlan() {
+        var target = new RoutingStateStore(AdaptiveStateDefinition.reference(),
+                new StatePartition("scope", "eval", "1"));
+        return RecoveryPlan.of(CheckpointRecovery.assess(CheckpointCodec.decode(new byte[0]), target,
+                new ExportState.Unavailable()));
     }
 
     /** Advice disposition: the host records that a person followed the Level A advice, before anything runs. */
