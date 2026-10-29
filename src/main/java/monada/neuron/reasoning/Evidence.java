@@ -9,7 +9,7 @@ import java.util.Objects;
  * memory-provider objects, or action payloads.
  */
 public sealed interface Evidence
-        permits SignalEvidence, MemoryReferenceEvidence {
+        permits SignalEvidence, MemoryReferenceEvidence, SpectralEvidence {
 
     /** Returns whether this evidence supports, contradicts, or is neutral to the hypothesis. */
     EvidenceRelation relation();

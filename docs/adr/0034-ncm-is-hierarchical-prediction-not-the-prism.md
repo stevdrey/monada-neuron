@@ -49,7 +49,9 @@ Adopt [NCM Wave Cognition Experiment Contract v1](../specs/ncm-wave-cognition-v1
   Resonance Store (ADR 0001).
 - **Binding stop/go gates.** Gates G0 to G5, with the Haar and synthesis sub-gates G1h and G1s, and pre-registered
   margins decide whether work continues. In particular, cycle integration (#128) does not start unless hierarchical NCM
-  beats the no-spectral baseline on the windows it answers, with a pre-registered minimum coverage (gate G3). No
+  beats the no-spectral baseline on the windows it answers, with a pre-registered minimum coverage (gate G3).
+  Superseded for #128 by `ncm-wave-cognition/2` and ADR 0044: G3 is no-go, and #128 integrates only as an
+  experimental opt-in with no default change. No
   predictor or control reads a test label at inference. A negative result is a valid, published outcome.
 
 The contract introduces no Java type and no runtime behavior. Every named type is a sketch owned by its issue, and every

@@ -1,7 +1,9 @@
-# NCM Wave Cognition Experiment Contract v1
+# NCM Wave Cognition Experiment Contract v2
 
-**Contract identifier**: `ncm-wave-cognition/1`
-**Status**: Accepted (issue #121; experimental and opt-in; implemented in part by #122, #123, #124, #125, #126 and #127, see Sections 4 to 9)
+**Contract identifier**: `ncm-wave-cognition/2` (major revision of `ncm-wave-cognition/1`, Section 17; the file name is
+kept for link stability)
+**Status**: Accepted (issue #121; experimental and opt-in; implemented in part by #122, #123, #124, #125, #126, #127
+and #128, see Sections 4 to 10.1)
 **Parent**: Epic #120, Hierarchical Wave Cognition
 **Decision record**: [ADR 0034](../adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md)
 **Composes, unchanged**: [ADR 0001](../adr/0001-cognition-memory-boundary.md),
@@ -441,8 +443,9 @@ Implemented in `monada.neuron.reasoning.concept` ([ADR 0043](../adr/0043-hierarc
 Gate G3 was evaluated by #127 under the protocol pre-registered in
 [next-concept-g3.md](../benchmarks/next-concept-g3.md): **no-go**. H3 misses its margin in four of five repeats, H6
 fails in every repeat (abstention adds about 0.015 leaf accuracy, and N11 noise is left uncovered less often than
-20 dB evidence), and H4 is not supported (C-flat over the same score tables is at least as accurate, at a lower coverage). #128 does not start
-(Section 15). Refinements of this section, recorded in ADR 0043: thresholds are per depth; a coarse-only result
+20 dB evidence), and H4 is not supported (C-flat over the same score tables is at least as accurate, at a lower coverage).
+Under `/1` this stopped #128; `/2` keeps the result and lets #128 integrate the predictor only as an experimental
+opt-in with no claim of benefit (Sections 10.1 and 15). Refinements of this section, recorded in ADR 0043: thresholds are per depth; a coarse-only result
 carries its `refinementStop` reason and the failing level as diagnostics; failures are tested margin first, so exact
 ties are `LOW_MARGIN`; the minimal snapshot is a phase-blind magnitude centroid per concept plus Laplace-smoothed leaf
 transition counts and a softmax temperature, with no resonance feature because G2 is no-go.
@@ -502,6 +505,8 @@ evidence and the previous concept; the fixtures (Section 12.3) define the label 
 
 When integrated (Section 10) candidates become `Hypothesis` values scored downstream by the existing evaluation policy
 (ADR 0020); the predictor's own score may enter only as an explicitly configured resonance-like support component.
+#128 hands each selected concept off with one unit-weight `SpectralEvidence` per supporting window and reports the
+score as a diagnostic only (Section 10.1).
 
 ## 9. `WaveSynthesizer` (implemented by issue #126)
 
@@ -553,20 +558,39 @@ Implementation (#126, ADR 0042):
 
 ## 10. Cognitive-Stage Wiring and Feedback
 
-### 10.1 Stage wiring (proposed, owned by issue #128)
+### 10.1 Stage wiring (implemented by issue #128)
 
-- Opt-in host composition inside existing positions: for example a `REASONING` stage that obtains its `SampledWave`
-  windows from a host resolver keyed by the request-scoped `HostExecutionContext` (ADR 0023), the same pattern the
-  routing reasoning adapter uses for its inputs, runs decomposition and prediction, and returns a
-  `ReasoningCognitiveStageResult` with the hypotheses. Samples never travel as `Signal` values; any input signals the
-  stage receives are ordinary cycle signals, not encoded samples or provenance.
-- No new `CognitiveStageKind`, no static registry, no payload map on `Signal`. `Signal` stays identity-free (ADR 0005);
-  spectral data travels only in typed stage results, never inside a `Signal`.
-- Budgets: the stage honors `CognitiveBudget` (ADR 0009), `HypothesisLimits` (ADR 0019) and this contract's bounds; a
-  bound reached produces `BUDGET_EXHAUSTED` or a `LIMIT_REACHED` stage status, never an unbounded loop.
-- Evidence: `SignalEvidence` references accepted signal occurrences. If spectral components need their own evidence
-  variant, #128 records that change to the sealed `Evidence` hierarchy in an ADR.
-- A runtime that does not opt in behaves exactly as before; existing tests are the regression check (gate G4).
+Implemented as `WaveCognitionReasoningStage` in `monada.neuron.reasoning.concept`
+([ADR 0044](../adr/0044-opt-in-wave-cognition-reasoning-stage.md)). Gate G3 is no-go: the stage is an experimental
+opt-in whose hypotheses carry no claim of predictive benefit.
+
+- **Opt-in composition in an existing position.** The host adds one `REASONING` stage with
+  `NeuronRuntime.Builder.stage(...)`. No new `CognitiveStageKind`, no static registry, no payload map on `Signal`, no
+  change to the runtime or the cycle. A runtime without the stage is unchanged (fixture N13, gate G4).
+- **Typed per-execution input.** A host `WaveInputResolver` maps the request-scoped `HostExecutionContext` (ADR 0023)
+  to a `WaveCognitionInput` of `WaveWindow`s (`SampledWave` plus the host's previous concept code), the pattern of the
+  routing reasoning adapter. An empty answer means the execution does not opt in. Samples never travel as `Signal`
+  values. The default stage is not a source and passes its input signals through unchanged, so the cycle's admission
+  budget (ADR 0009) governs every signal and hypotheses never cross a memory stage; `WaveCognitionReasoningStage.source`
+  is the first-stage variant for executions without signals, handing off typed-only. Every window of one input is
+  independent evidence for the same next step; a time series is one execution per step, and the previous concept is
+  caller-owned. The stage never chains windows or keeps anything between executions.
+- **Pipeline per window, in input order.** Frame check against the model (sample count, rate, unit; a mismatch is
+  `Incompatible` and is not transformed) → abstentions decidable without a pattern (unknown previous concept, model
+  above the prediction budget, model without exemplars) → DFT reference decomposition (the predictor is DFT-only, so Haar is not
+  wired in although G1s passed for it) → optional `WaveSynthesizer` fidelity status (G1s go; a diagnostic that never
+  changes a hypothesis) → `NextConceptPredictor`. No spectral resonance feature (G2 no-go).
+- **Hand-off.** `WaveCognitionStageResult` is a `HypothesisHandOff`: each selected concept (leaf or coarse-only) is
+  `ConceptHierarchy.proposition(ordinal)` with one `SpectralEvidence(sourceReference, windowOffset, SUPPORTS, 1.0)`
+  naming the window's `WaveProvenance`. `SpectralEvidence` is the new sealed `Evidence` variant of ADR 0044; the
+  predictor's score is not evidence mass (Section 8.5) and stays in the `WaveCognitionReport`.
+- **Bounds and outcomes.** `WaveCognitionLimits` (Section 11.1) bounds windows, total comparisons, each prediction
+  (`PredictionBudget`) and the hand-off (`HypothesisLimits`). No host context, no opt-in or no windows complete with no
+  hypothesis; more than `maxWindows` windows reject the whole input; reaching the comparison budget or the hypothesis
+  limits stops at that window with `LIMIT_REACHED` (`STAGE_LIMIT_REACHED` for the cycle). Every outcome and every
+  examined window is reported in a typed `WaveCognitionReport`.
+- **Host fixture.** `WaveCognitionHostFixtureTest` documents the minimal host API and checks N13 against golden
+  outputs of two default compositions recorded on `main` before the stage existed.
 
 ### 10.2 Feedback (proposed, owned by issue #129)
 
@@ -591,6 +615,8 @@ performance.
 | `maxConcepts` | 256 | Largest workload | #127 |
 | `maxDepth` | 3 | Largest workload | #127 |
 | `maxCandidatesPerLevel` | 16 | Bounded diagnostics per depth | #127 |
+| `maxWindowsPerCycle` | 32 (default 8) | `WaveCognitionLimits.MAX_WINDOWS`; one DFT of the model's sample count per window, so 32 windows of 4,096 samples are about 0.5 G multiply-adds | #128 |
+| `maxTotalComparisonsPerCycle` | host-set (default 2,048) | `WaveCognitionLimits.maxTotalComparisons`; eight predictions at `maxConcepts`. Bounds prediction work only; transform work is bounded by `maxWindowsPerCycle` and reported as decomposition and synthesis counts | #128 |
 | `maxPatternsPerComparisonBatch` | 1,024 | Largest workload; deferred by #125, which ships no batch API (callers compare pairs; one-against-many drifts towards ranking, ADR 0041) | #125 |
 
 ### 11.2 Determinism
@@ -756,8 +782,8 @@ workloads, adds D and the large-workload resource measurements, and publishes th
 
 ### 14.4 Required report fields
 
-Contract version `ncm-wave-cognition/1`, fixture generator version and seeds, split seeds, SNR levels, workload sizes,
-pre-registered margins, thresholds `τ_conf` and `τ_margin` with how they were chosen, JDK vendor and version, OS,
+Contract version the report was pre-registered under (`ncm-wave-cognition/1` for H2 and G3), fixture generator version
+and seeds, split seeds, SNR levels, workload sizes, pre-registered margins, thresholds `τ_conf` and `τ_margin` with how they were chosen, JDK vendor and version, OS,
 architecture, CPU model, available processors, heap and GC settings, JMH settings, Neuron commit (`+dirty` when
 uncommitted), and the determinism check result. Negative results are reported with the same prominence as positive ones.
 
@@ -773,8 +799,8 @@ around by widening scope.
 | G1h | #124 | H1h holds; determinism is exact | Haar is excluded: #126 inverts DFT patterns only, control D is dropped, and the report says so; G2 and G3 are unaffected |
 | G1s | #126 | H1s holds for each synthesis path in scope (DFT always; Haar only when G1h is go); determinism is exact | Evaluated per path: a failing path stays out of #128, which integrates with the passing path or without synthesis, and the report says so; G2 and G3 are unaffected |
 | G2 | #125 (with the generator and scalar control) | H2 holds | Spectral resonance stays a diagnostic only; #127 may still proceed without resonance features, and the report says so |
-| G3 | #127 (with controls A, B, C and C-flat) | H3 and H6 hold on the medium workload | **Stop before #128**; publish the negative result; no cycle integration. **Evaluated: no-go** ([next-concept-g3.md](../benchmarks/next-concept-g3.md)) |
-| G4 | #128 | All existing tests pass unchanged; N13 holds; budgets honored | Revert to library-only use; no default change |
+| G3 | #127 (with controls A, B, C and C-flat) | H3 and H6 hold on the medium workload | Publish the negative result; no default integration. Under `/1` this stopped #128; under `/2` #128 may integrate as an experimental opt-in without claim of benefit. **Evaluated: no-go** ([next-concept-g3.md](../benchmarks/next-concept-g3.md)) |
+| G4 | #128 | All existing tests pass unchanged; N13 holds; budgets honored | Revert to library-only use; no default change. **Evaluated: go** (ADR 0044; the only test edit is the exhaustive `Evidence` switch of the analytic footprint model) |
 | G5 | #129 (H5 with control E), #130 | H5 holds or is reported negative; #130 publishes the go/no-go report with every control | The report's decision is binding for further investment |
 
 The Epic may end after any gate with a documented negative result. That is a valid outcome of the experiment.
@@ -791,7 +817,7 @@ prerequisites. The graph is acyclic; no issue builds on a descendant.
 #122, #123 -> #125      (and gate G1 = go)
 #123, #124 -> #126      (and gate G1 = go; Haar inversion only if G1h = go)
 #122, #125 -> #127
-#126, #127 -> #128      (and gate G3 = go; G1s decides only whether synthesis is wired in)
+#126, #127 -> #128      (opt-in experimental under /2 although G3 is no-go; G1s decides only whether synthesis is wired in)
 #127, #128 -> #129
 #123 .. #129 -> #130
 ```
@@ -805,7 +831,7 @@ prerequisites. The graph is acyclic; no issue builds on a descendant.
 | #125 | `SpectralResonanceDynamics`; concept fixture generator, scalar control and H2 evaluation | #122, #123, G1 = go | `monada.neuron.resonance` (new types only), `monada-neuron-evaluation` | G2 |
 | #126 | `WaveSynthesizer`, fidelity diagnostics | #123, #124, G1 = go | spectral package | G1s |
 | #127 | `ConceptHierarchy`, `NextConceptPredictor`; controls A, B, C, C-flat and the H3, H4, H6 evaluation | #122, #125 | `monada.neuron.reasoning` (new types only), `monada-neuron-evaluation` | G3 |
-| #128 | Opt-in cycle integration, typed hand-off | #126, #127, G3 go | stages, host wiring | G4 |
+| #128 | Opt-in cycle integration, typed hand-off | #126, #127 (G3 evaluated) | stages, host wiring | G4 |
 | #129 | Feedback and caller-owned snapshots; control E and the H5 evaluation | #127, #128 | `monada.neuron.evolution`, `monada-neuron-evaluation` | G5 |
 | #130 | Consolidated ablation over all workloads, control D, large-workload resources, go/no-go report | #123 to #129 | `monada-neuron-evaluation` | G5 |
 
@@ -814,12 +840,21 @@ issue is updated to cite this table before it starts. #124 and #125 may proceed 
 
 ## 17. Versioning and Deviations
 
-- `ncm-wave-cognition/1` is this document. A **minor** revision adds clarification, a fixture or a report field without
+- `ncm-wave-cognition/2` is this document. A **minor** revision adds clarification, a fixture or a report field without
   changing any semantic. Changing a formula, a normalization, a tolerance, a bound's owner, a hypothesis, a margin rule or
   a gate is a **major** revision (`/2`).
 - A child issue whose implementation diverges updates this document in the same PR, or records an ADR, and reports the
   deviation in its PR description. A silent mismatch between code and this contract is a defect (`AGENTS.md`).
 - Proposed bounds (Section 11.1) may be lowered by their owner as a minor revision; raising one needs measured evidence.
+
+### 17.1 Revision history
+
+- `/1` (issue #121): the original contract. The H2 and G3 reports were pre-registered and evaluated under `/1` and keep
+  that identifier.
+- `/2` (issue #128, ADR 0044): changes the consequence of a failed G3 from "stop before #128" to "no default
+  integration; an experimental opt-in is allowed", implements Section 10.1, adds the `SpectralEvidence` variant and
+  the `maxWindowsPerCycle` and `maxTotalComparisonsPerCycle` bounds. No formula, tolerance, hypothesis, margin or
+  G3 verdict changes.
 
 ## 18. References
 
@@ -828,6 +863,7 @@ issue is updated to cite this table before it starts. #124 and #125 may proceed 
 - [ADR 0041](../adr/0041-spectral-resonance-dynamics.md): spectral resonance dynamics (#125).
 - [ADR 0042](../adr/0042-reference-wave-synthesizer.md): reference wave synthesizer (#126).
 - [ADR 0043](../adr/0043-hierarchical-next-concept-predictor.md): hierarchical next-concept predictor (#127).
+- [ADR 0044](../adr/0044-opt-in-wave-cognition-reasoning-stage.md): opt-in wave cognition reasoning stage (#128).
 - [ADR 0001](../adr/0001-cognition-memory-boundary.md): cognition and memory boundary.
 - [ADR 0005](../adr/0005-signals-without-identifiers.md): signals without identifiers.
 - [ADR 0006](../adr/0006-deterministic-scalar-resonance-metric.md): deterministic scalar resonance metric.

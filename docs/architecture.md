@@ -562,10 +562,10 @@ static, derived-not-consumed and adaptive controls in the evaluation module only
 adaptation on synthetic fixtures and coverage gaps on chosen-route-only Store exports, and makes no online routing quality,
 cost or accuracy claim.
 
-## NCM Wave Cognition Extension (specified; value types, DFT reference, Haar strategy, spectral resonance, synthesis and the next-concept predictor)
+## NCM Wave Cognition Extension (specified; value types, DFT reference, Haar strategy, spectral resonance, synthesis, the next-concept predictor and the opt-in stage)
 
 Epic #120 explores an experimental, opt-in path from explicit numeric samples to hierarchical next-concept hypotheses.
-[NCM Wave Cognition Experiment Contract v1](specs/ncm-wave-cognition-v1.md) (`ncm-wave-cognition/1`, issue #121) and
+[NCM Wave Cognition Experiment Contract](specs/ncm-wave-cognition-v1.md) (`ncm-wave-cognition/2`, issue #121) and
 [ADR 0034](adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md) specify it. Only the bounded, immutable spectral
 value types exist (`monada.neuron.spectral`: `SpectralPattern`, `SpectralFrame`, `WaveComponent`, `WaveProvenance`;
 issue #122, [ADR 0035](adr/0035-compact-immutable-spectral-pattern.md)) together with the explicit `SampledWave` input,
@@ -586,8 +586,13 @@ approximation (`NOT_INVERTIBLE`), with retained-energy and, when the original wi
 centroids of a caller-owned `ConceptModel`, mixes it with smoothed transition counts and descends a validated
 `ConceptHierarchy` coarse to fine with typed abstention (issue #127,
 [ADR 0043](adr/0043-hierarchical-next-concept-predictor.md)). Gate G3 is **no-go**
-([next-concept-g3.md](benchmarks/next-concept-g3.md)): the predictor stays a library-only experiment and cycle
-integration (#128) does not start. Every other name below is a proposal owned by issues #128 to #130.
+([next-concept-g3.md](benchmarks/next-concept-g3.md)). Contract revision `/2` keeps that verdict and allows only an
+experimental opt-in: `WaveCognitionReasoningStage` (issue #128, [ADR 0044](adr/0044-opt-in-wave-cognition-reasoning-stage.md))
+is a `REASONING` stage a host composes explicitly, after perception or memory recall or, through `source(...)`, as
+the first stage of a samples-only execution. It resolves windows through a `WaveInputResolver` keyed
+by the `HostExecutionContext`, passes its input signals through unchanged, and hands one hypothesis per selected
+concept with a `SpectralEvidence` window reference to `EVALUATION`, under `WaveCognitionLimits`. No default composition
+includes it. Every other name below is a proposal owned by issues #129 and #130.
 
 ```text
 Host / modality encoder -> SampledWave (meaning, rate, unit, provenance: host owned)
@@ -595,16 +600,15 @@ Host / modality encoder -> SampledWave (meaning, rate, unit, provenance: host ow
   -> SpectralResonanceDynamics (alignment, coherence, signed interference)
   -> NextConceptPredictor over a host-labeled ConceptHierarchy -> coarse-to-fine hypotheses | abstention
   -> optional WaveSynthesizer (EXACT | LOSSY | NOT_INVERTIBLE)
-  -> optional host composition inside existing stage positions (no new CognitiveStageKind)
+  -> optional WaveCognitionReasoningStage at the REASONING position (no new CognitiveStageKind)
 ```
 
 Decomposition, resonance, NCM inference and synthesis are separate operations. NCM is hierarchy and prediction over
 decomposed evidence, not the prism, and concept labels are host-supplied ground truth, never semantics inferred from
 frequencies. `Signal`, `FrequencyState` and `ScalarResonanceMetric` are unchanged and remain the default path; spectral
 data never travels inside a `Signal`. All artifacts are cycle-local and bounded, model state is a caller-owned snapshot,
-and memory, recall and ranking stay in Monada Resonance Store. Binding stop/go gates decide whether later issues proceed:
-cycle integration (#128) waits until hierarchical NCM beats a no-spectral baseline on the windows it answers, with a
-pre-registered minimum coverage.
+and memory, recall and ranking stay in Monada Resonance Store. Binding stop/go gates decide whether later issues proceed;
+G3 is no-go, so cycle integration exists only as the experimental opt-in of contract `/2`, never as a default.
 
 ## Target Module Boundaries
 
