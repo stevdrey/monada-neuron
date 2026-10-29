@@ -7,7 +7,8 @@ import java.util.OptionalLong;
 
 /**
  * One host-supplied window for {@link WaveCognitionReasoningStage}: explicit samples plus the concept the host
- * believes for the preceding window (contract {@code ncm-wave-cognition/2} section 10.1).
+ * believes for the preceding step (contract {@code ncm-wave-cognition/2} section 10.1). The windows of one
+ * {@link WaveCognitionInput} all bear on the same next step.
  *
  * <p>The previous concept is caller-owned state, as in {@link ConceptQuery}: the stage never derives it from another
  * window or another execution.

@@ -570,11 +570,14 @@ opt-in whose hypotheses carry no claim of predictive benefit.
 - **Typed per-execution input.** A host `WaveInputResolver` maps the request-scoped `HostExecutionContext` (ADR 0023)
   to a `WaveCognitionInput` of `WaveWindow`s (`SampledWave` plus the host's previous concept code), the pattern of the
   routing reasoning adapter. An empty answer means the execution does not opt in. Samples never travel as `Signal`
-  values; the stage is not a source and passes its input signals through unchanged, so the cycle's admission budget
-  (ADR 0009) governs every signal and hypotheses never cross a memory stage. The previous concept is caller-owned; the
-  stage never chains windows or keeps anything between executions.
+  values. The default stage is not a source and passes its input signals through unchanged, so the cycle's admission
+  budget (ADR 0009) governs every signal and hypotheses never cross a memory stage; `WaveCognitionReasoningStage.source`
+  is the first-stage variant for executions without signals, handing off typed-only. Every window of one input is
+  independent evidence for the same next step; a time series is one execution per step, and the previous concept is
+  caller-owned. The stage never chains windows or keeps anything between executions.
 - **Pipeline per window, in input order.** Frame check against the model (sample count, rate, unit; a mismatch is
-  `Incompatible` and is not transformed) → DFT reference decomposition (the predictor is DFT-only, so Haar is not
+  `Incompatible` and is not transformed) → abstentions decidable without a pattern (unknown previous concept, model
+  above the prediction budget, model without exemplars) → DFT reference decomposition (the predictor is DFT-only, so Haar is not
   wired in although G1s passed for it) → optional `WaveSynthesizer` fidelity status (G1s go; a diagnostic that never
   changes a hypothesis) → `NextConceptPredictor`. No spectral resonance feature (G2 no-go).
 - **Hand-off.** `WaveCognitionStageResult` is a `HypothesisHandOff`: each selected concept (leaf or coarse-only) is
@@ -586,7 +589,8 @@ opt-in whose hypotheses carry no claim of predictive benefit.
   hypothesis; more than `maxWindows` windows reject the whole input; reaching the comparison budget or the hypothesis
   limits stops at that window with `LIMIT_REACHED` (`STAGE_LIMIT_REACHED` for the cycle). Every outcome and every
   examined window is reported in a typed `WaveCognitionReport`.
-- **Host fixture.** `WaveCognitionHostFixtureTest` documents the minimal host API and checks N13.
+- **Host fixture.** `WaveCognitionHostFixtureTest` documents the minimal host API and checks N13 against golden
+  outputs of two default compositions recorded on `main` before the stage existed.
 
 ### 10.2 Feedback (proposed, owned by issue #129)
 
@@ -612,7 +616,7 @@ performance.
 | `maxDepth` | 3 | Largest workload | #127 |
 | `maxCandidatesPerLevel` | 16 | Bounded diagnostics per depth | #127 |
 | `maxWindowsPerCycle` | 32 (default 8) | `WaveCognitionLimits.MAX_WINDOWS`; one DFT of the model's sample count per window, so 32 windows of 4,096 samples are about 0.5 G multiply-adds | #128 |
-| `maxTotalComparisonsPerCycle` | host-set (default 2,048) | `WaveCognitionLimits.maxTotalComparisons`; eight predictions at `maxConcepts` | #128 |
+| `maxTotalComparisonsPerCycle` | host-set (default 2,048) | `WaveCognitionLimits.maxTotalComparisons`; eight predictions at `maxConcepts`. Bounds prediction work only; transform work is bounded by `maxWindowsPerCycle` and reported as decomposition and synthesis counts | #128 |
 | `maxPatternsPerComparisonBatch` | 1,024 | Largest workload; deferred by #125, which ships no batch API (callers compare pairs; one-against-many drifts towards ranking, ADR 0041) | #125 |
 
 ### 11.2 Determinism

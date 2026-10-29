@@ -1,5 +1,7 @@
 package monada.neuron.reasoning.concept;
 
+import monada.neuron.action.ActionResult;
+import monada.neuron.action.ActionStatus;
 import monada.neuron.context.CognitiveBudget;
 import monada.neuron.context.HostExecutionContext;
 import monada.neuron.context.HostReference;
@@ -14,7 +16,11 @@ import monada.neuron.memory.ResonanceMemoryStatus;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.monad.CognitiveStageKind;
 import monada.neuron.monad.CognitiveStageResult;
+import monada.neuron.monad.CognitiveCycleResult;
 import monada.neuron.monad.PrimaryMonad;
+import monada.neuron.perception.DeterministicPerceptionCapability;
+import monada.neuron.perception.DeterministicPerceptionCapability.Script;
+import monada.neuron.perception.PerceptionStatus;
 import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
 import monada.neuron.spectral.SampleUnit;
@@ -22,8 +28,12 @@ import monada.neuron.spectral.SampledWave;
 import monada.neuron.spectral.WaveProvenance;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.SplittableRandom;
@@ -52,6 +62,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * }</pre>
  * A runtime built without the stage is the default runtime, and an execution whose context resolves to no input runs
  * the stage as a pass-through.
+ *
+ * <p>The golden files {@code n13-*.txt} are the {@code toString} of the same default executions recorded on
+ * {@code main} at {@code e3b26fa}, before this stage existed; every record in a cycle result prints its values, so
+ * equal text means an equal result.
  */
 class WaveCognitionHostFixtureTest {
 
@@ -72,6 +86,26 @@ class WaveCognitionHostFixtureTest {
         return defaultComposition()
                 .stage(new HypothesisEvaluationCognitiveStage(new ReferenceHypothesisEvaluationPolicy(), 2))
                 .build();
+    }
+
+    /** A second default composition as on {@code main}: perception, memory recall, evaluation and action. */
+    private static NeuronRuntime perceivingDefaultRuntime() {
+        return NeuronRuntime.builder().monad(MONAD).defaultBudget(BUDGET)
+                .perceptionCapability(new DeterministicPerceptionCapability(Map.of(
+                        "with-waves", new Script(PerceptionStatus.SUCCEEDED, List.of(CUE)))), 2)
+                .memoryPort(MEMORY, 1)
+                .stage(new HypothesisEvaluationCognitiveStage(new ReferenceHypothesisEvaluationPolicy(), 2))
+                .actionCapability(request -> new ActionResult(ActionStatus.SUCCEEDED, request.maxObservations(),
+                        List.of()), 1)
+                .build();
+    }
+
+    private static String golden(String name) {
+        try (InputStream in = WaveCognitionHostFixtureTest.class.getResourceAsStream(name)) {
+            return new String(Objects.requireNonNull(in, name).readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static NeuronRuntime optInRuntime() {
@@ -97,8 +131,12 @@ class WaveCognitionHostFixtureTest {
         var before = defaultRuntime().execute(input("with-waves"));
         var optIn = optInRuntime().execute(input("with-waves"));
         var after = defaultRuntime().execute(input("with-waves"));
+        CognitiveCycleResult perceiving = perceivingDefaultRuntime().execute(CycleInput.of(List.of())
+                .withHostContext(HostExecutionContext.of(new HostReference("with-waves"))));
 
         assertAll(
+                () -> assertEquals(golden("n13-memory-evaluation.txt"), before.toString()),
+                () -> assertEquals(golden("n13-perception-memory-evaluation-action.txt"), perceiving.toString()),
                 () -> assertEquals(before, after),
                 () -> assertEquals(List.of(CognitiveStageKind.MEMORY_RECALL, CognitiveStageKind.EVALUATION),
                         before.stageResults().stream().map(CognitiveStageResult::kind).toList()),

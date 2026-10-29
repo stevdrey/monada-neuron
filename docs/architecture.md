@@ -588,7 +588,8 @@ centroids of a caller-owned `ConceptModel`, mixes it with smoothed transition co
 [ADR 0043](adr/0043-hierarchical-next-concept-predictor.md)). Gate G3 is **no-go**
 ([next-concept-g3.md](benchmarks/next-concept-g3.md)). Contract revision `/2` keeps that verdict and allows only an
 experimental opt-in: `WaveCognitionReasoningStage` (issue #128, [ADR 0044](adr/0044-opt-in-wave-cognition-reasoning-stage.md))
-is a non-source `REASONING` stage a host composes explicitly. It resolves windows through a `WaveInputResolver` keyed
+is a `REASONING` stage a host composes explicitly, after perception or memory recall or, through `source(...)`, as
+the first stage of a samples-only execution. It resolves windows through a `WaveInputResolver` keyed
 by the `HostExecutionContext`, passes its input signals through unchanged, and hands one hypothesis per selected
 concept with a `SpectralEvidence` window reference to `EVALUATION`, under `WaveCognitionLimits`. No default composition
 includes it. Every other name below is a proposal owned by issues #129 and #130.

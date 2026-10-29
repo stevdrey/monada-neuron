@@ -7,6 +7,7 @@ import monada.neuron.reasoning.Hypothesis;
 import monada.neuron.reasoning.HypothesisLimits;
 import monada.neuron.reasoning.HypothesisSet;
 import monada.neuron.reasoning.Proposition;
+import monada.neuron.reasoning.ReasoningCognitiveStageResult;
 import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
 import org.junit.jupiter.api.Test;
@@ -30,7 +31,7 @@ class WaveCognitionStageResultTest {
             new PredictionWork(6, 4, 2), Optional.empty());
 
     private static WaveCognitionReport processed() {
-        return new WaveCognitionReport(WaveCognitionOutcome.PROCESSED, 1, List.of(PREDICTED), 6);
+        return new WaveCognitionReport(WaveCognitionOutcome.PROCESSED, 1, List.of(PREDICTED), 1, 0, 6);
     }
 
     @Test
@@ -45,13 +46,15 @@ class WaveCognitionStageResultTest {
                 () -> assertEquals(List.of(FIRST), admitted.outputSignals()),
                 () -> assertEquals(ONE, admitted.hypotheses()),
                 () -> assertEquals(result.report(), admitted.report()),
+                () -> assertEquals(new ReasoningCognitiveStageResult(CognitiveStageStatus.COMPLETED, List.of(FIRST),
+                        ONE), admitted.reasoning()),
                 () -> assertThrows(IllegalArgumentException.class,
                         () -> result.withAdmittedOutputSignals(List.of(SECOND))));
     }
 
     @Test
     void statusAndHypothesesMustAgreeWithTheReportedOutcome() {
-        var limited = new WaveCognitionReport(WaveCognitionOutcome.WORK_LIMIT_REACHED, 2, List.of(PREDICTED), 6);
+        var limited = new WaveCognitionReport(WaveCognitionOutcome.WORK_LIMIT_REACHED, 2, List.of(PREDICTED), 1, 0, 6);
         var notRequested = WaveCognitionReport.empty(WaveCognitionOutcome.NOT_REQUESTED, 0);
         assertAll(
                 () -> assertThrows(IllegalArgumentException.class,
@@ -68,17 +71,30 @@ class WaveCognitionStageResultTest {
 
     @Test
     void reportsValidatePositionsTotalsAndOutcomeShape() {
+        var incompatible = new WindowOutcome.Incompatible(0);
         assertAll(
                 () -> assertThrows(IllegalArgumentException.class, () -> new WaveCognitionReport(
-                        WaveCognitionOutcome.PROCESSED, 1, List.of(new WindowOutcome.Incompatible(1)), 0)),
+                        WaveCognitionOutcome.PROCESSED, 1, List.of(new WindowOutcome.Incompatible(1)), 0, 0, 0)),
                 () -> assertThrows(IllegalArgumentException.class, () -> new WaveCognitionReport(
-                        WaveCognitionOutcome.PROCESSED, 1, List.of(PREDICTED), 5)),
+                        WaveCognitionOutcome.PROCESSED, 1, List.of(PREDICTED), 1, 0, 5)),
                 () -> assertThrows(IllegalArgumentException.class, () -> new WaveCognitionReport(
-                        WaveCognitionOutcome.PROCESSED, 2, List.of(PREDICTED), 6)),
+                        WaveCognitionOutcome.PROCESSED, 2, List.of(PREDICTED), 1, 0, 6)),
                 () -> assertThrows(IllegalArgumentException.class, () -> new WaveCognitionReport(
-                        WaveCognitionOutcome.REJECTED_OVERSIZED, 3, List.of(PREDICTED), 6)),
+                        WaveCognitionOutcome.REJECTED_OVERSIZED, 3, List.of(PREDICTED), 1, 0, 6)),
                 () -> assertThrows(IllegalArgumentException.class, () -> new WaveCognitionReport(
-                        WaveCognitionOutcome.NOT_REQUESTED, 1, List.of(), 0)),
+                        WaveCognitionOutcome.REJECTED_OVERSIZED, 0, List.of(), 0, 0, 0)),
+                () -> assertThrows(IllegalArgumentException.class, () -> new WaveCognitionReport(
+                        WaveCognitionOutcome.NOT_REQUESTED, 1, List.of(), 0, 0, 0)),
+                () -> assertThrows(IllegalArgumentException.class, () -> new WaveCognitionReport(
+                        WaveCognitionOutcome.WORK_LIMIT_REACHED, 1, List.of(PREDICTED), 1, 0, 6)),
+                () -> assertThrows(IllegalArgumentException.class, () -> new WaveCognitionReport(
+                        WaveCognitionOutcome.HYPOTHESIS_LIMIT_REACHED, 2, List.of(incompatible), 0, 0, 0)),
+                () -> assertThrows(IllegalArgumentException.class, () -> new WaveCognitionReport(
+                        WaveCognitionOutcome.HYPOTHESIS_LIMIT_REACHED, 2, List.of(), 0, 0, 0)),
+                () -> assertThrows(IllegalArgumentException.class, () -> new WaveCognitionReport(
+                        WaveCognitionOutcome.PROCESSED, 1, List.of(PREDICTED), 2, 0, 6)),
+                () -> assertThrows(IllegalArgumentException.class, () -> new WaveCognitionReport(
+                        WaveCognitionOutcome.PROCESSED, 1, List.of(PREDICTED), 1, 2, 6)),
                 () -> assertThrows(IllegalArgumentException.class, () -> new WindowOutcome.Predicted(0, 2, 1, 1.5,
                         Optional.empty(), PredictionWork.NONE, Optional.empty())));
     }

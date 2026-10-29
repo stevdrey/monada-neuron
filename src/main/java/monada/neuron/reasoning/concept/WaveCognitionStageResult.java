@@ -6,65 +6,80 @@ import monada.neuron.monad.CognitiveStageResult;
 import monada.neuron.monad.CognitiveStageStatus;
 import monada.neuron.reasoning.HypothesisHandOff;
 import monada.neuron.reasoning.HypothesisSet;
+import monada.neuron.reasoning.ReasoningCognitiveStageResult;
 import monada.neuron.signal.Signal;
 
 import java.util.List;
 import java.util.Objects;
 
 /**
- * Typed {@code REASONING} result of {@link WaveCognitionReasoningStage}: the input signals unchanged, the concept
- * hypotheses for {@code EVALUATION} and the execution's {@link WaveCognitionReport}.
+ * Typed {@code REASONING} result of {@link WaveCognitionReasoningStage}: the ordinary reasoning hand-off (signals and
+ * concept hypotheses for {@code EVALUATION}) plus the execution's {@link WaveCognitionReport}.
  *
- * @param status {@code LIMIT_REACHED} exactly when the report's outcome reached a limit
- * @param outputSignals ordered signals offered to the next stage
- * @param hypotheses immutable concept hypotheses produced this cycle; empty unless windows were examined
+ * <p>Signal admission, typed hand-off and provenance rules are those of {@link ReasoningCognitiveStageResult}, to
+ * which this result delegates.
+ *
+ * @param reasoning the reasoning hand-off; its status is {@code LIMIT_REACHED} exactly when the report's outcome
+ *     reached a limit, and its hypotheses are empty unless windows were examined
  * @param report the execution's diagnostics
  */
-public record WaveCognitionStageResult(CognitiveStageStatus status, List<Signal> outputSignals,
-                                       HypothesisSet hypotheses, WaveCognitionReport report)
+public record WaveCognitionStageResult(ReasoningCognitiveStageResult reasoning, WaveCognitionReport report)
         implements CognitiveStageResult, HypothesisHandOff {
 
-    /** Validates and snapshots components. */
+    /** Validates the agreement of the hand-off with the report. */
     public WaveCognitionStageResult {
-        Objects.requireNonNull(status, "status must not be null");
-        outputSignals = List.copyOf(Objects.requireNonNull(outputSignals, "outputSignals must not be null"));
-        Objects.requireNonNull(hypotheses, "hypotheses must not be null");
+        Objects.requireNonNull(reasoning, "reasoning must not be null");
         Objects.requireNonNull(report, "report must not be null");
         var expected = report.outcome().limitReached()
                 ? CognitiveStageStatus.LIMIT_REACHED : CognitiveStageStatus.COMPLETED;
-        if (status != expected) {
+        if (reasoning.status() != expected) {
             throw new IllegalArgumentException(report.outcome() + " requires status " + expected);
         }
-        if (!report.outcome().examinedWindows() && !hypotheses.isEmpty()) {
+        if (!report.outcome().examinedWindows() && !reasoning.hypotheses().isEmpty()) {
             throw new IllegalArgumentException(report.outcome() + " produces no hypothesis");
         }
     }
 
-    @Override
-    public CognitiveStageKind kind() {
-        return CognitiveStageKind.REASONING;
+    /** Creates a result from its parts. */
+    public WaveCognitionStageResult(CognitiveStageStatus status, List<Signal> outputSignals, HypothesisSet hypotheses,
+                                    WaveCognitionReport report) {
+        this(new ReasoningCognitiveStageResult(status, outputSignals, hypotheses), report);
     }
 
-    /** Keeps hypotheses and report, which are independent of signals, and trims signals to the prefix. */
+    @Override
+    public CognitiveStageKind kind() {
+        return reasoning.kind();
+    }
+
+    @Override
+    public CognitiveStageStatus status() {
+        return reasoning.status();
+    }
+
+    @Override
+    public List<Signal> outputSignals() {
+        return reasoning.outputSignals();
+    }
+
+    @Override
+    public HypothesisSet hypotheses() {
+        return reasoning.hypotheses();
+    }
+
+    /** Keeps the hypotheses and report and trims the signals to the admitted prefix. */
     @Override
     public CognitiveStageResult withAdmittedOutputSignals(List<Signal> admittedOutputSignals) {
-        Objects.requireNonNull(admittedOutputSignals, "admittedOutputSignals must not be null");
-        if (admittedOutputSignals.size() > outputSignals.size()
-                || !outputSignals.subList(0, admittedOutputSignals.size()).equals(admittedOutputSignals)) {
-            throw new IllegalArgumentException("admitted output signals must be a prefix of the reasoning outputs");
-        }
-        return new WaveCognitionStageResult(status, admittedOutputSignals, hypotheses, report);
+        return new WaveCognitionStageResult(
+                (ReasoningCognitiveStageResult) reasoning.withAdmittedOutputSignals(admittedOutputSignals), report);
     }
 
     @Override
     public boolean retainsTypedHandOff() {
-        return !hypotheses.isEmpty();
+        return reasoning.retainsTypedHandOff();
     }
 
-    /** Rejects signal evidence that references an occurrence the context never accepted. */
     @Override
     public void validateProvenance(CognitiveContext context) {
-        Objects.requireNonNull(context, "context must not be null");
-        hypotheses.validateSignalProvenance(context.acceptedSignals());
+        reasoning.validateProvenance(context);
     }
 }

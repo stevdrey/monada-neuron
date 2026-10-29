@@ -31,13 +31,20 @@ G3 result is not reinterpreted: it stays the published negative result, and noth
   previous concept code), the pattern of `RoutingInputResolver` and `PerceptionCapability`. Samples never become
   signals and the stage never sees another execution's input. An empty resolver answer means the execution does not
   opt in. The previous concept stays caller-owned: the stage never chains windows.
-- **Not a source; signals pass through.** The stage runs after perception or memory recall and returns its input
-  signals unchanged, so the cycle's existing input and output admission (ADR 0009) governs every signal and typed
-  hypotheses never need to cross a memory stage. Without input signals the cycle ends with `NO_SIGNALS` before the
-  stage, as for any non-source stage.
+- **Two positions, both `REASONING`.** The default stage is not a source: it runs after perception or memory recall
+  and returns its input signals unchanged, so the cycle's existing input and output admission (ADR 0009) governs
+  every signal and typed hypotheses never need to cross a memory stage. A host whose executions carry only samples
+  uses `WaveCognitionReasoningStage.source(...)`: the first stage, with no signals (like `RoutingReasoningStage`),
+  handing its hypotheses to `EVALUATION` typed-only, so no placeholder signal is ever needed.
+- **One step per execution.** Every window of an input is independent evidence for the same next step (channels,
+  sensors or views of one instant). A time series is one execution per step; the host carries the previous concept.
+  This is what makes merging equal concepts from several windows into one hypothesis sound.
 - **Bounded work, DFT only.** `WaveCognitionLimits`: at most `maxWindows` (`1..32`, default 8) windows, else the whole
-  input is rejected (`REJECTED_OVERSIZED`, nothing decomposed); `maxTotalComparisons` over the execution (default
-  2,048); a `PredictionBudget` per call and `HypothesisLimits` for the hand-off. The decomposer is the DFT reference
+  input is rejected (`REJECTED_OVERSIZED`, nothing decomposed); `maxTotalComparisons` over the execution's predictions
+  (default 2,048); a `PredictionBudget` per call and `HypothesisLimits` for the hand-off. Transform work is bounded by
+  `maxWindows` (one DFT and at most one synthesis per window) and counted in the report. Abstentions the predictor
+  decides without a pattern (unknown previous concept, model above the prediction budget, model without exemplars)
+  are decided before any transform. The decomposer is the DFT reference
   because `ConceptModelTrainer` accepts DFT frames only; a window whose sample count, rate or unit differs from the
   model frame is reported `Incompatible` before any transform. Haar windows are therefore out of this integration,
   although G1s passed for Haar synthesis.
@@ -91,8 +98,9 @@ Rejected: contract section 10.1 forbids a new kind, and a source stage could not
 - A host opts in with one `stage(...)` call and a resolver; every runtime that does not is unchanged (N13). All
   existing tests pass; the only test change is the `SpectralEvidence` branch of the analytic
   `HypothesisFootprintModel`, whose switch over the sealed `Evidence` must stay exhaustive.
-- Any exhaustive `switch` over `Evidence` in a consumer must add the new variant (source-incompatible for such
-  consumers, binary-compatible otherwise).
+- Consumers with an exhaustive `switch` over `Evidence` break: their source no longer compiles until they add the
+  `SpectralEvidence` case, and code already compiled against the previous release throws `MatchException` when it
+  meets one. Consumers that only read `relation()` and `weight()` are unaffected.
 - Hypotheses from this stage carry the G3 no-go: they are concept proposals for experiments, not calibrated beliefs.
 - Cost per execution is bounded by `maxWindows` DFTs of the model's sample count, `maxTotalComparisons` comparisons
   and, when enabled, as many syntheses.

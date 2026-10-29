@@ -38,20 +38,31 @@ import java.util.Optional;
  * contract is no-go: the hypotheses carry no claim of predictive benefit, and a host that does not compose this stage
  * keeps the default cycle unchanged.
  *
- * <p>It is not a source: it runs after perception or memory recall, passes its input signals through unchanged, and
- * never encodes samples, components or provenance in a {@code Signal}. It holds only immutable configuration and
- * stateless collaborators, so a reused runtime carries nothing from one execution to the next.
+ * <p><b>One step per execution.</b> Every window of an input is independent evidence for the <b>same</b> next step
+ * (channels, sensors or views of one instant), so equal concepts from several windows merge into one hypothesis whose
+ * evidence lists each supporting window. A time series is one execution per step, with the host carrying the
+ * previous concept forward.
+ *
+ * <p><b>Position.</b> The {@linkplain #WaveCognitionReasoningStage(WaveInputResolver, ConceptModel, WaveCognitionLimits)
+ * default stage} is not a source: it runs after perception or memory recall and passes its input signals through
+ * unchanged. A host whose executions carry only samples uses the {@linkplain #source(WaveInputResolver, ConceptModel,
+ * WaveCognitionLimits) source stage}, which must be the first stage, receives no signals and hands its hypotheses off
+ * typed-only. Neither encodes samples, components or provenance in a {@code Signal}. Both hold only immutable
+ * configuration and stateless collaborators, so a reused runtime carries nothing from one execution to the next.
  *
  * <p><b>Fail-closed.</b> A cycle without host context, a resolver that returns empty, an input without windows, or an
  * input with more than {@link WaveCognitionLimits#maxWindows()} windows produces no hypothesis and a typed
  * {@link WaveCognitionOutcome}; a window whose frame differs from the model's is not decomposed, a rejected
- * decomposition or an abstaining prediction contributes nothing. Reaching {@link WaveCognitionLimits#maxTotalComparisons()}
+ * decomposition or an abstaining prediction contributes nothing. Abstentions the predictor decides without a pattern
+ * (an unknown previous concept, a model larger than the prediction budget, a model without exemplars) are decided
+ * before the window is decomposed. Reaching {@link WaveCognitionLimits#maxTotalComparisons()}
  * or the hypothesis limits stops processing deterministically at that window and reports {@code LIMIT_REACHED}, which
  * ends the cycle with {@code STAGE_LIMIT_REACHED}.
  *
- * <p><b>Cost.</b> One DFT of the model's sample count per compatible window (O(N²) for the reference decomposer), one
- * bounded prediction, and one synthesis when {@link WaveCognitionLimits#verifyReconstruction()} is set; at most
- * {@link WaveCognitionLimits#maxWindows()} windows per execution.
+ * <p><b>Cost.</b> At most one DFT of the model's sample count per window (O(N²) for the reference decomposer), one
+ * bounded prediction, and one synthesis when {@link WaveCognitionLimits#verifyReconstruction()} is set, for at most
+ * {@link WaveCognitionLimits#maxWindows()} windows; {@link WaveCognitionLimits#maxTotalComparisons()} bounds the
+ * prediction work. The report counts every decomposition and synthesis it ran.
  */
 public final class WaveCognitionReasoningStage implements CognitiveStage {
 
@@ -67,18 +78,39 @@ public final class WaveCognitionReasoningStage implements CognitiveStage {
     private final WaveInputResolver resolver;
     private final ConceptModel model;
     private final WaveCognitionLimits limits;
+    private final boolean source;
 
     /**
-     * Creates a stage.
+     * Creates a non-source stage that runs after perception or memory recall and passes its signals through.
      *
      * @param resolver host adapter resolving the windows from the host context
      * @param model caller-owned immutable model snapshot; its hierarchy's domain is the hypotheses' domain
      * @param limits work bounds of each execution
      */
     public WaveCognitionReasoningStage(WaveInputResolver resolver, ConceptModel model, WaveCognitionLimits limits) {
+        this(resolver, model, limits, false);
+    }
+
+    private WaveCognitionReasoningStage(WaveInputResolver resolver, ConceptModel model, WaveCognitionLimits limits,
+                                        boolean source) {
         this.resolver = Objects.requireNonNull(resolver, "resolver must not be null");
         this.model = Objects.requireNonNull(model, "model must not be null");
         this.limits = Objects.requireNonNull(limits, "limits must not be null");
+        this.source = source;
+    }
+
+    /**
+     * Creates a source stage for executions that carry only samples: it must be the first stage, runs with no signals
+     * (like {@code RoutingReasoningStage}) and hands its hypotheses to {@code EVALUATION} typed-only.
+     *
+     * @param resolver host adapter resolving the windows from the host context
+     * @param model caller-owned immutable model snapshot; its hierarchy's domain is the hypotheses' domain
+     * @param limits work bounds of each execution
+     * @return the source stage
+     */
+    public static WaveCognitionReasoningStage source(
+            WaveInputResolver resolver, ConceptModel model, WaveCognitionLimits limits) {
+        return new WaveCognitionReasoningStage(resolver, model, limits, true);
     }
 
     @Override
@@ -86,9 +118,15 @@ public final class WaveCognitionReasoningStage implements CognitiveStage {
         return CognitiveStageKind.REASONING;
     }
 
+    @Override
+    public boolean isSource() {
+        return source;
+    }
+
     /**
      * Resolves the windows and predicts.
      *
+     * @throws IllegalArgumentException if a source stage receives input signals
      * @throws NullPointerException if the resolver returns {@code null}
      */
     @Override
@@ -96,6 +134,9 @@ public final class WaveCognitionReasoningStage implements CognitiveStage {
         Objects.requireNonNull(monad, "monad must not be null");
         var signals = List.copyOf(Objects.requireNonNull(inputSignals, "inputSignals must not be null"));
         Objects.requireNonNull(context, "context must not be null");
+        if (source && !signals.isEmpty()) {
+            throw new IllegalArgumentException("wave cognition source stage must not receive input signals");
+        }
         var hostContext = context.hostContext();
         if (hostContext.isEmpty()) {
             return withoutWindows(signals, WaveCognitionOutcome.NO_HOST_CONTEXT, 0);
@@ -119,6 +160,9 @@ public final class WaveCognitionReasoningStage implements CognitiveStage {
         var builder = new HypothesisSetBuilder(limits.hypothesisLimits());
         var outcomes = new ArrayList<WindowOutcome>(windows.size());
         var outcome = WaveCognitionOutcome.PROCESSED;
+        Optional<AbstentionReason> modelAbstention = modelAbstention();
+        int decompositions = 0;
+        int syntheses = 0;
         int totalComparisons = 0;
         for (int position = 0; position < windows.size(); position++) {
             WaveWindow window = windows.get(position);
@@ -127,11 +171,19 @@ public final class WaveCognitionReasoningStage implements CognitiveStage {
                 outcomes.add(new WindowOutcome.Incompatible(position));
                 continue;
             }
+            Optional<AbstentionReason> early = window.previousConceptCode().isPresent()
+                    && model.hierarchy().ordinalOf(window.previousConceptCode().getAsLong()).isEmpty()
+                    ? Optional.of(AbstentionReason.UNKNOWN_CONCEPT) : modelAbstention;
+            if (early.isPresent()) {
+                outcomes.add(new WindowOutcome.Abstained(position, early.get(), PredictionWork.NONE, Optional.empty()));
+                continue;
+            }
             if (totalComparisons + model.scorableConcepts() > limits.maxTotalComparisons()) {
                 outcome = WaveCognitionOutcome.WORK_LIMIT_REACHED;
                 break;
             }
             SpectralPattern pattern;
+            decompositions++;
             switch (decomposer.decompose(wave)) {
                 case DecompositionRejected rejected -> {
                     outcomes.add(new WindowOutcome.Rejected(position, rejected.reason()));
@@ -139,9 +191,11 @@ public final class WaveCognitionReasoningStage implements CognitiveStage {
                 }
                 case Decomposed decomposed -> pattern = decomposed.pattern();
             }
-            Optional<SynthesisStatus> reconstruction = limits.verifyReconstruction()
-                    ? Optional.of(synthesizer.synthesize(pattern, wave).status())
-                    : Optional.empty();
+            Optional<SynthesisStatus> reconstruction = Optional.empty();
+            if (limits.verifyReconstruction()) {
+                syntheses++;
+                reconstruction = Optional.of(synthesizer.synthesize(pattern, wave).status());
+            }
             ConceptPrediction prediction = predictor.predict(
                     new ConceptQuery(pattern, window.previousConceptCode()), model, limits.predictionBudget());
             totalComparisons += prediction.work().comparisons();
@@ -163,7 +217,22 @@ public final class WaveCognitionReasoningStage implements CognitiveStage {
         }
         var status = outcome.limitReached() ? CognitiveStageStatus.LIMIT_REACHED : CognitiveStageStatus.COMPLETED;
         return new WaveCognitionStageResult(status, signals, builder.build(),
-                new WaveCognitionReport(outcome, windows.size(), outcomes, totalComparisons));
+                new WaveCognitionReport(outcome, windows.size(), outcomes, decompositions, syntheses,
+                        totalComparisons));
+    }
+
+    /**
+     * The abstention {@link NextConceptPredictor#predict} returns for every window of this model and budget before
+     * scoring, in the predictor's order after its per-window checks; empty when scoring would run.
+     */
+    private Optional<AbstentionReason> modelAbstention() {
+        if (model.scorableConcepts() > limits.predictionBudget().maxComparisons()) {
+            return Optional.of(AbstentionReason.BUDGET_EXHAUSTED);
+        }
+        if (model.scorableConcepts() == 0) {
+            return Optional.of(AbstentionReason.LOW_CONFIDENCE);
+        }
+        return Optional.empty();
     }
 
     /** Proposes the selected concept with the window as evidence; false when the hypothesis limits are reached. */

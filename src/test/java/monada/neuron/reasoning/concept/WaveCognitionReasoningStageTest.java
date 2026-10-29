@@ -350,4 +350,92 @@ class WaveCognitionReasoningStageTest {
                 reasoning.report().windows().stream()
                         .map(w -> ((WindowOutcome.Predicted) w).conceptOrdinal()).toList());
     }
+
+    @Test
+    void abstentionsDecidableWithoutAPatternSkipTheTransform() {
+        var unknownPrevious = new WaveWindow(window(LOW_PURE, 4, "stream-l", 0).wave(), OptionalLong.of(99));
+        var good = window(HIGH_PURE, 5, "stream-l", 64);
+        var checked = WaveCognitionLimits.DEFAULT.withVerifyReconstruction(true);
+        var tight = new WaveCognitionLimits(8, 2_048, new PredictionBudget(16, MODEL.scorableConcepts() - 1, 3),
+                HypothesisLimits.DEFAULT, true);
+
+        var mixed = reasoning(run(runtime(resolver(Map.of("run", WaveCognitionInput.of(unknownPrevious, good)),
+                new ArrayList<>()), checked), "run"));
+        var overBudget = reasoning(run(runtime(resolver(Map.of("run", WaveCognitionInput.of(good, good)),
+                new ArrayList<>()), tight), "run"));
+
+        assertAll(
+                () -> assertEquals(new WindowOutcome.Abstained(0, AbstentionReason.UNKNOWN_CONCEPT,
+                        PredictionWork.NONE, Optional.empty()), mixed.report().windows().get(0)),
+                () -> assertInstanceOf(WindowOutcome.Predicted.class, mixed.report().windows().get(1)),
+                () -> assertEquals(1, mixed.report().decompositions()),
+                () -> assertEquals(1, mixed.report().syntheses()),
+                () -> assertEquals(List.of(
+                        new WindowOutcome.Abstained(0, AbstentionReason.BUDGET_EXHAUSTED, PredictionWork.NONE,
+                                Optional.empty()),
+                        new WindowOutcome.Abstained(1, AbstentionReason.BUDGET_EXHAUSTED, PredictionWork.NONE,
+                                Optional.empty())), overBudget.report().windows()),
+                () -> assertEquals(0, overBudget.report().decompositions()),
+                () -> assertTrue(overBudget.hypotheses().isEmpty()));
+    }
+
+    @Test
+    void theReportCountsEveryDecompositionAndSynthesis() {
+        var provenance = new WaveProvenance("encoder.concept-fixture", 1, "stream-m", 0);
+        var shortWindow = WaveWindow.of(new SampledWave(new double[N / 2], N, SampleUnit.HERTZ, provenance));
+        var overflowing = new double[N];
+        Arrays.fill(overflowing, 1.0e200);
+        var tooLoud = WaveWindow.of(new SampledWave(overflowing, N, SampleUnit.HERTZ, provenance));
+        var input = WaveCognitionInput.of(shortWindow, tooLoud, window(LOW_PURE, 1, "stream-m", 64),
+                window(HIGH_PURE, 2, "stream-m", 128));
+        var resolver = resolver(Map.of("run", input), new ArrayList<>());
+
+        var plain = reasoning(run(runtime(resolver, WaveCognitionLimits.DEFAULT), "run")).report();
+        var checked = reasoning(run(runtime(resolver, WaveCognitionLimits.DEFAULT.withVerifyReconstruction(true)),
+                "run")).report();
+
+        assertAll(
+                () -> assertEquals(3, plain.decompositions()),
+                () -> assertEquals(0, plain.syntheses()),
+                () -> assertEquals(3, checked.decompositions()),
+                () -> assertEquals(2, checked.syntheses()));
+    }
+
+    @Test
+    void aSourceStageRunsSamplesOnlyExecutionsAndHandsOffTypedOnly() {
+        var input = WaveCognitionInput.of(window(LOW_PURE, 1, "stream-n", 0));
+        var calls = new ArrayList<String>();
+        var stage = WaveCognitionReasoningStage.source(resolver(Map.of("run", input), calls), MODEL,
+                WaveCognitionLimits.DEFAULT);
+        var runtime = NeuronRuntime.builder()
+                .monad(new PrimaryMonad(new UUID(0L, 128L)))
+                .defaultBudget(BUDGET)
+                .stage(stage)
+                .stage(new HypothesisEvaluationCognitiveStage(new ReferenceHypothesisEvaluationPolicy(), 1))
+                .build();
+
+        var result = runtime.execute(CycleInput.of(List.of()).withHostContext(host("run")));
+        var notRequested = runtime.execute(CycleInput.of(List.of()).withHostContext(host("other")));
+        var evaluation = assertInstanceOf(EvaluationCognitiveStageResult.class, result.stageResults().getLast());
+
+        assertAll(
+                () -> assertTrue(stage.isSource()),
+                () -> assertEquals(List.of(CognitiveStageKind.REASONING, CognitiveStageKind.EVALUATION),
+                        kinds(result)),
+                () -> assertEquals(CognitiveCycleTermination.COMPLETED, result.termination()),
+                () -> assertEquals(List.of(), reasoning(result).outputSignals()),
+                () -> assertEquals(1, evaluation.evaluation().selected().size()),
+                () -> assertEquals(CognitiveCycleTermination.NO_SIGNALS, notRequested.termination()),
+                () -> assertEquals(List.of(CognitiveStageKind.REASONING), kinds(notRequested)),
+                () -> assertEquals(List.of("run", "other"), calls),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> runtime.execute(CycleInput.of(List.of(CUE)).withHostContext(host("run")))),
+                () -> assertThrows(IllegalArgumentException.class, () -> NeuronRuntime.builder()
+                        .monad(new PrimaryMonad(new UUID(0L, 128L)))
+                        .perceptionCapability(new DeterministicPerceptionCapability(Map.of()), 1)
+                        .stage(stage)
+                        .build()),
+                () -> assertTrue(!new WaveCognitionReasoningStage(context -> Optional.empty(), MODEL,
+                        WaveCognitionLimits.DEFAULT).isSource()));
+    }
 }
