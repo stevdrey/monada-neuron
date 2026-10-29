@@ -537,6 +537,11 @@ The checkpoint codec (`CheckpointCodec` in `monada.neuron.routing.adaptation.cod
 [`routing-checkpoint/1`](specs/routing-checkpoint-v1.md), issue #100,
 [ADR 0044](adr/0044-routing-checkpoint-byte-codec.md)) turns a `RoutingStateCheckpoint` into bytes a host stores itself
 and reads them back strictly; its SHA-256 checksum is integrity, not authenticity, and Neuron still persists nothing.
+Checkpoint recovery diagnostics (`CheckpointRecovery` in `monada.neuron.routing.adaptation.recovery`, flow
+[`routing-checkpoint-recovery-v1.md`](specs/routing-checkpoint-recovery-v1.md), issue #101,
+[ADR 0045](adr/0045-checkpoint-recovery-diagnostics.md)) assess a decoded checkpoint against the store it would be
+restored into and the host's export before `rebuildFrom`, through the store's own `restoreProblems`, and plan the next
+action without ever proposing a cold start; the assessment is a value and restores nothing.
 
 ```text
 Forge (host)

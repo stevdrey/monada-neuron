@@ -144,6 +144,8 @@ a valid checkpoint gives a state identical to a rebuild from scratch).
 
 - Checkpoint persistence and serialization remain host concerns; no format is defined here. The portable byte format
   `routing-checkpoint/1` is defined by [ADR 0044](0044-routing-checkpoint-byte-codec.md) (issue #100) without changing
-  the compaction rule or the ledger digest; where the bytes are stored stays the host's choice.
+  the compaction rule or the ledger digest; where the bytes are stored stays the host's choice. The read only
+  preflight before `rebuildFrom`, and `restoreProblems` as the typed form of its checks, are defined by
+  [ADR 0045](0045-checkpoint-recovery-diagnostics.md) (issue #101) without changing what the restore accepts.
 - Checkpoints across export pages of a published consumer: #68 delivered the published consumer loop over real Store
   exports (contract Section 24) without checkpoints, so this remains open.

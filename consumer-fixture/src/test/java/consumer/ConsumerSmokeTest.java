@@ -8,6 +8,10 @@ import monada.neuron.routing.comparison.RouteChange;
 import monada.neuron.routing.comparison.ScenarioComparison;
 import monada.neuron.routing.comparison.ScenarioDifference;
 import monada.neuron.routing.adaptation.codec.CheckpointDecodeResult;
+import monada.neuron.routing.adaptation.recovery.BlockerKind;
+import monada.neuron.routing.adaptation.recovery.Caveat;
+import monada.neuron.routing.adaptation.recovery.RecoveryAction;
+import monada.neuron.routing.adaptation.recovery.RecoveryAssessment;
 import monada.neuron.routing.disposition.AdviceDisposition;
 import monada.neuron.routing.disposition.DispositionResult;
 import monada.neuron.routing.features.FeatureDimension;
@@ -92,6 +96,21 @@ class ConsumerSmokeTest {
 
         assertEquals(1, decoded.checkpoint().preferenceSnapshot().size());
         assertEquals("route-a", decoded.checkpoint().preferenceSnapshot().getFirst().key().route().routeId());
+    }
+
+    // covers: AC-7
+    @Test
+    void checkpointRecoveryIsAvailableThroughThePublishedArtifact() {
+        var compatible = assertInstanceOf(RecoveryAssessment.Compatible.class, ConsumerSmoke.checkpointRecovery());
+        assertEquals(0L, compatible.checkpointCutoff());
+        assertEquals(List.of(Caveat.REPLAY_REQUIRED, Caveat.UNVERIFIED_UNTIL_REPLAY,
+                Caveat.EXPORT_COMPLETENESS_UNPROVEN), compatible.caveats());
+
+        var plan = ConsumerSmoke.checkpointRecoveryPlan();
+        // undecodable bytes are the only blocker, so the missing export is not even reported yet
+        assertEquals(List.of(RecoveryAction.OBTAIN_READABLE_CHECKPOINT, RecoveryAction.REBUILD_FROM_SCRATCH),
+                plan.steps().stream().map(step -> step.action()).toList());
+        assertEquals(BlockerKind.UNDECODABLE, BlockerKind.values()[0]);
     }
 
     // covers: AC-9

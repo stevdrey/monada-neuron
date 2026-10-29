@@ -90,5 +90,6 @@ The forces:
 
 - Move the receipt and checkpoint writers and readers to one shared package private home once a third format needs
   them.
-- Issue #101 (checkpoint recovery diagnostics) consumes `CheckpointDecodeResult` and turns a rejection into a precise
-  blocker before `rebuildFrom`.
+- Issue #101 (checkpoint recovery diagnostics, [ADR 0045](0045-checkpoint-recovery-diagnostics.md)) consumes
+  `CheckpointDecodeResult` and turns a rejection into an `UNDECODABLE` blocker carrying the reason, before
+  `rebuildFrom`.
