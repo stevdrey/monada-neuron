@@ -3,14 +3,15 @@
 **Contract identifier**: `forge-integration-readiness/1`
 **Status**: Accepted (issue #94; documentation only; normative for host adoption, decided in ADR 0033). Section 5.4
 documents the Neuron types added by issue #95 (ADR 0037), Section 5.5 those added by issue #96 (ADR 0038), and
-advice receipts are added by issue #97 (ADR 0039), host dispositions by issue #98 (ADR 0040) and the checkpoint codec
-by issue #100 (ADR 0044), each as a minor, additive revision.
+advice receipts are added by issue #97 (ADR 0039), host dispositions by issue #98 (ADR 0040), scenario comparison
+previews by issue #99 (ADR 0043) and the checkpoint codec by issue #100 (ADR 0044), each as a minor, additive revision.
 **Composes**: [Forge Routing Contract v1](forge-routing-contract-v1.md) (`forge-routing/1`), unchanged
 **Decision record**: [ADR 0033](../adr/0033-phase-gated-host-adoption-boundary.md); Section 5.4 by
 [ADR 0037](../adr/0037-feature-readiness-diagnostics.md); Section 5.5 by
 [ADR 0038](../adr/0038-decision-review-summaries.md); advice receipts by
 [ADR 0039](../adr/0039-canonical-routing-advice-receipts.md); dispositions by
-[ADR 0040](../adr/0040-host-advice-disposition.md); the checkpoint codec by
+[ADR 0040](../adr/0040-host-advice-disposition.md); scenario comparison previews by
+[ADR 0043](../adr/0043-routing-scenario-comparison.md); the checkpoint codec by
 [ADR 0044](../adr/0044-routing-checkpoint-byte-codec.md)
 **Forge baseline**: `stevdrey/monada-forge` at commit [`56c35e05bb94d4d97e49b59c138fbaed66036ecd`](https://github.com/stevdrey/monada-forge/commit/56c35e05bb94d4d97e49b59c138fbaed66036ecd) (2026-10-21)
 
@@ -627,7 +628,9 @@ no numeric limit, as #98 does, there is nothing to move into the Section 9.1 tab
 
 - disposition shape and its fail closed combinations, `implemented by issue #98` ([ADR 0040](../adr/0040-host-advice-disposition.md)),
   which introduces no numeric limit: a disposition holds a `DecisionRef`, a receipt digest and at most one `RouteKey`;
-- comparison delta bounds, `proposed, owned by issue #99`;
+- comparison delta bounds, `implemented by issue #99` ([ADR 0043](../adr/0043-routing-scenario-comparison.md)): at most
+  two decisions per comparison and at most 64 eligibility changes (`ScenarioDelta.MAX_ELIGIBILITY_CHANGES`, two
+  catalogs of 32 routes);
 - checkpoint byte format `routing-checkpoint/1`, oversize and corrupt input rules, `implemented by issue #100`
   ([ADR 0044](../adr/0044-routing-checkpoint-byte-codec.md)); its cap of 43,149,964 bytes is defined by that format, not by this contract, so nothing
   moves into the Section 9.1 table;
@@ -805,7 +808,8 @@ with the same numbers (v1 Section 1 cites Store issues 99 and 100), which are ne
   [`routing-advice-receipt/1`](routing-advice-receipt-v1.md).
 - `implemented by issue #98`: host disposition of advice, `AdviceDisposition` in `monada.neuron.routing.disposition`,
   contract version `routing-advice-disposition/1` ([ADR 0040](../adr/0040-host-advice-disposition.md)).
-- `proposed, owned by issue #99`: scenario comparison preview.
+- `implemented by issue #99`: scenario comparison preview, `ScenarioComparator` in
+  `monada.neuron.routing.comparison` ([ADR 0043](../adr/0043-routing-scenario-comparison.md)).
 - `implemented by issue #100`: checkpoint codec, `CheckpointCodec` in `monada.neuron.routing.adaptation.codec`, format
   [`routing-checkpoint/1`](routing-checkpoint-v1.md) ([ADR 0044](../adr/0044-routing-checkpoint-byte-codec.md)).
 - `proposed, owned by issue #101`: checkpoint recovery diagnostics.
@@ -839,10 +843,10 @@ dispositions (`implemented by issue #98`) joined it with another.
 - Every relative link in this document resolves in this repository; every Forge link resolves at commit
   `56c35e05bb94d4d97e49b59c138fbaed66036ecd`.
 - No sentence states or implies that a Forge phase beyond 1 is implemented.
-- In the issue #94 revision, every mention of issues #95 to #103 carried `proposed, owned by issue`; issues #99 and #101
-  to #103 still carry `proposed`, #95 is `implemented by issue #95, Section 5.4`, #96 is
-  `implemented by issue #96, Section 5.5`, #97 is `implemented by issue #97`, #98 is `implemented by issue #98` and
-  #100 is `implemented by issue #100`.
+- In the issue #94 revision, every mention of issues #95 to #103 carried `proposed, owned by issue`; issues #101 to #103
+  still carry `proposed`, #95 is `implemented by issue #95, Section 5.4`, #96 is
+  `implemented by issue #96, Section 5.5`, #97 is `implemented by issue #97`, #98 is `implemented by issue #98`, #99 is
+  `implemented by issue #99` and #100 is `implemented by issue #100`.
 - The issue #100 revision marks the ownership table, the Phase 5 row, Sections 7.3, 9.2 and 11.2 as implemented for the
   checkpoint codec only, leaving #101's share of the shared entries proposed; it adds no type of this contract's own, no
   numeric limit of its own and no field table classification change ([ADR 0044](../adr/0044-routing-checkpoint-byte-codec.md)).

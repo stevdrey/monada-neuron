@@ -1,0 +1,43 @@
+package monada.neuron.routing.comparison;
+
+import monada.neuron.routing.catalog.EligibilityReport;
+
+import java.util.Objects;
+
+/**
+ * Where one route stood in one scenario, from that scenario's catalog, its verified eligibility report and its
+ * decision's recorded exclusions: exactly one of {@link Eligible}, {@link Excluded} or {@link NotInCatalog}.
+ */
+public sealed interface RouteStanding permits RouteStanding.Eligible, RouteStanding.Excluded, RouteStanding.NotInCatalog {
+
+    /**
+     * The route is in the catalog and the decision does not exclude it.
+     *
+     * @param route the eligibility filter's entry, with the execution mode and whether the route is eligible only as
+     *         overflow; a change in either is a change of standing
+     */
+    record Eligible(EligibilityReport.EligibleRoute route) implements RouteStanding {
+
+        /** Requires a non-null route. */
+        public Eligible {
+            Objects.requireNonNull(route, "route must not be null");
+        }
+    }
+
+    /**
+     * The decision excludes the route.
+     *
+     * @param exclusion the decision's exclusion, unchanged
+     */
+    record Excluded(EligibilityReport.Exclusion exclusion) implements RouteStanding {
+
+        /** Requires a non-null exclusion. */
+        public Excluded {
+            Objects.requireNonNull(exclusion, "exclusion must not be null");
+        }
+    }
+
+    /** The scenario's catalog does not list the route. */
+    record NotInCatalog() implements RouteStanding {
+    }
+}

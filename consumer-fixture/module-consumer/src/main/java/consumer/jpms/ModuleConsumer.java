@@ -9,7 +9,9 @@ import monada.neuron.resonance.AdaptiveBatchResonanceEvaluator;
 import monada.neuron.resonance.BatchResonanceEvaluator;
 import monada.neuron.routing.LexicographicRoutingPolicy;
 import monada.neuron.routing.RoutingDecision;
+import monada.neuron.routing.RoutingInput;
 import monada.neuron.routing.RoutingPreference;
+import monada.neuron.routing.TrustedRoutingProfile;
 import monada.neuron.routing.adaptation.AdaptiveStateDefinition;
 import monada.neuron.routing.adaptation.RoutingStateStore;
 import monada.neuron.routing.adaptation.StatePartition;
@@ -22,6 +24,10 @@ import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteDescriptor;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.routing.comparison.RouteChange;
+import monada.neuron.routing.comparison.RoutingScenario;
+import monada.neuron.routing.comparison.ScenarioComparator;
+import monada.neuron.routing.comparison.ScenarioComparison;
 import monada.neuron.routing.disposition.AdviceDisposition;
 import monada.neuron.routing.disposition.DispositionResult;
 import monada.neuron.routing.features.FeatureDimension;
@@ -131,6 +137,13 @@ public final class ModuleConsumer {
         require(disposition instanceof DispositionResult.Bound b && b.disposition() instanceof AdviceDisposition.Followed f
                         && f.refersTo(receipt),
                 "a followed disposition must bind to the Level A receipt: " + disposition);
+
+        var side = new RoutingScenario(policy, TrustedRoutingProfile.lexicographic(policy), new RoutingInput(request,
+                catalog, RoutingPreference.empty(request, policy.definition(), policy.policyId(), policy.policyVersion())));
+        var preview = new ScenarioComparator().compare(side, side);
+        require(preview instanceof ScenarioComparison.Compared c && c.differences().isEmpty()
+                        && c.delta().routeChange() == RouteChange.SAME_ROUTE && c.before().equals(levelA),
+                "an identical scenario preview must report no difference: " + preview);
 
         System.out.println("[module-consumer] " + self.getName() + " reads " + neuron.getName()
                 + " (automatic=" + neuron.getDescriptor().isAutomatic() + ", location="

@@ -26,6 +26,9 @@ import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteDescriptor;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.routing.comparison.RoutingScenario;
+import monada.neuron.routing.comparison.ScenarioComparator;
+import monada.neuron.routing.comparison.ScenarioComparison;
 import monada.neuron.routing.disposition.AdviceDisposition;
 import monada.neuron.routing.disposition.DispositionResult;
 import monada.neuron.routing.features.FeatureDimension;
@@ -149,5 +152,26 @@ public final class ConsumerSmoke {
     public static DispositionResult dispositionFollowed() {
         var receipt = AdviceReceipt.of(routeOneStage());
         return AdviceDisposition.followed(receipt, receipt.decision().provenance().decisionRef());
+    }
+
+    /** Scenario preview: the Level A route becomes unavailable in a considered catalog, compared side by side. */
+    public static ScenarioComparison compareUnavailableRoute() {
+        var request = new RoutingRequest(RoutingRequest.CONTRACT_VERSION, "scope", "task", "exec", "attempt",
+                "stage", "implement", 1L, "src", "ctx", "con", "eval", "1",
+                TaskFeatures.builder().stageKind("implement").build(),
+                new HardRequirements(List.of(), List.of(), List.of("hosted"), List.of("sandboxed"), 0L), false, 0L);
+        var route = RouteDescriptor.builder("route-a", 1)
+                .stages(List.of("implement"))
+                .executionModes(List.of("sandboxed"))
+                .locality("hosted")
+                .build();
+        var policy = LexicographicRoutingPolicy.reference();
+        var profile = TrustedRoutingProfile.lexicographic(policy);
+        var preference = RoutingPreference.empty(request, policy.definition(), policy.policyId(), policy.policyVersion());
+        var now = RouteCatalog.of("catalog-1", List.of(new CatalogEntry(route, Availability.AVAILABLE, 1)));
+        var considered = RouteCatalog.of("catalog-2", List.of(new CatalogEntry(route, Availability.UNAVAILABLE, 1)));
+        return new ScenarioComparator().compare(
+                new RoutingScenario(policy, profile, new RoutingInput(request, now, preference)),
+                new RoutingScenario(policy, profile, new RoutingInput(request, considered, preference)));
     }
 }

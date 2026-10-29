@@ -54,4 +54,21 @@ class RankStatisticsTest {
         }
         assertEquals(new Interval(51.0, 1_950.0), statistics.interval(values));
     }
+
+    @Test
+    void ratioBootstrapIsSeededPairedAndDrawsLikeTheAucBootstrap() {
+        double[][] numerators = {{1, 0, 1, 1, 0, 1}, {1, 0, 1, 1, 0, 1}};
+        double[][] denominators = {{1, 1, 1, 1, 1, 0}, {1, 1, 1, 1, 1, 0}};
+        int[][] clusters = {{0, 2}, {1, 3}, {4, 5}};
+
+        double[][] first = statistics.bootstrapRatios(numerators, denominators, clusters, 50, 7L);
+        assertArrayEquals(first[0], statistics.bootstrapRatios(numerators, denominators, clusters, 50, 7L)[0]);
+        assertArrayEquals(new double[50], statistics.difference(first[0], first[1]));
+        assertEquals(0.8, statistics.ratio(numerators[0], denominators[0]));
+        assertEquals(0.0, statistics.ratio(new double[] {0.0}, new double[] {0.0}));
+        // A single cluster: every resample draws it, so the ratio is fixed.
+        assertArrayEquals(new double[] {0.5, 0.5},
+                statistics.bootstrapRatios(new double[][] {{1, 0}}, new double[][] {{1, 1}},
+                        new int[][] {{0, 1}}, 2, 3L)[0]);
+    }
 }
