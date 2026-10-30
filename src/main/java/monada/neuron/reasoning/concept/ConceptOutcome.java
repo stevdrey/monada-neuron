@@ -13,7 +13,7 @@ import java.util.OptionalLong;
  *
  * <p>A {@link Verification#VERIFIED} outcome carries the observed leaf, the spectral pattern of the window that was
  * labeled with it, and optionally the verified leaf of the window before it (which adds one transition count). The
- * other verifications carry no label and lead to abstention. The {@link #polarity()} compares the verified leaf with
+ * other verifications carry no label and lead to abstention. The {@link #polarity(ConceptHierarchy)} compares the verified leaf with
  * the receipt and is reported, but {@link ConceptFeedbackPolicy} learns from the verified label alone, so a confirmed
  * prediction adds exactly the evidence an independently labeled window would.
  *
