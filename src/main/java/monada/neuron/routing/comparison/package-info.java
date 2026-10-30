@@ -1,5 +1,5 @@
 /**
- * Read-only previews of two routing scenarios side by side for the opt-in Forge routing extension (issue #99, ADR 0043).
+ * Read-only previews of two routing scenarios side by side for the opt-in Forge routing extension (issue #99, ADR 0047).
  *
  * <p>A host that lets a person adjust an approved catalog, requirement or preference can ask what the advice would be
  * under the change. {@link monada.neuron.routing.comparison.ScenarioComparator#compare} decides both caller-provided

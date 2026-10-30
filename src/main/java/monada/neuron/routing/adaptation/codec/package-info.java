@@ -1,5 +1,5 @@
 /**
- * Portable byte codec for routing state checkpoints in the opt-in Forge routing extension (issue #100, ADR 0044).
+ * Portable byte codec for routing state checkpoints in the opt-in Forge routing extension (issue #100, ADR 0048).
  *
  * <p>{@link monada.neuron.routing.adaptation.codec.CheckpointCodec#encode} turns a
  * {@link monada.neuron.routing.adaptation.RoutingStateCheckpoint} into one canonical byte string of format

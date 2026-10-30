@@ -1,4 +1,4 @@
-# ADR 0044: Portable Byte Codec for Routing State Checkpoints
+# ADR 0048: Portable Byte Codec for Routing State Checkpoints
 
 ## Status
 

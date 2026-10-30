@@ -168,6 +168,8 @@ Create or update an ADR when a change establishes a durable decision involving:
 
 An ADR should state context, decision, alternatives, consequences, and follow-up work.
 
+ADR numbers are sequential and unique. Before choosing one, run `scripts/check-adr-numbers.sh --next`; it considers `main`, the working tree and every open pull request, because two branches opened side by side would otherwise take the same number (issue #171). CI runs the same script in check mode on every pull request and on pushes to `main`. Renumber rather than keep a duplicate, and update every citation of the renamed ADR.
+
 ## Issue Workflow
 
 Implementation tasks should state:

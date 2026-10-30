@@ -20,6 +20,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  adr-numbers:
+    # Two pull requests opened side by side can each take the next free ADR number (issue #171); git never
+    # reports a conflict because the slugs differ. The script compares the tree with main and with every other
+    # open pull request, so the second of two clashing pull requests fails here. GitHub does not rerun this
+    # when main moves, so a clash can still slip through unless branches must be up to date before merging.
+    name: ADR numbers are unique
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Run the guard's self-test
+        run: scripts/check-adr-numbers-test.sh
+
+      - name: Check ADR numbers against main and open pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: scripts/check-adr-numbers.sh --require-prs --pr "${{ github.event.pull_request.number || 0 }}"
+
   verify:
     name: Build and test (Java 27)
     runs-on: ubuntu-latest

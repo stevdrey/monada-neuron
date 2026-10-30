@@ -527,15 +527,15 @@ format [`routing-advice-receipt/1`](specs/routing-advice-receipt-v1.md), issue #
 [ADR 0039](adr/0039-canonical-routing-advice-receipts.md)); a receipt is a byte comparator over one decision, not the
 `routing-ledger-digest/1` of ADR 0031. Host dispositions of advice (`AdviceDisposition` in
 `monada.neuron.routing.disposition`, contract version `routing-advice-disposition/1`, issue #98,
-[ADR 0040](adr/0040-host-advice-disposition.md)) record what a person did with a receipt before anything ran, by its
+[ADR 0046](adr/0046-host-advice-disposition.md)) record what a person did with a receipt before anything ran, by its
 `DecisionRef` and digest only; a disposition is intent, not authorization, invocation or acceptance, and it reaches no
 state and earns no credit. Scenario comparison previews (`ScenarioComparator` in `monada.neuron.routing.comparison`, issue #99,
-[ADR 0043](adr/0043-routing-scenario-comparison.md)) decide two caller supplied scenarios through
+[ADR 0047](adr/0047-routing-scenario-comparison.md)) decide two caller supplied scenarios through
 `TrustedRoutingAdvice` and report them side by side; a pair across scope, task, stage kind, feature schema,
 evaluation policy or cutoff is `Incomparable` and has no delta, and every preview is labelled hypothetical.
 The checkpoint codec (`CheckpointCodec` in `monada.neuron.routing.adaptation.codec`, format
 [`routing-checkpoint/1`](specs/routing-checkpoint-v1.md), issue #100,
-[ADR 0044](adr/0044-routing-checkpoint-byte-codec.md)) turns a `RoutingStateCheckpoint` into bytes a host stores itself
+[ADR 0048](adr/0048-routing-checkpoint-byte-codec.md)) turns a `RoutingStateCheckpoint` into bytes a host stores itself
 and reads them back strictly; its SHA-256 checksum is integrity, not authenticity, and Neuron still persists nothing.
 Checkpoint recovery diagnostics (`CheckpointRecovery` in `monada.neuron.routing.adaptation.recovery`, flow
 [`routing-checkpoint-recovery-v1.md`](specs/routing-checkpoint-recovery-v1.md), issue #101,

@@ -1,5 +1,5 @@
 /**
- * Host dispositions of routing advice for the opt-in Forge routing extension (issue #98, ADR 0040).
+ * Host dispositions of routing advice for the opt-in Forge routing extension (issue #98, ADR 0046).
  *
  * <p>An {@link monada.neuron.routing.disposition.AdviceDisposition} is the host's own record of what a person did with
  * one {@code AdviceReceipt} before anything ran: followed it, proposed another route, deferred, or declined. It holds
