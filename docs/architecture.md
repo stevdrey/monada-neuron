@@ -592,7 +592,10 @@ is a `REASONING` stage a host composes explicitly, after perception or memory re
 the first stage of a samples-only execution. It resolves windows through a `WaveInputResolver` keyed
 by the `HostExecutionContext`, passes its input signals through unchanged, and hands one hypothesis per selected
 concept with a `SpectralEvidence` window reference to `EVALUATION`, under `WaveCognitionLimits`. No default composition
-includes it. Every other name below is a proposal owned by issues #129 and #130.
+includes it. `ConceptFeedbackPolicy` (issue #129, [ADR 0049](adr/0049-bounded-concept-model-outcome-feedback.md))
+turns caller-carried, verified `ConceptOutcome`s into a new caller-owned snapshot or leaves it unchanged; H5 is
+negative ([next-concept-g5.md](benchmarks/next-concept-g5.md)). Every other name below is a proposal owned by issue
+#130.
 
 ```text
 Host / modality encoder -> SampledWave (meaning, rate, unit, provenance: host owned)
@@ -601,6 +604,7 @@ Host / modality encoder -> SampledWave (meaning, rate, unit, provenance: host ow
   -> NextConceptPredictor over a host-labeled ConceptHierarchy -> coarse-to-fine hypotheses | abstention
   -> optional WaveSynthesizer (EXACT | LOSSY | NOT_INVERTIBLE)
   -> optional WaveCognitionReasoningStage at the REASONING position (no new CognitiveStageKind)
+  -> optional, caller carried: ConceptOutcome -> ConceptFeedbackPolicy -> new ConceptModel snapshot -> next cycle
 ```
 
 Decomposition, resonance, NCM inference and synthesis are separate operations. NCM is hierarchy and prediction over

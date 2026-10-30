@@ -372,8 +372,12 @@ experimental opt-in: `WaveCognitionReasoningStage` (issue #128,
 [ADR 0044](docs/adr/0044-opt-in-wave-cognition-reasoning-stage.md)) is a `REASONING` stage a host composes explicitly;
 it resolves `SampledWave` windows from the `HostExecutionContext`, decomposes and predicts within bounded limits, and
 hands concept hypotheses with `SpectralEvidence` to `EVALUATION`. A runtime without it is unchanged, and its
-hypotheses carry no claim of predictive benefit. Feedback (#129) and the consolidated ablation (#130) are not
-implemented.
+hypotheses carry no claim of predictive benefit. Bounded outcome feedback (issue #129,
+[ADR 0049](docs/adr/0049-bounded-concept-model-outcome-feedback.md)) lets a host apply verified, attributable
+`ConceptOutcome`s to its snapshot through `ConceptFeedbackPolicy`, which returns a new snapshot or the unchanged one and
+never learns from the prediction itself. Its pre-registered H5 evaluation is **negative**: validated feedback moves
+C's held-out rate by less than the margin, about as much as retraining on the same labels
+([next-concept-g5.md](docs/benchmarks/next-concept-g5.md)). The consolidated ablation (#130) is not implemented.
 
 ## Design Principles
 

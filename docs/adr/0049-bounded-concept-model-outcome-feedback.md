@@ -145,7 +145,9 @@ re-selection. They are copied unchanged.
 
 ## Follow-Up
 
-- #129 H5 (control E, `docs/benchmarks/next-concept-g5.md`): does validated feedback improve later held-out windows
-  without leakage?
+- #129 H5 (control E, [next-concept-g5.md](../benchmarks/next-concept-g5.md)) is **negative**: validated feedback
+  moves C's held-out rate by `+0.007` on average, below the `0.02` margin, and about as much as retraining on the same
+  labels. Every leakage, abstention, duplicate and determinism check passes. A shifted workload, where feedback has
+  something to correct, would be a new protocol.
 - #130: control E reused with D, plus the consolidated G5 report.
 - A ledger-based reconciliation of late outcomes, if a host needs it.

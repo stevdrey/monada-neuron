@@ -1,7 +1,8 @@
 # Next-Concept G5 Evaluation, Part 1 (Issue #129, hypothesis H5)
 
 **Contract**: `ncm-wave-cognition/2`, Sections 10.2, 12.3, 13 (H5), 14.2 (control E) and 15 (G5)
-**Status**: protocol pre-registered in this commit, before any held-out result is committed; results pending
+**Status**: protocol pre-registered in commit `9343e9b`, before any held-out result was committed; results below (H5:
+**negative**)
 
 This document is the pre-registration that contract Section 13 requires for H5. It commits the margin, the minimum
 coverage, the gate rule, the feedback procedure, the feedback bounds, every seed and the arms **before** the first
@@ -116,6 +117,123 @@ The verdict is trusted only when every check passes (exit status 0).
 
 The runner writes `build/reports/benchmarks/next-concept-g5.{md,json}`.
 
+## Environment
+
+| Item | Value |
+| --- | --- |
+| Contract / generator | `ncm-wave-cognition/2`, `ncm-concept-fixture-v1` |
+| JDK | OpenJDK 27 (Azul Zulu 27), JMH 1.37 for the cost table |
+| JVM flags | evaluation module default, G1, default heap (3,832 MB max) |
+| OS / architecture | Linux 7.2 (Fedora 44), x86_64 |
+| CPU | AMD Ryzen 7 7730U with Radeon Graphics, 16 available processors (the evaluation is single-threaded) |
+| Pre-registration commit | `9343e9b`: margin, coverage, seeds, bounds and arms committed before any held-out result |
+| Execution commit (results below) | `bce881b` with uncommitted documentation edits only (`+dirty`: contract Section 10.2 text; no source change) |
+| Run | about 34 s wall clock for the full protocol; two runs gave bit-identical checks and results (only the timestamp differs) |
+
+## Checks
+
+All eight semantic checks pass, so the verdict below can be trusted:
+
+| Check | Observed |
+| --- | --- |
+| `splits.disjoint` | 12 splits (training, threshold selection, 5 feedback and 5 test) with distinct seeds; 24,576 clean windows, none shared |
+| `leakage.feedback-provenance` | 88,596 receipt and evidence references of applied outcomes (E and E-shuffled), 0 outside FEEDBACK splits, 0 from TEST splits |
+| `feedback.unverified-abstains` | 30,127 `UNVERIFIED` outcomes, 0 applied; C's exact snapshot kept in 5/5 repeats |
+| `feedback.duplicate-rejected` | repeat 1's first applied outcome sent twice is applied once (`DUPLICATE`); replayed onto its result, `MODEL_MISMATCH` |
+| `feedback.replay-deterministic` | repeat 1's feedback re-streamed from C: revision 5,691, identical fingerprint |
+| `leakage.counterfactual` | repeat 1 with permuted held-out labels: E snapshot and answers bit-identical, E rate changed |
+| `determinism` | repeat 1 regenerated, re-streamed, re-answered and re-bootstrapped bit-identically |
+| `leakage.test-labels` | 21 guarded label sets (test, permuted and regenerated), 0 reads before the scorer opened them |
+
 ## Results
 
-Pending: recorded in a later commit.
+### Selection (non-test data, identical to G3)
+
+Temperature `0.02`; thresholds `τ_conf = [0, 0]`, `τ_margin = [0.3, 0.1]`; C snapshot fingerprint
+`6d6bf888…e3d563`, 6,480 retained bytes (the G3 model plus 80 bytes of feedback bookkeeping, ADR 0049).
+
+### Gate quantities (pooled over 20, 10 and 0 dB; 95% paired-bootstrap intervals)
+
+| Repeat | `rate(E) − rate(C)` | E leaf coverage | Gate (lower bound > 0.02, coverage ≥ 0.60) |
+| --- | --- | --- | --- |
+| 1 | −0.0023 [−0.0155, 0.0121] | 0.785 [0.770, 0.799] | fail |
+| 2 | 0.0089 [−0.0035, 0.0225] | 0.768 [0.752, 0.783] | fail |
+| 3 | 0.0149 [0.0050, 0.0246] | 0.804 [0.791, 0.818] | fail |
+| 4 | 0.0104 [−0.0007, 0.0227] | 0.774 [0.764, 0.785] | fail |
+| 5 | 0.0031 [−0.0063, 0.0129] | 0.753 [0.741, 0.765] | fail |
+
+**H5 verdict: NEGATIVE.** No repeat reaches the registered margin: the largest lower bound is `0.0050` (repeat 3),
+and four of five intervals include zero. Coverage is not the reason (E covers 0.75 to 0.80 of the windows). The first
+part of G5 is therefore reported negative (contract Section 15); #130 consolidates G5 with every control.
+
+### Controls
+
+| Repeat | rate C | rate E | rate E-shuffled | rate C-replay | E at 25% | E at 50% | `rate(E) − rate(C-replay)` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 0.3256 | 0.3232 | 0.0565 | 0.3188 | 0.3411 | 0.3401 | 0.0045 [0.0020, 0.0071] |
+| 2 | 0.2991 | 0.3080 | 0.0577 | 0.3008 | 0.3077 | 0.3171 | 0.0073 [0.0033, 0.0114] |
+| 3 | 0.3135 | 0.3284 | 0.0463 | 0.3262 | 0.3310 | 0.3423 | 0.0021 [−0.0010, 0.0055] |
+| 4 | 0.3082 | 0.3186 | 0.0327 | 0.3158 | 0.3191 | 0.3266 | 0.0028 [0.0007, 0.0050] |
+| 5 | 0.3170 | 0.3201 | 0.0589 | 0.3234 | 0.3297 | 0.3317 | −0.0033 [−0.0078, 0.0012] |
+
+| Repeat | C coverage / covered accuracy | E coverage / covered accuracy | E outcomes sent / applied / `CONCEPT_CAP` | E positive / negative |
+| --- | --- | --- | --- | --- |
+| 1 | 0.761 / 0.428 | 0.785 / 0.412 | 6,024 / 5,691 / 333 | 2,777 / 2,914 |
+| 2 | 0.733 / 0.408 | 0.768 / 0.401 | 6,018 / 5,793 / 225 | 2,860 / 2,933 |
+| 3 | 0.748 / 0.419 | 0.804 / 0.408 | 6,018 / 5,916 / 102 | 2,727 / 3,189 |
+| 4 | 0.750 / 0.411 | 0.774 / 0.412 | 6,025 / 5,679 / 346 | 2,768 / 2,911 |
+| 5 | 0.753 / 0.421 | 0.753 / 0.425 | 6,017 / 5,851 / 166 | 2,783 / 3,068 |
+
+### Reading the results
+
+- **Feedback is safe and bounded, but not useful enough.** Validated feedback moves the rate by `+0.007` on average
+  (−0.002 to +0.015), below the registered margin. It mostly raises leaf coverage (by about 0.03) while covered
+  accuracy stays level or falls slightly, so E answers more windows at about C's accuracy.
+- **The improvement is "more labeled data", not the gate.** C-replay, which retrains C on the same FEEDBACK labels
+  without receipts or the gate, lands within `0.008` of E in every repeat. The incremental update reproduces a retrain,
+  as ADR 0049 intends. On this stationary fixture, the extra labels add little to a model already trained on 6,144
+  windows.
+- **Wrong feedback is not hidden.** E-shuffled loses 0.24 to 0.28 of rate, mostly through coverage (0.07 to 0.14):
+  permuted labels blur the centroids until C abstains. Feedback through a trusted verifier is only as good as the
+  verifier. The policy bounds how far a leaf moves (`CONCEPT_CAP`, 2 to 6% of E's outcomes), but it cannot tell a
+  wrong label from a right one.
+- **The drift curve is not monotone.** In every repeat, E after 25% or 50% of the stream rates higher than E after all
+  of it (by up to 0.018). This is informational and not pre-registered, so it does not change the verdict. A
+  shorter stream or a smaller feedback share would be a new protocol.
+- **No leakage and no amplification.** Every applied outcome came from a FEEDBACK split. `UNVERIFIED` outcomes changed
+  nothing, a duplicate was applied once, a replayed batch was rejected, and two runs were bit-identical.
+
+## Cost of one update (JMH)
+
+```bash
+./gradlew :monada-neuron-evaluation:jmh -PjmhArgs="ConceptFeedbackBenchmark -prof gc"
+```
+
+Settings: 1 fork, 3 warm-up and 5 measurement iterations of 1 s, average time, `-prof gc`. Workloads are those of
+`NextConceptPredictorBenchmark`: MEDIUM is 6 concepts with 129 bins, and LARGE is the contract's largest bounds, 256
+concepts with 2,049 bins (a 4.2 MB snapshot). Every operation includes the new snapshot's fingerprint, because the
+next update's gate needs it.
+
+| Operation | MEDIUM time | MEDIUM allocation | LARGE time | LARGE allocation |
+| --- | ---: | ---: | ---: | ---: |
+| `applyOne` (1 outcome) | 7.2 ± 0.2 µs | 16.9 kB | 4.09 ± 1.00 ms | 4.53 MB |
+| `applyBatch` (64 outcomes) | 34.4 ± 4.5 µs | 23.0 kB | 4.69 ± 0.71 ms | 4.53 MB |
+| `fingerprint` alone | 5.5 ± 0.4 µs | 8.9 kB | 3.57 ± 1.11 ms | 10.3 kB |
+
+Retained state does not grow with feedback: the snapshot stays 6,480 B on the medium workload across 5,700 updates,
+and only counts change. Each update copies the learned arrays once, so allocation is the snapshot size per batch.
+The SHA-256 fingerprint dominates the time (about 77% of `applyOne` on MEDIUM and 87% on LARGE). At the largest bounds
+a streaming caller pays about 4 ms per update, while a batch of 64 costs about 73 µs per outcome. Batching per snapshot
+is the efficient pattern, and ADR 0049 already requires it for outcomes of one revision.
+
+## Limitations
+
+- One stationary fixture family, one machine, one JMH fork. The fixture has no distribution shift, so feedback can only
+  add labeled data from the same process. A shifted workload is a separate protocol.
+- Windows inside one sequence share its transition process; the intervals assume sequence slots are independent.
+- Feedback is attributed only to answered windows. Abstentions get no receipt, so the feedback stream over-represents
+  windows C already answers.
+- The verifier is the generator's own labels, so "validated" means correct by construction for E. E-shuffled shows
+  what a wrong trusted verifier does.
+- The C snapshot and its selection are G3's, so the G3 limitations (in-sample temperature, no resonance features)
+  carry over.
