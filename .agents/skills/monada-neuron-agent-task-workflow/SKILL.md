@@ -9,7 +9,7 @@ description: Use when preparing implementation plans, Issues, PR reviews, or age
 
 1. Read `AGENTS.md`.
 2. Read `README.md`, `docs/architecture.md`, and `docs/design-principles.md`.
-3. Read relevant ADRs under `docs/adr/`.
+3. Read relevant ADRs under `docs/adr/`. When the task adds one, take its number from `scripts/check-adr-numbers.sh --next`, which also checks every open pull request (issue #171).
 4. Inspect current `main`, affected code, tests, and build configuration.
 5. Use `docs/specs/spec-context-template.md` to shape implementation work.
 6. Use `docs/specs/pr-review-checklist.md` for review.

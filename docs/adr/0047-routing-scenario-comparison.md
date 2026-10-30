@@ -1,4 +1,4 @@
-# ADR 0043: Routing Scenario Comparison Preview
+# ADR 0047: Routing Scenario Comparison Preview
 
 ## Status
 

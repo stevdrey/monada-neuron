@@ -72,7 +72,7 @@ When applicable:
 ## Documentation
 
 - Are architecture/design docs updated when behavior or ownership changes?
-- Is an ADR added for durable decisions?
+- Is an ADR added for durable decisions, with a number from `scripts/check-adr-numbers.sh --next` that no open pull request also uses?
 - Are benchmark commands and special runtime flags documented?
 
 ## Merge Recommendation

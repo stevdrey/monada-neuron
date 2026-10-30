@@ -3,17 +3,17 @@
 **Contract identifier**: `forge-integration-readiness/1`
 **Status**: Accepted (issue #94; documentation only; normative for host adoption, decided in ADR 0033). Section 5.4
 documents the Neuron types added by issue #95 (ADR 0037), Section 5.5 those added by issue #96 (ADR 0038), and
-advice receipts are added by issue #97 (ADR 0039), host dispositions by issue #98 (ADR 0040), scenario comparison
-previews by issue #99 (ADR 0043), the checkpoint codec by issue #100 (ADR 0044) and checkpoint recovery diagnostics by
+advice receipts are added by issue #97 (ADR 0039), host dispositions by issue #98 (ADR 0046), scenario comparison
+previews by issue #99 (ADR 0047), the checkpoint codec by issue #100 (ADR 0048) and checkpoint recovery diagnostics by
 issue #101 (ADR 0045), each as a minor, additive revision.
 **Composes**: [Forge Routing Contract v1](forge-routing-contract-v1.md) (`forge-routing/1`), unchanged
 **Decision record**: [ADR 0033](../adr/0033-phase-gated-host-adoption-boundary.md); Section 5.4 by
 [ADR 0037](../adr/0037-feature-readiness-diagnostics.md); Section 5.5 by
 [ADR 0038](../adr/0038-decision-review-summaries.md); advice receipts by
 [ADR 0039](../adr/0039-canonical-routing-advice-receipts.md); dispositions by
-[ADR 0040](../adr/0040-host-advice-disposition.md); scenario comparison previews by
-[ADR 0043](../adr/0043-routing-scenario-comparison.md); the checkpoint codec by
-[ADR 0044](../adr/0044-routing-checkpoint-byte-codec.md)
+[ADR 0046](../adr/0046-host-advice-disposition.md); scenario comparison previews by
+[ADR 0047](../adr/0047-routing-scenario-comparison.md); the checkpoint codec by
+[ADR 0048](../adr/0048-routing-checkpoint-byte-codec.md)
 **Forge baseline**: `stevdrey/monada-forge` at commit [`56c35e05bb94d4d97e49b59c138fbaed66036ecd`](https://github.com/stevdrey/monada-forge/commit/56c35e05bb94d4d97e49b59c138fbaed66036ecd) (2026-10-21)
 
 This document tells a host application, Monada Forge in particular, how to opt into Neuron's routing advice one phase at a
@@ -124,7 +124,7 @@ it.
   [`routing-advice-receipt/1`](routing-advice-receipt-v1.md)): a canonical copy of what was advised, for byte comparison
   only. It is not proof that anything ran or was accepted, not authentication, not a signature and not a routing ledger
   digest.
-- An `AdviceDisposition` (`implemented by issue #98`, [ADR 0040](../adr/0040-host-advice-disposition.md)): what a human
+- An `AdviceDisposition` (`implemented by issue #98`, [ADR 0046](../adr/0046-host-advice-disposition.md)): what a human
   did with advice before anything ran, one of `Followed`, `AlternativeProposed`, `Deferred` or `Declined`. It is not
   execution, not authorization and not quality evidence, and it awards no credit. An `AlternativeProposed` with any
   `AlternativeStanding` is a request to the host's own authorization, never a route grant.
@@ -631,13 +631,13 @@ New limits are proposals only, each owned by its issue, and no proposal is part 
 An entry that its issue has since marked `implemented` stays listed here so the history reads in one place; when it adds
 no numeric limit, as #98 does, there is nothing to move into the Section 9.1 table:
 
-- disposition shape and its fail closed combinations, `implemented by issue #98` ([ADR 0040](../adr/0040-host-advice-disposition.md)),
+- disposition shape and its fail closed combinations, `implemented by issue #98` ([ADR 0046](../adr/0046-host-advice-disposition.md)),
   which introduces no numeric limit: a disposition holds a `DecisionRef`, a receipt digest and at most one `RouteKey`;
-- comparison delta bounds, `implemented by issue #99` ([ADR 0043](../adr/0043-routing-scenario-comparison.md)): at most
+- comparison delta bounds, `implemented by issue #99` ([ADR 0047](../adr/0047-routing-scenario-comparison.md)): at most
   two decisions per comparison and at most 64 eligibility changes (`ScenarioDelta.MAX_ELIGIBILITY_CHANGES`, two
   catalogs of 32 routes);
 - checkpoint byte format `routing-checkpoint/1`, oversize and corrupt input rules, `implemented by issue #100`
-  ([ADR 0044](../adr/0044-routing-checkpoint-byte-codec.md)); its cap of 43,149,964 bytes is defined by that format, not by this contract, so nothing
+  ([ADR 0048](../adr/0048-routing-checkpoint-byte-codec.md)); its cap of 43,149,964 bytes is defined by that format, not by this contract, so nothing
   moves into the Section 9.1 table;
 - recovery preflight blockers and precedence, `implemented by issue #101`
   ([ADR 0045](../adr/0045-checkpoint-recovery-diagnostics.md)): at most one blocker per store rule, so a `Blocked`
@@ -815,11 +815,11 @@ with the same numbers (v1 Section 1 cites Store issues 99 and 100), which are ne
 - `implemented by issue #97`: versioned advice receipts, `AdviceReceipt` in `monada.neuron.routing.receipt`, format
   [`routing-advice-receipt/1`](routing-advice-receipt-v1.md).
 - `implemented by issue #98`: host disposition of advice, `AdviceDisposition` in `monada.neuron.routing.disposition`,
-  contract version `routing-advice-disposition/1` ([ADR 0040](../adr/0040-host-advice-disposition.md)).
+  contract version `routing-advice-disposition/1` ([ADR 0046](../adr/0046-host-advice-disposition.md)).
 - `implemented by issue #99`: scenario comparison preview, `ScenarioComparator` in
-  `monada.neuron.routing.comparison` ([ADR 0043](../adr/0043-routing-scenario-comparison.md)).
+  `monada.neuron.routing.comparison` ([ADR 0047](../adr/0047-routing-scenario-comparison.md)).
 - `implemented by issue #100`: checkpoint codec, `CheckpointCodec` in `monada.neuron.routing.adaptation.codec`, format
-  [`routing-checkpoint/1`](routing-checkpoint-v1.md) ([ADR 0044](../adr/0044-routing-checkpoint-byte-codec.md)).
+  [`routing-checkpoint/1`](routing-checkpoint-v1.md) ([ADR 0048](../adr/0048-routing-checkpoint-byte-codec.md)).
 - `implemented by issue #101`: checkpoint recovery diagnostics, `CheckpointRecovery` in
   `monada.neuron.routing.adaptation.recovery` and `RoutingStateStore.restoreProblems`, flow
   [`routing-checkpoint-recovery-v1.md`](routing-checkpoint-recovery-v1.md)
@@ -860,13 +860,13 @@ dispositions (`implemented by issue #98`) joined it with another.
   `implemented by issue #99`, #100 is `implemented by issue #100` and #101 is `implemented by issue #101`.
 - The issue #100 revision marks the ownership table, the Phase 5 row, Sections 7.3, 9.2 and 11.2 as implemented for the
   checkpoint codec only, leaving #101's share of the shared entries proposed; it adds no type of this contract's own, no
-  numeric limit of its own and no field table classification change ([ADR 0044](../adr/0044-routing-checkpoint-byte-codec.md)).
+  numeric limit of its own and no field table classification change ([ADR 0048](../adr/0048-routing-checkpoint-byte-codec.md)).
 - The issue #101 revision marks #101's share of the same entries as implemented; it adds no type of this contract's
   own, no numeric limit of its own and no field table classification change
   ([ADR 0045](../adr/0045-checkpoint-recovery-diagnostics.md)).
 - The issue #98 revision adds `AdviceDisposition` to the never permission list of Section 2.2 and marks the Phase 4 row,
   Sections 6.2, 7.2, 9.2 and 11.2 as implemented; it adds no type of this contract's own, no numeric limit and no field
-  table classification change ([ADR 0040](../adr/0040-host-advice-disposition.md)).
+  table classification change ([ADR 0046](../adr/0046-host-advice-disposition.md)).
 - The issue #94 revision introduced no new type, value or numeric limit; the issue #95 revision adds the Section 5.4
   types in Neuron and the issue #96 revision adds the Section 5.5 types, neither changing any field table classification
   or adding a numeric limit. The issue #97 revision documents the receipt cap of `routing-advice-receipt/1` in

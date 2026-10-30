@@ -10,7 +10,7 @@ additive bump)
 
 [ADR 0031](0031-routing-state-checkpoint-and-ledger-compaction.md) gave `RoutingStateStore.rebuildFrom`: a staged
 replay from a checkpoint that returns `Rebuilt` or `Failed`, after checks that throw `IllegalArgumentException`.
-[ADR 0044](0044-routing-checkpoint-byte-codec.md) lets a host store a checkpoint as bytes, so after a restart the host
+[ADR 0048](0048-routing-checkpoint-byte-codec.md) lets a host store a checkpoint as bytes, so after a restart the host
 holds bytes it may have damaged, taken from another partition, or taken under an older definition, plus a Store export
 it may or may not have.
 

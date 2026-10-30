@@ -70,6 +70,8 @@ Create/update an ADR when the change establishes:
 - new hardware/native boundary;
 - new durable signal semantics.
 
+Number a new ADR with `scripts/check-adr-numbers.sh --next`, which considers `main`, the working tree and every open pull request. Do not take the next number after the highest file in `docs/adr/`; another open branch may already hold it (issue #171).
+
 ## Acceptance
 
 The design remains expressible in Monada concepts, core behavior is testable without external providers, memory ownership is not duplicated, and new boundaries are documented when durable.

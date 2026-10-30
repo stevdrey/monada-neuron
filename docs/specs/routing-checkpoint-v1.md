@@ -2,7 +2,7 @@
 
 **Format identifier**: `routing-checkpoint/1`
 **Status**: Accepted (issue #100; normative byte format, decided in
-[ADR 0044](../adr/0044-routing-checkpoint-byte-codec.md))
+[ADR 0048](../adr/0048-routing-checkpoint-byte-codec.md))
 **Defined over**: `RoutingStateCheckpoint` of [ADR 0031](../adr/0031-routing-state-checkpoint-and-ledger-compaction.md)
 (Forge Routing Contract v1, section 7)
 **Code**: `monada.neuron.routing.adaptation.codec` (`CheckpointCodec`, `CheckpointDecodeResult`, `CheckpointRejectReason`)
