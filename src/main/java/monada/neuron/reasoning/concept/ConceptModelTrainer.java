@@ -16,7 +16,9 @@ import java.util.OptionalInt;
  *
  * <p><b>Algorithm.</b> One pass over the windows in sequence order: each non-silent window adds its unit feature
  * ({@link ConceptFeatures}) to its leaf and every ancestor, every window counts towards its leaf marginal, and each
- * consecutive pair of a sequence counts one leaf-to-leaf transition. The centroid sums are then scaled to unit norm.
+ * consecutive pair of a sequence counts one leaf-to-leaf transition. The centroid sums are then scaled to unit norm,
+ * and each sum's norm is kept so {@link ConceptFeedbackPolicy} can add a verified exemplar without a replay. A trained
+ * snapshot has revision {@code 0} and no feedback.
  * Cost: O(W · (bins · depth)) time for W windows, O(concepts · bins + leaves²) memory, one feature buffer.
  *
  * <p>Invalid training data is a caller bug ({@link IllegalArgumentException}): a non-DFT frame, a window whose
@@ -89,11 +91,12 @@ public final class ConceptModelTrainer {
                 }
             }
         }
+        double[] centroidNorms = new double[concepts];
         for (int concept = 0; concept < concepts; concept++) {
-            features.normalize(centroids, concept * bins, bins);
+            centroidNorms[concept] = features.normalize(centroids, concept * bins, bins);
         }
-        return new ConceptModel(hierarchy, frame, centroids, exemplarCounts, transitions, leafCounts, temperature,
-                ConceptThresholds.NONE);
+        return new ConceptModel(hierarchy, frame, centroids, centroidNorms, exemplarCounts, transitions, leafCounts,
+                new long[leaves], temperature, ConceptThresholds.NONE, 0L);
     }
 
     private int leafOf(ConceptHierarchy hierarchy, long code) {

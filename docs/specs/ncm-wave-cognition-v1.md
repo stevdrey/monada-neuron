@@ -2,8 +2,8 @@
 
 **Contract identifier**: `ncm-wave-cognition/2` (major revision of `ncm-wave-cognition/1`, Section 17; the file name is
 kept for link stability)
-**Status**: Accepted (issue #121; experimental and opt-in; implemented in part by #122, #123, #124, #125, #126, #127
-and #128, see Sections 4 to 10.1)
+**Status**: Accepted (issue #121; experimental and opt-in; implemented in part by #122, #123, #124, #125, #126, #127,
+#128 and #129, see Sections 4 to 10.2)
 **Parent**: Epic #120, Hierarchical Wave Cognition
 **Decision record**: [ADR 0034](../adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md)
 **Composes, unchanged**: [ADR 0001](../adr/0001-cognition-memory-boundary.md),
@@ -131,7 +131,7 @@ Neuron, cycle-local, pure and deterministic
   existing CognitiveStage positions (no new kind) -> typed result -> later stages / ActionOutcome
         |
         v  optional, caller carried (#129)
-  validated outcome -> NcmFeedback -> caller-owned model snapshot -> next cycle
+  validated outcome -> ConceptOutcome -> ConceptFeedbackPolicy -> new caller-owned snapshot -> next cycle
         |
         v  only through existing ports
 Monada Resonance Store (Store owned): persisted experience, recall, ranking
@@ -224,6 +224,17 @@ enum AbstentionReason { LOW_CONFIDENCE, LOW_MARGIN, INCOMPATIBLE_INPUT, UNKNOWN_
 final class ConceptModel { }          // caller-owned snapshot: centroids, transition counts, temperature, thresholds
 final class ConceptModelTrainer { ConceptModel train(hierarchy, frame, List<LabeledSequence>, double temperature) { } }
 final class NextConceptPredictor { ConceptPrediction predict(ConceptQuery, ConceptModel, PredictionBudget) { } }
+
+// #129 (implemented; ADR 0049): ConceptModel gains revision() and fingerprint() (ncm-concept-model/1)
+record ConceptPredictionReceipt(String modelFingerprint, String sourceReference, long windowOffset,
+                                OptionalLong previousConceptCode, long predictedCode, int depth) { }
+record ConceptOutcome(ConceptPredictionReceipt receipt, Verification verification, OptionalLong verifiedCode,
+                      SpectralPattern observedEvidence, OptionalLong verifiedPreviousCode, long originCycleOrdinal,
+                      String verifierId) { }   // Verification { VERIFIED, UNVERIFIED, CONTRADICTED }
+record ConceptFeedbackLimits(int maxOutcomesPerUpdate, long maxEvidenceAge, double maxFeedbackShare,
+                             List<String> trustedVerifiers) { }
+final class ConceptFeedbackPolicy { ConceptModelUpdate apply(ConceptModel, List<ConceptOutcome>, long cycle) { } }
+sealed interface ConceptModelUpdate permits Updated, Unchanged { }   // rejections typed by ConceptFeedbackRejection
 
 // #126 (implemented; ADR 0042 records the deviations from the first sketch)
 sealed interface SynthesisResult permits Reconstructed, NotInvertible {   // both nested in SynthesisResult
@@ -592,12 +603,33 @@ opt-in whose hypotheses carry no claim of predictive benefit.
 - **Host fixture.** `WaveCognitionHostFixtureTest` documents the minimal host API and checks N13 against golden
   outputs of two default compositions recorded on `main` before the stage existed.
 
-### 10.2 Feedback (proposed, owned by issue #129)
+### 10.2 Feedback (implemented by issue #129, ADR 0049)
 
 Outcome-driven updates follow the cross-cycle rule of ADR 0021: an outcome produces an explicit feedback artifact the
 caller carries forward; the caller applies it to its own model snapshot, producing a new immutable snapshot. No hidden
 online training, no mutation of the cycle that produced the outcome, no feedback derived from the predictor's own
 unvalidated output, and every update is reversible by keeping the previous snapshot.
+
+- **Artifact and attribution.** The caller builds a `ConceptPredictionReceipt` per answered prediction: the exact
+  snapshot by `ConceptModel.fingerprint()`, the window by source reference and offset, the previous concept and the
+  selected concept. The host's verifier, never the predictor, turns it into a `ConceptOutcome` (`VERIFIED` with the
+  observed leaf and the labeled window's pattern, or `UNVERIFIED` / `CONTRADICTED` with no label).
+- **Safety limits.** `ConceptFeedbackPolicy` is pure and stateless and rejects, with a typed
+  `ConceptFeedbackRejection` and no change: a batch above `maxOutcomesPerUpdate`; a receipt of another snapshot
+  (another model, task, thresholds or revision, including a batch replayed onto the snapshot it produced); an
+  untrusted verifier; unverified or contradicted outcomes (abstention); a predicting cycle in the future or older
+  than `maxEvidenceAge`; codes outside the hierarchy or labels that are not leaves; evidence of another frame; a
+  window repeated in a batch (`DUPLICATE`) or labeled differently (`AMBIGUOUS`); and a leaf whose feedback would
+  exceed `maxFeedbackShare` times its training windows (`CONCEPT_CAP`).
+- **Update.** An accepted outcome counts as one labeled window of its verified leaf, as the trainer counts one: leaf
+  marginal, one transition from the verified previous leaf, and the unit feature added to the exemplar sums of the
+  leaf and every ancestor, so the coarse-to-fine pooling invariant holds. The prediction never contributes, so a
+  confirmation adds no more than a correction, and nothing is subtracted. The result is `Updated` (revision + 1,
+  same temperature and thresholds) or `Unchanged` (the same instance).
+- **Reproducible sequence.** Same base snapshot, batches and cycle ordinals give the same fingerprint; an update
+  equals a retrain on the training windows plus the accepted outcomes up to rounding of the restored sums (counts
+  exactly). The next cycle runs only with the snapshot the caller passes to a new stage.
+- **Evidence.** H5 with control E is evaluated in [next-concept-g5.md](../benchmarks/next-concept-g5.md).
 
 ## 11. Bounds, Determinism and Fallback
 
@@ -801,7 +833,7 @@ around by widening scope.
 | G2 | #125 (with the generator and scalar control) | H2 holds | Spectral resonance stays a diagnostic only; #127 may still proceed without resonance features, and the report says so |
 | G3 | #127 (with controls A, B, C and C-flat) | H3 and H6 hold on the medium workload | Publish the negative result; no default integration. Under `/1` this stopped #128; under `/2` #128 may integrate as an experimental opt-in without claim of benefit. **Evaluated: no-go** ([next-concept-g3.md](../benchmarks/next-concept-g3.md)) |
 | G4 | #128 | All existing tests pass unchanged; N13 holds; budgets honored | Revert to library-only use; no default change. **Evaluated: go** (ADR 0044; the only test edit is the exhaustive `Evidence` switch of the analytic footprint model) |
-| G5 | #129 (H5 with control E), #130 | H5 holds or is reported negative; #130 publishes the go/no-go report with every control | The report's decision is binding for further investment |
+| G5 | #129 (H5 with control E), #130 | H5 holds or is reported negative; #130 publishes the go/no-go report with every control | The report's decision is binding for further investment. **Part 1 evaluated: H5 negative** ([next-concept-g5.md](../benchmarks/next-concept-g5.md)); #130 still owes the consolidated report |
 
 The Epic may end after any gate with a documented negative result. That is a valid outcome of the experiment.
 
@@ -855,6 +887,10 @@ issue is updated to cite this table before it starts. #124 and #125 may proceed 
   integration; an experimental opt-in is allowed", implements Section 10.1, adds the `SpectralEvidence` variant and
   the `maxWindowsPerCycle` and `maxTotalComparisonsPerCycle` bounds. No formula, tolerance, hypothesis, margin or
   G3 verdict changes.
+- `/2`, minor (issue #129, ADR 0049): implements Section 10.2 and the #129 sketch of Section 3.4, delivers control E
+  and registers the H5 margin (`0.02`) and minimum coverage (`0.60`) in
+  [next-concept-g5.md](../benchmarks/next-concept-g5.md). No formula, tolerance, hypothesis, margin rule or earlier
+  verdict changes.
 
 ## 18. References
 
