@@ -687,7 +687,8 @@ public final class RoutingStateStore {
      *         store's watermark
      */
     public CompactionResult compact(RoutingStateCheckpoint checkpoint) {
-        requireSamePartition(checkpoint);
+        Objects.requireNonNull(checkpoint, "checkpoint must not be null");
+        throwFirst(partitionProblems(checkpoint));
         long cutoff = checkpoint.processedCutoff();
         if (cutoff > processedCutoff) {
             throw new IllegalArgumentException("the checkpoint at " + cutoff + " lies beyond processedCutoff "
@@ -724,7 +725,7 @@ public final class RoutingStateStore {
             return new CompactionResult.Refused(CompactionResult.Reason.CREDITS_UNBOUND_COHORT);
         }
         // compaction drops what the checkpoint covers, so a rebuild must be able to start from it afterwards
-        if (restorabilityProblem(checkpoint).isPresent()) {
+        if (!restorabilityProblems(checkpoint).isEmpty()) {
             return new CompactionResult.Refused(CompactionResult.Reason.UNRESTORABLE);
         }
         // everything that can fail is computed before the first mutation, so compaction stays all-or-nothing
@@ -774,17 +775,11 @@ public final class RoutingStateStore {
      */
     public RebuildResult rebuildFrom(RoutingStateCheckpoint checkpoint, Collection<RoutingObservation> observations,
             long exportCutoff, BiFunction<RoutingObservation, TargetBindings, FeedbackDerivation> derive) {
-        requireSamePartition(checkpoint);
+        Objects.requireNonNull(checkpoint, "checkpoint must not be null");
+        throwFirst(partitionProblems(checkpoint));
         Objects.requireNonNull(observations, "observations must not be null");
         Objects.requireNonNull(derive, "derive must not be null");
-        if (exportCutoff < checkpoint.processedCutoff()) {
-            throw new IllegalArgumentException("exportCutoff " + exportCutoff + " is below the checkpoint's cutoff "
-                    + checkpoint.processedCutoff());
-        }
-        if (exportCutoff < processedCutoff) {
-            throw new IllegalArgumentException("exportCutoff " + exportCutoff + " is below processedCutoff "
-                    + processedCutoff + ": the rebuilt state would forget examined observations");
-        }
+        throwFirst(exportProblems(checkpoint, exportCutoff));
         var retained = new TreeSet<String>(OpaqueTokens.CODE_POINT_ORDER);
         checkpoint.retainedMarkers().forEach(marker -> retained.add(marker.experienceRef()));
         // the history the checkpoint contains is dropped before ordering, so only the tail counts against the replay
@@ -799,10 +794,7 @@ public final class RoutingStateStore {
             }
         }
         List<RoutingObservation> ordered = new RebuildOrder().order(later);
-        Optional<String> problem = restorabilityProblem(checkpoint);
-        if (problem.isPresent()) {
-            throw new IllegalArgumentException(problem.get());
-        }
+        throwFirst(restorabilityProblems(checkpoint));
         var staged = new RoutingStateStore(definition, partition);
         // the caller's other checkpoints of this lineage stay restorable from the rebuilt store
         staged.checkpointedCohorts.addAll(checkpointedCohorts);
@@ -812,7 +804,7 @@ public final class RoutingStateStore {
 
     /** Sets this new, empty store to a checkpoint plus the given extra cohorts at the baseline. */
     private void restore(RoutingStateCheckpoint checkpoint, Collection<CohortKey> extra) {
-        // the channel bounds were checked by requireSamePartition, before anything else
+        // the channel bounds were checked by partitionProblems, before anything else
         for (CheckpointCohort value : checkpoint.preferenceSnapshot()) {
             var cohort = new Cohort(node(value.key(),
                     new FrequencyState(value.amplitude(), value.frequency(), value.phase()), value.energy()));
@@ -822,7 +814,7 @@ public final class RoutingStateStore {
                 compactedCredits.add(value.key());
             }
         }
-        // the receiving store checked restorability (restorabilityProblem) before staging
+        // the receiving store checked restorability (restorabilityProblems) before staging
         for (CohortKey key : extra) {
             if (!cohorts.containsKey(key)) {
                 cohorts.put(key, new Cohort(baselineNode(key)));
@@ -868,17 +860,53 @@ public final class RoutingStateStore {
     }
 
     /**
-     * The checkpoint must be of this partition and definition, and every retained marker of its bucket mapping; its
-     * cutoff is checked by each caller.
+     * Every reason {@link #rebuildFrom} with this checkpoint and export cutoff would throw before replaying, in the order
+     * it checks them, at most one per rule: the partition and definition rules ({@link RestoreProblem.Mismatch},
+     * {@link RestoreProblem.BucketMappingMismatch}, {@link RestoreProblem.ChannelOutOfBounds}), the export rules
+     * ({@link RestoreProblem.ExportBehindCheckpoint}, {@link RestoreProblem.ExportBehindStore}) and the restorability
+     * rules ({@link RestoreProblem.CohortBoundAfterCheckpoint}, {@link RestoreProblem.CohortCapacity}). An empty list
+     * means {@code rebuildFrom} passes every check before replay; {@code rebuildFrom} throws the first problem's
+     * {@link RestoreProblem#message()}. Nothing is read beyond what {@code rebuildFrom} reads before staging, and nothing
+     * is changed; the observation list is not validated here. {@code O(C + M·C)} for {@code C} cohorts and {@code M}
+     * retained markers.
+     *
+     * @param checkpoint the checkpoint to start from
+     * @param exportCutoff the export's high watermark the rebuilt state would examine
+     * @return the problems in check order, immutable; empty when none
      */
-    private void requireSamePartition(RoutingStateCheckpoint checkpoint) {
+    public List<RestoreProblem> restoreProblems(RoutingStateCheckpoint checkpoint, long exportCutoff) {
         Objects.requireNonNull(checkpoint, "checkpoint must not be null");
-        if (!checkpoint.scopeId().equals(partition.scopeId())
-                || !checkpoint.evaluationPolicyId().equals(partition.evaluationPolicyId())
-                || !checkpoint.evaluationPolicyVersion().equals(partition.evaluationPolicyVersion())
-                || !checkpoint.mappingVersion().equals(definition.mappingVersion())
-                || !checkpoint.featureSchemaVersion().equals(definition.featureSchemaVersion())) {
-            throw new IllegalArgumentException("the checkpoint belongs to another partition or definition");
+        var problems = new ArrayList<>(partitionProblems(checkpoint));
+        problems.addAll(exportProblems(checkpoint, exportCutoff));
+        problems.addAll(restorabilityProblems(checkpoint));
+        return List.copyOf(problems);
+    }
+
+    private static void throwFirst(List<RestoreProblem> problems) {
+        if (!problems.isEmpty()) {
+            throw new IllegalArgumentException(problems.getFirst().message());
+        }
+    }
+
+    /**
+     * The checkpoint must be of this partition and definition, and every retained marker of its bucket mapping; its
+     * cutoff is checked by each caller. One problem per identity field, then the first marker of another bucket mapping,
+     * then the first cohort outside the bounds.
+     */
+    private List<RestoreProblem> partitionProblems(RoutingStateCheckpoint checkpoint) {
+        var problems = new ArrayList<RestoreProblem>();
+        if (!checkpoint.scopeId().equals(partition.scopeId())) {
+            problems.add(new RestoreProblem.Mismatch(PartitionField.SCOPE));
+        }
+        if (!checkpoint.evaluationPolicyId().equals(partition.evaluationPolicyId())
+                || !checkpoint.evaluationPolicyVersion().equals(partition.evaluationPolicyVersion())) {
+            problems.add(new RestoreProblem.Mismatch(PartitionField.EVALUATION_POLICY));
+        }
+        if (!checkpoint.mappingVersion().equals(definition.mappingVersion())) {
+            problems.add(new RestoreProblem.Mismatch(PartitionField.MAPPING_VERSION));
+        }
+        if (!checkpoint.featureSchemaVersion().equals(definition.featureSchemaVersion())) {
+            problems.add(new RestoreProblem.Mismatch(PartitionField.FEATURE_SCHEMA));
         }
         // the record checks every binding part it carries; the bucket mapping is the definition's, so it is checked
         // here, before a retained marker could answer a redelivery that this definition would bucket differently
@@ -886,8 +914,9 @@ public final class RoutingStateStore {
         for (AppliedRevision marker : checkpoint.retainedMarkers()) {
             if (marker.basis() instanceof EntryBasis.NoUpdateMarker basis
                     && !basis.cohortBinding().bucketMappingVersion().equals(bucketMapping)) {
-                throw new IllegalArgumentException("marker " + marker.experienceRef() + " was recorded under bucket mapping "
-                        + basis.cohortBinding().bucketMappingVersion() + ", not " + bucketMapping);
+                problems.add(new RestoreProblem.BucketMappingMismatch(marker.experienceRef(),
+                        basis.cohortBinding().bucketMappingVersion(), bucketMapping));
+                break;
             }
         }
         // the definition's bounds too, so compact never accepts a checkpoint that a rebuild could not start from
@@ -896,48 +925,64 @@ public final class RoutingStateStore {
             if (value.amplitude() < bounds.minAmplitude() || value.amplitude() > bounds.maxAmplitude()
                     || value.energy() < bounds.minEnergy() || value.energy() > bounds.maxEnergy()
                     || value.frequency() < bounds.minFrequency() || value.frequency() > bounds.maxFrequency()) {
-                throw new IllegalArgumentException("cohort " + value.key()
-                        + " holds a Node channel outside the definition's adaptation bounds");
+                problems.add(new RestoreProblem.ChannelOutOfBounds(value.key()));
+                break;
             }
         }
+        return problems;
+    }
+
+    /** The export must reach the checkpoint's cutoff and this store's watermark, in that order. */
+    private List<RestoreProblem> exportProblems(RoutingStateCheckpoint checkpoint, long exportCutoff) {
+        var problems = new ArrayList<RestoreProblem>();
+        if (exportCutoff < checkpoint.processedCutoff()) {
+            problems.add(new RestoreProblem.ExportBehindCheckpoint(exportCutoff, checkpoint.processedCutoff()));
+        }
+        if (exportCutoff < processedCutoff) {
+            problems.add(new RestoreProblem.ExportBehindStore(exportCutoff, processedCutoff));
+        }
+        return problems;
     }
 
     /**
      * Why {@link #rebuildFrom} on this store could not start from the checkpoint as the store is now, if it could not:
      * a cohort bound here but not held by the checkpoint is named by one of its retained {@code NO_TARGET_BINDING}
-     * markers, or its cohorts, this store's and those this store's checkpoints hold together exceed
-     * {@value #MAX_COHORTS}. That union is exactly what the store holds and reserves afterwards (a rebuilt store
+     * markers (the first such cohort), or its cohorts, this store's and those this store's checkpoints hold together
+     * exceed {@value #MAX_COHORTS}. That union is exactly what the store holds and reserves afterwards (a rebuilt store
      * inherits the reservations, a compacted one adds the checkpoint's cohorts), so every checkpoint of the lineage stays
      * restorable. The one rule both {@link #compact} (which refuses {@code UNRESTORABLE}) and {@link #rebuildFrom}
      * (which throws) apply.
      */
-    private Optional<String> restorabilityProblem(RoutingStateCheckpoint checkpoint) {
+    private List<RestoreProblem> restorabilityProblems(RoutingStateCheckpoint checkpoint) {
+        var problems = new ArrayList<RestoreProblem>();
         var held = new TreeSet<CohortKey>();
         checkpoint.preferenceSnapshot().forEach(cohort -> held.add(cohort.key()));
         var union = new TreeSet<>(held);
+        boolean named = false;
         for (CohortKey key : cohorts.keySet()) {
             if (held.contains(key)) {
                 continue;
             }
             union.add(key);
+            if (named) {
+                continue;
+            }
             for (AppliedRevision marker : checkpoint.retainedMarkers()) {
                 if (marker.basis() instanceof EntryBasis.NoUpdateMarker basis
                         && basis.reason() == NoUpdateReason.NO_TARGET_BINDING && names(basis, marker, key)) {
-                    return Optional.of("cohort " + key + " was bound after the checkpoint at "
-                            + checkpoint.processedCutoff() + ", which records sample " + marker.experienceRef()
-                            + " as unbound; rebuild from an earlier checkpoint or from scratch");
+                    problems.add(new RestoreProblem.CohortBoundAfterCheckpoint(key, marker.experienceRef(),
+                            marker.ledgerSequence(), checkpoint.processedCutoff()));
+                    named = true;
+                    break;
                 }
             }
         }
         int bound = union.size();
         union.addAll(checkpointedCohorts);
         if (union.size() > MAX_COHORTS) {
-            int reservedOnly = union.size() - bound;
-            return Optional.of("the checkpoint's cohorts and this store's together are " + union.size()
-                    + (reservedOnly > 0 ? ", " + reservedOnly + " of them held only by this store's checkpoints" : "")
-                    + ", more than the " + MAX_COHORTS + " a rebuilt store allows");
+            problems.add(new RestoreProblem.CohortCapacity(union.size(), union.size() - bound));
         }
-        return Optional.empty();
+        return problems;
     }
 
     /**

@@ -1,4 +1,4 @@
-# ADR 0040: Host Disposition of Routing Advice
+# ADR 0046: Host Disposition of Routing Advice
 
 ## Status
 

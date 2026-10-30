@@ -3,15 +3,17 @@
 **Contract identifier**: `forge-integration-readiness/1`
 **Status**: Accepted (issue #94; documentation only; normative for host adoption, decided in ADR 0033). Section 5.4
 documents the Neuron types added by issue #95 (ADR 0037), Section 5.5 those added by issue #96 (ADR 0038), and
-advice receipts are added by issue #97 (ADR 0039), host dispositions by issue #98 (ADR 0040) and scenario comparison
-previews by issue #99 (ADR 0043), each as a minor, additive revision.
+advice receipts are added by issue #97 (ADR 0039), host dispositions by issue #98 (ADR 0046), scenario comparison
+previews by issue #99 (ADR 0047), the checkpoint codec by issue #100 (ADR 0048) and checkpoint recovery diagnostics by
+issue #101 (ADR 0045), each as a minor, additive revision.
 **Composes**: [Forge Routing Contract v1](forge-routing-contract-v1.md) (`forge-routing/1`), unchanged
 **Decision record**: [ADR 0033](../adr/0033-phase-gated-host-adoption-boundary.md); Section 5.4 by
 [ADR 0037](../adr/0037-feature-readiness-diagnostics.md); Section 5.5 by
 [ADR 0038](../adr/0038-decision-review-summaries.md); advice receipts by
 [ADR 0039](../adr/0039-canonical-routing-advice-receipts.md); dispositions by
-[ADR 0040](../adr/0040-host-advice-disposition.md); scenario comparison previews by
-[ADR 0043](../adr/0043-routing-scenario-comparison.md)
+[ADR 0046](../adr/0046-host-advice-disposition.md); scenario comparison previews by
+[ADR 0047](../adr/0047-routing-scenario-comparison.md); the checkpoint codec by
+[ADR 0048](../adr/0048-routing-checkpoint-byte-codec.md)
 **Forge baseline**: `stevdrey/monada-forge` at commit [`56c35e05bb94d4d97e49b59c138fbaed66036ecd`](https://github.com/stevdrey/monada-forge/commit/56c35e05bb94d4d97e49b59c138fbaed66036ecd) (2026-10-21)
 
 This document tells a host application, Monada Forge in particular, how to opt into Neuron's routing advice one phase at a
@@ -105,7 +107,7 @@ document introduces into the discussion; it changes no v1 row.
 | Evidence judgment, acceptance | Forge | Neuron never inspects code or calls a judge. |
 | Local outcome entries before Phase 5 | Forge | Host storage, host format (Section 7). |
 | Ledger, projections, recall, ranking, export | Resonance Store | Appears at the Phase 5 gate only. |
-| Checkpoint persistence, receipt persistence | Forge | Forge may delegate the storage to the Store; the choice and the responsibility stay with Forge. Neuron ships values and codecs only (`proposed, owned by issue #100` for the codec). |
+| Checkpoint persistence, receipt persistence | Forge | Forge may delegate the storage to the Store; the choice and the responsibility stay with Forge. Neuron ships values, codecs and a read only recovery preflight only (`implemented by issue #100` for the codec: `CheckpointCodec`, format [`routing-checkpoint/1`](routing-checkpoint-v1.md); `implemented by issue #101` for the preflight: `CheckpointRecovery` and `RoutingStateStore.restoreProblems`, flow [`routing-checkpoint-recovery-v1.md`](routing-checkpoint-recovery-v1.md)). |
 | Readiness outcomes `NOT_READY`, `UNAVAILABLE`, `ADVISED`, `STALE` | Forge | Host vocabulary, not a Neuron type (Section 5). |
 
 ### 2.2 Never permission
@@ -122,7 +124,7 @@ it.
   [`routing-advice-receipt/1`](routing-advice-receipt-v1.md)): a canonical copy of what was advised, for byte comparison
   only. It is not proof that anything ran or was accepted, not authentication, not a signature and not a routing ledger
   digest.
-- An `AdviceDisposition` (`implemented by issue #98`, [ADR 0040](../adr/0040-host-advice-disposition.md)): what a human
+- An `AdviceDisposition` (`implemented by issue #98`, [ADR 0046](../adr/0046-host-advice-disposition.md)): what a human
   did with advice before anything ran, one of `Followed`, `AlternativeProposed`, `Deferred` or `Declined`. It is not
   execution, not authorization and not quality evidence, and it awards no credit. An `AlternativeProposed` with any
   `AlternativeStanding` is a request to the host's own authorization, never a route grant.
@@ -183,7 +185,7 @@ not been reached makes no claim about Forge.
 | **Phase 2 preview** (conditional on Forge Phase 2) | source provenance, scope limits, acceptance criteria | host minted ids, a reviewed `stageKind` from a fixed list, a public draft epoch accessor, the three fingerprints, the `evaluationPolicy` constant, a preview `HardRequirements` constant, a static catalog of at least one route, workspace observations | `TaskFeatures`, `RoutingRequest`, `RouteCatalog`, `LexicographicRoutingPolicy.reference()`, `RoutingStateDefinition.reference()`, `RoutingPreference.empty(...)`, `RoutingPolicy.decide` (unverified advice) | `category` until picked; observations when not collected; no `TrustedRoutingProfile` required; no execution, no outcome |
 | **Phase 3 first adapter** (conditional on Forge Phase 3) | contract tests, secret handling, execution policy tests | a real catalog from authorized adapters, per request `HardRequirements` from the host execution policy, the overflow switch, a host selected `TrustedRoutingProfile` | the Phase 2 calls, plus `RoutingReasoningStage` with `TrustedRoutingProfile.lexicographic(parameters, definition)`, built from the `PolicyParameters` and `RoutingStateDefinition` the host holds as its own configuration (v1 Section 18.1), not from the policy instance, for verified advice (the stage is a `CognitiveStage`, so it runs inside a `NeuronRuntime` cycle with a host `RoutingInputResolver` and a `Proposition` domain, v1 Section 24.2, not as a bare call); the host keeps local outcome entries keyed by `DecisionRef` (no Neuron call) | `RoutingPreference` still empty; `cutoff` still 0; no Store |
 | **Phase 4 delivery loop** (conditional on Forge Phase 4) | end to end evidence, deterministic stop conditions | judged results and corrections in the local outcome entries; receipt correlation by `AdviceReceipt` bytes or `sha256()` (`implemented by issue #97`); dispositions by `AdviceDisposition` (`implemented by issue #98`) | the Phase 3 calls; still no feedback into Neuron | `RoutingPreference` still empty; advice still earns zero credit |
-| **Phase 5 learning** (conditional on Forge Phase 5) | reproducible comparisons, provenance, measured value | the Resonance Store, the adapter artifact, one `RoutingStateStore` per `StatePartition`, Store exports with ledger sequences, checkpoint persistence (`proposed, owned by issues #100, #101`) | adapter `StoreExperienceTranslator`, `RoutingFeedbackPolicy.derive`, `RoutingStateStore`, `RoutingStateCheckpoint`, `rebuildFrom`; `decide` now receives a Store built `RoutingPreference` with a real `cutoff` | nothing by design; `Abstain(STATE_INCOMPATIBLE)` becomes possible for the first time |
+| **Phase 5 learning** (conditional on Forge Phase 5) | reproducible comparisons, provenance, measured value | the Resonance Store, the adapter artifact, one `RoutingStateStore` per `StatePartition`, Store exports with ledger sequences, checkpoint persistence (codec `implemented by issue #100`; recovery preflight `implemented by issue #101`) | adapter `StoreExperienceTranslator`, `RoutingFeedbackPolicy.derive`, `RoutingStateStore`, `RoutingStateCheckpoint`, `rebuildFrom`; `decide` now receives a Store built `RoutingPreference` with a real `cutoff` | nothing by design; `Abstain(STATE_INCOMPATIBLE)` becomes possible for the first time |
 
 ### 3.3 Rules that hold at every gate
 
@@ -555,15 +557,20 @@ later decide):
 - A correction that supersedes an applied reward or penalty is handled by reset and ordered replay, from scratch or from a
   `RoutingStateCheckpoint` with its `LedgerDigest` (issue #89,
   [ADR 0031](../adr/0031-routing-state-checkpoint-and-ledger-compaction.md)).
-- Checkpoint bytes and their persistence are the host's or the Store's; the codec and the recovery preflight are
-  `proposed, owned by issues #100, #101`.
+- Checkpoint bytes and their persistence are the host's or the Store's. The codec is `implemented by issue #100`
+  (`CheckpointCodec`, format [`routing-checkpoint/1`](routing-checkpoint-v1.md)); the recovery preflight is
+  `implemented by issue #101` (`CheckpointRecovery.assess` over a decoded checkpoint, the target store and an explicit
+  `ExportState`, with `RecoveryPlan` as advice; flow and failure matrix in
+  [`routing-checkpoint-recovery-v1.md`](routing-checkpoint-recovery-v1.md),
+  [ADR 0045](../adr/0045-checkpoint-recovery-diagnostics.md)). A missing export is never a cold start, and recovery
+  execution stays the host's `rebuildFrom` call.
 
 | Phase | Outcome evidence | Correction | Replay | Checkpoint |
 | --- | --- | --- | --- | --- |
 | 2 | none (nothing executes) | none | none | none |
 | 3 | local entry, `PENDING` | none | none | none |
 | 4 | local entry, judged | host storage replace | none | none |
-| 5 | Store ledger via export | superseding revision, `supersedesSequence` | `rebuildFrom` as of `cutoff` | host or Store persisted; codec `proposed, owned by issue #100` |
+| 5 | Store ledger via export | superseding revision, `supersedesSequence` | `rebuildFrom` as of `cutoff` | host or Store persisted; codec `implemented by issue #100` (`routing-checkpoint/1`) |
 
 ## 8. Dependencies and Core Only Mode
 
@@ -624,13 +631,18 @@ New limits are proposals only, each owned by its issue, and no proposal is part 
 An entry that its issue has since marked `implemented` stays listed here so the history reads in one place; when it adds
 no numeric limit, as #98 does, there is nothing to move into the Section 9.1 table:
 
-- disposition shape and its fail closed combinations, `implemented by issue #98` ([ADR 0040](../adr/0040-host-advice-disposition.md)),
+- disposition shape and its fail closed combinations, `implemented by issue #98` ([ADR 0046](../adr/0046-host-advice-disposition.md)),
   which introduces no numeric limit: a disposition holds a `DecisionRef`, a receipt digest and at most one `RouteKey`;
-- comparison delta bounds, `implemented by issue #99` ([ADR 0043](../adr/0043-routing-scenario-comparison.md)): at most
+- comparison delta bounds, `implemented by issue #99` ([ADR 0047](../adr/0047-routing-scenario-comparison.md)): at most
   two decisions per comparison and at most 64 eligibility changes (`ScenarioDelta.MAX_ELIGIBILITY_CHANGES`, two
   catalogs of 32 routes);
-- checkpoint byte format `routing-checkpoint/1`, oversize and corrupt input rules, `proposed, owned by issue #100`;
-- recovery preflight blockers and precedence, `proposed, owned by issue #101`;
+- checkpoint byte format `routing-checkpoint/1`, oversize and corrupt input rules, `implemented by issue #100`
+  ([ADR 0048](../adr/0048-routing-checkpoint-byte-codec.md)); its cap of 43,149,964 bytes is defined by that format, not by this contract, so nothing
+  moves into the Section 9.1 table;
+- recovery preflight blockers and precedence, `implemented by issue #101`
+  ([ADR 0045](../adr/0045-checkpoint-recovery-diagnostics.md)): at most one blocker per store rule, so a `Blocked`
+  assessment holds at most 10 blockers (`BlockerKind`), which is a shape of the diagnostic, not a numeric limit of
+  this contract;
 - host fixture bounds, `proposed, owned by issue #102`;
 - evaluation suite fixture sizes, `proposed, owned by issue #103`.
 
@@ -803,11 +815,15 @@ with the same numbers (v1 Section 1 cites Store issues 99 and 100), which are ne
 - `implemented by issue #97`: versioned advice receipts, `AdviceReceipt` in `monada.neuron.routing.receipt`, format
   [`routing-advice-receipt/1`](routing-advice-receipt-v1.md).
 - `implemented by issue #98`: host disposition of advice, `AdviceDisposition` in `monada.neuron.routing.disposition`,
-  contract version `routing-advice-disposition/1` ([ADR 0040](../adr/0040-host-advice-disposition.md)).
+  contract version `routing-advice-disposition/1` ([ADR 0046](../adr/0046-host-advice-disposition.md)).
 - `implemented by issue #99`: scenario comparison preview, `ScenarioComparator` in
-  `monada.neuron.routing.comparison` ([ADR 0043](../adr/0043-routing-scenario-comparison.md)).
-- `proposed, owned by issue #100`: checkpoint codec.
-- `proposed, owned by issue #101`: checkpoint recovery diagnostics.
+  `monada.neuron.routing.comparison` ([ADR 0047](../adr/0047-routing-scenario-comparison.md)).
+- `implemented by issue #100`: checkpoint codec, `CheckpointCodec` in `monada.neuron.routing.adaptation.codec`, format
+  [`routing-checkpoint/1`](routing-checkpoint-v1.md) ([ADR 0048](../adr/0048-routing-checkpoint-byte-codec.md)).
+- `implemented by issue #101`: checkpoint recovery diagnostics, `CheckpointRecovery` in
+  `monada.neuron.routing.adaptation.recovery` and `RoutingStateStore.restoreProblems`, flow
+  [`routing-checkpoint-recovery-v1.md`](routing-checkpoint-recovery-v1.md)
+  ([ADR 0045](../adr/0045-checkpoint-recovery-diagnostics.md)).
 - `proposed, owned by issue #102`: the Forge like external host fixture that enforces the host guard in code.
 - `proposed, owned by issue #103`: the host scenario evaluation suite.
 
@@ -838,12 +854,19 @@ dispositions (`implemented by issue #98`) joined it with another.
 - Every relative link in this document resolves in this repository; every Forge link resolves at commit
   `56c35e05bb94d4d97e49b59c138fbaed66036ecd`.
 - No sentence states or implies that a Forge phase beyond 1 is implemented.
-- In the issue #94 revision, every mention of issues #95 to #103 carried `proposed, owned by issue`; issues #99 to #103
+- In the issue #94 revision, every mention of issues #95 to #103 carried `proposed, owned by issue`; issues #102 and #103
   still carry `proposed`, #95 is `implemented by issue #95, Section 5.4`, #96 is
-  `implemented by issue #96, Section 5.5`, #97 is `implemented by issue #97` and #98 is `implemented by issue #98`.
+  `implemented by issue #96, Section 5.5`, #97 is `implemented by issue #97`, #98 is `implemented by issue #98`, #99 is
+  `implemented by issue #99`, #100 is `implemented by issue #100` and #101 is `implemented by issue #101`.
+- The issue #100 revision marks the ownership table, the Phase 5 row, Sections 7.3, 9.2 and 11.2 as implemented for the
+  checkpoint codec only, leaving #101's share of the shared entries proposed; it adds no type of this contract's own, no
+  numeric limit of its own and no field table classification change ([ADR 0048](../adr/0048-routing-checkpoint-byte-codec.md)).
+- The issue #101 revision marks #101's share of the same entries as implemented; it adds no type of this contract's
+  own, no numeric limit of its own and no field table classification change
+  ([ADR 0045](../adr/0045-checkpoint-recovery-diagnostics.md)).
 - The issue #98 revision adds `AdviceDisposition` to the never permission list of Section 2.2 and marks the Phase 4 row,
   Sections 6.2, 7.2, 9.2 and 11.2 as implemented; it adds no type of this contract's own, no numeric limit and no field
-  table classification change ([ADR 0040](../adr/0040-host-advice-disposition.md)).
+  table classification change ([ADR 0046](../adr/0046-host-advice-disposition.md)).
 - The issue #94 revision introduced no new type, value or numeric limit; the issue #95 revision adds the Section 5.4
   types in Neuron and the issue #96 revision adds the Section 5.5 types, neither changing any field table classification
   or adding a numeric limit. The issue #97 revision documents the receipt cap of `routing-advice-receipt/1` in

@@ -46,13 +46,15 @@ public record ReplayRun(
      * @param keptCheckpoints checkpoints still kept when the run ended
      * @param keptCheckpointCohorts cohorts held by those checkpoints together
      * @param keptCheckpointMarkers retained markers held by those checkpoints together
+     * @param codecRoundTrips checkpoints encoded to {@code routing-checkpoint/1} and decoded before they were kept
      */
     public record RebuildStats(RebuildStrategy strategy, int rebuilds, int fromCheckpoint, long replayedObservations,
             int checkpoints, int compactions, int compactedEntries, int keptCheckpoints, int keptCheckpointCohorts,
-            int keptCheckpointMarkers) {
+            int keptCheckpointMarkers, int codecRoundTrips) {
 
         /** No rebuild work: a run that never rebuilt from scratch. */
-        public static final RebuildStats NONE = new RebuildStats(RebuildStrategy.SCRATCH, 0, 0, 0L, 0, 0, 0, 0, 0, 0);
+        public static final RebuildStats NONE =
+                new RebuildStats(RebuildStrategy.SCRATCH, 0, 0, 0L, 0, 0, 0, 0, 0, 0, 0);
 
         /** Requires the strategy. */
         public RebuildStats {

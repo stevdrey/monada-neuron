@@ -197,6 +197,7 @@ public final class RoutingReplayEvaluation {
             checkpointed.add(checkpointEvidence(scenario));
         }
         checks.add(checkpointCheck(checkpointed));
+        checks.add(checkpointCodecCheck(checkpointed));
 
         checks.add(cheapInvalidCheck(caseRuns));
         checks.add(repairedAcceptedCheck(caseRuns));
@@ -273,10 +274,12 @@ public final class RoutingReplayEvaluation {
      * @param restoredEqual the state rebuilt from its latest checkpoint has the same digest; true when never compacted
      * @param stats the checkpointed run's rebuild work
      * @param scratchReplayed observations the from-scratch run's rebuilds replayed
+     * @param codecRoundTrips checkpoints that went through {@code routing-checkpoint/1} and were kept as decoded
+     * @param codecRejected the codec refused a checkpoint, or a decoded one re-encoded to different bytes
      * @param failure why a comparison failed, if one did
      */
     record CheckpointEvidence(String scenario, boolean equal, boolean restoredEqual, ReplayRun.RebuildStats stats,
-            long scratchReplayed, String failure) {
+            long scratchReplayed, int codecRoundTrips, boolean codecRejected, String failure) {
 
         boolean passed() {
             return equal && restoredEqual;
@@ -298,7 +301,13 @@ public final class RoutingReplayEvaluation {
     private CheckpointEvidence checkpointEvidence(Scenario scenario) {
         ReplayRun scratch = scenario.runs().get(ReplayArm.ADAPTIVE);
         var replay = new TemporalReplay(scenario.fixture());
-        ReplayRun checkpointed = replay.run(ReplayArm.ADAPTIVE, RebuildStrategy.CHECKPOINT);
+        ReplayRun checkpointed;
+        try {
+            checkpointed = replay.run(ReplayArm.ADAPTIVE, RebuildStrategy.CHECKPOINT);
+        } catch (TemporalReplay.CodecRejected rejected) {
+            return new CheckpointEvidence(scenario.name(), false, false, ReplayRun.RebuildStats.NONE,
+                    scratch.rebuilds().replayedObservations(), 0, true, rejected.getMessage());
+        }
         String failure = "";
         boolean equal = true;
         try {
@@ -319,7 +328,7 @@ public final class RoutingReplayEvaluation {
             }
         }
         return new CheckpointEvidence(scenario.name(), equal, restoredEqual, checkpointed.rebuilds(),
-                scratch.rebuilds().replayedObservations(), failure);
+                scratch.rebuilds().replayedObservations(), checkpointed.rebuilds().codecRoundTrips(), false, failure);
     }
 
     private Map<ReplayArm, ReplayRun> runAll(ReplayFixture fixture) {
@@ -605,6 +614,21 @@ public final class RoutingReplayEvaluation {
         return new Check("state.checkpoint-equals-rebuild", passed,
                 String.join(", ", results.stream().map(CheckpointEvidence::toString).toList())
                         + (exercised ? "" : " (no compaction and checkpoint-started rebuild were exercised)"));
+    }
+
+    /**
+     * Every kept checkpoint went through {@code routing-checkpoint/1}: at least one round trip ran, none was rejected or
+     * re-encoded differently, and the run's decisions, deliveries, derivations and state digest still equal the
+     * from-scratch run's, which never takes a checkpoint, so the codec changed nothing.
+     */
+    static Check checkpointCodecCheck(List<CheckpointEvidence> results) {
+        int roundTrips = results.stream().mapToInt(CheckpointEvidence::codecRoundTrips).sum();
+        boolean rejected = results.stream().anyMatch(CheckpointEvidence::codecRejected);
+        boolean equal = !results.isEmpty() && results.stream().allMatch(CheckpointEvidence::equal);
+        return new Check("state.checkpoint-codec-roundtrip", roundTrips > 0 && !rejected && equal,
+                String.join(", ", results.stream().map(result -> result.scenario() + ":roundTrips="
+                        + result.codecRoundTrips() + ":rejected=" + result.codecRejected() + ":equal="
+                        + result.equal()).toList()));
     }
 
     static Check cheapInvalidCheck(Map<ReplayArm, ReplayRun> runs) {
