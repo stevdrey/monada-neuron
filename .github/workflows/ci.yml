@@ -70,6 +70,9 @@ jobs:
       - name: Verify JPMS module consumer
         run: ./gradlew --no-daemon jpmsConsumerTest
 
+      - name: Verify Forge-like host consumers (classpath and JPMS, core only)
+        run: ./gradlew --no-daemon forgeHostConsumerTest
+
       - name: Upload test reports on failure
         if: failure()
         uses: actions/upload-artifact@v7

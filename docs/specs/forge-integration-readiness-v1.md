@@ -479,8 +479,8 @@ A review is information only: it is never eligibility, readiness, authentication
 
 Advice is computed from a snapshot of host inputs. The host, not Neuron, owns the check that the snapshot still holds. The
 rule is placed in the **host guard**, the code that runs immediately before advice is shown as actionable or acted on after
-the host's own authorization. It is never placed inside Neuron validation, and the `#102` fixture (`proposed, owned by issue #102`) enforces it
-in code.
+the host's own authorization. It is never placed inside Neuron validation, and the `#102` fixture (`implemented by issue #102`,
+[`forge-host-fixture-v1.md`](forge-host-fixture-v1.md)) enforces it in code.
 
 Before using advice the host checks all of the following:
 
@@ -643,7 +643,8 @@ no numeric limit, as #98 does, there is nothing to move into the Section 9.1 tab
   ([ADR 0045](../adr/0045-checkpoint-recovery-diagnostics.md)): at most one blocker per store rule, so a `Blocked`
   assessment holds at most 10 blockers (`BlockerKind`), which is a shape of the diagnostic, not a numeric limit of
   this contract;
-- host fixture bounds, `proposed, owned by issue #102`;
+- host fixture bounds, `implemented by issue #102` ([`forge-host-fixture-v1.md`](forge-host-fixture-v1.md), Section 4):
+  the fixture exercises only inputs within the Section 9.1 bounds and adds no numeric limit of its own;
 - evaluation suite fixture sizes, `proposed, owned by issue #103`.
 
 ## 10. Examples
@@ -824,7 +825,8 @@ with the same numbers (v1 Section 1 cites Store issues 99 and 100), which are ne
   `monada.neuron.routing.adaptation.recovery` and `RoutingStateStore.restoreProblems`, flow
   [`routing-checkpoint-recovery-v1.md`](routing-checkpoint-recovery-v1.md)
   ([ADR 0045](../adr/0045-checkpoint-recovery-diagnostics.md)).
-- `proposed, owned by issue #102`: the Forge like external host fixture that enforces the host guard in code.
+- `implemented by issue #102`: the Forge like external host fixture that enforces the host guard in code,
+  `consumer-fixture/forge-host` ([`forge-host-fixture-v1.md`](forge-host-fixture-v1.md)).
 - `proposed, owned by issue #103`: the host scenario evaluation suite.
 
 Receipts (`implemented by issue #97`) joined the never permission list of Section 2.2 with a minor bump, and
@@ -854,10 +856,14 @@ dispositions (`implemented by issue #98`) joined it with another.
 - Every relative link in this document resolves in this repository; every Forge link resolves at commit
   `56c35e05bb94d4d97e49b59c138fbaed66036ecd`.
 - No sentence states or implies that a Forge phase beyond 1 is implemented.
-- In the issue #94 revision, every mention of issues #95 to #103 carried `proposed, owned by issue`; issues #102 and #103
-  still carry `proposed`, #95 is `implemented by issue #95, Section 5.4`, #96 is
+- In the issue #94 revision, every mention of issues #95 to #103 carried `proposed, owned by issue`; issue #103
+  still carries `proposed`, #95 is `implemented by issue #95, Section 5.4`, #96 is
   `implemented by issue #96, Section 5.5`, #97 is `implemented by issue #97`, #98 is `implemented by issue #98`, #99 is
-  `implemented by issue #99`, #100 is `implemented by issue #100` and #101 is `implemented by issue #101`.
+  `implemented by issue #99`, #100 is `implemented by issue #100`, #101 is `implemented by issue #101` and #102 is
+  `implemented by issue #102`.
+- The issue #102 revision marks Sections 6.1, 9.2 and 11.2 as implemented for the host fixture only; it adds no type of
+  this contract's own, no numeric limit and no field table classification change, and `./gradlew forgeHostConsumerTest`
+  runs the fixture in both module forms against the published core alone.
 - The issue #100 revision marks the ownership table, the Phase 5 row, Sections 7.3, 9.2 and 11.2 as implemented for the
   checkpoint codec only, leaving #101's share of the shared entries proposed; it adds no type of this contract's own, no
   numeric limit of its own and no field table classification change ([ADR 0048](../adr/0048-routing-checkpoint-byte-codec.md)).
