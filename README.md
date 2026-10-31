@@ -263,7 +263,10 @@ dependencies are the core artifact and `com.monada:monada-api` / `com.monada:mon
 
 To verify the contract end to end, `./gradlew consumerSmokeTest` publishes to a repository-local directory and builds
 the standalone `consumer-fixture/` project against it with no incubator flags. `./gradlew jpmsConsumerTest` does the
-same for the module-path consumer in `consumer-fixture/module-consumer`. With the Store sibling present,
+same for the module-path consumer in `consumer-fixture/module-consumer`. `./gradlew forgeHostConsumerTest` runs the
+Forge-like host in `consumer-fixture/forge-host` against the same core-only repository, once as a named module and once on
+the classpath: reviewed task metadata in, advice and a disposition out, with no worker, no path and no Store
+([forge-host-fixture-v1.md](docs/specs/forge-host-fixture-v1.md)). With the Store sibling present,
 `./gradlew embeddedHostConsumerTest` publishes the core, the adapter and the actual Store publications into
 `build/integration-repo` (with `STORE-PROVENANCE.txt`). It then runs the classpath and JPMS embedded-host loop in
 `consumer-fixture/embedded-host`, which covers: route, fake execution, delayed evidence, Store record, close and reopen,

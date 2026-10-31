@@ -143,6 +143,20 @@ tasks.register<Exec>("jpmsConsumerTest") {
     ))
 }
 
+// Builds the Forge-like host fixture (Issue #102) against the same published core artifact, once as a named
+// module and once on the plain classpath. Core-only: it never needs the Resonance Store checkout, and the
+// fixture asserts that nothing but the core resolves.
+tasks.register<Exec>("forgeHostConsumerTest") {
+    group = "verification"
+    description = "Runs the classpath and JPMS Forge-like review-to-disposition hosts against the locally published artifact"
+    dependsOn("publishMavenJavaPublicationToConsumerSmokeRepository")
+    val repo = layout.buildDirectory.dir("consumer-repo").get().asFile.absolutePath
+    runConsumerBuild(layout.projectDirectory.dir("consumer-fixture/forge-host"), listOf(
+        "verifyConsumer", "--rerun-tasks", "--refresh-dependencies",
+        "-PneuronRepo=$repo", "-PneuronVersion=${project.version}"
+    ))
+}
+
 // The embedded host loop needs the published adapter and the actual Store publications, so these tasks
 // exist only when the optional adapter module is included (ADR 0018, ADR 0032).
 if (findProject(":monada-neuron-resonance-adapter") != null) {

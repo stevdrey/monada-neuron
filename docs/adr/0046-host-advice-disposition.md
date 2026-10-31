@@ -109,6 +109,8 @@ Only the last two are evidence, and only through the feedback path. A dispositio
 ## Follow-Up
 
 - The Forge like host fixture (#102) builds all four dispositions from this package; no new API is expected there.
+  Done: `consumer-fixture/forge-host` binds every variant over selected, abstained and no eligible route advice
+  through the existing factories, with no new API ([forge-host-fixture-v1.md](../specs/forge-host-fixture-v1.md)).
 - The host scenario suite (#103) should assert "disposition alone earns zero credit" by driving `RoutingFeedbackPolicy`
   with and without dispositions and seeing identical state.
 - If a host ever needs "cut by truncation" apart from "never seen", add an `UNLISTED_IN_DECISION` standing in a
