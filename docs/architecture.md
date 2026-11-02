@@ -529,7 +529,12 @@ format [`routing-advice-receipt/1`](specs/routing-advice-receipt-v1.md), issue #
 `monada.neuron.routing.disposition`, contract version `routing-advice-disposition/1`, issue #98,
 [ADR 0046](adr/0046-host-advice-disposition.md)) record what a person did with a receipt before anything ran, by its
 `DecisionRef` and digest only; a disposition is intent, not authorization, invocation or acceptance, and it reaches no
-state and earns no credit. Scenario comparison previews (`ScenarioComparator` in `monada.neuron.routing.comparison`, issue #99,
+state and earns no credit. The Forge-like host fixture (`consumer-fixture/forge-host`, issue #102,
+[forge-host-fixture-v1.md](specs/forge-host-fixture-v1.md)) runs that boundary end to end as an external consumer of the
+published core alone, as a named module and on the classpath: local stand ins for reviewed task metadata, the adapter
+of the readiness contract's Section 4, host vocabulary readiness outcomes, the host guard of its Section 6.1, and every
+disposition variant, with nothing executed and no path read; it is a proof of one possible host policy, not Forge
+integration, which has not shipped. Scenario comparison previews (`ScenarioComparator` in `monada.neuron.routing.comparison`, issue #99,
 [ADR 0047](adr/0047-routing-scenario-comparison.md)) decide two caller supplied scenarios through
 `TrustedRoutingAdvice` and report them side by side; a pair across scope, task, stage kind, feature schema,
 evaluation policy or cutoff is `Incomparable` and has no delta, and every preview is labelled hypothetical.
