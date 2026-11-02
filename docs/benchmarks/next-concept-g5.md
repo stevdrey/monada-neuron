@@ -129,6 +129,7 @@ The runner writes `build/reports/benchmarks/next-concept-g5.{md,json}`.
 | Pre-registration commit | `9343e9b`: margin, coverage, seeds, bounds and arms committed before any held-out result |
 | Execution commit (results below) | `bce881b` with uncommitted documentation edits only (`+dirty`: contract Section 10.2 text; no source change) |
 | Run | about 34 s wall clock for the full protocol; two runs gave bit-identical checks and results (only the timestamp differs) |
+| Post-review rerun | after the PR #178 review hardened the gate (trusted contradictions and disagreements block a window, evidence windows deduplicated per batch, receipt depth checked), the registered protocol was rerun: every check, interval, rate, fingerprint and rejection count is identical to the results below (only the timestamp and JVM memory differ). G5 sends one outcome per batch, never `CONTRADICTED`, and absorbs each evidence window once, so the new rules cannot fire on it |
 
 ## Checks
 

@@ -149,7 +149,10 @@ public final class ConceptModel {
         return Arrays.copyOfRange(centroids, offset, offset + bins);
     }
 
-    /** Returns the bytes of the learned arrays (centroids and their norms, exemplar, transition, leaf and feedback counts). */
+    /**
+     * Returns the bytes of the learned arrays: centroids and their norms, exemplar, transition, leaf and feedback
+     * counts.
+     */
     public long retainedBytes() {
         return 8L * (centroids.length + centroidNorms.length + exemplarCounts.length + transitions.length
                 + leafCounts.length + feedbackCounts.length);
@@ -159,7 +162,8 @@ public final class ConceptModel {
      * Returns the lower-case hex SHA-256 of the snapshot's canonical encoding ({@link #FINGERPRINT_FORMAT}): format,
      * hierarchy, frame, every learned value by its exact bits, temperature, the thresholds at every depth and the
      * revision. Equal fingerprints mean the same predictions; it is an identity and equivalence check, not an
-     * authentication boundary. Computed once, on first use.
+     * authentication boundary. Computed once, on first use: O(model) bytes hashed, the largest cost of a feedback
+     * update at the largest bounds ({@code docs/benchmarks/next-concept-g5.md}), paid once per accepted batch.
      */
     public String fingerprint() {
         String value = fingerprint;

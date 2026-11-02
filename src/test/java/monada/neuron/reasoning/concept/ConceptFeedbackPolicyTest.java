@@ -45,9 +45,17 @@ class ConceptFeedbackPolicyTest {
         return new ConceptPredictionReceipt(model.fingerprint(), ref, offset, OptionalLong.empty(), predicted, 1);
     }
 
+    /** A verified outcome whose evidence is the window after the receipt's, named by its own provenance. */
     private static ConceptOutcome verified(ConceptPredictionReceipt receipt, long verified, long seed) {
-        return ConceptOutcome.verified(receipt, verified, window(verified, new SplittableRandom(seed)),
-                OptionalLong.empty(), 0, VERIFIER);
+        return ConceptOutcome.verified(receipt, verified, at(window(verified, new SplittableRandom(seed)),
+                receipt.sourceReference(), receipt.windowOffset() + 1), OptionalLong.empty(), 0, VERIFIER);
+    }
+
+    /** The same pattern with the provenance of window {@code offset} of stream {@code ref}. */
+    private static SpectralPattern at(SpectralPattern pattern, String ref, long offset) {
+        return SpectralPattern.of(pattern.frame(), pattern.sourceEnergy(),
+                new WaveProvenance("encoder.concept-fixture", 1, ref + "/evidence", offset), pattern.levels(),
+                pattern.indices(), pattern.magnitudes(), pattern.phases());
     }
 
     private static ConceptOutcome outcome(ConceptModel model, String ref, long offset, long predicted, long verified) {
@@ -149,6 +157,76 @@ class ConceptFeedbackPolicyTest {
                         reasons(update)),
                 () -> assertEquals(1, result.applied().size()),
                 () -> assertEquals("t", result.applied().getFirst().receipt().sourceReference()));
+    }
+
+    @Test
+    void aTrustedContradictionMakesTheWindowAmbiguous() {
+        var policy = new ConceptFeedbackPolicy(ConceptFeedbackLimits.trusting(VERIFIER, "verifier.second"));
+        var receipt = receipt(model, "s", 0, LOW_PURE);
+        var update = policy.apply(model, List.of(verified(receipt, LOW_PURE, 1),
+                ConceptOutcome.unverified(receipt, ConceptOutcome.Verification.CONTRADICTED, 0, "verifier.second"),
+                ConceptOutcome.unverified(receipt(model, "s", 1, LOW_PURE), ConceptOutcome.Verification.CONTRADICTED,
+                        0, "verifier.untrusted"),
+                verified(receipt(model, "s", 1, LOW_PURE), LOW_PURE, 2)), 0);
+
+        assertAll(
+                () -> assertEquals(List.of(ConceptFeedbackRejection.AMBIGUOUS, ConceptFeedbackRejection.AMBIGUOUS,
+                        ConceptFeedbackRejection.UNTRUSTED_VERIFIER), reasons(update)),
+                () -> assertEquals(List.of(0, 1, 2), update.rejected().stream()
+                        .map(ConceptModelUpdate.Rejected::index).toList()),
+                () -> assertEquals(1, update.work().applied(), "an untrusted contradiction does not block"));
+    }
+
+    @Test
+    void aDisagreeingLabelBlocksTheWindowEvenWhenItFailsALaterCheck() {
+        var limits = new ConceptFeedbackLimits(8, 2, 1.0, List.of(VERIFIER));
+        var receipt = receipt(model, "s", 0, LOW_PURE);
+        var stale = ConceptOutcome.verified(receipt, HIGH_PURE, at(window(HIGH_PURE, new SplittableRandom(2)), "s", 1),
+                OptionalLong.empty(), 0, VERIFIER);
+        var fresh = ConceptOutcome.verified(receipt, LOW_PURE, at(window(LOW_PURE, new SplittableRandom(1)), "s", 1),
+                OptionalLong.empty(), 3, VERIFIER);
+        var update = new ConceptFeedbackPolicy(limits).apply(model, List.of(stale, fresh), 3);
+
+        assertAll(
+                () -> assertSame(model, update.current()),
+                () -> assertEquals(List.of(ConceptFeedbackRejection.AGE_OUT_OF_RANGE,
+                        ConceptFeedbackRejection.AMBIGUOUS), reasons(update)));
+    }
+
+    @Test
+    void oneEvidenceWindowIsAbsorbedOncePerBatch() {
+        SpectralPattern evidence = at(window(LOW_PURE, new SplittableRandom(1)), "s", 9);
+        var update = POLICY.apply(model, List.of(
+                ConceptOutcome.verified(receipt(model, "s", 0, LOW_PURE), LOW_PURE, evidence, OptionalLong.empty(), 0,
+                        VERIFIER),
+                ConceptOutcome.verified(receipt(model, "s", 1, HIGH_PURE), LOW_PURE, evidence, OptionalLong.empty(),
+                        0, VERIFIER)), 0);
+        var conflicting = POLICY.apply(model, List.of(
+                ConceptOutcome.verified(receipt(model, "s", 0, LOW_PURE), LOW_PURE, evidence, OptionalLong.empty(), 0,
+                        VERIFIER),
+                ConceptOutcome.verified(receipt(model, "s", 1, LOW_PURE), LOW_CHORD, evidence, OptionalLong.empty(),
+                        0, VERIFIER)), 0);
+
+        assertAll(
+                () -> assertEquals(1, update.work().applied()),
+                () -> assertEquals(List.of(ConceptFeedbackRejection.DUPLICATE), reasons(update)),
+                () -> assertEquals(model.exemplarCount(LOW_PURE_ORDINAL) + 1,
+                        update.current().exemplarCount(LOW_PURE_ORDINAL)),
+                () -> assertSame(model, conflicting.current()),
+                () -> assertEquals(List.of(ConceptFeedbackRejection.AMBIGUOUS, ConceptFeedbackRejection.AMBIGUOUS),
+                        reasons(conflicting)));
+    }
+
+    @Test
+    void aReceiptDepthOtherThanItsConceptsIsUnknown() {
+        var wrongDepth = new ConceptPredictionReceipt(model.fingerprint(), "s", 0, OptionalLong.empty(), LOW_PURE, 0);
+        var inner = new ConceptPredictionReceipt(model.fingerprint(), "s", 1, OptionalLong.empty(), LOW_BAND, 0);
+
+        assertAll(
+                () -> assertEquals(List.of(ConceptFeedbackRejection.UNKNOWN_CONCEPT),
+                        reasons(POLICY.apply(model, List.of(verified(wrongDepth, LOW_PURE, 1)), 0))),
+                () -> assertInstanceOf(ConceptModelUpdate.Updated.class,
+                        POLICY.apply(model, List.of(verified(inner, LOW_PURE, 1)), 0)));
     }
 
     @Test
@@ -293,7 +371,7 @@ class ConceptFeedbackPolicyTest {
         for (int w = 0; w < extra.windows().size(); w++) {
             var window = extra.windows().get(w);
             batch.add(ConceptOutcome.verified(receipt(model, "x", w, LOW_PURE), window.conceptCode(),
-                    window.pattern(), previous < 0 ? OptionalLong.empty() : OptionalLong.of(previous), 0, VERIFIER));
+                    at(window.pattern(), "x", w), previous < 0 ? OptionalLong.empty() : OptionalLong.of(previous), 0, VERIFIER));
             previous = window.conceptCode();
         }
         var once = updated(POLICY.apply(model, batch, 0)).next();

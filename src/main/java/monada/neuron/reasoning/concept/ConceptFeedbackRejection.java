@@ -17,17 +17,25 @@ public enum ConceptFeedbackRejection {
     /** The outcome is {@link ConceptOutcome.Verification#UNVERIFIED}: unknown outcomes abstain. */
     UNVERIFIED,
     /**
-     * The outcome is {@link ConceptOutcome.Verification#CONTRADICTED}, or the batch holds different verified labels
-     * for the same window; every outcome of that window is rejected.
+     * The outcome is {@link ConceptOutcome.Verification#CONTRADICTED}, or another outcome of the batch from a trusted
+     * verifier on the same snapshot contradicts or labels differently the same predicted window (even when that
+     * outcome fails a later check), or two accepted outcomes label the same evidence window differently; every
+     * accepted outcome of that window is rejected.
      */
     AMBIGUOUS,
     /** The predicting cycle is after the current one or older than {@link ConceptFeedbackLimits#maxEvidenceAge()}. */
     AGE_OUT_OF_RANGE,
-    /** The predicted, verified or verified-previous code is not a concept of the hierarchy, or a label is not a leaf. */
+    /**
+     * The predicted, verified or verified-previous code is not a concept of the hierarchy, a label is not a leaf, or
+     * the receipt's depth is not its predicted concept's depth.
+     */
     UNKNOWN_CONCEPT,
     /** The observed pattern has another version or frame than the snapshot. */
     INCOMPATIBLE_EVIDENCE,
-    /** The batch already holds an outcome with the same label for the same window; the first one is kept. */
+    /**
+     * The batch already holds an accepted outcome with the same labels for the same predicted window or the same
+     * evidence window; the first one is kept.
+     */
     DUPLICATE,
     /**
      * The leaf has absorbed {@link ConceptFeedbackLimits#maxFeedbackShare()} times its training windows of feedback:

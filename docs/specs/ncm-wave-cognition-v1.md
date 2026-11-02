@@ -618,9 +618,11 @@ unvalidated output, and every update is reversible by keeping the previous snaps
   `ConceptFeedbackRejection` and no change: a batch above `maxOutcomesPerUpdate`; a receipt of another snapshot
   (another model, task, thresholds or revision, including a batch replayed onto the snapshot it produced); an
   untrusted verifier; unverified or contradicted outcomes (abstention); a predicting cycle in the future or older
-  than `maxEvidenceAge`; codes outside the hierarchy or labels that are not leaves; evidence of another frame; a
-  window repeated in a batch (`DUPLICATE`) or labeled differently (`AMBIGUOUS`); and a leaf whose feedback would
-  exceed `maxFeedbackShare` times its training windows (`CONCEPT_CAP`).
+  than `maxEvidenceAge`; codes outside the hierarchy, labels that are not leaves or a receipt depth other than its
+  concept's; evidence of another frame; a predicted or evidence window repeated in a batch (`DUPLICATE`), or labeled
+  differently or contradicted by a trusted verifier (`AMBIGUOUS`); and a leaf whose feedback would exceed
+  `maxFeedbackShare` times its training windows (`CONCEPT_CAP`). Deduplication is per batch; idempotency across
+  batches is the host's, and `CONCEPT_CAP` bounds what a resent window can add.
 - **Update.** An accepted outcome counts as one labeled window of its verified leaf, as the trainer counts one: leaf
   marginal, one transition from the verified previous leaf, and the unit feature added to the exemplar sums of the
   leaf and every ancestor, so the coarse-to-fine pooling invariant holds. The prediction never contributes, so a

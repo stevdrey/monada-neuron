@@ -73,9 +73,9 @@ learned arrays a public mutation surface.
   | 4 | The outcome is not unverified | `UNVERIFIED` |
   | 5 | The outcome is not contradicted | `AMBIGUOUS` |
   | 6 | `0 ≤ current − origin ≤ maxEvidenceAge` (default 64 caller cycles) | `AGE_OUT_OF_RANGE` |
-  | 7 | The predicted code is a concept, and the verified and verified-previous codes are leaves | `UNKNOWN_CONCEPT` |
+  | 7 | The predicted code is a concept whose depth is the receipt's, and the verified and verified-previous codes are leaves | `UNKNOWN_CONCEPT` |
   | 8 | The evidence has the snapshot's frame and pattern version | `INCOMPATIBLE_EVIDENCE` |
-  | 9 | Grouped by `(sourceReference, windowOffset)` in a `TreeMap` (no hash order): repeats of one label are rejected after the first; different labels reject every outcome of the window | `DUPLICATE` / `AMBIGUOUS` |
+  | 9 | Grouped by the receipt's `(sourceReference, windowOffset)` in a `TreeMap` (no hash order). Every outcome from a trusted verifier on this snapshot that is not unverified votes, including a contradicted one and a verified one rejected by checks 6–8: a contradiction or two different labels reject every accepted outcome of the window; otherwise repeats are rejected after the first. The accepted outcomes are then grouped the same way by their evidence's provenance, so one labeled window is absorbed at most once per batch even under different receipts | `DUPLICATE` / `AMBIGUOUS` |
   | 10 | The leaf's feedback count stays at most `maxFeedbackShare` × its training windows (default 1.0). This bounds how far feedback can move a leaf. A leaf with no training window never accepts feedback | `CONCEPT_CAP` |
 
 - **Update.** An accepted outcome counts as one more labeled window of its verified leaf, exactly as the trainer
@@ -140,6 +140,11 @@ re-selection. They are copied unchanged.
 - Feedback is opt-in and caller-driven. Memory-off and no-feedback runs are bit-identical to ADR 0043/0044 behavior.
 - Late outcomes of an older revision are rejected (`MODEL_MISMATCH`) and never merged. A host that wants them must
   re-predict or replay.
+- Deduplication is per batch. Neuron keeps no history across snapshots, so a host that re-predicts a window and sends
+  the same evidence again under the new receipt is bounded only by `CONCEPT_CAP`; idempotency across batches is the
+  host's.
+- `ConceptModel.fingerprint()` hashes the whole snapshot once per snapshot. At the largest bounds it is most of an
+  update's cost, so batching amortizes it together with the copy.
 - `CONCEPT_CAP` and `maxEvidenceAge` are safety bounds, not tuned hyperparameters. G5 registers the values it uses.
 - Feedback can only add labeled evidence. It cannot correct a bad hierarchy, temperature or threshold.
 

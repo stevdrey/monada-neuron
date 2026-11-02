@@ -21,9 +21,12 @@ import java.util.TreeMap;
  * <p><b>Gate.</b> Every outcome passes the checks of {@link ConceptFeedbackRejection} in order: the receipt must name
  * this exact snapshot, the verifier must be trusted, the outcome must be verified and unambiguous, the predicting
  * cycle must be within {@link ConceptFeedbackLimits#maxEvidenceAge()}, every code must be a concept of the hierarchy
- * (labels leaves), the evidence must match the frame, and a window may appear once per batch. Because the new
- * snapshot has a new fingerprint, a batch replayed after it was applied is {@code MODEL_MISMATCH}: repeated identical
- * feedback cannot amplify anything.
+ * (labels leaves, the receipt's depth that of its concept), and the evidence must match the frame. Within a batch, a
+ * predicted window that any trusted verifier contradicts or labels differently is ambiguous, and both a predicted
+ * window and an evidence window are absorbed at most once. Because the new snapshot has a new fingerprint, a batch
+ * replayed after it was applied is {@code MODEL_MISMATCH}. Neuron keeps no history across batches, so a host that
+ * re-predicts a window and sends the same evidence again under the new receipt is bounded only by
+ * {@link ConceptFeedbackRejection#CONCEPT_CAP}; cross-batch idempotency is the host's.
  *
  * <p><b>Update.</b> An accepted outcome is one more labeled window of its verified leaf, exactly as the trainer would
  * count it: one leaf marginal count, one transition from the verified previous leaf when given, and, for a non-silent
@@ -35,13 +38,19 @@ import java.util.TreeMap;
  * <p>Centroid sums are restored from the unit centroid and its stored norm, so an update equals a retrain on the
  * training windows plus the accepted outcomes up to rounding of the sums (one restoration per touched concept per
  * batch). Cost: O(B · log B) for the gate, O(B · depth · bins) for the sums and one copy of the learned arrays,
- * O(model) bytes, per batch of B outcomes; batching amortizes the copy.
+ * O(model) bytes, per batch of B outcomes. The receipt check needs the {@link ConceptModel#fingerprint()} of the
+ * snapshot, a SHA-256 over all of it computed once per snapshot; at the largest bounds it dominates the update, so
+ * batching amortizes both the copy and the digest.
  */
 public final class ConceptFeedbackPolicy {
 
-    private static final Comparator<ConceptPredictionReceipt> WINDOW_ORDER = Comparator
-            .comparing(ConceptPredictionReceipt::sourceReference)
-            .thenComparingLong(ConceptPredictionReceipt::windowOffset);
+    private static final Comparator<ConceptOutcome> WINDOW_ORDER = Comparator
+            .comparing((ConceptOutcome outcome) -> outcome.receipt().sourceReference())
+            .thenComparingLong(outcome -> outcome.receipt().windowOffset());
+
+    private static final Comparator<ConceptOutcome> EVIDENCE_ORDER = Comparator
+            .comparing((ConceptOutcome outcome) -> outcome.observedEvidence().provenance().sourceReference())
+            .thenComparingLong(outcome -> outcome.observedEvidence().provenance().windowOffset());
 
     private final ConceptFeedbackLimits limits;
     private final ConceptFeatures features = new ConceptFeatures();
@@ -88,6 +97,7 @@ public final class ConceptFeedbackPolicy {
             reasons[i] = check(current, fingerprint, batch.get(i), currentCycleOrdinal);
         }
         rejectRepeatedWindows(batch, reasons);
+        rejectRepeatedEvidence(batch, reasons);
         return update(current, batch, reasons);
     }
 
@@ -114,7 +124,8 @@ public final class ConceptFeedbackPolicy {
         if (origin > currentCycleOrdinal || currentCycleOrdinal - origin > limits.maxEvidenceAge()) {
             return ConceptFeedbackRejection.AGE_OUT_OF_RANGE;
         }
-        if (hierarchy.ordinalOf(outcome.receipt().predictedCode()).isEmpty()
+        OptionalInt predicted = hierarchy.ordinalOf(outcome.receipt().predictedCode());
+        if (predicted.isEmpty() || hierarchy.node(predicted.getAsInt()).depth() != outcome.receipt().depth()
                 || leafOrdinal(hierarchy, outcome.verifiedCode()).isEmpty()
                 || (outcome.verifiedPreviousCode().isPresent()
                         && leafOrdinal(hierarchy, outcome.verifiedPreviousCode()).isEmpty())) {
@@ -132,33 +143,76 @@ public final class ConceptFeedbackPolicy {
         return ordinal.isPresent() && hierarchy.isLeaf(ordinal.getAsInt()) ? ordinal : OptionalInt.empty();
     }
 
-    /** Groups the accepted outcomes by window in canonical order; repeats are duplicates, disagreements ambiguous. */
+    /**
+     * Groups the outcomes that vote on a window in canonical order: every outcome from a trusted verifier on this
+     * snapshot that is not {@code UNVERIFIED}, including a {@code CONTRADICTED} one and a verified one rejected by a
+     * later check. A contradiction or two different labels make every accepted outcome of the window ambiguous;
+     * otherwise the accepted repeats after the first are duplicates.
+     */
     private void rejectRepeatedWindows(List<ConceptOutcome> batch, ConceptFeedbackRejection[] reasons) {
-        TreeMap<ConceptPredictionReceipt, List<Integer>> windows = new TreeMap<>(WINDOW_ORDER);
+        TreeMap<ConceptOutcome, List<Integer>> windows = new TreeMap<>(WINDOW_ORDER);
         for (int i = 0; i < batch.size(); i++) {
-            if (reasons[i] == null) {
-                windows.computeIfAbsent(batch.get(i).receipt(), key -> new ArrayList<>(1)).add(i);
+            if (votes(reasons[i])) {
+                windows.computeIfAbsent(batch.get(i), key -> new ArrayList<>(1)).add(i);
             }
         }
         for (List<Integer> indices : windows.values()) {
-            if (indices.size() == 1) {
-                continue;
-            }
-            ConceptOutcome first = batch.get(indices.getFirst());
-            boolean agree = true;
-            for (int index : indices) {
-                ConceptOutcome other = batch.get(index);
-                agree &= other.verifiedCode().equals(first.verifiedCode())
-                        && other.verifiedPreviousCode().equals(first.verifiedPreviousCode());
-            }
-            for (int k = 0; k < indices.size(); k++) {
-                if (!agree) {
-                    reasons[indices.get(k)] = ConceptFeedbackRejection.AMBIGUOUS;
-                } else if (k > 0) {
-                    reasons[indices.get(k)] = ConceptFeedbackRejection.DUPLICATE;
-                }
+            rejectRepeats(batch, reasons, indices);
+        }
+    }
+
+    /**
+     * Groups the accepted outcomes by the window of their evidence, so one labeled window is absorbed at most once
+     * per batch even under different receipts: repeats with the same labels are duplicates, different labels
+     * ambiguous.
+     */
+    private void rejectRepeatedEvidence(List<ConceptOutcome> batch, ConceptFeedbackRejection[] reasons) {
+        TreeMap<ConceptOutcome, List<Integer>> windows = new TreeMap<>(EVIDENCE_ORDER);
+        for (int i = 0; i < batch.size(); i++) {
+            if (reasons[i] == null) {
+                windows.computeIfAbsent(batch.get(i), key -> new ArrayList<>(1)).add(i);
             }
         }
+        for (List<Integer> indices : windows.values()) {
+            rejectRepeats(batch, reasons, indices);
+        }
+    }
+
+    private void rejectRepeats(List<ConceptOutcome> batch, ConceptFeedbackRejection[] reasons, List<Integer> indices) {
+        if (indices.size() == 1) {
+            return;
+        }
+        ConceptOutcome label = null;
+        boolean agree = true;
+        for (int index : indices) {
+            ConceptOutcome other = batch.get(index);
+            if (other.verification() != ConceptOutcome.Verification.VERIFIED) {
+                agree = false;
+            } else if (label == null) {
+                label = other;
+            } else {
+                agree &= other.verifiedCode().equals(label.verifiedCode())
+                        && other.verifiedPreviousCode().equals(label.verifiedPreviousCode());
+            }
+        }
+        boolean kept = false;
+        for (int index : indices) {
+            if (reasons[index] != null) {
+                continue;
+            }
+            if (!agree) {
+                reasons[index] = ConceptFeedbackRejection.AMBIGUOUS;
+            } else if (kept) {
+                reasons[index] = ConceptFeedbackRejection.DUPLICATE;
+            } else {
+                kept = true;
+            }
+        }
+    }
+
+    /** Whether an outcome speaks for its window: trusted, about this snapshot, and not merely unverified. */
+    private boolean votes(ConceptFeedbackRejection reason) {
+        return reason == null || reason.compareTo(ConceptFeedbackRejection.AMBIGUOUS) >= 0;
     }
 
     private ConceptModelUpdate update(ConceptModel model, List<ConceptOutcome> batch,

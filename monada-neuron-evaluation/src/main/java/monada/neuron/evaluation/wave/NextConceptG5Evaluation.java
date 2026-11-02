@@ -167,6 +167,11 @@ final class NextConceptG5Evaluation {
         var rejections = new int[ConceptFeedbackRejection.values().length];
         var appliedReferences = new ArrayList<String>();
         ConceptModel current = start;
+        for (int target : checkpointSteps) {
+            if (target == 0) {
+                checkpoints.add(current);
+            }
+        }
         ConceptOutcome firstApplied = null;
         ConceptModel beforeFirst = null;
         long ordinal = 0;
@@ -529,11 +534,19 @@ final class NextConceptG5Evaluation {
         static final int REPLAY = 3;
         /** The first drift-curve checkpoint; one arm per {@link #CHECKPOINTS} entry follows. */
         static final int CHECKPOINT = 4;
-        static final List<String> NAMES = List.of("C (no feedback)", "E (validated feedback)",
-                "E-shuffled (permuted feedback labels)", "C-replay (retrained on training + feedback)",
-                "E after 25% of feedback", "E after 50% of feedback");
+        /** Arm names in index order: the fixed arms, then one per {@link #CHECKPOINTS} entry. */
+        static final List<String> NAMES = names();
 
         private Arm() {
+        }
+
+        private static List<String> names() {
+            var names = new ArrayList<>(List.of("C (no feedback)", "E (validated feedback)",
+                    "E-shuffled (permuted feedback labels)", "C-replay (retrained on training + feedback)"));
+            for (double checkpoint : CHECKPOINTS) {
+                names.add("E after " + StrictMath.round(checkpoint * 100) + "% of feedback");
+            }
+            return List.copyOf(names);
         }
     }
 
