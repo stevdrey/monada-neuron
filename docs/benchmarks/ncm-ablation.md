@@ -124,7 +124,7 @@ Every check passed (23 in total). The 6 G3 and 8 G5 checks re-ran unchanged. The
 | `leakage.counterfactual` | permuted held-out labels: every arm bit-identical; D-haar accuracy changes |
 | `determinism` | repeat 1 regenerated, re-answered and re-bootstrapped: bit-identical |
 | `leakage.test-labels` | 21 guarded label sets, 0 early reads |
-| `host.memory-independence` | 128/128 executions identical across four memory compositions |
+| `host.memory-independence` | 128/128 executions identical across four memory compositions (re-run after the review fix of the previous-concept lag; unchanged) |
 | `large.bounds` | at most 256 comparisons per prediction (budget 256), 0 `BUDGET_EXHAUSTED`, distinct seeds, 0 early reads |
 
 ## Environment

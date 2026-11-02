@@ -182,7 +182,7 @@ predictor which fails the quality rule does not make it pass. Under every verdic
 | `leakage.counterfactual` | Repeat 1 re-answered with permuted held-out labels: every arm bit-identical, D-haar's accuracy changes |
 | `determinism` | Repeat 1 regenerated, re-answered and re-bootstrapped: bit-identical |
 | `leakage.test-labels` | No guarded held-out label read before scoring |
-| `host.memory-independence` | 128 medium windows, one execution each, chaining the stage's own selection: identical reports and hypotheses with no memory port, an empty port, an `UNAVAILABLE` port and a recalling port |
+| `host.memory-independence` | 128 medium windows, one execution each, the previous concept being the stage's own selection for the preceding window (made two executions earlier, as the arms chain it): identical reports and hypotheses with no memory port, an empty port, an `UNAVAILABLE` port and a recalling port |
 | `large.bounds` | No prediction above the comparison budget, no `BUDGET_EXHAUSTED`, distinct seeds, no early label read |
 
 ## Required report fields
@@ -208,4 +208,6 @@ check passed, whatever the verdict.
 
 ## Changelog
 
-- `ncm-ablation/1` (#130): initial protocol.
+- `ncm-ablation/1` (#130): initial protocol. Review fix before merge: the host check had passed each execution's
+  prediction (for the next window) as the very next execution's previous concept; it now lags it by one execution as
+  stated above. The registered run was repeated; every check and figure is unchanged.

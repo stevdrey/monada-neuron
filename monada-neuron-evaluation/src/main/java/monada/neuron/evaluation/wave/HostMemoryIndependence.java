@@ -42,7 +42,7 @@ import java.util.UUID;
  * rely on the Resonance Store: the stage reads only its typed per-execution samples and the caller-owned model.
  *
  * <p>Each window is one execution (contract section 10.1: a time series is one execution per step), whose previous
- * concept is the stage's own selection of the preceding execution, never a label. Every composition runs the same
+ * concept is the stage's own selection for the preceding window (made two executions earlier), never a label. Every composition runs the same
  * windows in the same order; the check compares the stage's {@code WaveCognitionReport} and hypotheses of every
  * execution for equality.
  */
@@ -103,19 +103,25 @@ final class HostMemoryIndependence {
                 .orElseThrow(() -> new IllegalStateException("the cycle ran no wave cognition stage"));
     }
 
-    /** Runs every window as one execution, chaining the stage's own selection as previous concept. */
+    /**
+     * Runs every window as one execution, chaining the stage's own selections as the evaluation arms do: execution
+     * {@code w} predicts the concept of window {@code w + 1}, so it becomes the previous concept of execution
+     * {@code w + 2}; none at the start or after an abstention.
+     */
     List<Object> trace(Composition composition, ConceptModel model, List<SampledWave> windows) {
         var inputs = new HashMap<String, WaveCognitionInput>();
         NeuronRuntime runtime = runtime(composition, model, inputs, WaveCognitionLimits.DEFAULT);
         var trace = new ArrayList<Object>(2 * windows.size());
-        OptionalLong previous = OptionalLong.empty();
+        OptionalLong forPrevious = OptionalLong.empty();
+        OptionalLong forCurrent = OptionalLong.empty();
         for (int w = 0; w < windows.size(); w++) {
             String ref = "w" + w;
-            inputs.put(ref, WaveCognitionInput.of(new WaveWindow(windows.get(w), previous)));
+            inputs.put(ref, WaveCognitionInput.of(new WaveWindow(windows.get(w), forPrevious)));
             WaveCognitionStageResult result = stageResult(runtime.execute(input(ref)));
             trace.add(result.report());
             trace.add(result.hypotheses());
-            previous = result.report().windows().getLast() instanceof WindowOutcome.Predicted predicted
+            forPrevious = forCurrent;
+            forCurrent = result.report().windows().getLast() instanceof WindowOutcome.Predicted predicted
                     ? OptionalLong.of(model.hierarchy().node(predicted.conceptOrdinal()).conceptCode())
                     : OptionalLong.empty();
         }
