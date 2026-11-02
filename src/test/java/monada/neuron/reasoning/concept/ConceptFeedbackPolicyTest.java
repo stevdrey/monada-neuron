@@ -218,6 +218,33 @@ class ConceptFeedbackPolicyTest {
     }
 
     @Test
+    void aDiscardedDuplicateNeverHidesAConflictingEvidenceLabel() {
+        SpectralPattern e1 = at(window(LOW_PURE, new SplittableRandom(1)), "e", 1);
+        SpectralPattern e2 = at(window(LOW_PURE, new SplittableRandom(2)), "e", 2);
+        var r1 = receipt(model, "r", 1, LOW_PURE);
+        var r2 = receipt(model, "r", 2, LOW_PURE);
+        List<ConceptOutcome> outcomes = List.of(
+                ConceptOutcome.verified(r1, LOW_PURE, e1, OptionalLong.empty(), 0, VERIFIER),
+                ConceptOutcome.verified(r1, LOW_PURE, e2, OptionalLong.empty(), 0, VERIFIER),
+                ConceptOutcome.verified(r2, HIGH_PURE, e2, OptionalLong.empty(), 0, VERIFIER));
+        int[][] permutations = {{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}};
+        var fingerprints = new ArrayList<String>();
+        for (int[] permutation : permutations) {
+            var batch = new ArrayList<ConceptOutcome>();
+            for (int index : permutation) {
+                batch.add(outcomes.get(index));
+            }
+            var update = updated(POLICY.apply(model, batch, 0));
+            assertEquals(List.of(outcomes.getFirst()), update.applied(), "only E1 is learned, whatever the order");
+            assertEquals(2, update.rejected().stream()
+                    .filter(rejected -> rejected.reason() == ConceptFeedbackRejection.AMBIGUOUS).count(),
+                    "both labels of E2 are ambiguous");
+            fingerprints.add(update.next().fingerprint());
+        }
+        assertEquals(1, fingerprints.stream().distinct().count(), "the batch order never changes the snapshot");
+    }
+
+    @Test
     void aReceiptDepthOtherThanItsConceptsIsUnknown() {
         var wrongDepth = new ConceptPredictionReceipt(model.fingerprint(), "s", 0, OptionalLong.empty(), LOW_PURE, 0);
         var inner = new ConceptPredictionReceipt(model.fingerprint(), "s", 1, OptionalLong.empty(), LOW_BAND, 0);
@@ -243,8 +270,8 @@ class ConceptFeedbackPolicyTest {
                 ConceptOutcome.verified(receipt, LOW_PURE, evidence, OptionalLong.empty(), 0, VERIFIER),
                 verified(receipt(model, "s", 1, 99), LOW_PURE, 1),
                 verified(receipt(model, "s", 2, LOW_PURE), LOW_BAND, 1),
-                ConceptOutcome.verified(receipt(model, "s", 3, LOW_PURE), LOW_PURE, evidence, OptionalLong.of(99),
-                        5, VERIFIER),
+                ConceptOutcome.verified(receipt(model, "s", 3, LOW_PURE), LOW_PURE, at(evidence, "s", 4),
+                        OptionalLong.of(99), 5, VERIFIER),
                 ConceptOutcome.verified(receipt(model, "s", 5, LOW_PURE), LOW_PURE, otherFrame,
                         OptionalLong.empty(), 5, VERIFIER)), 5);
 
@@ -371,7 +398,8 @@ class ConceptFeedbackPolicyTest {
         for (int w = 0; w < extra.windows().size(); w++) {
             var window = extra.windows().get(w);
             batch.add(ConceptOutcome.verified(receipt(model, "x", w, LOW_PURE), window.conceptCode(),
-                    at(window.pattern(), "x", w), previous < 0 ? OptionalLong.empty() : OptionalLong.of(previous), 0, VERIFIER));
+                    at(window.pattern(), "x", w), previous < 0 ? OptionalLong.empty() : OptionalLong.of(previous), 0,
+                    VERIFIER));
             previous = window.conceptCode();
         }
         var once = updated(POLICY.apply(model, batch, 0)).next();

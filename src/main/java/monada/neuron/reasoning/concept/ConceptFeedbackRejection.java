@@ -19,8 +19,8 @@ public enum ConceptFeedbackRejection {
     /**
      * The outcome is {@link ConceptOutcome.Verification#CONTRADICTED}, or another outcome of the batch from a trusted
      * verifier on the same snapshot contradicts or labels differently the same predicted window (even when that
-     * outcome fails a later check), or two accepted outcomes label the same evidence window differently; every
-     * accepted outcome of that window is rejected.
+     * outcome fails a later check), or two such outcomes label the same evidence window differently; every
+     * accepted outcome of that window is rejected. Conflicts are found before any duplicate is discarded.
      */
     AMBIGUOUS,
     /** The predicting cycle is after the current one or older than {@link ConceptFeedbackLimits#maxEvidenceAge()}. */

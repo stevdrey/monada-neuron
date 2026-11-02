@@ -4,12 +4,14 @@ import monada.neuron.spectral.SpectralPattern;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.TreeMap;
+import java.util.function.IntPredicate;
 
 /**
  * Quality-gated, bounded update of a caller-owned {@link ConceptModel} from verified, attributable {@link
@@ -96,8 +98,7 @@ public final class ConceptFeedbackPolicy {
         for (int i = 0; i < size; i++) {
             reasons[i] = check(current, fingerprint, batch.get(i), currentCycleOrdinal);
         }
-        rejectRepeatedWindows(batch, reasons);
-        rejectRepeatedEvidence(batch, reasons);
+        rejectRepeats(batch, reasons);
         return update(current, batch, reasons);
     }
 
@@ -144,47 +145,56 @@ public final class ConceptFeedbackPolicy {
     }
 
     /**
-     * Groups the outcomes that vote on a window in canonical order: every outcome from a trusted verifier on this
+     * Rejects ambiguous and repeated windows in two phases, so the batch order never decides what is learned. First
+     * every conflict is found among the outcomes that vote on a window: every outcome from a trusted verifier on this
      * snapshot that is not {@code UNVERIFIED}, including a {@code CONTRADICTED} one and a verified one rejected by a
-     * later check. A contradiction or two different labels make every accepted outcome of the window ambiguous;
-     * otherwise the accepted repeats after the first are duplicates.
+     * later check. They are grouped by predicted window and, when verified, by evidence window; a contradiction or
+     * two different labels in either group make every accepted member ambiguous. Only then are the accepted repeats
+     * after the first of a predicted or an evidence window duplicates, so a discarded duplicate never hides a label.
      */
-    private void rejectRepeatedWindows(List<ConceptOutcome> batch, ConceptFeedbackRejection[] reasons) {
-        TreeMap<ConceptOutcome, List<Integer>> windows = new TreeMap<>(WINDOW_ORDER);
+    private void rejectRepeats(List<ConceptOutcome> batch, ConceptFeedbackRejection[] reasons) {
+        boolean[] ambiguous = new boolean[batch.size()];
+        for (List<Integer> group : groups(batch, WINDOW_ORDER, i -> votes(reasons[i]))) {
+            markConflicts(batch, group, ambiguous);
+        }
+        for (List<Integer> group : groups(batch, EVIDENCE_ORDER, i -> votes(reasons[i])
+                && batch.get(i).verification() == ConceptOutcome.Verification.VERIFIED)) {
+            markConflicts(batch, group, ambiguous);
+        }
         for (int i = 0; i < batch.size(); i++) {
-            if (votes(reasons[i])) {
-                windows.computeIfAbsent(batch.get(i), key -> new ArrayList<>(1)).add(i);
+            if (ambiguous[i] && reasons[i] == null) {
+                reasons[i] = ConceptFeedbackRejection.AMBIGUOUS;
             }
         }
-        for (List<Integer> indices : windows.values()) {
-            rejectRepeats(batch, reasons, indices);
+        for (Comparator<ConceptOutcome> order : List.of(WINDOW_ORDER, EVIDENCE_ORDER)) {
+            for (List<Integer> group : groups(batch, order, i -> reasons[i] == null)) {
+                for (int k = 1; k < group.size(); k++) {
+                    reasons[group.get(k)] = ConceptFeedbackRejection.DUPLICATE;
+                }
+            }
         }
     }
 
-    /**
-     * Groups the accepted outcomes by the window of their evidence, so one labeled window is absorbed at most once
-     * per batch even under different receipts: repeats with the same labels are duplicates, different labels
-     * ambiguous.
-     */
-    private void rejectRepeatedEvidence(List<ConceptOutcome> batch, ConceptFeedbackRejection[] reasons) {
-        TreeMap<ConceptOutcome, List<Integer>> windows = new TreeMap<>(EVIDENCE_ORDER);
+    /** Groups the selected outcomes by window in canonical order (no hash order), each group in batch order. */
+    private Collection<List<Integer>> groups(List<ConceptOutcome> batch, Comparator<ConceptOutcome> order,
+                                             IntPredicate selected) {
+        TreeMap<ConceptOutcome, List<Integer>> windows = new TreeMap<>(order);
         for (int i = 0; i < batch.size(); i++) {
-            if (reasons[i] == null) {
+            if (selected.test(i)) {
                 windows.computeIfAbsent(batch.get(i), key -> new ArrayList<>(1)).add(i);
             }
         }
-        for (List<Integer> indices : windows.values()) {
-            rejectRepeats(batch, reasons, indices);
-        }
+        return windows.values();
     }
 
-    private void rejectRepeats(List<ConceptOutcome> batch, ConceptFeedbackRejection[] reasons, List<Integer> indices) {
-        if (indices.size() == 1) {
+    /** Marks every member of a group that holds a contradiction or two different labels. */
+    private void markConflicts(List<ConceptOutcome> batch, List<Integer> group, boolean[] ambiguous) {
+        if (group.size() == 1) {
             return;
         }
         ConceptOutcome label = null;
         boolean agree = true;
-        for (int index : indices) {
+        for (int index : group) {
             ConceptOutcome other = batch.get(index);
             if (other.verification() != ConceptOutcome.Verification.VERIFIED) {
                 agree = false;
@@ -195,17 +205,9 @@ public final class ConceptFeedbackPolicy {
                         && other.verifiedPreviousCode().equals(label.verifiedPreviousCode());
             }
         }
-        boolean kept = false;
-        for (int index : indices) {
-            if (reasons[index] != null) {
-                continue;
-            }
-            if (!agree) {
-                reasons[index] = ConceptFeedbackRejection.AMBIGUOUS;
-            } else if (kept) {
-                reasons[index] = ConceptFeedbackRejection.DUPLICATE;
-            } else {
-                kept = true;
+        if (!agree) {
+            for (int index : group) {
+                ambiguous[index] = true;
             }
         }
     }
