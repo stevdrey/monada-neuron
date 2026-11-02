@@ -12,6 +12,7 @@ import monada.neuron.routing.features.TaskFeatureReadiness;
 import monada.neuron.routing.features.TaskFeatures;
 import monada.neuron.routing.receipt.AdviceReceipt;
 import monada.neuron.routing.review.DecisionReview;
+import monada.neuron.routing.token.OpaqueTokens;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -248,9 +249,9 @@ public final class ForgeRoutingAdapter {
             return false;
         }
         for (String tag : tags) {
-            int codePoints = tag.codePointCount(0, tag.length());
-            if (codePoints == 0 || codePoints > 128 || !tag.strip().equals(tag)
-                    || tag.chars().anyMatch(Character::isISOControl)) {
+            try {
+                OpaqueTokens.require(tag, "tag");
+            } catch (IllegalArgumentException rejected) {
                 return false;
             }
         }

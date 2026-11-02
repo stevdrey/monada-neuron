@@ -117,7 +117,7 @@ class ForgeRoutingAdapterTest {
         var adapter = adapter();
 
         for (List<String> tags : List.of(List.of("java", "java"), List.of(""), List.of(" java"), List.of("ja\tva"),
-                List.of("x".repeat(129)))) {
+                List.of("x".repeat(129)), List.of(" java"), List.of("java​"), List.of("ja\uD800va"))) {
             var draft = reviewedDraft().withContext(new Context(Optional.of(tags), Optional.of(tags),
                     OptionalLong.empty(), OptionalLong.empty()));
 
