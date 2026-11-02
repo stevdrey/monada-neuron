@@ -380,7 +380,11 @@ hypotheses carry no claim of predictive benefit. Bounded outcome feedback (issue
 `ConceptOutcome`s to its snapshot through `ConceptFeedbackPolicy`, which returns a new snapshot or the unchanged one and
 never learns from the prediction itself. Its pre-registered H5 evaluation is **negative**: validated feedback moves
 C's held-out rate by less than the margin, about as much as retraining on the same labels
-([next-concept-g5.md](docs/benchmarks/next-concept-g5.md)). The consolidated ablation (#130) is not implemented.
+([next-concept-g5.md](docs/benchmarks/next-concept-g5.md)). The consolidated ablation (#130, [ncm-ablation.md](docs/benchmarks/ncm-ablation.md)) runs every control over the
+tiny, medium and large workloads, adds control D (Haar and coherence features) and closes gate G5 as **no-go**: no arm
+meets the registered quality rule, the hierarchy and coherence add nothing, and Haar features are worse than DFT
+magnitudes. [ADR 0050](docs/adr/0050-ncm-investment-decision.md) keeps NCM an experimental opt-in with no further
+investment.
 
 ## Design Principles
 
