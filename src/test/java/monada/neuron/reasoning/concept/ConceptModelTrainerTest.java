@@ -54,7 +54,7 @@ class ConceptModelTrainerTest {
                 () -> assertEquals(2.0 * half, band[5], 1e-15),
                 () -> assertEquals(half, band[7], 1e-15),
                 () -> assertEquals(ConceptThresholds.NONE, model.thresholds()),
-                () -> assertEquals(8L * (6 * 33 + 6 + 16 + 4), model.retainedBytes()));
+                () -> assertEquals(8L * (6 * 33 + 6 + 6 + 16 + 4 + 4), model.retainedBytes()));
     }
 
     @Test

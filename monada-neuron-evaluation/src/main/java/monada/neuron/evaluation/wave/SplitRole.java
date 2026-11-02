@@ -7,6 +7,8 @@ public enum SplitRole {
     TRAINING,
     /** Read by threshold selection; its labels are open. */
     THRESHOLD_SELECTION,
+    /** Validated outcomes carried as feedback (contract section 10.2, issue #129); its labels are open. */
+    FEEDBACK,
     /** Held out; its labels are guarded and read only by the scorer. */
     TEST
 }
