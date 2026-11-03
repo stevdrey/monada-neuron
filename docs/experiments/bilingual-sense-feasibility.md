@@ -122,7 +122,7 @@ offline as a tooling step and adds no dependency to any Neuron module.
 | Occurrence-level alignment | Feasible: Tatoeba and Europarl give sentence alignment; occurrence spans are marked during annotation |
 | `EN→ES` | Feasible with new annotation. Existing CL-WSD/DiBiMT sets are reference material only |
 | `ES→EN` | Feasible only with new annotation. MuCoW's automatic labels may suggest lemmas but are not gold |
-| Low-frequency senses | **Not guaranteed.** Whether a source holds enough occurrences of a rare sense is unknown until the count audit and pilot ([steps 2 and 4](#executable-order)). Where minimums fail, that sense is dropped or reported descriptively |
+| Low-frequency senses | **Not guaranteed.** Whether a source holds enough occurrences of a rare sense is unknown until the count audit and pilot ([steps 2 and 5](#executable-order)). Where minimums fail, that sense is dropped or reported descriptively |
 | Multiple valid answers | Supported by set-valued gold |
 | Ambiguous / unanswerable cases | Must be created by annotators; no audited source labels them |
 | Unfamiliar inputs | Constructed from occurrences of non-inventory lemmas and inventory-external senses, labeled `OUT_OF_INVENTORY` |
@@ -134,8 +134,9 @@ offline as a tooling step and adds no dependency to any Neuron module.
 1. **Lemma selection before any text is labeled.** The annotation lead declares the target lemmas per direction from
    dictionary evidence only (inventory entries with at least two clearly distinct translation clusters). No model
    output, no held-out text and no system score informs the choice.
-2. **Guidelines and calibration set.** Written guidelines with examples of every label, piloted on a calibration
-   sample that is excluded from every split.
+2. **Guidelines and calibration set.** Written guidelines with examples of every label, calibrated on a sample that
+   is excluded from every split and frozen before the pilot or any split is annotated
+   ([step 4](#executable-order)).
 3. **Two independent annotators per item**, bilingual (native in one language, proficient in the other), blind to
    each other, to the system arms and to the split assignment. Each item is annotated in two passes, because the
    aligned translation can reveal a sense the source does not determine.
@@ -212,10 +213,10 @@ produces its input. No system output enters any step before 8. Nothing below has
 | 0 | #183 (this report) | Public pages and papers | Feasibility, proposals | — |
 | 1 | #184 preregistration commit, before any corpus download | This report | The frozen protocol: source versions and checksum policy; lemma candidates and form lists (annotation step 1); the inventory freeze rule; family definitions, near-duplicate threshold, hash seed and split proportions; the pilot sample size and seed; the guideline revision policy; the minimum α; the text, projection and data gates below; the evaluation arms, metrics and margins for #185 | — |
 | 2 | Count audit, after step 1 | Corpus text only, no labels. Tatoeba `sentences`, `links`, `sentences_base` and the Europarl v10 `es-en` TSV, with file names, sizes, dates and SHA-256 recorded | Occurrence and family counts per (direction, lemma); the lemma list after the **text gate** | Step 1 |
-| 3 | Split assignment | Family ids | Family-to-split map; held-out families sealed | Step 1 (seed, proportions, families) |
-| 4 | Pilot | A fixed-seed sample from **training families only**, two-pass annotated | Estimated cluster shares; clusters and lemmas kept after the **projection gate** | Steps 1 to 3 |
-| 5 | Calibration | A calibration sample excluded from every split | The frozen guidelines; revisions allowed only here | Step 1 (revision policy) |
-| 6 | Full annotation | Every split, two-pass, with adjudication | Gold, raw pass-A and pass-B labels | Step 5 guidelines |
+| 3 | Split assignment | Family ids | Family-to-split map, including a calibration reserve outside every split; held-out families sealed | Step 1 (seed, proportions, families) |
+| 4 | Calibration | A sample of the calibration reserve | The frozen guidelines; revisions allowed only here | Step 1 (revision policy) |
+| 5 | Pilot | A fixed-seed sample from **training families only**, two-pass annotated under the step-4 guidelines | Estimated cluster shares; clusters and lemmas kept after the **projection gate** | Steps 1 to 4 |
+| 6 | Full annotation | Every split, two-pass, with adjudication | Gold, raw pass-A and pass-B labels | Step 4 guidelines |
 | 7 | Data gates | Gold counts and pass-A agreement only; no system output | Pass or fail per (direction, lemma, cluster), with counts, recorded in a revision of this report | Step 1 (gates) |
 | 8 | #185 | The sealed held-out split, for the first time by any system | Results under the step-1 evaluation protocol | Steps 1 and 7 |
 
@@ -224,10 +225,14 @@ Gate proposals for step 1 to freeze (they are not results):
 - **Text gate (step 2).** A lemma stays only if it has enough candidate families in a direction to fill the
   registered training, validation and held-out quotas for at least two clusters at the minimum below. This gate is
   based on counts alone.
-- **Projection gate (step 4).** For each cluster, the projected held-out count is the held-out families of the lemma
+- **Projection gate (step 5).** For each cluster, the projected held-out count is the held-out families of the lemma
   times the cluster's pilot share. A cluster whose projection is below the minimum per sense is dropped before
   held-out annotation, so no effort is spent on items that cannot pass. Pilot labels come from training families,
-  are not gold for any evaluation and are not re-used as held-out items.
+  are not gold for any evaluation and are not re-used as held-out items. Because calibration precedes the pilot,
+  the gate uses labels made under the final guidelines.
+- **Late guideline changes.** Guidelines are frozen at step 4. If a material change is later unavoidable, it is a
+  new protocol version recorded in the report: every pilot item is relabeled, the projection gate is re-applied
+  from step 5, and every item already annotated in step 6 is relabeled under the new version.
 - **Minimum per sense (step 7).** A (direction, lemma, cluster) enters the scored evaluation only if the held-out
   split holds at least 30 independent families with that gold cluster. At n = 30 the 95% Wilson interval for an
   accuracy near 0.5 is about ±0.17. Below that, per-sense results are reported descriptively only.
@@ -237,12 +242,12 @@ Gate proposals for step 1 to freeze (they are not results):
 - **Agreement (step 7).** Lemmas whose pass-A α is below the frozen minimum are dropped.
 - **Minimum per direction (step 7).** At least 4 lemmas that each keep two or more clusters above the minimum. If a
   direction fails, that direction is stopped and the other proceeds alone, stated as such.
-- **Global stop (steps 2, 4 or 7).** If neither direction can still meet its minimum, #185 runs no system on this
+- **Global stop (steps 2, 5 or 7).** If neither direction can still meet its minimum, #185 runs no system on this
   data and the epic records a data no-go.
 
 Rough budget, for planning only: 6 lemmas per direction × 3 clusters × (30 held-out + 20 validation + 40 training)
 families is about 3,240 occurrences and about 6,500 single pass-A annotations before adjudication. The real count
-depends on steps 2 and 4.
+depends on steps 2 and 5.
 
 ## Gaps and open checks
 
@@ -251,7 +256,7 @@ depends on steps 2 and 4.
 - Whether OMW's Spanish file maps to PWN 3.0 offsets as assumed [NV].
 - The legal status of Wiktionary-derived extracts beyond the CC BY-SA inheritance [NV].
 - UN corpus redistribution terms [NV].
-- The occurrence and per-sense counts in any candidate source: unknown until steps 2, 4 and 7 of the executable order.
+- The occurrence and per-sense counts in any candidate source: unknown until steps 2, 5 and 7 of the executable order.
 
 ## Limitations
 
