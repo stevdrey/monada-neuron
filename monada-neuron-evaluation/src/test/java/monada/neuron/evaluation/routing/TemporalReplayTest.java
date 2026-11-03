@@ -1,6 +1,10 @@
 package monada.neuron.evaluation.routing;
 
 import monada.neuron.routing.Basis;
+import monada.neuron.routing.DecisionRef;
+import monada.neuron.routing.catalog.Availability;
+import monada.neuron.routing.catalog.CatalogEntry;
+import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.adaptation.RebuildResult;
 import monada.neuron.routing.feedback.ScoreRule;
@@ -178,6 +182,28 @@ class TemporalReplayTest {
                 () -> assertTrue(adaptive.feedback().stream().noneMatch(FeedbackEvent::replayed)),
                 () -> assertTrue(adaptive.samples().stream()
                         .anyMatch(s -> s.coverage() == ReplaySample.Coverage.MISSING_COUNTERFACTUAL)));
+    }
+
+    @Test
+    void aLoggedTaskWhoseReplayedDecisionSelectsNothingIsNotExecuted() {
+        // the log ran a route; the replay reads the same catalog version with every route unavailable, so it selects
+        // nothing and the host must not be asked to run the logged route
+        var fixture = fixtures.chosenRouteOnly(16);
+        var none = RouteCatalog.of(SyntheticRoutingFixtures.FULL.catalogVersion(), SyntheticRoutingFixtures.FULL.entries().stream()
+                .map(e -> new CatalogEntry(e.descriptor(), Availability.UNAVAILABLE, e.fallbackPriority())).toList());
+        var tasks = new ArrayList<>(fixture.tasks());
+        ReplayTask fifth = tasks.get(5);
+        tasks.set(5, new ReplayTask(fifth.request(), none, fifth.oracle()));
+        var changed = fixture.withTasks(fixture.fixtureId() + "+nothing-eligible@5", tasks);
+
+        for (ReplayArm arm : ReplayArm.values()) {
+            ReplaySample sample = new TemporalReplay(changed).run(arm).samples().stream()
+                    .filter(s -> s.decisionRef().equals(DecisionRef.of(fifth.request()))).findFirst().orElseThrow();
+
+            assertAll(arm.name(),
+                    () -> assertEquals(ReplaySample.DecisionKind.NO_ELIGIBLE_ROUTE, sample.kind()),
+                    () -> assertEquals(ReplaySample.Coverage.NOT_EXECUTED, sample.coverage()));
+        }
     }
 
     @Test

@@ -94,12 +94,23 @@ public final class TemporalReplay {
     private final OutcomeEvaluator evaluator = new OutcomeEvaluator();
     private final ObservationFactory observations = new ObservationFactory();
     private final SortedSet<CohortKey> cohortKeys;
+    private final HostStep host;
     /** Generated synthetic observations by task and decision provenance; filled by the first run that needs one. */
     private final Map<GenerationKey, Generated> generated = new HashMap<>();
 
-    /** Creates a replay of a fixture. */
+    /** Creates a replay of a fixture whose host follows every selection. */
     public TemporalReplay(ReplayFixture fixture) {
+        this(fixture, HostStep.FOLLOW);
+    }
+
+    /**
+     * Creates a replay of a fixture with a host between each decision and its execution. The host is asked for every
+     * decision of a task whose outcomes are scripted for every route; a logged task has one route and ignores it.
+     * A stateful host is shared by every run of this replay, so give each run its own replay.
+     */
+    TemporalReplay(ReplayFixture fixture, HostStep host) {
         this.fixture = Objects.requireNonNull(fixture, "fixture must not be null");
+        this.host = Objects.requireNonNull(host, "host must not be null");
         this.policy = fixture.policy();
         this.feedbackPolicy = fixture.definition().feedbackPolicy(fixture.evidencePolicy());
         this.cohortKeys = fixture.cohortKeys();
@@ -305,14 +316,30 @@ public final class TemporalReplay {
             RoutingDecision decision = policy.decide(request, task.catalog(), preference);
             Optional<Outcome> outcome = Optional.empty();
             var coverage = ReplaySample.Coverage.NOT_EXECUTED;
+            HostExecution execution = task.oracle() instanceof OutcomeOracle.KnownForEveryRoute
+                    ? Objects.requireNonNull(host.execute(task, decision), "the host returned no execution")
+                    // a log has one route and no host step: it ran the advice, which exists only for a selection
+                    : HostStep.FOLLOW.execute(task, decision);
+            if (!(decision instanceof RoutingDecision.Selected) && !(execution instanceof HostExecution.NotExecuted)) {
+                throw new IllegalStateException("the host ran " + execution + " over a decision that selected nothing");
+            }
             if (decision instanceof RoutingDecision.Selected selected) {
                 switch (task.oracle()) {
                     case OutcomeOracle.KnownForEveryRoute known -> {
-                        Optional<ScriptedOutcome> scripted = known.outcomeOf(selected.route());
-                        coverage = scripted.isPresent() ? ReplaySample.Coverage.OBSERVED
-                                : ReplaySample.Coverage.UNOBSERVED;
-                        if (scripted.isPresent()) {
-                            outcome = Optional.of(execute(task, selected, scripted.get()));
+                        RouteKey executed = switch (execution) {
+                            case HostExecution.Advised ignored -> selected.route();
+                            case HostExecution.Alternative alternative -> alternative.route();
+                            case HostExecution.NotExecuted ignored -> null;
+                        };
+                        if (executed == null) {
+                            coverage = ReplaySample.Coverage.HOST_NOT_EXECUTED;
+                        } else {
+                            Optional<ScriptedOutcome> scripted = known.outcomeOf(executed);
+                            coverage = scripted.isPresent() ? ReplaySample.Coverage.OBSERVED
+                                    : ReplaySample.Coverage.UNOBSERVED;
+                            if (scripted.isPresent()) {
+                                outcome = Optional.of(execute(task, selected, scripted.get(), executed));
+                            }
                         }
                     }
                     case OutcomeOracle.ChosenRouteOnly logged -> {
@@ -335,17 +362,18 @@ public final class TemporalReplay {
         }
 
         /**
-         * The replayed route's observations, generated once per task and decision provenance; queues them for
-         * delivery (unless the arm keeps no state) and returns the latest one.
+         * The executed route's observations, generated once per task, decision provenance and executed route; queues
+         * them for delivery (unless the arm keeps no state) and returns the latest one.
          */
-        private Outcome execute(ReplayTask task, RoutingDecision.Selected selected, ScriptedOutcome scripted) {
+        private Outcome execute(ReplayTask task, RoutingDecision.Selected selected, ScriptedOutcome scripted,
+                RouteKey executed) {
             RoutingRequest request = task.request();
-            var key = new GenerationKey(decisions, selected.route(), selected.cohortBinding(),
+            var key = new GenerationKey(decisions, selected.route(), executed, selected.cohortBinding(),
                     selected.provenance().catalogVersion(), selected.provenance().policyId(),
                     selected.provenance().policyVersion());
             Generated observed = generated.computeIfAbsent(key, ignored -> new Generated(
-                    observations.observe(request, selected, scripted, 0),
-                    scripted.correction().map(c -> observations.observe(request, selected, scripted, 1)),
+                    observations.observe(request, selected, scripted, 0, executed),
+                    scripted.correction().map(c -> observations.observe(request, selected, scripted, 1, executed)),
                     observations.chainOf(scripted, scripted.correction().isPresent() ? 1 : 0)));
             if (arm != ReplayArm.STATIC) {
                 pending.add(new Delivered(observed.original(), selected, request, true));
@@ -574,9 +602,12 @@ public final class TemporalReplay {
         }
     }
 
-    /** What identifies a generated synthetic observation: the task index and every decision field it reads. */
-    private record GenerationKey(int task, RouteKey route, CohortBinding binding, String catalogVersion,
-            String policyId, String policyVersion) {
+    /**
+     * What identifies a generated synthetic observation: the task index, every decision field it reads and the route
+     * the host executed, so an alternative's outcome never collides with the advised route's.
+     */
+    private record GenerationKey(int task, RouteKey route, RouteKey executed, CohortBinding binding,
+            String catalogVersion, String policyId, String policyVersion) {
     }
 
     /** A generated original, its correction if scripted, and the latest revision's chain. */

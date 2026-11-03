@@ -118,6 +118,47 @@ class ReplaySummaryTest {
     }
 
     @Test
+    void aSelectionTheHostRanNothingForHasNoOutcomeAndIsCountedUnderItsOwnCoverage() {
+        ReplayRun run = new TemporalReplay(fixtures.cases()).run(ReplayArm.STATIC);
+        ReplaySample observed = run.samples().stream()
+                .filter(s -> s.coverage() == ReplaySample.Coverage.OBSERVED).findFirst().orElseThrow();
+
+        var summary = ReplaySummary.of(new ReplayRun(ReplayArm.STATIC,
+                List.of(withoutOutcome(observed, ReplaySample.Coverage.HOST_NOT_EXECUTED)), List.of(), List.of(),
+                run.decisions(), run.derivations(), run.state()));
+
+        assertAll(
+                () -> assertEquals(1, summary.total().coverage(ReplaySample.Coverage.HOST_NOT_EXECUTED)),
+                () -> assertEquals(0, summary.total().coverage(ReplaySample.Coverage.OBSERVED)),
+                () -> assertEquals(0, summary.chain().executions()));
+    }
+
+    @Test
+    void hostNotExecutedIsRejectedWithAnOutcomeOrOnADecisionThatSelectedNothing() {
+        ReplayRun run = new TemporalReplay(fixtures.cases()).run(ReplayArm.STATIC);
+        ReplaySample observed = run.samples().stream()
+                .filter(s -> s.coverage() == ReplaySample.Coverage.OBSERVED).findFirst().orElseThrow();
+        ReplaySample abstained = run.samples().stream()
+                .filter(s -> s.kind() == ReplaySample.DecisionKind.ABSTAINED).findFirst().orElseThrow();
+
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class, () -> new ReplaySample(observed.decisionRef(),
+                        observed.stageKind(), observed.cutoff(), observed.stateCutoff(), observed.arm(),
+                        observed.kind(), observed.route(), observed.basis(), observed.abstainReason(),
+                        ReplaySample.Coverage.HOST_NOT_EXECUTED, observed.acceptance(), observed.verdict(),
+                        observed.provenFailures(), observed.attempts(), observed.stageUsage(),
+                        observed.usageDeclaration(), observed.chainCost(), observed.comparison())),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> withoutOutcome(abstained, ReplaySample.Coverage.HOST_NOT_EXECUTED)));
+    }
+
+    private static ReplaySample withoutOutcome(ReplaySample s, ReplaySample.Coverage coverage) {
+        return new ReplaySample(s.decisionRef(), s.stageKind(), s.cutoff(), s.stateCutoff(), s.arm(), s.kind(),
+                s.route(), s.basis(), s.abstainReason(), coverage, Optional.empty(), Optional.empty(), List.of(), 0,
+                List.of(), Optional.empty(), Optional.empty(), s.comparison());
+    }
+
+    @Test
     void anExecutionsChainFactsComeFromItsTerminalSample() {
         ReplayRun run = new TemporalReplay(fixtures.cases()).run(ReplayArm.STATIC);
         ReplaySample repaired = run.samples().stream().filter(s -> s.decisionRef().taskId().equals("task-repair"))

@@ -72,6 +72,14 @@ tasks.register<JavaExec>("runForgeRoutingEvaluation") {
     args(quotedBenchmarkArgs())
 }
 
+tasks.register<JavaExec>("runForgeHostScenarioEvaluation") {
+    group = "benchmark"
+    description = "Replays Forge like host scenarios through the routing replay with a scripted host (Issue #103)"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("monada.neuron.evaluation.routing.HostScenarioRunner")
+    args(quotedBenchmarkArgs())
+}
+
 // Spectral resonance H2 (Issue #125, gate G2; protocol pre-registered in docs/benchmarks/spectral-resonance-h2.md).
 tasks.register<JavaExec>("runSpectralResonanceH2") {
     group = "benchmark"
