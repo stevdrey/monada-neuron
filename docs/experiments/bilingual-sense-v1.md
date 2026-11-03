@@ -139,8 +139,15 @@ held-out families each, labeled `OOI` by construction, never annotated and never
 2. Near-duplicate merge, over every candidate occurrence of every lemma and both directions, before any assignment:
    two source sentences are near-duplicates when their masked token sequences (target span replaced by one `⟨T⟩`
    token, punctuation removed) are equal, or when both have at least 3 tokens and the Jaccard similarity of their word
-   3-gram sets is at least `0.5`. Families of near-duplicates are merged with union-find. Candidate pairs come from an
-   inverted index on 3-grams, so only pairs sharing a 3-gram are compared.
+   3-gram sets is at least `0.5`. Families of near-duplicates are merged with union-find. Candidates come from two
+   exact passes, so that every pair meeting either branch is found:
+   - **Equality pass.** Every occurrence is grouped by its masked token sequence (a hash map keyed by the sequence,
+     compared by content on hash collision). This catches short sequences that share no 3-gram, such as `Bank!` and
+     `Banks?`, which both reduce to `⟨T⟩`.
+   - **Jaccard pass.** Pairs of sequences with at least 3 tokens come from an inverted index on 3-grams with prefix
+     filtering (3-grams ordered rarest first by global frequency; a set `x` indexes its first
+     `|x| − ⌈0.5·|x|⌉ + 1` 3-grams), which finds every pair at or above the threshold; each candidate pair is then
+     verified with the exact Jaccard similarity.
    - **Deviation from the feasibility proposal.** It proposed word 5-grams. Tatoeba sentences are often shorter than
      ten tokens, so 5-grams would leave most pairs without any shared n-gram; 3-grams with a `0.5` threshold are
      registered instead.
@@ -210,7 +217,8 @@ adjudication by a third person, translation-divergent stratum. Registered additi
 
 - Annotators may use the inventory and printed or online dictionaries. They may not use machine translation, an LLM or
   any system arm during pass A. Machine-generated labels are never gold.
-- Guideline revision policy: guidelines change only during calibration (step 4); they are then frozen with a SHA-256.
+- Guideline revision policy: guidelines change only during calibration (step 4). When calibration ends, before any
+  pilot item is shown, the final guidelines are committed with their SHA-256.
   A later material change follows the feasibility report's late-change rule (new version, pilot relabeled, projection
   gate re-applied, step-6 items relabeled).
 - Agreement: Krippendorff's α on pass A with MASI distance over label sets, where `UNA` and `OOI` are singleton labels.
@@ -350,6 +358,11 @@ Per arm, per direction, per lemma, per scored sense and per stratum:
 - **Abstention AUROC**: `1 − s` as a detector of `UNA ∪ OOI` against `ANS`.
 - **Calibration**: ECE of `s` against forced correctness on `ANS` (10 equal-mass bins) and the Brier score.
   Reported; not a gate.
+- **Constant bound** `Macro_const`: for each lemma, the best held-out sense-macro accuracy of always choosing one
+  cluster, averaged over the direction's scored senses as `Macro` is. Under set-valued gold, Arm A is not the ceiling
+  of a context-free predictor (a cluster shared by many gold sets can beat the training majority); `Macro` is linear
+  in a context-free predictor's per-lemma choice, so `Macro_const` is that ceiling. It reads held-out gold, so it is
+  computed only after scoring and used only by checks.
 - **Generalization gap**: memorization-probe accuracy minus new-context accuracy.
 - **Cost**: training and selection time, held-out inference time per item (median and p95), allocated bytes per item
   and retained model size, with `EvaluationMetricsCollector` (3 warm-up, 10 measured iterations). Reported per arm.
@@ -378,9 +391,9 @@ a task where A is often above 0.5. Per-sense intervals at n = 30 (about ±0.17) 
 | `leakage.input-surface` | The system input type carries no translation, alignment, pass-B, family or split field (enforced by type, verified by test) |
 | `leakage.test-labels` | No held-out gold is read before scoring (guarded labels, as `GuardedLabels` does for NCM) |
 | `leakage.sealed-hash` | Held-out gold SHA-256 equals the hash committed at step 7 |
-| `leakage.inventory-hash` | Inventory and guideline hashes equal those committed before calibration |
-| `nc.label-permutation` | N and C refitted with training labels permuted within each lemma: held-out `Macro` at most `Macro(A) + 0.05` |
-| `nc.context-mask` | N with every window token masked: `Macro` at most `Macro(A) + 0.02`, and it abstains on every item when `τ > 0` |
+| `leakage.inventory-hash` | The inventory hash equals the one committed before calibration (step 4 starts); the guideline hash equals the one committed when calibration ends, before the pilot (step 5) |
+| `nc.label-permutation` | N and C refitted with training labels permuted within each lemma: held-out `Macro` at most `Macro_const + 0.05` |
+| `nc.context-mask` | N with every window token masked: every hypothesis scores exactly `0`, `k*` is the lowest-ordinal cluster of each lemma (the policy's tie-break), and N abstains on every item when `τ > 0`. Checked structurally, not by an accuracy bound |
 | `nc.heldout-counterfactual` | Held-out labels permuted: every arm's outputs bit-identical, metrics change |
 | `unseen-lemma.abstain` | Every arm abstains on every unseen-lemma item |
 | `w.reference-equivalence` | (If W runs) waves equal the pinned-commit fixtures bit-for-bit, and the four documented consequences hold |
@@ -468,4 +481,9 @@ training-split data at any time; it may read the held-out split only at step 8, 
 
 ## Changelog
 
-- `bilingual-sense/1` (#184): initial protocol.
+- `bilingual-sense/1` (#184): initial protocol. Review fixes before merge, before any data exists:
+  - the near-duplicate rule adds an exact equality pass, so short masked sequences that share no 3-gram are merged,
+    and the 3-gram pass uses exact prefix filtering;
+  - the guideline hash is the one committed after calibration, not before it;
+  - the negative controls compare against the constant bound `Macro_const` and a structural masking check instead of
+    `Macro(A)`, which set-valued gold does not make a ceiling.
