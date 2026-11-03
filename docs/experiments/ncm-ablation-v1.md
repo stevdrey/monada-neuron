@@ -119,6 +119,36 @@ negative log-likelihood; no thresholds are selected (there is no threshold-selec
 answer every window down to a leaf and the selective trade-off is reported as a risk-coverage curve. D uses Haar depth
 `log2 4096 = 12`.
 
+### Control coverage by workload
+
+Every gate is decided on the medium workload, and every control runs there. Tiny and large run the subsets below,
+following the purpose contract Section 14.1 gives each workload: tiny for exact fixtures and determinism, large for
+bounds, latency, allocation and memory with informational quality.
+
+| Control | tiny (`N = 8`) | medium (`N = 256`) | large (`N = 4096`) |
+| --- | --- | --- | --- |
+| A | no: one window per query, nothing to compare a transition baseline against | yes | yes |
+| A-oracle | no: as A | yes (informational) | no: informational only, and it reads a test label |
+| B | no: exact fixtures check C and D only | yes | yes |
+| C | yes | yes | yes, without thresholds (descent to a leaf) |
+| C-forced | no: no thresholds, so it equals C | yes | yes: the forced accuracy column |
+| C-flat, X-flat (thresholded flat controls) | no: no threshold selection | yes | no: no threshold-selection split; the forced accuracy is the unthresholded flat argmax |
+| C+coh | no: one window per query, no previous window for coherence | yes | no: not in the pre-registered large protocol |
+| D-haar | yes (Haar `L = 3`) | yes (`L` selected, 5) | yes (`L = 12`), without thresholds |
+| D-haar+coh (control D) | no: as C+coh | yes | no: not in the pre-registered large protocol |
+| E (feedback) | no: no feedback stream | yes (G5 harness) | no: the G5 harness and its FEEDBACK split exist for the medium fixture only |
+| E-D | no | excluded: no D arm passes the G3 rule | no |
+| DFT reference scorer (equivalence) | yes | yes | no |
+
+Coherence (C+coh, D-haar+coh) and feedback (E) are therefore validated at the medium scale only. Nothing in this
+protocol supports a claim about them at 256 concepts or 4,096 samples.
+
+**Deviation from the issue wording.** Issue #130 and contract Section 14.2 ask #130 to run every available control
+over all workloads. This protocol runs every control on the medium workload, which carries every gate, and the
+subsets above on tiny and large. It records each omission and its reason instead of dropping it silently. Running the
+coherence and feedback arms at the large scale would need a large threshold-selection split, a large FEEDBACK split
+and their own selection grids. That is a follow-up, not part of `ncm-ablation/1`.
+
 ## Seeds
 
 | Item | Value |
@@ -208,7 +238,8 @@ check passed, whatever the verdict.
 
 ## Changelog
 
-- `ncm-ablation/1` (#130): initial protocol. Review fixes before merge, none touching the verdict rule or any
+- `ncm-ablation/1` (#130): initial protocol. Documentation corrections before merge: the per-workload control coverage
+  is stated as the matrix above, and the N11 behavior is described per arm in the report. Review fixes before merge, none touching the verdict rule or any
   quality figure (the registered run was repeated and every quality figure is bit-identical):
   - the host check lags each execution's prediction by one execution and resets it at a sequence start, as the arms
     chain it;

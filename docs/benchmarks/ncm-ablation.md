@@ -18,7 +18,7 @@ No arm meets the registered G3 quality rule in any of the five repeats, so the p
 | C | the system under test (DFT magnitudes + hierarchy) | fail (0/5) | H6: abstention adds only about 0.015 accuracy (margin 0.05); H3 below 0.15 in four of five repeats |
 | C+coh | C plus phase coherence with the previous window | fail (0/5) | Same as C: coherence moves forced accuracy by at most ±0.002 |
 | D-haar | Haar magnitudes instead of DFT magnitudes | fail (0/5) | H3 lower bounds 0.07 to 0.12; it never abstains (coverage 1.00), so H6 is 0 and N11 noise is always answered |
-| D-haar+coh | control D: Haar magnitudes + coherence | fail (0/5) | As D-haar |
+| D-haar+coh | control D: Haar magnitudes + coherence | fail (0/5) | H3 lower bounds 0.07 to 0.12 and H6 about 0; it meets the N11 direction only trivially (3 of 2,016 noise windows uncovered, none at 20 dB) |
 | E | C plus validated feedback (H5) | negative (0/5) | Reproduces #129: `rate(E) − rate(C)` lower bound at most 0.005, margin 0.02 |
 
 Because no D arm passes, E-D (feedback over D) is excluded with that reason, as the protocol pre-registered. No arm was
@@ -56,8 +56,14 @@ generated report. Summary of repeat 1 (the other repeats agree within ±0.02):
 | D-haar+coh | 1.000 | 0.368 | 0.368 | 0.694 | 0.621 | 0.694 | 0.042 | 0 / 0 | 0.002 / 0.000 |
 
 Control A answers 0.24 on every window; A-oracle (reads the true current label, informational) reaches 0.49 to 0.51.
-Every arm, C included, abstains **less** on pure noise (N11) than on clean 20 dB evidence: the confidence scores do
-not detect out-of-distribution input.
+No arm detects out-of-distribution input usefully, but the arms fail the N11 condition in different ways:
+
+- **C and C+coh** abstain **less** on pure noise (N11) than on clean 20 dB evidence: 0.18 against 0.23 to 0.28 in
+  every repeat. Their confidence scores are higher on noise.
+- **D-haar** never abstains on either: 0.000 against 0.000. It fails the strict inequality because it does not
+  abstain at all.
+- **D-haar+coh** satisfies the direction of the N11 condition in every repeat, but only trivially: it leaves 3 of
+  2,016 noise windows uncovered (0.0015) against none at 20 dB. It is still NO-GO, because it fails H3 and H6.
 
 ### Selections (non-test data)
 
@@ -88,6 +94,29 @@ Control A 0.004, control B 0.137, over 1,008 windows with a successor. At this s
 hierarchy gives usable coarse answers (root 0.60, depth 1 0.46) where the leaf is weak (0.18). C is poorly calibrated
 here (ECE 0.20). Haar features are again clearly worse. Every prediction stayed within the comparison budget
 (at most 256 of 256) and none was `BUDGET_EXHAUSTED` (`large.bounds`).
+
+### Control coverage by workload
+
+Every gate is decided on the medium workload, where every control runs. Tiny and large run subsets, as the protocol
+records:
+
+| Control | tiny (`N = 8`) | medium (`N = 256`) | large (`N = 4096`) |
+| --- | --- | --- | --- |
+| A | no: one window per query, nothing to compare a transition baseline against | yes | yes |
+| A-oracle | no: as A | yes (informational) | no: informational only, and it reads a test label |
+| B | no: exact fixtures check C and D only | yes | yes |
+| C | yes | yes | yes, without thresholds (descent to a leaf) |
+| C-forced | no: no thresholds, so it equals C | yes | yes: the forced accuracy column |
+| C-flat, X-flat (thresholded flat controls) | no: no threshold selection | yes | no: no threshold-selection split; the forced accuracy is the unthresholded flat argmax |
+| C+coh | no: one window per query, no previous window for coherence | yes | no: not in the pre-registered large protocol |
+| D-haar | yes (Haar `L = 3`) | yes (`L` selected, 5) | yes (`L = 12`), without thresholds |
+| D-haar+coh (control D) | no: as C+coh | yes | no: not in the pre-registered large protocol |
+| E (feedback) | no: no feedback stream | yes (G5 harness) | no: the G5 harness and its FEEDBACK split exist for the medium fixture only |
+| E-D | no | excluded: no D arm passes the G3 rule | no |
+| DFT reference scorer (equivalence) | yes | yes | no |
+
+Coherence and feedback are **not** validated at the large scale. These results say nothing about them at 256 concepts
+or 4,096 samples.
 
 ## Cost
 
@@ -163,8 +192,9 @@ None is started by this issue:
    pipeline (ADR 0050).
 2. **External validation before any new investment.** Re-open the question only with a pre-registered evaluation on
    real, externally labeled signals, where a simple baseline (B, or C-flat) is the bar to beat.
-3. **Out-of-distribution detection** is the clearest functional gap: every arm abstains less on noise than on clean
-   evidence. Any future work should start there, under its own hypothesis and gate.
+3. **Out-of-distribution detection** is the clearest functional gap. C and C+coh abstain less on noise than on
+   clean evidence. The Haar arms barely abstain at all (D-haar+coh on 3 of 2,016 noise windows). Any future work
+   should start there, under its own hypothesis and gate.
 4. **A Haar-capable core model is not warranted.** D is worse than C on every measured axis except transform cost.
 
 ## Commands

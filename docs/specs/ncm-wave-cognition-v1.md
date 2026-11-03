@@ -805,8 +805,10 @@ the registered margins and adds none for H2 to H6. Changing a margin after seein
 - **E**: C or D with validated feedback. Delivered by #129 for G5, reused by #130.
 - Scalar control for H2: `ScalarResonanceMetric` on the dominant-component projection. Delivered by #125 for G2.
 
-Each gate's evidence is therefore produced before the gate is evaluated; #130 consolidates every control over all
-workloads, adds D and the large-workload resource measurements, and publishes the final report.
+Each gate's evidence is therefore produced before the gate is evaluated. #130 consolidates every control on the medium
+workload and the subsets of [ncm-ablation-v1.md](../experiments/ncm-ablation-v1.md) on the tiny and large workloads (C
+and D on both, plus A and B at large; coherence and feedback at medium only). It adds D and the large-workload resource
+measurements, and publishes the final report.
 
 ### 14.3 Metrics
 
@@ -871,7 +873,7 @@ prerequisites. The graph is acyclic; no issue builds on a descendant.
 | #127 | `ConceptHierarchy`, `NextConceptPredictor`; controls A, B, C, C-flat and the H3, H4, H6 evaluation | #122, #125 | `monada.neuron.reasoning` (new types only), `monada-neuron-evaluation` | G3 |
 | #128 | Opt-in cycle integration, typed hand-off | #126, #127 (G3 evaluated) | stages, host wiring | G4 |
 | #129 | Feedback and caller-owned snapshots; control E and the H5 evaluation | #127, #128 | `monada.neuron.evolution`, `monada-neuron-evaluation` | G5 |
-| #130 | Consolidated ablation over all workloads, control D, large-workload resources, go/no-go report | #123 to #129 | `monada-neuron-evaluation` | G5 |
+| #130 | Consolidated ablation (every control on the medium workload, subsets on tiny and large), control D, large-workload resources, go/no-go report | #123 to #129 | `monada-neuron-evaluation` | G5 |
 
 The evaluation pieces assigned to #125, #127 and #129 are scope additions relative to those issues' current text; each
 issue is updated to cite this table before it starts. #124 and #125 may proceed in parallel after #123 (#125 once G1 is go); #126 and #127 may proceed in parallel after their prerequisites.
@@ -899,8 +901,9 @@ issue is updated to cite this table before it starts. #124 and #125 may proceed 
   verdict changes.
 - `/2`, minor (issue #130, ADR 0050): implements control D in the evaluation module (Section 14.2), adds the
   large-workload fixture `ncm-concept-fixture-large-v1` and the consolidated protocol
-  [`ncm-ablation/1`](../experiments/ncm-ablation-v1.md), and records G5 as no-go. No formula, tolerance, hypothesis,
-  margin rule or earlier verdict changes.
+  [`ncm-ablation/1`](../experiments/ncm-ablation-v1.md), and records G5 as no-go. Deviation: every control runs on
+  the medium workload, but only subsets run on tiny and large (protocol matrix). Coherence and feedback are validated
+  at the medium scale only. No formula, tolerance, hypothesis, margin rule or earlier verdict changes.
 
 ## 18. References
 

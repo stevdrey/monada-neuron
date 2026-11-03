@@ -23,7 +23,9 @@ Issue #130 had to:
 - publish a go/no-go verdict without enabling NCM by default.
 
 The protocol `ncm-ablation/1` ([protocol](../experiments/ncm-ablation-v1.md)) was pre-registered before any held-out
-result. It judges every arm by the registered G3 rule and adds no margin. Its results are in
+result. It runs every control on the medium workload, which carries every gate. Tiny and large run subsets: C and D
+on both, plus A and B at large. Coherence and feedback are therefore validated at the medium scale only (protocol
+coverage matrix). It judges every arm by the registered G3 rule and adds no margin. Its results are in
 [ncm-ablation.md](../benchmarks/ncm-ablation.md).
 
 ## Decision
@@ -39,7 +41,9 @@ result. It judges every arm by the registered G3 rule and adds no margin. Its re
    - The hierarchy adds nothing over a flat decision on the same scores: −0.002 to −0.006.
    - Coherence adds nothing: forced accuracy moves by at most ±0.002.
    - Haar features are worse than DFT magnitudes: −0.018 to −0.039 forced accuracy.
-   - Abstention is barely informative, and every arm abstains less on noise than on clean evidence.
+   - Abstention is barely informative, and no arm detects noise usefully. C and C+coh abstain less on noise than on
+     clean evidence. D-haar never abstains. D-haar+coh abstains on 3 of 2,016 noise windows and on no clean
+     window: it meets the direction of the N11 condition, but it fails H3 and H6.
 2. **No further investment in the NCM wave pipeline.** That covers optimized transforms, SIMD or accelerator
    backends for it, a Haar-capable core `ConceptModel`, feedback over D (E-D), and default integration. The
    reference implementations stay, as a correctness baseline and for the opt-in stage.
