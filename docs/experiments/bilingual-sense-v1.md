@@ -73,7 +73,7 @@ Homographs of another lemma (Spanish *cuenta* of *contar*, *piso* of *pisar*, *n
 | Source | Version | Files | Family unit |
 | --- | --- | --- | --- |
 | Tatoeba | The first weekly export downloaded after this protocol is committed | `sentences.tar.bz2`, `links.tar.bz2`, `sentences_base.tar.bz2` | Translation cluster (connected component of the link graph), merged with near-duplicates |
-| Europarl | v10 | `es-en` TSV of the v10 release | Session file (one day), merged with near-duplicates |
+| Europarl | v10 | `training/europarl-v10.es-en.tsv.gz` | Session file, read from the `file_id` column, merged with near-duplicates |
 
 - At step 2, record for each file: URL, download time (UTC), byte size and SHA-256, in a revision of the feasibility
   report. That snapshot is the only one this protocol uses; a file is never replaced by a later export.
@@ -82,6 +82,12 @@ Homographs of another lemma (Spanish *cuenta* of *contar*, *piso* of *pisar*, *n
   annotation item 8).
 - If a file cannot be downloaded, or its terms are found incompatible with publishing derived sentences, that source
   is dropped before step 3 and the drop is recorded. If both sources are dropped, the epic records a data no-go.
+- **Europarl `file_id` validation (step 2).** The v10 README lists the bilingual TSV columns as source, target,
+  `file_id`, `chapter_id`, `speaker_id`, speaker name, language and affiliation, and warns that some fields may be
+  blank [V, README]. The header row and the values are unverified until step 2. Europarl is kept only if `file_id` is
+  present and non-blank on at least 99% of the rows that hold a candidate occurrence, and inspected values name
+  session-day files (for example `ep-YY-MM-DD`). Rows with a blank `file_id` are excluded. If the validation fails,
+  Europarl is dropped under the rule above; no other family rule is substituted after the freeze.
 - UN, News Commentary, WikiMatrix, OpenSubtitles, BabelNet and XL-WSD are not used.
 
 ### Source language rule
@@ -120,8 +126,11 @@ Matching is on the declared forms only, after the registered tokenization, with 
 by an unrelated word is still an item, labeled by annotators (usually `OOI`).
 
 **Unseen-lemma check items.** Two lemmas per direction with no inventory and no training data are drawn for a
-mechanical check only (`unseen-lemma.abstain`): `EN→ES` *pitch*, *match*; `ES→EN` *cola*, *muñeca*. Up to 30
-held-out families each, labeled `OOI` by construction, never annotated and never pooled into any hypothesis.
+mechanical check only (`unseen-lemma.abstain`): `EN→ES` *pitch*, *match*; `ES→EN` *cola*, *muñeca*. Their
+occurrences take part in the near-duplicate merge, but they form no stratum. Items are drawn only from families that
+the step-3 map already assigns to held-out (families of declared strata that also contain an unseen-lemma form), up to
+30 families per lemma in `cap` order; fewer are used if fewer exist, and the count is reported. They are labeled `OOI`
+by construction, never annotated and never pooled into any hypothesis.
 
 ### Inventory freeze rule
 
@@ -169,13 +178,18 @@ integer; `u(label, id) = h / 2²⁵⁶ ∈ [0, 1)`.
 | Calibration sample | `calibration` | Increasing `h` among reserve families |
 | Label permutation control | `permute` | Fisher–Yates driven by `h(permute, i)` |
 | Wave vocabulary shuffle control | `vocab-shuffle` | As above |
-| Bootstrap | seed `0x1840_B007 + r` for repeat `r` | `java.util.SplittableRandom`, `B = 2000` resamples |
+| Bootstrap | seed `0x1840_B007` | `java.util.SplittableRandom`, `B = 2000` resamples. There is one registered run; `determinism` re-runs it with the same seed |
 
 ### Split assignment
 
-Each family has a primary stratum: its direction and the lowest-ordinal kept lemma it contains (lemmas ordered as in
-the candidate table). Within each primary stratum, families are ordered by `h(split, family id)`; the `i`-th of `n`
-goes to the split whose cumulative proportion first exceeds `(i + 0.5) / n`:
+Each family has a primary stratum: its direction and the lowest-ordinal **declared** lemma it contains, in the order
+of the candidate table. The stratum never depends on which lemmas later gates keep, so step 3 fixes the split once and
+no lemma dropped at steps 2, 4, 5 or 7 moves a family. A family whose declared lemmas are all dropped stays in its
+split and contributes no items.
+
+Within each primary stratum, families are ordered by increasing `h(split, family id)` and indexed `i = 0, …, n − 1`.
+The family at index `i` goes to the first split, in the order of the table below, whose cumulative boundary exceeds
+`(i + 0.5) / n`; the boundaries are 0.05, 0.50, 0.70 and 1.00.
 
 | Split | Proportion | Use |
 | --- | --- | --- |
@@ -233,8 +247,8 @@ adjudication by a third person, translation-divergent stratum. Registered additi
 
 | Gate | Step | Rule |
 | --- | --- | --- |
-| Text | 2 | A `(direction, lemma)` stays only if, after splitting, it has at least 80 training, 40 validation and 60 held-out candidate families. Counts only |
-| Projection | 5 | For each cluster, the projection is `heldOutFamilies × p⁺`, where `p⁺` is the upper bound of the 80% Wilson interval of its pilot share. A cluster with projection below 30 is removed from the scored set (its items stay and are reported descriptively); a lemma left with fewer than two scorable clusters is dropped before step 6 |
+| Text | 2–3 | Step 2 counts occurrences and families; the gate is then read from the step-3 map, which does not depend on it, before step 4. A `(direction, lemma)` stays only if it has at least 80 training, 40 validation and 60 held-out candidate families. Counts only |
+| Projection | 5 | For each cluster, the projection is `min(heldOutFamilies, 120) × p⁺`, where 120 is the held-out annotation cap and `p⁺` is the upper bound of the 80% Wilson interval of its pilot share among pilot `ANS` items (an item with gold set `G` counts `1/|G|` toward each cluster in it). A cluster with projection below 30 is removed from the scored set (its items stay and are reported descriptively); a lemma left with fewer than two scorable clusters is dropped before step 6 |
 | Agreement | 7 | Drop a `(direction, lemma)` with pass-A α below 0.67 |
 | Minimum per sense | 7 | A `(direction, lemma, cluster)` is **scored** only with at least 30 held-out families whose gold set contains it |
 | Low-frequency | 7 | A cluster below 20% of its lemma's gold `ANS` occurrences is low-frequency. If none is scored in a direction, #185 states that low-frequency senses were not testable there |
@@ -252,20 +266,23 @@ pass-B labels, translations, alignments, family ids or split ids. A lemma with n
 arm.
 
 Training gold with a set `G` of `m` clusters contributes weight `1/m` to each cluster. `UNA` and `OOI` training items
-are used only by the abstention selection on validation, never as a class.
+are used by no arm; abstention behavior is selected on validation items only.
+
+**Training-file order** is defined once: training families in increasing `h(split, family id)`, then their occurrences
+in increasing `h(occurrence, ·)`. B's tie-break and W's vocabulary order both use it.
 
 | Arm | Definition | Forced choice and confidence `s` | Grid (points) |
 | --- | --- | --- | --- |
 | A — majority sense | Per `(direction, lemma)`, the cluster with the largest training weight | `k*` = that cluster; `s` = its training share. Always answers | none (1) |
 | B — nearest example | Jaccard similarity over the window token sets (target excluded) to every training item of the lemma; weighted vote of the `k` most similar, ties by lower item order in training-file order | `k*` = top vote; `s` = (top vote share) × (highest similarity). Abstain if `s < τ` | `k ∈ {1, 3, 5}` × `w ∈ {3, 5, S}` × `τ ∈ {0, 0.1, …, 0.9}` (90) |
-| C — contextual lexical | Multinomial naive Bayes per lemma over window tokens, Laplace `α`; tokens absent from training are ignored | `k*` = argmax posterior; `s` = its posterior. Abstain if `s < τ` | `α ∈ {0.1, 0.5, 1}` × `w ∈ {3, 5, S}` × `τ ∈ {0, 0.5, 0.55, …, 0.95}` (90) |
-| N — Neuron hypothesis/evidence | [Below](#arm-n-neuron-candidate) | `k*` = top-ranked hypothesis; `s` = its score. Abstain if `s < τ` | `λ ∈ {0.5, 1, 2}` × `w ∈ {3, 5, S}` × `τ ∈ {0, 0.1, …, 0.9}` (90) |
+| C — contextual lexical | Multinomial naive Bayes per lemma over window tokens, Laplace `α`; tokens absent from training are ignored | `k*` = argmax posterior; `s` = its posterior. Abstain if `s < τ` | `α ∈ {0.1, 0.5, 1}` × `w ∈ {3, 5, S}` × `τ ∈ {0, 0.55, 0.6, …, 0.95}` (90) |
+| N — Neuron hypothesis/evidence | [Below](#arm-n-neuron-candidate) | `k*` = top-ranked cluster; `s` = its score. Abstain if `s < τ` | `λ ∈ {0.5, 1, 2}` × `w ∈ {3, 5, S}` × `τ ∈ {0, 0.1, …, 0.9}` (90) |
 | W — wave tokens (optional) | [Below](#arm-w-optional-wave-token-representation) | as below | as below |
 
 ### Arm N: Neuron candidate
 
-For each item, one `Hypothesis` per inventory cluster (sequence = cluster ordinal), evaluated by the existing
-`ReferenceHypothesisEvaluationPolicy` with `HypothesisScoringConfig.NONE` (evidence only; no resonance component,
+For each item, one candidate per inventory cluster, scored with the evidence formula of the existing
+`ReferenceHypothesisEvaluationPolicy` under `HypothesisScoringConfig.NONE` (evidence only; no resonance component,
 since G2 is a no-go and a three-scalar `FrequencyState` cannot carry a context):
 
 ```text
@@ -282,10 +299,16 @@ weight = min(1, λ · |d| · log2(1 + n(c)))
 relation = SUPPORTS if d > 0, CONTRADICTS if d < 0, none if d = 0
 ```
 
-Each window token position yields at most one `SignalEvidence` per hypothesis, with `signalSequence` = the token's
-position in the sentence (provenance only: no `Signal` or `FrequencyState` encodes text). Per hypothesis the 16
-largest weights are kept (`HypothesisLimits.DEFAULT`), ties to the lower position. Ties in score rank the lower
-ordinal first, as the policy does.
+Each window token position yields at most one cue per cluster, held in an evaluation-side cue record
+`(cluster ordinal, token position, relation, weight)`. No core type is repurposed: no `Signal`, `FrequencyState` or
+`SignalEvidence` carries text or token positions. Per cluster the 16 largest weights are kept (the bound of
+`HypothesisLimits.DEFAULT`), ties to the lower position. Ties in score rank the lower ordinal first, as the policy does.
+
+N is a reference scorer in the evaluation module, following the pattern of ADR 0050's `FeatureConceptScorer`. Check
+`n.policy-equivalence` ties it to core: for every validation item, the same weights are passed, outside any cognitive
+cycle, to `ReferenceHypothesisEvaluationPolicy` as a `HypothesisSet` built in cluster-ordinal order (so the
+`Hypothesis` sequence equals the 0-based ordinal) whose `SignalEvidence` entries carry the opaque indices `0..m − 1`.
+That oracle check is the only place `SignalEvidence` appears, and it requires bit-identical scores and ranking.
 
 Properties registered as expected behavior, to be checked rather than assumed: a context with no known token has
 score `0` for every cluster, so N abstains whenever `τ > 0` (unknown tokens and unfamiliar contexts produce no
@@ -313,8 +336,9 @@ What the encoding is (read from `WordWaveTokenizer` at the pinned commit):
 - Id `i` maps to `sin(2π·f₁·t/L) + 0.5·sin(2π·f₂·t/L + φ)` with `f₁ = i mod 7 + 1`, `f₂ = i mod 13 + 1`,
   `φ = (i mod 5)·π/4`; `<pad>` is the zero vector.
 - Consequences documented in advance, each to be confirmed by a check in #185:
-  1. **455-id collisions.** The waveform depends only on `i mod 455` (`455 = lcm(7, 13, 5)`), so ids `i` and
-     `i + 455` are identical. Collisions follow vocabulary order, not meaning.
+  1. **455-id collisions.** For ids `i ≥ 1`, the waveform depends only on `i mod 455` (`455 = lcm(7, 13, 5)`), so ids
+     `i` and `i + 455` are identical. `<pad>` (id 0) is the zero vector, so id 455 does not equal it. Collisions
+     follow vocabulary order, not meaning.
   2. **ID-order dependence.** The same token gets a different wave when the fitting text order changes.
   3. **Rank bound.** For `L ≥ 27`, every token wave lies in the span of sines and cosines of frequencies `1..13`, so any
      sum or mean of token waves lies in a subspace of dimension at most 26.
@@ -324,7 +348,7 @@ Registered construction, inside the evaluation module only, with no DJL, PyTorch
 
 - The formula is re-implemented and checked bit-for-bit against fixture vectors generated offline from the pinned
   commit (check `w.reference-equivalence`); the fixture file and the command that produced it are committed.
-- Vocabulary fitted on training windows only, in training-file order (families in `split` hash order), limit 20,000,
+- Vocabulary fitted on training windows only, in [training-file order](#arms), limit 20,000,
   `L = 64`.
 - Representation: mean of the window's token waves. Classifier: per-lemma nearest class centroid by cosine over the
   training weights; `k*` = nearest; `s` = softmax of cosines at temperature `0.1`, top probability. Abstain if `s < τ`.
@@ -353,9 +377,11 @@ Per arm, per direction, per lemma, per scored sense and per stratum:
   direction.
 - **Coverage** on `ANS`, **selective accuracy** on answered `ANS`, **abstention precision and recall** for
   `UNA ∪ OOI`, separately for `UNA` and `OOI`.
-- **Risk-coverage curve and AURC** over all held-out items of scored lemmas, ranked by `s` (ties: item order), where
-  risk counts wrong answers on `ANS` and any answer on `UNA`/`OOI`.
-- **Abstention AUROC**: `1 − s` as a detector of `UNA ∪ OOI` against `ANS`.
+- **Risk-coverage curve and AURC** over all held-out items of scored lemmas, ranked by decreasing `s`, where risk
+  counts wrong answers on `ANS` and any answer on `UNA`/`OOI`. Tied scores form one block: the curve steps once, to the
+  block's combined coverage and mean risk, so the result does not depend on item order (an arm with a constant `s`
+  per lemma, such as A, gets one step per distinct value).
+- **Abstention AUROC**: `1 − s` as a detector of `UNA ∪ OOI` against `ANS`; a tied pair counts ½.
 - **Calibration**: ECE of `s` against forced correctness on `ANS` (10 equal-mass bins) and the Brier score.
   Reported; not a gate.
 - **Constant bound** `Macro_const`: for each lemma, the best held-out sense-macro accuracy of always choosing one
@@ -393,10 +419,11 @@ a task where A is often above 0.5. Per-sense intervals at n = 30 (about ±0.17) 
 | `leakage.sealed-hash` | Held-out gold SHA-256 equals the hash committed at step 7 |
 | `leakage.inventory-hash` | The inventory hash equals the one committed before calibration (step 4 starts); the guideline hash equals the one committed when calibration ends, before the pilot (step 5) |
 | `nc.label-permutation` | N and C refitted with training labels permuted within each lemma: held-out `Macro` at most `Macro_const + 0.05` |
-| `nc.context-mask` | N with every window token masked: every hypothesis scores exactly `0`, `k*` is the lowest-ordinal cluster of each lemma (the policy's tie-break), and N abstains on every item when `τ > 0`. Checked structurally, not by an accuracy bound |
+| `nc.context-mask` | N with every window token masked: every cluster scores exactly `0`, `k*` is the lowest-ordinal cluster of each lemma (the policy's tie-break), and N abstains on every item when `τ > 0`. Checked structurally, not by an accuracy bound |
 | `nc.heldout-counterfactual` | Held-out labels permuted: every arm's outputs bit-identical, metrics change |
-| `unseen-lemma.abstain` | Every arm abstains on every unseen-lemma item |
-| `w.reference-equivalence` | (If W runs) waves equal the pinned-commit fixtures bit-for-bit, and the four documented consequences hold |
+| `unseen-lemma.abstain` | At least one unseen-lemma item exists, and every arm abstains on every one |
+| `n.policy-equivalence` | N's scores and ranking equal `ReferenceHypothesisEvaluationPolicy`'s bit-for-bit on every validation item ([Arm N](#arm-n-neuron-candidate)) |
+| `w.reference-equivalence` | (If W runs) waves equal the pinned-commit fixtures bit-for-bit, and the four documented consequences hold as stated (consequence 1 for ids `i ≥ 1`) |
 | `determinism` | A second full run is bit-identical in outputs, selections and intervals |
 | `budget` | Resource limits below are respected |
 
@@ -451,7 +478,9 @@ A NO-GO or NOT TESTABLE in either direction closes sentence translation for Epic
 ## Execution order
 
 Steps 2 to 8 of the [feasibility report](bilingual-sense-feasibility.md#executable-order) run in order, with the rules
-of this document. No system output enters any step before 8. #185 may build and unit-test the harness on synthetic or
+of this document, with one recorded refinement: the feasibility report applies the text gate at step 2, before the
+split. Here step 2 counts, step 3 forms the split from the declared lemmas alone, and the text gate is then read from
+the step-3 map before step 4, so no gate outcome can move a family. No system output enters any step before 8. #185 may build and unit-test the harness on synthetic or
 training-split data at any time; it may read the held-out split only at step 8, once.
 
 ## Review against Epic #182
@@ -486,4 +515,16 @@ training-split data at any time; it may read the held-out split only at step 8, 
     and the 3-gram pass uses exact prefix filtering;
   - the guideline hash is the one committed after calibration, not before it;
   - the negative controls compare against the constant bound `Macro_const` and a structural masking check instead of
-    `Macro(A)`, which set-valued gold does not make a ceiling.
+    `Macro(A)`, which set-valued gold does not make a ceiling;
+  - the primary stratum uses the declared lemmas, so the split no longer depends on later gates, and the text gate is
+    read from the step-3 map;
+  - the split quantile states a 0-based index and the cumulative boundaries;
+  - the projection gate applies the 120-family held-out cap and defines the pilot share over `ANS` items;
+  - AURC and AUROC handle tied scores as blocks instead of by item order;
+  - C's threshold grid has 10 values, so every grid has 90 points;
+  - Europarl families come from the `file_id` column of `europarl-v10.es-en.tsv.gz`, validated at step 2;
+  - N carries cues in an evaluation-side record and is checked against the core policy (`n.policy-equivalence`),
+    instead of storing token positions in `SignalEvidence`;
+  - unseen-lemma items come from families already in held-out;
+  - training `UNA`/`OOI` items are used by no arm, and training-file order and the bootstrap seed are defined once;
+  - the 455-id collision rule excludes `<pad>` (id 0).

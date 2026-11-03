@@ -23,8 +23,8 @@ to ADR 0050, and how a result may or may not lead to sentence translation.
    validation-only selection rule, metrics, margins, checks, resource limits and a per-direction verdict rule.
    Changing any of them after the count audit starts is a new protocol version, and the held-out split is single-use.
 2. **Evaluation-only ownership.** Harness, arms and checks belong to `monada-neuron-evaluation`. The Neuron candidate
-   is built from the existing `Hypothesis`, `SignalEvidence` and `ReferenceHypothesisEvaluationPolicy` without changing
-   them. Core gains no type, dependency, `Signal` change or default. Corpora, annotation tools and aligners stay
+   reproduces the evidence formula of `ReferenceHypothesisEvaluationPolicy` and is verified bit-identical against it;
+   no core type is changed or repurposed. Core gains no type, dependency, `Signal` change or default. Corpora, annotation tools and aligners stay
    offline tooling. The annotated dataset is evaluation data, not cognitive memory; persistent memory stays with
    Monada Resonance Store.
 3. **The wave arm is optional and cannot satisfy ADR 0050.** A token-id waveform is a derived encoding of the same
