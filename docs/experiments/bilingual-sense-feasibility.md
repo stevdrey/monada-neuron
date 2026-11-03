@@ -8,6 +8,7 @@
 | Kind | Feasibility report. It precedes the protocol (#184) and the evaluation (#185) |
 | Audit date | 2026-11-03 |
 | Method | Manual desk audit of public pages and papers (below). No dataset archive was downloaded, no example was labeled and no model was trained or run |
+| Protocol | Step 1 is registered as [`bilingual-sense/1`](bilingual-sense-v1.md) (#184, [ADR 0051](../adr/0051-bilingual-sense-evaluation-protocol.md)) |
 | Code changes | None. The runtime, `Signal`, defaults and the opt-in NCM stage are unchanged |
 | Verdict | **Conditionally feasible, narrowed.** No existing dataset can serve as held-out evidence for both directions. The task is feasible only with a new, small, independently annotated dataset over redistributable source text, limited to a pre-declared set of target lemmas. Low-frequency senses enter the evaluation only where they pass the frozen gates of the [executable order](#executable-order) (text counts, pilot projection, then held-out gold counts); otherwise they are reported descriptively or dropped |
 
