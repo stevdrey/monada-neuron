@@ -2,8 +2,8 @@
 
 **Contract identifier**: `ncm-wave-cognition/2` (major revision of `ncm-wave-cognition/1`, Section 17; the file name is
 kept for link stability)
-**Status**: Accepted (issue #121; experimental and opt-in; implemented in part by #122, #123, #124, #125, #126, #127,
-#128 and #129, see Sections 4 to 10.2)
+**Status**: Accepted (issue #121; experimental and opt-in; implemented by #122 to #129, see Sections 4 to 10.2;
+evaluated by #130: G5 **no-go**, [ADR 0050](../adr/0050-ncm-investment-decision.md))
 **Parent**: Epic #120, Hierarchical Wave Cognition
 **Decision record**: [ADR 0034](../adr/0034-ncm-is-hierarchical-prediction-not-the-prism.md)
 **Composes, unchanged**: [ADR 0001](../adr/0001-cognition-memory-boundary.md),
@@ -789,7 +789,9 @@ the registered margins and adds none for H2 to H6. Changing a margin after seein
   It reads a test label, so it is reported as a labelled upper reference and never used by a gate.
 - **B**: spectral-only nearest centroid, flat over leaf concepts, no resonance and no hierarchy. Delivered by #127 for
   G3.
-- **C**: DFT plus resonance plus hierarchy, the system under test at G3. Delivered by #127.
+- **C**: DFT plus resonance plus hierarchy, the system under test at G3. Delivered by #127. Because G2 is no-go, C
+  runs without resonance features (Section 8); #130 re-tests the phase-sensitive coherence as a feature in its own arms
+  (C+coh, D-haar+coh).
 - **C-flat**: C with the hierarchy removed: the same features (including resonance, or without it exactly when C runs
   without it), the same scoring inputs and thresholds rule, flat over the leaf concepts, at the same work budget. It is
   the control for H4, so that comparison changes only the hierarchy. Delivered by #127. B remains the spectral-only
@@ -797,12 +799,16 @@ the registered margins and adds none for H2 to H6. Changing a margin after seein
 - **D**: C with Haar and coherence features. Delivered by #130. Ablation configuration: the host constructs
   `new HaarWaveDecomposer(L)` explicitly (for the medium workload `N = 256`, any `L` in `1..8`, reported with the
   run) next to `DftWaveDecomposer`; nothing selects wavelets by default, and dropping D (G1h no-go) removes only
-  that construction.
+  that construction. Implemented by #130 in the evaluation module only: the core predictor stays DFT-only, and a
+  reference scorer that is bit-identical to it over DFT features scores Haar and coherence features
+  ([ncm-ablation-v1.md](../experiments/ncm-ablation-v1.md)).
 - **E**: C or D with validated feedback. Delivered by #129 for G5, reused by #130.
 - Scalar control for H2: `ScalarResonanceMetric` on the dominant-component projection. Delivered by #125 for G2.
 
-Each gate's evidence is therefore produced before the gate is evaluated; #130 consolidates every control over all
-workloads, adds D and the large-workload resource measurements, and publishes the final report.
+Each gate's evidence is therefore produced before the gate is evaluated. #130 consolidates every control on the medium
+workload and the subsets of [ncm-ablation-v1.md](../experiments/ncm-ablation-v1.md) on the tiny and large workloads (C
+and D on both, plus A and B at large; coherence and feedback at medium only). It adds D and the large-workload resource
+measurements, and publishes the final report.
 
 ### 14.3 Metrics
 
@@ -835,7 +841,7 @@ around by widening scope.
 | G2 | #125 (with the generator and scalar control) | H2 holds | Spectral resonance stays a diagnostic only; #127 may still proceed without resonance features, and the report says so |
 | G3 | #127 (with controls A, B, C and C-flat) | H3 and H6 hold on the medium workload | Publish the negative result; no default integration. Under `/1` this stopped #128; under `/2` #128 may integrate as an experimental opt-in without claim of benefit. **Evaluated: no-go** ([next-concept-g3.md](../benchmarks/next-concept-g3.md)) |
 | G4 | #128 | All existing tests pass unchanged; N13 holds; budgets honored | Revert to library-only use; no default change. **Evaluated: go** (ADR 0044; the only test edit is the exhaustive `Evidence` switch of the analytic footprint model) |
-| G5 | #129 (H5 with control E), #130 | H5 holds or is reported negative; #130 publishes the go/no-go report with every control | The report's decision is binding for further investment. **Part 1 evaluated: H5 negative** ([next-concept-g5.md](../benchmarks/next-concept-g5.md)); #130 still owes the consolidated report |
+| G5 | #129 (H5 with control E), #130 | H5 holds or is reported negative; #130 publishes the go/no-go report with every control | The report's decision is binding for further investment. **Evaluated: no-go**: H5 negative ([next-concept-g5.md](../benchmarks/next-concept-g5.md)); no control passes the registered G3 rule ([ncm-ablation.md](../benchmarks/ncm-ablation.md), [ADR 0050](../adr/0050-ncm-investment-decision.md)) |
 
 The Epic may end after any gate with a documented negative result. That is a valid outcome of the experiment.
 
@@ -867,7 +873,7 @@ prerequisites. The graph is acyclic; no issue builds on a descendant.
 | #127 | `ConceptHierarchy`, `NextConceptPredictor`; controls A, B, C, C-flat and the H3, H4, H6 evaluation | #122, #125 | `monada.neuron.reasoning` (new types only), `monada-neuron-evaluation` | G3 |
 | #128 | Opt-in cycle integration, typed hand-off | #126, #127 (G3 evaluated) | stages, host wiring | G4 |
 | #129 | Feedback and caller-owned snapshots; control E and the H5 evaluation | #127, #128 | `monada.neuron.evolution`, `monada-neuron-evaluation` | G5 |
-| #130 | Consolidated ablation over all workloads, control D, large-workload resources, go/no-go report | #123 to #129 | `monada-neuron-evaluation` | G5 |
+| #130 | Consolidated ablation (every control on the medium workload, subsets on tiny and large), control D, large-workload resources, go/no-go report | #123 to #129 | `monada-neuron-evaluation` | G5 |
 
 The evaluation pieces assigned to #125, #127 and #129 are scope additions relative to those issues' current text; each
 issue is updated to cite this table before it starts. #124 and #125 may proceed in parallel after #123 (#125 once G1 is go); #126 and #127 may proceed in parallel after their prerequisites.
@@ -893,6 +899,11 @@ issue is updated to cite this table before it starts. #124 and #125 may proceed 
   and registers the H5 margin (`0.02`) and minimum coverage (`0.60`) in
   [next-concept-g5.md](../benchmarks/next-concept-g5.md). No formula, tolerance, hypothesis, margin rule or earlier
   verdict changes.
+- `/2`, minor (issue #130, ADR 0050): implements control D in the evaluation module (Section 14.2), adds the
+  large-workload fixture `ncm-concept-fixture-large-v1` and the consolidated protocol
+  [`ncm-ablation/1`](../experiments/ncm-ablation-v1.md), and records G5 as no-go. Deviation: every control runs on
+  the medium workload, but only subsets run on tiny and large (protocol matrix). Coherence and feedback are validated
+  at the medium scale only. No formula, tolerance, hypothesis, margin rule or earlier verdict changes.
 
 ## 18. References
 
@@ -902,6 +913,8 @@ issue is updated to cite this table before it starts. #124 and #125 may proceed 
 - [ADR 0042](../adr/0042-reference-wave-synthesizer.md): reference wave synthesizer (#126).
 - [ADR 0043](../adr/0043-hierarchical-next-concept-predictor.md): hierarchical next-concept predictor (#127).
 - [ADR 0044](../adr/0044-opt-in-wave-cognition-reasoning-stage.md): opt-in wave cognition reasoning stage (#128).
+- [ADR 0049](../adr/0049-bounded-concept-model-outcome-feedback.md): bounded concept model outcome feedback (#129).
+- [ADR 0050](../adr/0050-ncm-investment-decision.md): NCM investment decision after the consolidated ablation (#130).
 - [ADR 0001](../adr/0001-cognition-memory-boundary.md): cognition and memory boundary.
 - [ADR 0005](../adr/0005-signals-without-identifiers.md): signals without identifiers.
 - [ADR 0006](../adr/0006-deterministic-scalar-resonance-metric.md): deterministic scalar resonance metric.

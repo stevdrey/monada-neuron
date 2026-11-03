@@ -107,6 +107,15 @@ tasks.register<JavaExec>("runNextConceptG5") {
     args(quotedBenchmarkArgs())
 }
 
+// Consolidated NCM ablation and go/no-go report (Issue #130; protocol pre-registered in docs/experiments/ncm-ablation-v1.md).
+tasks.register<JavaExec>("runNcmAblation") {
+    group = "benchmark"
+    description = "Runs every NCM control over the tiny, medium and large workloads and publishes the go/no-go report (Issue #130)"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("monada.neuron.evaluation.wave.NcmAblationRunner")
+    args(quotedBenchmarkArgs())
+}
+
 tasks.register<JavaExec>("jmh") {
     group = "benchmark"
     description = "Runs JMH microbenchmarks"

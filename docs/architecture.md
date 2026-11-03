@@ -608,8 +608,10 @@ by the `HostExecutionContext`, passes its input signals through unchanged, and h
 concept with a `SpectralEvidence` window reference to `EVALUATION`, under `WaveCognitionLimits`. No default composition
 includes it. `ConceptFeedbackPolicy` (issue #129, [ADR 0049](adr/0049-bounded-concept-model-outcome-feedback.md))
 turns caller-carried, verified `ConceptOutcome`s into a new caller-owned snapshot or leaves it unchanged; H5 is
-negative ([next-concept-g5.md](benchmarks/next-concept-g5.md)). Every other name below is a proposal owned by issue
-#130.
+negative ([next-concept-g5.md](benchmarks/next-concept-g5.md)). The consolidated ablation of issue #130 closes gate G5
+as **no-go** ([ncm-ablation.md](benchmarks/ncm-ablation.md)); [ADR 0050](adr/0050-ncm-investment-decision.md) keeps
+the pipeline an experimental opt-in with no further investment. Every name below is implemented; control D (Haar and
+coherence features) exists only in the evaluation module.
 
 ```text
 Host / modality encoder -> SampledWave (meaning, rate, unit, provenance: host owned)
