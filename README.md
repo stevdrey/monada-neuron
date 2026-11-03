@@ -388,6 +388,12 @@ meets the registered quality rule, the hierarchy and coherence add nothing, and 
 magnitudes. [ADR 0050](docs/adr/0050-ncm-investment-decision.md) keeps NCM an experimental opt-in with no further
 investment.
 
+Epic #182 researches a separate, bounded language task: selecting an English or Spanish expression for an ambiguous
+word in context, or abstaining. Its [data feasibility report](docs/experiments/bilingual-sense-feasibility.md)
+(issue #183) finds no openly redistributable, human-annotated set for both directions, so the task is feasible only
+with a new, independently annotated dataset over Tatoeba and Europarl text, family-disjoint splits and registered
+stop rules. It changes no code and does not reopen the NCM wave pipeline.
+
 ## Design Principles
 
 ### 1. Do not build an LLM wrapper
