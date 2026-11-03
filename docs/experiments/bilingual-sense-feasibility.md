@@ -9,7 +9,7 @@
 | Audit date | 2026-11-03 |
 | Method | Manual desk audit of public pages and papers (below). No dataset archive was downloaded, no example was labeled and no model was trained or run |
 | Code changes | None. The runtime, `Signal`, defaults and the opt-in NCM stage are unchanged |
-| Verdict | **Conditionally feasible, narrowed.** No existing dataset can serve as held-out evidence for both directions. The task is feasible only with a new, small, independently annotated dataset over redistributable source text, limited to a pre-declared set of target lemmas. Low-frequency senses enter the evaluation only where a count audit meets the minimums in [Stop rules](#stop-and-narrowing-rules); otherwise they are reported descriptively or dropped |
+| Verdict | **Conditionally feasible, narrowed.** No existing dataset can serve as held-out evidence for both directions. The task is feasible only with a new, small, independently annotated dataset over redistributable source text, limited to a pre-declared set of target lemmas. Low-frequency senses enter the evaluation only where they pass the frozen gates of the [executable order](#executable-order) (text counts, pilot projection, then held-out gold counts); otherwise they are reported descriptively or dropped |
 
 This report does not choose an implementation, a model or thresholds, and it does not claim that any label exists
 beyond what a cited source states. It does not inspect, and cannot inspect, any held-out result: none exists.
@@ -23,10 +23,10 @@ context is insufficient or the occurrence falls outside the inventory.
 | Element | Definition used for this assessment |
 | --- | --- |
 | Occurrence | One token span of a target lemma in one source sentence, identified by sentence id and character offsets |
-| Context | The source sentence only (optionally its immediate neighbours, if the source has document order). The aligned translation is the evidence for the label, never an input |
+| Context | The source sentence only (optionally its immediate neighbours, if the source has document order), exactly the window annotators see in the source-only pass. The aligned translation is never a system input |
 | Direction | `EN→ES` and `ES→EN`, evaluated and reported separately. A lemma pair in one direction is not evidence for the other |
 | Candidates | A fixed, per-lemma, per-direction inventory of sense clusters, each listing acceptable target expressions; frozen before annotation of any split |
-| Gold | A **set** of acceptable clusters (multiple valid answers allowed), or `UNANSWERABLE` (the context does not decide), or `OUT_OF_INVENTORY` (no cluster fits) |
+| Gold | Decided from the **source context alone** ([two-pass annotation](#proposed-responsible-annotation)): a **set** of acceptable clusters (multiple valid answers allowed), or `UNANSWERABLE` (the context does not decide), or `OUT_OF_INVENTORY` (no cluster fits). The translation may check inventory coverage but never makes an item answerable or narrows its set |
 | Abstention | A system output. It is correct on `UNANSWERABLE` and `OUT_OF_INVENTORY` items and counted as non-coverage elsewhere |
 
 ## Audit method (reproducible)
@@ -50,7 +50,7 @@ translation-selection set in the `ES→EN` direction**, and the `EN→ES` sets a
 | --- | --- | --- | --- | --- | --- |
 | SemEval-2010 Task 3 CL-WSD ([paper](https://aclanthology.org/S10-1003.pdf)) | `EN→ES` (and NL, FR, IT, DE); translation clusters from Europarl | 25 English nouns: 5 trial (20 sentences each), 20 test (50 each) [V] | Inventory clustered by one annotator; gold by three annotators per language, up to 3 weighted translations; no IAA reported [V] | Task host `lt3.hogent.be/semeval` no longer resolves; license [NV] | Reference only: one direction, nouns only, terms unknown |
 | SemEval-2013 Task 10 CL-WSD ([paper](https://aclanthology.org/S13-2029.pdf)) | `EN→ES` (and others); Europarl clusters | 20 nouns × 50 test sentences from the public ANC [V] | Three annotators per language; no IAA reported [V] | Host dead (HTTP 410); license [NV] | Reference only |
-| SemEval-2010 Task 2 CL-LexSub ([paper](https://aclanthology.org/S10-1002.pdf)) | `EN→ES` free-form substitutes; no inventory | 30 dev + 100 test words × 10 sentences [V] | Four annotators, pairwise IAA 0.2777 [V] | License, host [NV] | No: no inventory, low agreement |
+| SemEval-2010 Task 2 CL-LexSub ([paper](https://aclanthology.org/S10-1002.pdf)) | `EN→ES` free-form Spanish substitutes; no predefined sense inventory [V] | 30 dev + 100 test words, nouns, verbs, adjectives and adverbs; the same sentences as SemEval-2007 LEXSUB, ten per word, from the English Internet Corpus; no training data [V] | Four native Mexican-Spanish annotators, as many substitutes as they could; pairwise ITA 0.2777 [V] | Distribution site and license not stated in the paper [NV] | Reference only, for lemma choice and substitute candidates: not gold (see consequence 2) |
 | SemEval-2013 Task 12 ([paper](https://aclanthology.org/S13-2040.pdf)) | Monolingual ES and EN senses (BabelNet 1.1.1) over 13 parallel WMT news articles | ES: 1,481 BabelNet instances, 1.15 senses per instance [V] | One annotator per language, projection from English, reviewer on frequent lemmas; no IAA [V] | Host dead; license [NV]; BabelNet inventory is non-commercial | Indirect: monolingual senses, not translation choices |
 | SemEval-2015 Task 13 ([paper](https://aclanthology.org/S15-2049.pdf)) | Monolingual ES and EN senses (BabelNet 2.5.1) over 4 parallel OPUS documents | ES: 1,239 instances; EN: 1,261 [V] | Two taggers plus judge; agreed on at least one meaning for 68% [V]; multiple senses allowed | Open zip on the task's Data page; license [NV] | Indirect; only 4 documents, so splits are coarse |
 | XL-WSD ([site](https://sapienzanlp.github.io/xl-wsd/)) | ES senses (BabelNet), repackaging SemEval-2013/2015 | ES test 1,851, dev 452, silver train 393,539 [V, site chart data] | Inherited from the SemEval sets | CC BY-NC, sharing "only to research institutions" [V]; full license page 404 | No public redistribution of derived examples |
@@ -62,17 +62,23 @@ translation-selection set in the `ES→EN` direction**, and the `EN→ES` sets a
 Consequences:
 
 1. `ES→EN` has no human-annotated occurrence-level gold among the audited sources.
-2. The human-annotated `EN→ES` sets cover at most 20 to 25 nouns, their hosts are gone or closed, and their terms are
-   unknown. They cannot be redistributed or used as held-out evidence from this public repository on current
-   information.
+2. `EN→ES` has two kinds of human-annotated data, and neither can serve as held-out evidence from this public
+   repository on current information:
+   - **Sense or translation-cluster gold** (CL-WSD 2010 and 2013) covers 20 to 25 nouns; its hosts are gone and its
+     terms are unknown. DiBiMT's gold is closed.
+   - **Lexical substitution** (CL-LexSub 2010) covers more lemmas, 130 words across the open parts of speech, but its
+     labels are free-form substitutes with no inventory, so they become clusters only through new annotation. It has
+     about ten sentences per word, far below any per-sense minimum, low agreement (0.2777), no training data and an
+     unverified host and license.
 3. The open sense-annotated Spanish sets depend on BabelNet, whose license restricts use and redistribution to
    research institutions [V, [license](https://babelnet.org/full-license)].
 4. No audited dataset labels `UNANSWERABLE` contexts explicitly. Abstention gold must be created.
 
 ## Redistributable source text
 
-Source text supplies sentences; it supplies **no** sense label. The aligned translation is evidence an annotator
-reads, not a label.
+Source text supplies sentences; it supplies **no** sense label. The aligned translation is shown to annotators only
+after their source-only judgment, under the rules of [two-pass annotation](#proposed-responsible-annotation); it is
+never a label.
 
 | Source | Version and en-es size | Terms | Document structure | Fit |
 | --- | --- | --- | --- | --- |
@@ -104,7 +110,8 @@ CC BY-SA input makes the published inventory CC BY-SA.
 | [eflomal](https://github.com/robertostling/eflomal) | GPL-3.0 [V] | No |
 | [SimAlign](https://github.com/cisnlp/simalign) | MIT [V] | Yes (mBERT-like) |
 
-Alignment may only **pre-highlight** the candidate counterpart for the annotator; it never becomes a label. It runs
+Alignment may only **pre-highlight** the candidate counterpart in the translation-revealed pass B; it is hidden in
+the source-only pass A and never becomes a label. It runs
 offline as a tooling step and adds no dependency to any Neuron module.
 
 ## Feasibility by requirement
@@ -115,7 +122,7 @@ offline as a tooling step and adds no dependency to any Neuron module.
 | Occurrence-level alignment | Feasible: Tatoeba and Europarl give sentence alignment; occurrence spans are marked during annotation |
 | `EN→ES` | Feasible with new annotation. Existing CL-WSD/DiBiMT sets are reference material only |
 | `ES→EN` | Feasible only with new annotation. MuCoW's automatic labels may suggest lemmas but are not gold |
-| Low-frequency senses | **Not guaranteed.** Whether a source holds enough occurrences of a rare sense is unknown until the count audit below. Where minimums fail, that sense is dropped or reported descriptively |
+| Low-frequency senses | **Not guaranteed.** Whether a source holds enough occurrences of a rare sense is unknown until the count audit and pilot ([steps 2 and 4](#executable-order)). Where minimums fail, that sense is dropped or reported descriptively |
 | Multiple valid answers | Supported by set-valued gold |
 | Ambiguous / unanswerable cases | Must be created by annotators; no audited source labels them |
 | Unfamiliar inputs | Constructed from occurrences of non-inventory lemmas and inventory-external senses, labeled `OUT_OF_INVENTORY` |
@@ -130,12 +137,26 @@ offline as a tooling step and adds no dependency to any Neuron module.
 2. **Guidelines and calibration set.** Written guidelines with examples of every label, piloted on a calibration
    sample that is excluded from every split.
 3. **Two independent annotators per item**, bilingual (native in one language, proficient in the other), blind to
-   each other, to the system arms and to the split assignment. Each marks the occurrence span and selects the set of
-   acceptable clusters, or `UNANSWERABLE`, or `OUT_OF_INVENTORY`, with an optional note.
-4. **Adjudication** by a third person on disagreement; the adjudicated label is gold, and both raw labels are kept.
-5. **Agreement reporting** per lemma and direction: Krippendorff's α with a set distance (for example MASI) and the
-   abstention-label confusion between annotators. #184 registers the minimum α a lemma needs to stay in the
-   evaluation; a lemma below it is dropped before any held-out result is seen.
+   each other, to the system arms and to the split assignment. Each item is annotated in two passes, because the
+   aligned translation can reveal a sense the source does not determine.
+   - **Pass A (source only).** The annotator sees exactly the context a system receives, with the translation and any
+     alignment highlight hidden. They mark the occurrence span and select the set of acceptable clusters, or
+     `UNANSWERABLE`, or `OUT_OF_INVENTORY`, with an optional note. Pass A is locked when submitted.
+   - **Pass B (translation revealed).** The same annotator records the cluster the translation realizes, or
+     "none / unclear". Pass B is diagnostic; it cannot edit pass A.
+4. **Adjudication** by a third person when the pass-A labels disagree. The adjudicator first sees only the source
+   and both pass-A labels and decides from the source. Only then may they consult pass B and the translation, and
+   only to check inventory coverage (an `OUT_OF_INVENTORY` miss) or to find a source cue an annotator overlooked; a
+   change on that ground cites the source span that justifies it. A translation alone never turns `UNANSWERABLE` into
+   an answerable item and never narrows a source-only set. The adjudicated label is gold; all raw labels are kept.
+   - **Translation-divergent items** keep their source-only gold and are reported as their own stratum: the
+     translation attests a cluster outside the gold set, or the gold is `UNANSWERABLE` although a translation exists.
+     Example: «Se acercó al banco» is `UNANSWERABLE` between *bank* and *bench* from the source alone, even when its
+     translation says *bank*; a system that abstains there is correct.
+5. **Agreement reporting** per lemma and direction on pass A: Krippendorff's α with a set distance (for example MASI)
+   and the abstention-label confusion between annotators. The pass-A versus pass-B divergence rate is reported as a
+   diagnostic. The minimum α a lemma needs is frozen at [step 1](#executable-order) and applied at step 7; a lemma
+   below it is dropped before any system is run.
 6. **Contrastive and ambiguous items.** Annotators mark naturally occurring minimal-context pairs; a constructed
    contrastive sentence is allowed only if labeled as constructed and kept in its own reported stratum.
 7. **Privacy.** Store sentence ids, offsets and labels, not Europarl speaker names; Tatoeba attribution is by sentence
@@ -154,10 +175,11 @@ offline as a tooling step and adds no dependency to any Neuron module.
   signals". Nothing in this report reopens investment in the NCM wave pipeline; a protocol that wants to rely on the
   old pipeline must satisfy ADR 0050 Decision item 5 separately.
 
-## Partition proposal (input to #184)
+## Partition proposal (frozen at step 1, applied at step 3)
 
-Splitting happens on **families**, never on sentences, and before any annotation of the held-out families is read
-by anyone tuning a system.
+Splitting happens on **families**, never on sentences. Every parameter below is frozen in the #184 preregistration
+([step 1](#executable-order)), and families are assigned ([step 3](#executable-order)) before any of them is
+annotated.
 
 | Source | Family unit |
 | --- | --- |
@@ -178,40 +200,49 @@ Assignment:
    one translation pair cannot leak across directions.
 4. Strata reported separately in #185: seen lemma in a new family (new context), contrastive, `UNANSWERABLE`,
    `OUT_OF_INVENTORY`, and memorization (a training-family probe, never counted as held-out).
-5. Held-out labels are sealed: produced and adjudicated, but no system is run on them until the protocol is frozen.
+5. Held-out labels are sealed: produced and adjudicated, but no system is run on them until the step-7 gates pass.
 
-## Stop and narrowing rules
+## Executable order
 
-These are proposals for #184 to register; they are not results.
+Every rule is frozen before the data it governs is read, and each gate is applied mechanically after the step that
+produces its input. No system output enters any step before 8. Nothing below has been run; this report is step 0.
 
-- **Minimum per sense.** A (direction, lemma, cluster) enters the scored evaluation only if the held-out split holds
-  at least 30 independent families with that gold cluster. At n = 30 the 95% Wilson interval for an accuracy near
-  0.5 is about ±0.17; below that, per-sense results are reported descriptively only.
-- **Low-frequency senses.** A cluster under 20% of its lemma's occurrences is "low-frequency". If none reaches the
-  minimum in a direction, the report states that low-frequency senses were not testable in that direction rather
-  than pooling them.
-- **Minimum per direction.** At least 4 lemmas that each keep two or more clusters above the minimum. If a direction
-  fails, that direction is stopped and the other proceeds alone, stated as such.
-- **Agreement.** Lemmas below the registered α are dropped before held-out evaluation.
-- **Global stop.** If neither direction meets its minimum, #184 is not started on this data and the epic records a
-  data no-go.
+| Step | Where | Reads | Produces | Frozen beforehand |
+| --- | --- | --- | --- | --- |
+| 0 | #183 (this report) | Public pages and papers | Feasibility, proposals | — |
+| 1 | #184 preregistration commit, before any corpus download | This report | The frozen protocol: source versions and checksum policy; lemma candidates and form lists (annotation step 1); the inventory freeze rule; family definitions, near-duplicate threshold, hash seed and split proportions; the pilot sample size and seed; the guideline revision policy; the minimum α; the text, projection and data gates below; the evaluation arms, metrics and margins for #185 | — |
+| 2 | Count audit, after step 1 | Corpus text only, no labels. Tatoeba `sentences`, `links`, `sentences_base` and the Europarl v10 `es-en` TSV, with file names, sizes, dates and SHA-256 recorded | Occurrence and family counts per (direction, lemma); the lemma list after the **text gate** | Step 1 |
+| 3 | Split assignment | Family ids | Family-to-split map; held-out families sealed | Step 1 (seed, proportions, families) |
+| 4 | Pilot | A fixed-seed sample from **training families only**, two-pass annotated | Estimated cluster shares; clusters and lemmas kept after the **projection gate** | Steps 1 to 3 |
+| 5 | Calibration | A calibration sample excluded from every split | The frozen guidelines; revisions allowed only here | Step 1 (revision policy) |
+| 6 | Full annotation | Every split, two-pass, with adjudication | Gold, raw pass-A and pass-B labels | Step 5 guidelines |
+| 7 | Data gates | Gold counts and pass-A agreement only; no system output | Pass or fail per (direction, lemma, cluster), with counts, recorded in a revision of this report | Step 1 (gates) |
+| 8 | #185 | The sealed held-out split, for the first time by any system | Results under the step-1 evaluation protocol | Steps 1 and 7 |
+
+Gate proposals for step 1 to freeze (they are not results):
+
+- **Text gate (step 2).** A lemma stays only if it has enough candidate families in a direction to fill the
+  registered training, validation and held-out quotas for at least two clusters at the minimum below. This gate is
+  based on counts alone.
+- **Projection gate (step 4).** For each cluster, the projected held-out count is the held-out families of the lemma
+  times the cluster's pilot share. A cluster whose projection is below the minimum per sense is dropped before
+  held-out annotation, so no effort is spent on items that cannot pass. Pilot labels come from training families,
+  are not gold for any evaluation and are not re-used as held-out items.
+- **Minimum per sense (step 7).** A (direction, lemma, cluster) enters the scored evaluation only if the held-out
+  split holds at least 30 independent families with that gold cluster. At n = 30 the 95% Wilson interval for an
+  accuracy near 0.5 is about ±0.17. Below that, per-sense results are reported descriptively only.
+- **Low-frequency senses (step 7).** A cluster under 20% of its lemma's gold occurrences is "low-frequency". If none
+  reaches the minimum in a direction, #185 states that low-frequency senses were not testable in that direction,
+  rather than pooling them.
+- **Agreement (step 7).** Lemmas whose pass-A α is below the frozen minimum are dropped.
+- **Minimum per direction (step 7).** At least 4 lemmas that each keep two or more clusters above the minimum. If a
+  direction fails, that direction is stopped and the other proceeds alone, stated as such.
+- **Global stop (steps 2, 4 or 7).** If neither direction can still meet its minimum, #185 runs no system on this
+  data and the epic records a data no-go.
 
 Rough budget, for planning only: 6 lemmas per direction × 3 clusters × (30 held-out + 20 validation + 40 training)
-families is about 3,240 occurrences and about 6,500 single annotations before adjudication. The real count depends on
-the audit below.
-
-## Count audit to run before #184 (not run here)
-
-This step reads candidate text, not labels. It must be run before #184 freezes the lemma list, and it reports only
-lemma occurrence counts and family counts per source, never sense labels or system output.
-
-1. Download the Tatoeba `sentences`, `links` and `sentences_base` exports and the Europarl v10 `es-en` TSV, recording
-   file names, sizes, dates and SHA-256 in the report revision.
-2. For each declared lemma and direction, count occurrences (lemma form list frozen in advance) and distinct families.
-3. Draw a fixed-seed sample of 50 occurrences per lemma from **training families only**, and have one annotator
-   estimate the cluster distribution. This estimate decides whether the low-frequency minimums are plausible; it
-   is not gold and never enters an evaluation.
-4. Narrow the lemma list or stop according to the rules above, and record the decision.
+families is about 3,240 occurrences and about 6,500 single pass-A annotations before adjudication. The real count
+depends on steps 2 and 4.
 
 ## Gaps and open checks
 
@@ -220,13 +251,13 @@ lemma occurrence counts and family counts per source, never sense labels or syst
 - Whether OMW's Spanish file maps to PWN 3.0 offsets as assumed [NV].
 - The legal status of Wiktionary-derived extracts beyond the CC BY-SA inheritance [NV].
 - UN corpus redistribution terms [NV].
-- The occurrence and per-sense counts in any candidate source: unknown until the count audit.
+- The occurrence and per-sense counts in any candidate source: unknown until steps 2, 4 and 7 of the executable order.
 
 ## Limitations
 
 - The audit relied on public pages and papers; dead hosts and unreachable pages are reported as such, not guessed.
 - Counts quoted from papers describe their releases, not files this project has checked.
-- The minimums and the budget are design proposals for #184, not measurements.
+- The minimums and the budget are design proposals for the #184 preregistration to freeze, not measurements.
 - Tatoeba sentences are short and partly written to be translated; results on them may not transfer to longer or
   natural text. Europarl is formal parliamentary speech. Both biases are reported strata, not corrected away.
 
