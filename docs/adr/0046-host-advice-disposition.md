@@ -113,6 +113,10 @@ Only the last two are evidence, and only through the feedback path. A dispositio
   through the existing factories, with no new API ([forge-host-fixture-v1.md](../specs/forge-host-fixture-v1.md)).
 - The host scenario suite (#103) should assert "disposition alone earns zero credit" by driving `RoutingFeedbackPolicy`
   with and without dispositions and seeing identical state.
+  Done: [`forge-host-scenarios.md`](../benchmarks/forge-host-scenarios.md) asserts it more strictly than comparing
+  runs. `host.disposition.no-credit-path` traces every applied update to a followed task that ran the advice and finds
+  no observation for any task the host ran nothing for, and `host.override.executed-route-only` shows an alternative
+  execution derives `PROVENANCE_MISMATCH` and credits no route.
 - If a host ever needs "cut by truncation" apart from "never seen", add an `UNLISTED_IN_DECISION` standing in a
   `routing-advice-disposition/2`, never by reinterpreting `HOST_CLAIM`.
 - When issue #165 is reopened, list `DispositionBoundaryTest` in it so the source path fix covers four boundary tests.

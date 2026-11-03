@@ -645,7 +645,9 @@ no numeric limit, as #98 does, there is nothing to move into the Section 9.1 tab
   this contract;
 - host fixture bounds, `implemented by issue #102` ([`forge-host-fixture-v1.md`](forge-host-fixture-v1.md), Section 4):
   the fixture exercises only inputs within the Section 9.1 bounds and adds no numeric limit of its own;
-- evaluation suite fixture sizes, `proposed, owned by issue #103`.
+- evaluation suite fixture sizes, `implemented by issue #103`
+  ([`forge-host-scenarios.md`](../benchmarks/forge-host-scenarios.md)): six scenarios of 16 to 32 tasks, 144 in all,
+  every one within the Section 9.1 bounds; the suite adds no numeric limit of its own.
 
 ## 10. Examples
 
@@ -827,7 +829,9 @@ with the same numbers (v1 Section 1 cites Store issues 99 and 100), which are ne
   ([ADR 0045](../adr/0045-checkpoint-recovery-diagnostics.md)).
 - `implemented by issue #102`: the Forge like external host fixture that enforces the host guard in code,
   `consumer-fixture/forge-host` ([`forge-host-fixture-v1.md`](forge-host-fixture-v1.md)).
-- `proposed, owned by issue #103`: the host scenario evaluation suite.
+- `implemented by issue #103`: the host scenario evaluation suite, `HostScenarioEvaluation` in
+  `monada-neuron-evaluation` (`./gradlew :monada-neuron-evaluation:runForgeHostScenarioEvaluation`), write up
+  [`forge-host-scenarios.md`](../benchmarks/forge-host-scenarios.md).
 
 Receipts (`implemented by issue #97`) joined the never permission list of Section 2.2 with a minor bump, and
 dispositions (`implemented by issue #98`) joined it with another.
@@ -856,11 +860,13 @@ dispositions (`implemented by issue #98`) joined it with another.
 - Every relative link in this document resolves in this repository; every Forge link resolves at commit
   `56c35e05bb94d4d97e49b59c138fbaed66036ecd`.
 - No sentence states or implies that a Forge phase beyond 1 is implemented.
-- In the issue #94 revision, every mention of issues #95 to #103 carried `proposed, owned by issue`; issue #103
-  still carries `proposed`, #95 is `implemented by issue #95, Section 5.4`, #96 is
+- In the issue #94 revision, every mention of issues #95 to #103 carried `proposed, owned by issue`; #103 is now
+  `implemented by issue #103`, #95 is `implemented by issue #95, Section 5.4`, #96 is
   `implemented by issue #96, Section 5.5`, #97 is `implemented by issue #97`, #98 is `implemented by issue #98`, #99 is
   `implemented by issue #99`, #100 is `implemented by issue #100`, #101 is `implemented by issue #101` and #102 is
   `implemented by issue #102`.
+- The issue #103 revision marks Sections 9.2 and 11.2 as implemented for the host scenario suite; it adds no type of
+  this contract's own, no numeric limit and no field table classification change, and touches no core Neuron source.
 - The issue #102 revision marks Sections 6.1, 9.2 and 11.2 as implemented for the host fixture only; it adds no type of
   this contract's own, no numeric limit and no field table classification change, and `./gradlew forgeHostConsumerTest`
   runs the fixture in both module forms against the published core alone.

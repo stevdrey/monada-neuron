@@ -595,3 +595,6 @@ Observations, not conclusions:
 
   It verifies packaging, resolution, ownership and the semantic path, not routing quality, cost or latency. It records
   no timing or allocation measurement, and none of its output is evidence of effectiveness.
+- **Host dispositions are covered elsewhere.** This harness always runs the advised route. Issue #103's
+  [`forge-host-scenarios.md`](forge-host-scenarios.md) replays it with a scripted host that follows, overrides,
+  defers or declines, and checks that only executed routes are credited.

@@ -1,7 +1,9 @@
 package monada.neuron.evaluation.routing;
 
+import monada.neuron.routing.CohortBinding;
 import monada.neuron.routing.DecisionRef;
 import monada.neuron.routing.RoutingDecision;
+import monada.neuron.routing.catalog.RouteKey;
 import monada.neuron.routing.catalog.RoutingRequest;
 import monada.neuron.routing.features.Feature;
 import monada.neuron.routing.outcome.AttemptStatus;
@@ -22,6 +24,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Turns a {@link ScriptedOutcome} into the {@code RoutingObservation} a host would export for one {@code Selected}
@@ -88,6 +91,42 @@ public final class ObservationFactory {
      */
     public RoutingObservation observe(RoutingRequest request, RoutingDecision.Selected decision,
             ScriptedOutcome outcome, int revision) {
+        return observe(request, decision, outcome, revision, decision.route());
+    }
+
+    /**
+     * The observation of one revision of a route the host executed, which may differ from the advised one; every other
+     * field still answers the decision, as a host that overrode the advice would report it.
+     *
+     * @param request the request of the decision
+     * @param decision the decision the execution answers
+     * @param outcome the scripted outcome of the executed route
+     * @param revision 0 for the original, 1 for its correction (which must exist)
+     * @param executedRoute the route that ran
+     * @return the observation
+     */
+    RoutingObservation observe(RoutingRequest request, RoutingDecision.Selected decision, ScriptedOutcome outcome,
+            int revision, RouteKey executedRoute) {
+        return observe(request, decision, outcome, revision, executedRoute, decision.cohortBinding());
+    }
+
+    /**
+     * The observation of one revision with the outcome's request and cohort binding chosen by the caller: the foreign
+     * evidence probe of the host scenarios builds outcomes that answer another scope, evaluation policy or feature
+     * schema than the decision they are delivered with.
+     *
+     * @param request the request the outcome reports (identity, scope and evaluation policy)
+     * @param decision the decision whose route, catalog and policy the outcome reports
+     * @param outcome the scripted outcome of the executed route
+     * @param revision 0 for the original, 1 for its correction (which must exist)
+     * @param executedRoute the route that ran
+     * @param binding the cohort binding the outcome reports
+     * @return the observation
+     */
+    RoutingObservation observe(RoutingRequest request, RoutingDecision.Selected decision, ScriptedOutcome outcome,
+            int revision, RouteKey executedRoute, CohortBinding binding) {
+        Objects.requireNonNull(executedRoute, "executedRoute must not be null");
+        Objects.requireNonNull(binding, "binding must not be null");
         if (revision != 0 && (revision != 1 || outcome.correction().isEmpty())) {
             throw new IllegalArgumentException("no revision " + revision + " for " + request.executionId());
         }
@@ -120,8 +159,8 @@ public final class ObservationFactory {
             case CHAIN_ONLY -> new StageAttribution(StageAttribution.Basis.CHAIN_ONLY, chain.stages(), List.of());
             case NONE -> new StageAttribution(StageAttribution.Basis.NONE, chain.stages(), List.of());
         };
-        var routed = new RoutingOutcome(RoutingRequest.CONTRACT_VERSION, DecisionRef.of(request), decision.route(),
-                decision.cohortBinding(), decision.provenance().catalogVersion(), decision.provenance().policyId(),
+        var routed = new RoutingOutcome(RoutingRequest.CONTRACT_VERSION, DecisionRef.of(request), executedRoute,
+                binding, decision.provenance().catalogVersion(), decision.provenance().policyId(),
                 decision.provenance().policyVersion(), request.sourceFingerprint(), request.contextFingerprint(),
                 request.constraintsFingerprint(), request.evaluationPolicyId(), request.evaluationPolicyVersion(),
                 position, outcome.invocation(), status, outcome.origin(),

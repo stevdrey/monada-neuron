@@ -79,7 +79,9 @@ public record ReplaySample(
         /** The advised route executed in the fixture, but no outcome was observed or exported for it. */
         UNOBSERVED,
         /** The policy abstained or nothing was eligible, so nothing executed. */
-        NOT_EXECUTED
+        NOT_EXECUTED,
+        /** The policy selected a route, but the host deferred or declined and ran nothing; the #67 replay never does. */
+        HOST_NOT_EXECUTED
     }
 
     /** Validates the fields. */
@@ -106,8 +108,10 @@ public record ReplaySample(
         if ((kind == DecisionKind.ABSTAINED) != abstainReason.isPresent()) {
             throw new IllegalArgumentException("an abstention reason is reported exactly for an abstention");
         }
+        // HOST_NOT_EXECUTED is a selection's coverage, so a non-selection carrying it fails here too
         if (selected == (coverage == Coverage.NOT_EXECUTED)) {
-            throw new IllegalArgumentException("only a selection executes, and every selection executes");
+            throw new IllegalArgumentException("only a selection executes, and every selection executes unless the"
+                    + " host ran nothing");
         }
         boolean observed = coverage == Coverage.OBSERVED;
         if (observed != acceptance.isPresent() || observed != verdict.isPresent()
