@@ -15,6 +15,8 @@ import monada.neuron.evaluation.wave.SpectralResonanceH2Evaluation.Check;
 import monada.neuron.host.NeuronRuntime;
 import monada.neuron.reasoning.concept.ConceptHierarchy;
 import monada.neuron.reasoning.concept.ConceptModel;
+import monada.neuron.reasoning.concept.ConceptPrediction;
+import monada.neuron.reasoning.concept.ConceptPrediction.ConceptCandidates;
 import monada.neuron.reasoning.concept.ConceptQuery;
 import monada.neuron.reasoning.concept.ConceptThresholds;
 import monada.neuron.reasoning.concept.NextConceptPredictor;
@@ -23,12 +25,10 @@ import monada.neuron.reasoning.concept.WaveCognitionInput;
 import monada.neuron.reasoning.concept.WaveCognitionLimits;
 import monada.neuron.reasoning.concept.WaveWindow;
 import monada.neuron.resonance.SpectralResonanceDynamics;
-import monada.neuron.spectral.SampleUnit;
 import monada.neuron.spectral.SampledWave;
 import monada.neuron.spectral.SpectralBasis;
 import monada.neuron.spectral.SpectralPattern;
 import monada.neuron.spectral.WaveDecomposer;
-import monada.neuron.spectral.WaveProvenance;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -123,6 +123,7 @@ final class NcmAblationEvaluation {
     private final FeatureConceptScorer scorer = new FeatureConceptScorer();
     private final SpectralResonanceDynamics dynamics = new SpectralResonanceDynamics();
     private final RankStatistics statistics = new RankStatistics();
+    private final ThresholdSelection thresholds = new ThresholdSelection();
     private final SelectiveMetrics selective = new SelectiveMetrics();
     private final SeedDerivation seeds = new SeedDerivation();
     private final HostMemoryIndependence host = new HostMemoryIndependence();
@@ -172,7 +173,7 @@ final class NcmAblationEvaluation {
         }
         checks.add(equivalenceCheck(cSelection, training, thresholdSplits));
 
-        List<SampledWave> noise = noiseWaves();
+        List<SampledWave> noise = g3.noiseWaves();
         var noiseUncovered = new double[ARMS.size()];
         noiseUncovered[C] = uncoveredRate(runC(dftPatterns(noise), cSelection.model()));
         for (int a = 1; a < ARMS.size(); a++) {
@@ -200,7 +201,7 @@ final class NcmAblationEvaluation {
 
         List<SampledWave> memoryWindows = repeats.getFirst().splits().getFirst().split().windows().stream()
                 .limit(protocol.memoryWindows()).map(ConceptFixtureGenerator.FixtureWindow::wave).toList();
-        checks.add(host.check(cSelection.model(), memoryWindows));
+        checks.add(host.check(cSelection.model(), memoryWindows, protocol.g3().windowsPerSequence()));
 
         LargeWorkloadEvaluation largeEvaluation = new LargeWorkloadEvaluation(protocol.large());
         LargeWorkloadEvaluation.Result large = largeEvaluation.run();
@@ -237,17 +238,11 @@ final class NcmAblationEvaluation {
         if (map.basis() == SpectralBasis.DFT) {
             return features(split.patterns(), map);
         }
-        return features(split.split().windows().stream().map(ConceptFixtureGenerator.FixtureWindow::wave).toList(),
-                map);
+        return features(waves(split), map);
     }
 
     private double[][] features(List<SampledWave> waves, ConceptFeatureMap map) {
-        WaveDecomposer decomposer = map.decomposer();
-        var patterns = new SpectralPattern[waves.size()];
-        for (int w = 0; w < patterns.length; w++) {
-            patterns[w] = map.decompose(decomposer, waves.get(w));
-        }
-        return features(patterns, map);
+        return features(decompose(map, waves), map);
     }
 
     private double[][] features(SpectralPattern[] patterns, ConceptFeatureMap map) {
@@ -317,59 +312,20 @@ final class NcmAblationEvaluation {
         for (Split split : thresholdSplits) {
             thresholdFeatures.add(features(split, map));
         }
-        ConceptThresholds chosen = ConceptThresholds.NONE;
-        double chosenAccuracy = -1.0;
-        double chosenCoverage = -1.0;
-        boolean reached = false;
-        for (double c0 : NextConceptG3Evaluation.CONFIDENCE_GRID) {
-            for (double m0 : NextConceptG3Evaluation.MARGIN_GRID) {
-                for (double c1 : NextConceptG3Evaluation.CONFIDENCE_GRID) {
-                    for (double m1 : NextConceptG3Evaluation.MARGIN_GRID) {
-                        var thresholds = ConceptThresholds.of(new double[] {c0, c1}, new double[] {m0, m1});
-                        double[] covered = selectionScore(thresholdSplits,
-                                runFeatures(thresholdFeatures, best.withThresholds(thresholds)));
-                        if (covered[0] >= protocol.g3().selectionCoverage() && (!reached || covered[1] > chosenAccuracy
-                                || (covered[1] == chosenAccuracy && covered[0] > chosenCoverage))) {
-                            reached = true;
-                            chosen = thresholds;
-                            chosenAccuracy = covered[1];
-                            chosenCoverage = covered[0];
-                        }
-                    }
-                }
-            }
-        }
-        if (!reached) {
-            double[] none = selectionScore(thresholdSplits, runFeatures(thresholdFeatures, best));
-            chosenCoverage = none[0];
-            chosenAccuracy = none[1];
-        }
-        FeatureConceptModel model = best.withThresholds(chosen);
+        FeatureConceptModel trained = best;
+        ThresholdSelection.Chosen chosen = thresholds.select(candidate -> selectionScore(thresholdSplits,
+                runFeatures(thresholdFeatures, trained.withThresholds(candidate))), protocol.g3().selectionCoverage());
+        FeatureConceptModel model = best.withThresholds(chosen.thresholds());
         List<ArmDecisions> chosenDecisions = runFeatures(thresholdFeatures, model);
-        double flatConfidence = 0.0;
-        double flatMargin = 0.0;
-        double flatCoverage = -1.0;
-        double flatAccuracy = 0.0;
-        double gap = Double.POSITIVE_INFINITY;
-        for (double c : NextConceptG3Evaluation.FLAT_CONFIDENCE_GRID) {
-            for (double m : NextConceptG3Evaluation.FLAT_MARGIN_GRID) {
-                var flats = new ArrayList<ArmDecisions>();
-                for (ArmDecisions decisions : chosenDecisions) {
-                    flats.add(decisions.flat(c, m));
-                }
-                double[] covered = selectionScore(thresholdSplits, flats);
-                double distance = Math.abs(covered[0] - chosenCoverage);
-                if (distance < gap) {
-                    gap = distance;
-                    flatConfidence = c;
-                    flatMargin = m;
-                    flatCoverage = covered[0];
-                    flatAccuracy = covered[1];
-                }
+        ThresholdSelection.Flat flat = thresholds.matchFlat((confidence, margin) -> {
+            var flats = new ArrayList<ArmDecisions>(chosenDecisions.size());
+            for (ArmDecisions decisions : chosenDecisions) {
+                flats.add(decisions.flat(confidence, margin));
             }
-        }
-        return new FeatureSelection(arm, map, model, bestNll, tried, chosenCoverage, chosenAccuracy, reached,
-                flatConfidence, flatMargin, flatCoverage, flatAccuracy);
+            return selectionScore(thresholdSplits, flats);
+        }, chosen.coverage());
+        return new FeatureSelection(arm, map, model, bestNll, tried, chosen.coverage(), chosen.accuracy(),
+                chosen.reached(), flat.confidence(), flat.margin(), flat.coverage(), flat.accuracy());
     }
 
     /** Returns {@code [leaf coverage, accuracy on covered]} of decisions on non-test splits (the G3 rule). */
@@ -418,6 +374,25 @@ final class NcmAblationEvaluation {
 
     /** Every arm answers every window of every SNR level of one repeat; no label is read. */
     private Answers answer(List<Split> splits, Selection cSelection, List<FeatureSelection> selections) {
+        var features = new ArrayList<List<double[][]>>();
+        for (int i = 0; i < selections.size(); i++) {
+            features.add(new ArrayList<>());
+        }
+        for (Split split : splits) {
+            List<double[][]> perArm = features(split, selections);
+            for (int i = 0; i < selections.size(); i++) {
+                features.get(i).add(perArm.get(i));
+            }
+        }
+        return answer(splits, cSelection, selections, features);
+    }
+
+    /**
+     * Every arm answers every window from already extracted features: per feature arm and split, the window features
+     * of {@link #features(Split, List)}. The counterfactual re-answer reuses them, its windows being identical.
+     */
+    private Answers answer(List<Split> splits, Selection cSelection, List<FeatureSelection> selections,
+                           List<List<double[][]>> features) {
         var arms = new ArrayList<List<ArmDecisions>>();
         var flats = new ArrayList<List<ArmDecisions>>();
         var c = new ArrayList<ArmDecisions>();
@@ -429,18 +404,48 @@ final class NcmAblationEvaluation {
         }
         arms.add(c);
         flats.add(cFlat);
-        for (FeatureSelection selection : selections) {
+        for (int i = 0; i < selections.size(); i++) {
+            FeatureSelection selection = selections.get(i);
             var arm = new ArrayList<ArmDecisions>();
             var flat = new ArrayList<ArmDecisions>();
-            for (Split split : splits) {
-                ArmDecisions decisions = runFeature(features(split, selection.map()), selection.model());
+            for (int s = 0; s < splits.size(); s++) {
+                ArmDecisions decisions = runFeature(features.get(i).get(s), selection.model());
                 arm.add(decisions);
                 flat.add(decisions.flat(selection.flatConfidence(), selection.flatMargin()));
             }
             arms.add(arm);
             flats.add(flat);
         }
-        return new Answers(arms, flats);
+        return new Answers(arms, flats, features);
+    }
+
+    /**
+     * Extracts every feature arm's features of one split, decomposing the windows once per transform: the DFT
+     * patterns of the split itself, and one Haar decomposition per distinct depth, shared by the arms that use it.
+     */
+    List<double[][]> features(Split split, List<FeatureSelection> selections) {
+        var haar = new HashMap<Integer, SpectralPattern[]>();
+        var features = new ArrayList<double[][]>(selections.size());
+        for (FeatureSelection selection : selections) {
+            ConceptFeatureMap map = selection.map();
+            SpectralPattern[] patterns = map.basis() == SpectralBasis.DFT ? split.patterns()
+                    : haar.computeIfAbsent(map.haarLevels(), levels -> decompose(map, waves(split)));
+            features.add(features(patterns, map));
+        }
+        return features;
+    }
+
+    private List<SampledWave> waves(Split split) {
+        return split.split().windows().stream().map(ConceptFixtureGenerator.FixtureWindow::wave).toList();
+    }
+
+    private SpectralPattern[] decompose(ConceptFeatureMap map, List<SampledWave> waves) {
+        WaveDecomposer decomposer = map.decomposer();
+        var patterns = new SpectralPattern[waves.size()];
+        for (int w = 0; w < patterns.length; w++) {
+            patterns[w] = map.decompose(decomposer, waves.get(w));
+        }
+        return patterns;
     }
 
     // ---------------------------------------------------------------- scoring
@@ -619,23 +624,6 @@ final class NcmAblationEvaluation {
 
     // ---------------------------------------------------------------- data
 
-    /** The N11 noise windows, drawn exactly as the G3 harness draws them. */
-    List<SampledWave> noiseWaves() {
-        var random = new Random(protocol.g3().noiseSeed());
-        int n = protocol.g3().sequences() * protocol.g3().windowsPerSequence();
-        var waves = new ArrayList<SampledWave>(n);
-        for (int w = 0; w < n; w++) {
-            var samples = new double[ConceptFixtureGenerator.SAMPLE_COUNT];
-            for (int i = 0; i < samples.length; i++) {
-                samples[i] = random.nextGaussian();
-            }
-            waves.add(new SampledWave(samples, ConceptFixtureGenerator.SAMPLE_RATE, SampleUnit.HERTZ,
-                    new WaveProvenance("ncm-noise-n11", 1, "seed-" + Long.toHexString(protocol.g3().noiseSeed())
-                            + "/w" + w, (long) w * samples.length)));
-        }
-        return waves;
-    }
-
     private SpectralPattern[] dftPatterns(List<SampledWave> waves) {
         ConceptFeatureMap dft = ConceptFeatureMap.dft();
         WaveDecomposer decomposer = dft.decomposer();
@@ -727,15 +715,12 @@ final class NcmAblationEvaluation {
             for (int s = 0; s < first.splits().size(); s++) {
                 ArmDecisions arm = first.answers().arms().get(a).get(s);
                 ArmDecisions flat = first.answers().flats().get(a).get(s);
-                double[][] features = null;
+                double[][] features = first.answers().features().get(a - 1).get(s);
                 for (int w = 0; w < arm.windows(); w++) {
                     windows++;
                     shared += arm.predictions[w] == flat.predictions[w] && arm.previous[w] == flat.previous[w] ? 1 : 0;
                     if (arm.leaf[w] == flat.leaf[w]) {
                         continue;
-                    }
-                    if (features == null) {
-                        features = features(first.splits().get(s), selection.map());
                     }
                     audited++;
                     ScoredPrediction again = scorer.predict(features[w], arm.previous[w], open,
@@ -765,7 +750,7 @@ final class NcmAblationEvaluation {
             permuted.add(new Split(new ConceptSplit(original.role(), original.seed(), original.snrDb(),
                     original.windows(), labels), split.patterns()));
         }
-        Answers again = answer(permuted, cSelection, selections);
+        Answers again = answer(permuted, cSelection, selections, first.answers().features());
         boolean identical = first.answers().sameAs(again);
         permuted.forEach(split -> split.split().labels().openForScoring());
         int arm = 1 + FeatureArm.D_HAAR.ordinal();
@@ -799,7 +784,9 @@ final class NcmAblationEvaluation {
     /**
      * End-to-end measurements per workload: decomposition plus prediction per window (one sequence per iteration),
      * prediction alone, control D's Haar path, and one opt-in runtime execution of eight windows through the wave
-     * cognition stage. Thread-allocated bytes exclude nothing but the iteration setup.
+     * cognition stage. Thread-allocated bytes exclude nothing but the iteration setup. The prediction loops call the
+     * core predictor and the reference scorer directly, chaining their own selections as the arms do, without the
+     * evaluation's decision records, so the figures carry no harness copies.
      */
     List<BenchmarkRunResult> resources(TinyWorkload tiny, Selection cSelection, FeatureSelection dSelection,
                                        RepeatResult first, LargeWorkloadEvaluation.Result large) {
@@ -809,63 +796,93 @@ final class NcmAblationEvaluation {
         var results = new ArrayList<BenchmarkRunResult>();
 
         ConceptModel tinyModel = tiny.model();
-        results.add(collector.measure("ncm.tiny.C.window", "tiny", warmup, measured, 2, () -> {
-            for (int ordinal = 0; ordinal < 2; ordinal++) {
-                tiny.predictC(tinyModel, ordinal);
-            }
-        }, diagnostics(2, tinyModel.retainedBytes(), "DFT decomposition + core prediction of " + TinyWorkload.N
-                + "-sample windows")));
+        List<SampledWave> tinyWaves = List.of(tiny.window(0, 0), tiny.window(1, 0));
+        results.add(collector.measure("ncm.tiny.C.window", "tiny", warmup, measured, tinyWaves.size(),
+                () -> predictCore(dftPatterns(tinyWaves), tinyModel, tinyWaves.size()),
+                diagnostics(tinyWaves.size(), tinyModel.retainedBytes(), "DFT decomposition + core prediction of "
+                        + TinyWorkload.N + "-sample windows")));
 
         int length = protocol.g3().windowsPerSequence();
-        List<SampledWave> medium = first.splits().getFirst().split().windows().stream().limit(length)
-                .map(ConceptFixtureGenerator.FixtureWindow::wave).toList();
+        List<SampledWave> medium = waves(first.splits().getFirst()).subList(0, length);
         SpectralPattern[] mediumPatterns = dftPatterns(medium);
         ConceptModel cModel = cSelection.model();
         results.add(collector.measure("ncm.medium.C.window", "medium", warmup, measured, medium.size(),
-                () -> runC(dftPatterns(medium), cModel), diagnostics(medium.size(), cModel.retainedBytes(),
-                        "DFT decomposition + core prediction, own previous concept")));
+                () -> predictCore(dftPatterns(medium), cModel, length), diagnostics(medium.size(),
+                        cModel.retainedBytes(), "DFT decomposition + core prediction, own previous concept")));
         results.add(collector.measure("ncm.medium.C.predict", "medium", warmup, measured, medium.size(),
-                () -> runC(mediumPatterns, cModel), diagnostics(medium.size(), cModel.retainedBytes(),
+                () -> predictCore(mediumPatterns, cModel, length), diagnostics(medium.size(), cModel.retainedBytes(),
                         "core prediction of decomposed windows")));
         results.add(collector.measure("ncm.medium.D.window", "medium", warmup, measured, medium.size(),
-                () -> runFeature(features(medium, dSelection.map()), dSelection.model()),
+                () -> predictFeatures(features(medium, dSelection.map()), dSelection.model(), length),
                 diagnostics(medium.size(), dSelection.model().retainedBytes(), dSelection.map().label()
                         + " decomposition + feature + reference scorer")));
         results.add(stage("ncm.medium.stage.execution", "medium", collector, cModel, medium));
 
         int largeLength = protocol.large().windowsPerSequence();
-        SpectralPattern[] largePatterns = Arrays.copyOf(large.testPatterns(), largeLength);
-        List<SampledWave> largeWaves = large.test().waves().subList(0, largeLength);
+        SpectralPattern[] largePatterns = large.headPatterns();
+        List<SampledWave> largeWaves = large.headWaves();
         LargeWorkloadEvaluation largeEvaluation = new LargeWorkloadEvaluation(protocol.large());
-        ConceptHierarchy largeHierarchy = largeEvaluation.hierarchy();
         ConceptModel largeC = large.c();
-        ArmDecisions.Step largeStep = (w, previous) -> ScoredPrediction.of(predictor.predict(new ConceptQuery(
-                largePatterns[w], previous < 0 ? OptionalLong.empty()
-                : OptionalLong.of(largeHierarchy.node(previous).conceptCode())), largeC, PredictionBudget.DEFAULT));
-        results.add(collector.measure("ncm.large.C.window", "large", warmup, measured, largeLength, () -> {
-            ConceptFeatureMap dft = ConceptFeatureMap.dft();
-            WaveDecomposer decomposer = dft.decomposer();
-            for (SampledWave wave : largeWaves) {
-                dft.decompose(decomposer, wave);
-            }
-            ArmDecisions.run(largeHierarchy, largeLength, largeLength, largeStep);
-        }, diagnostics(largeLength, largeC.retainedBytes(), "DFT decomposition + core prediction, own previous "
-                + "concept")));
+        results.add(collector.measure("ncm.large.C.window", "large", warmup, measured, largeLength,
+                () -> predictCore(dftPatterns(largeWaves), largeC, largeLength), diagnostics(largeLength,
+                        largeC.retainedBytes(), "DFT decomposition + core prediction, own previous concept")));
         results.add(collector.measure("ncm.large.C.predict", "large", warmup, measured, largeLength,
-                () -> ArmDecisions.run(largeHierarchy, largeLength, largeLength, largeStep),
+                () -> predictCore(largePatterns, largeC, largeLength),
                 diagnostics(largeLength, largeC.retainedBytes(), "core prediction of decomposed windows")));
         FeatureConceptModel largeD = large.d();
-        LargeConceptFixtureGenerator.LargeSplit largeHead = new LargeConceptFixtureGenerator.LargeSplit(
-                SplitRole.TEST, large.test().seed(), largeWaves, new LargeConceptFixtureGenerator.LeafLabels(
-                new int[largeLength], false));
-        results.add(collector.measure("ncm.large.D.window", "large", warmup, measured, largeLength, () -> {
-            double[][] features = largeEvaluation.features(largeD.features(), largeHead);
-            ArmDecisions.run(largeHierarchy, largeLength, largeLength,
-                    (w, previous) -> scorer.predict(features[w], previous, largeD, PredictionBudget.DEFAULT));
-        }, diagnostics(largeLength, largeD.retainedBytes(), largeD.features().label()
-                + " decomposition + feature + reference scorer")));
+        results.add(collector.measure("ncm.large.D.window", "large", warmup, measured, largeLength,
+                () -> predictFeatures(largeEvaluation.features(largeD.features(), largeWaves), largeD, largeLength),
+                diagnostics(largeLength, largeD.retainedBytes(), largeD.features().label()
+                        + " decomposition + feature + reference scorer")));
         results.add(stage("ncm.large.stage.execution", "large", collector, largeC, largeWaves));
         return results;
+    }
+
+    /**
+     * Predicts every window with the core predictor, chaining its own selections as the arms do (window {@code w}'s
+     * prediction is the previous concept of window {@code w + 2}, none at a sequence start or after an abstention).
+     *
+     * @return the number of answered predictions, so the work cannot be elided
+     */
+    int predictCore(SpectralPattern[] patterns, ConceptModel model, int windowsPerSequence) {
+        ConceptHierarchy concepts = model.hierarchy();
+        int answered = 0;
+        OptionalLong forPrevious = OptionalLong.empty();
+        OptionalLong forCurrent = OptionalLong.empty();
+        for (int w = 0; w < patterns.length; w++) {
+            if (w % windowsPerSequence == 0) {
+                forPrevious = OptionalLong.empty();
+                forCurrent = OptionalLong.empty();
+            }
+            ConceptPrediction prediction = predictor.predict(new ConceptQuery(patterns[w], forPrevious), model,
+                    PredictionBudget.DEFAULT);
+            forPrevious = forCurrent;
+            if (prediction instanceof ConceptCandidates candidates) {
+                answered++;
+                forCurrent = OptionalLong.of(concepts.node(candidates.selected().conceptOrdinal()).conceptCode());
+            } else {
+                forCurrent = OptionalLong.empty();
+            }
+        }
+        return answered;
+    }
+
+    /** As {@link #predictCore} for the reference scorer over extracted features. */
+    int predictFeatures(double[][] features, FeatureConceptModel model, int windowsPerSequence) {
+        int answered = 0;
+        int forPrevious = ArmDecisions.NONE;
+        int forCurrent = ArmDecisions.NONE;
+        for (int w = 0; w < features.length; w++) {
+            if (w % windowsPerSequence == 0) {
+                forPrevious = ArmDecisions.NONE;
+                forCurrent = ArmDecisions.NONE;
+            }
+            ScoredPrediction prediction = scorer.predict(features[w], forPrevious, model, PredictionBudget.DEFAULT);
+            forPrevious = forCurrent;
+            forCurrent = prediction.abstention().isEmpty() ? prediction.selected() : ArmDecisions.NONE;
+            answered += prediction.abstention().isEmpty() ? 1 : 0;
+        }
+        return answered;
     }
 
     private Map<String, String> diagnostics(int windows, long retainedBytes, String path) {
@@ -981,8 +998,11 @@ final class NcmAblationEvaluation {
                             double flatMargin, double flatCoverage, double flatAccuracy) {
     }
 
-    /** Per arm in {@link #ARMS} order, the decisions and flat decisions per SNR level. */
-    record Answers(List<List<ArmDecisions>> arms, List<List<ArmDecisions>> flats) {
+    /**
+     * Per arm in {@link #ARMS} order, the decisions and flat decisions per SNR level; per feature arm, the window
+     * features each split was answered from (inputs, not answers: {@link #sameAs} ignores them).
+     */
+    record Answers(List<List<ArmDecisions>> arms, List<List<ArmDecisions>> flats, List<List<double[][]>> features) {
 
         boolean sameAs(Answers other) {
             for (int a = 0; a < arms.size(); a++) {

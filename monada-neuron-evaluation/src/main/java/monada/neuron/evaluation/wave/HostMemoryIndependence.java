@@ -42,7 +42,8 @@ import java.util.UUID;
  * rely on the Resonance Store: the stage reads only its typed per-execution samples and the caller-owned model.
  *
  * <p>Each window is one execution (contract section 10.1: a time series is one execution per step), whose previous
- * concept is the stage's own selection for the preceding window (made two executions earlier), never a label. Every composition runs the same
+ * concept is the stage's own selection for the preceding window (made two executions earlier, none at a sequence
+ * start), never a label. Every composition runs the same
  * windows in the same order; the check compares the stage's {@code WaveCognitionReport} and hypotheses of every
  * execution for equality.
  */
@@ -106,48 +107,62 @@ final class HostMemoryIndependence {
     /**
      * Runs every window as one execution, chaining the stage's own selections as the evaluation arms do: execution
      * {@code w} predicts the concept of window {@code w + 1}, so it becomes the previous concept of execution
-     * {@code w + 2}; none at the start or after an abstention.
+     * {@code w + 2}; none at a sequence start or after an abstention. Per execution the trace holds the previous
+     * concept the host passed, the stage's report and its hypotheses.
      */
-    List<Object> trace(Composition composition, ConceptModel model, List<SampledWave> windows) {
+    List<Object> trace(Composition composition, ConceptModel model, List<SampledWave> windows,
+                       int windowsPerSequence) {
         var inputs = new HashMap<String, WaveCognitionInput>();
         NeuronRuntime runtime = runtime(composition, model, inputs, WaveCognitionLimits.DEFAULT);
-        var trace = new ArrayList<Object>(2 * windows.size());
+        var trace = new ArrayList<Object>(3 * windows.size());
         OptionalLong forPrevious = OptionalLong.empty();
         OptionalLong forCurrent = OptionalLong.empty();
         for (int w = 0; w < windows.size(); w++) {
+            if (w % windowsPerSequence == 0) {
+                forPrevious = OptionalLong.empty();
+                forCurrent = OptionalLong.empty();
+            }
             String ref = "w" + w;
             inputs.put(ref, WaveCognitionInput.of(new WaveWindow(windows.get(w), forPrevious)));
             WaveCognitionStageResult result = stageResult(runtime.execute(input(ref)));
+            trace.add(forPrevious);
             trace.add(result.report());
             trace.add(result.hypotheses());
             forPrevious = forCurrent;
-            forCurrent = result.report().windows().getLast() instanceof WindowOutcome.Predicted predicted
-                    ? OptionalLong.of(model.hierarchy().node(predicted.conceptOrdinal()).conceptCode())
-                    : OptionalLong.empty();
+            forCurrent = predicted(result.report())
+                    .map(ordinal -> OptionalLong.of(model.hierarchy().node(ordinal).conceptCode()))
+                    .orElse(OptionalLong.empty());
         }
         return trace;
     }
 
+    /** Returns the concept ordinal the report's last examined window predicted, empty when none did. */
+    Optional<Integer> predicted(WaveCognitionReport report) {
+        return !report.windows().isEmpty() && report.windows().getLast() instanceof WindowOutcome.Predicted predicted
+                ? Optional.of(predicted.conceptOrdinal()) : Optional.empty();
+    }
+
     /** Compares every composition with {@link Composition#NO_MEMORY} over the same windows. */
-    Check check(ConceptModel model, List<SampledWave> windows) {
-        List<Object> reference = trace(Composition.NO_MEMORY, model, windows);
+    Check check(ConceptModel model, List<SampledWave> windows, int windowsPerSequence) {
+        List<Object> reference = trace(Composition.NO_MEMORY, model, windows, windowsPerSequence);
         int predicted = 0;
         for (Object entry : reference) {
-            if (entry instanceof WaveCognitionReport report
-                    && report.windows().getLast() instanceof WindowOutcome.Predicted) {
+            if (entry instanceof WaveCognitionReport report && predicted(report).isPresent()) {
                 predicted++;
             }
         }
         var differing = new ArrayList<String>();
         for (Composition composition : Composition.values()) {
-            if (composition != Composition.NO_MEMORY && !reference.equals(trace(composition, model, windows))) {
+            if (composition != Composition.NO_MEMORY
+                    && !reference.equals(trace(composition, model, windows, windowsPerSequence))) {
                 differing.add(composition.name());
             }
         }
         boolean passed = differing.isEmpty() && predicted > 0;
-        return new Check("host.memory-independence", passed, windows.size() + " executions (" + predicted
-                + " with a predicted concept) give " + (differing.isEmpty() ? "identical" : "DIFFERENT " + differing)
-                + " wave cognition reports and hypotheses with no memory port, an empty port, an UNAVAILABLE port and "
-                + "a recalling port");
+        return new Check("host.memory-independence", passed, windows.size() + " executions in sequences of "
+                + windowsPerSequence + " (" + predicted + " with a predicted concept) give "
+                + (differing.isEmpty() ? "identical" : "DIFFERENT " + differing)
+                + " previous concepts, wave cognition reports and hypotheses with no memory port, an empty port, an "
+                + "UNAVAILABLE port and a recalling port");
     }
 }

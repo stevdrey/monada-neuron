@@ -1,29 +1,34 @@
 package monada.neuron.evaluation.wave;
 
-import java.util.Objects;
 import java.util.Random;
 
 /**
- * Ground-truth leaf labels of one split, kept apart from its waves.
+ * Ground-truth leaf labels of one split of the medium fixture, kept apart from its waves.
  *
  * <p>Labels of a {@link SplitRole#TEST} split are guarded: every read before {@link #openForScoring()} is counted as
  * a leak, and the evaluation fails its leakage check when {@link #earlyReads()} is not zero. Only the scorer opens
- * them, after every arm has scored. Training and threshold-selection labels are open from the start.
+ * them, after every arm has scored. Training and threshold-selection labels are open from the start. The guard is
+ * {@link GuardedLabels}, shared with the large fixture.
  */
 public final class SplitLabels {
 
-    private final FixtureConcept[] labels;
-    private boolean open;
-    private int earlyReads;
+    private final GuardedLabels labels;
 
     SplitLabels(FixtureConcept[] labels, boolean guarded) {
-        this.labels = labels.clone();
-        this.open = !guarded;
+        var ordinals = new int[labels.length];
+        for (int i = 0; i < labels.length; i++) {
+            ordinals[i] = labels[i].ordinal();
+        }
+        this.labels = new GuardedLabels(ordinals, guarded);
+    }
+
+    private SplitLabels(GuardedLabels labels) {
+        this.labels = labels;
     }
 
     /** Returns the number of labelled windows. */
     public int size() {
-        return labels.length;
+        return labels.size();
     }
 
     /**
@@ -34,21 +39,17 @@ public final class SplitLabels {
      * @return the generating leaf concept
      */
     public FixtureConcept label(int window) {
-        Objects.checkIndex(window, labels.length);
-        if (!open) {
-            earlyReads++;
-        }
-        return labels[window];
+        return FixtureConcept.values()[labels.ordinal(window)];
     }
 
     /** Opens guarded labels for the scorer. */
     public void openForScoring() {
-        open = true;
+        labels.openForScoring();
     }
 
     /** Returns the number of guarded reads made before the labels were opened. */
     public int earlyReads() {
-        return earlyReads;
+        return labels.earlyReads();
     }
 
     /**
@@ -56,13 +57,6 @@ public final class SplitLabels {
      * leakage check: arm scores must not change when the labels do.
      */
     SplitLabels permuted(Random random) {
-        FixtureConcept[] shuffled = labels.clone();
-        for (int i = shuffled.length - 1; i > 0; i--) {
-            int j = random.nextInt(i + 1);
-            FixtureConcept swap = shuffled[i];
-            shuffled[i] = shuffled[j];
-            shuffled[j] = swap;
-        }
-        return new SplitLabels(shuffled, true);
+        return new SplitLabels(labels.permuted(random));
     }
 }

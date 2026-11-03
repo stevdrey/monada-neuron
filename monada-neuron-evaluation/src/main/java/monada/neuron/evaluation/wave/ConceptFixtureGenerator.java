@@ -195,8 +195,11 @@ public final class ConceptFixtureGenerator {
         }
     }
 
-    /** SHA-256 of the samples' raw bits, in hexadecimal. */
-    private String digest(double[] samples) {
+    /**
+     * SHA-256 of the samples' raw bits, in hexadecimal: the clean-window digest every fixture's split-disjointness
+     * check compares. Class-level: a pure function of the samples, shared with the large-workload fixture.
+     */
+    static String digest(double[] samples) {
         try {
             var buffer = ByteBuffer.allocate(Long.BYTES * samples.length);
             for (double sample : samples) {

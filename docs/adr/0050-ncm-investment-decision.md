@@ -76,7 +76,7 @@ result. It judges every arm by the registered G3 rule and adds no margin. Its re
 - The default runtime, `Signal`, `FrequencyState`, `ScalarResonanceMetric` and the stage lifecycle are unchanged.
 - The evaluation module gains a reproducible ablation harness: `runNcmAblation`, about 2 minutes. A future protocol
   can reuse it as its baseline.
-- Timings show that the reference O(N²) DFT dominates the end-to-end cost (about 90% at N = 256, 94% at N = 4,096).
+- Timings show that the reference O(N²) DFT dominates the end-to-end cost (about 91% at N = 256, 95% at N = 4,096).
   Under this decision, that cost is not optimized.
 
 ## Follow-Up

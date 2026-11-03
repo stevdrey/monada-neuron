@@ -36,8 +36,8 @@ class LargeConceptFixtureGeneratorTest {
         ConceptHierarchy hierarchy = generator.hierarchy();
         for (int w = 0; w < first.waves().size(); w++) {
             assertArrayEquals(first.waves().get(w).samples(), second.waves().get(w).samples());
-            assertEquals(first.labels().label(w), second.labels().label(w));
-            assertTrue(hierarchy.isLeaf(first.labels().label(w)));
+            assertEquals(first.labels().ordinal(w), second.labels().ordinal(w));
+            assertTrue(hierarchy.isLeaf(first.labels().ordinal(w)));
             assertEquals(LargeConceptFixtureGenerator.SAMPLE_COUNT, first.waves().get(w).sampleCount());
         }
         assertFalse(Arrays.equals(first.waves().getFirst().samples(),
@@ -45,12 +45,23 @@ class LargeConceptFixtureGeneratorTest {
     }
 
     @Test
+    void cleanDigestsIdentifyTheCleanContentWhateverTheNoise() {
+        LargeSplit quiet = generator.generate(SplitRole.TRAINING, 7L, 40.0, 1, 3);
+        LargeSplit noisy = generator.generate(SplitRole.TRAINING, 7L, 0.0, 1, 3);
+        assertEquals(3, quiet.cleanDigests().size());
+        assertEquals(quiet.cleanDigests(), noisy.cleanDigests());
+        assertFalse(Arrays.equals(quiet.waves().getFirst().samples(), noisy.waves().getFirst().samples()));
+        assertFalse(quiet.cleanDigests().contains(generator.generate(SplitRole.TEST, 8L, 40.0, 1, 1)
+                .cleanDigests().getFirst()));
+    }
+
+    @Test
     void heldOutLabelsAreGuardedUntilOpened() {
         LargeSplit test = generator.generate(SplitRole.TEST, 9L, 20.0, 1, 2);
-        test.labels().label(0);
+        test.labels().ordinal(0);
         assertEquals(1, test.labels().earlyReads());
         test.labels().openForScoring();
-        test.labels().label(1);
+        test.labels().ordinal(1);
         assertEquals(1, test.labels().earlyReads());
         assertEquals(0, generator.generate(SplitRole.TRAINING, 9L, 20.0, 1, 2).labels().earlyReads());
     }

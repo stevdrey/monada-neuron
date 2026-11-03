@@ -75,14 +75,6 @@ final class NextConceptG3Evaluation {
 
     /** Temperature grid, chosen on the training split by the negative log-likelihood of the current leaf. */
     static final double[] TEMPERATURES = {0.01, 0.02, 0.05, 0.1, 0.2, 0.5};
-    /** Per-depth confidence grid of C. */
-    static final double[] CONFIDENCE_GRID = {0.0, 0.6, 0.7, 0.8, 0.9};
-    /** Per-depth margin grid of C. */
-    static final double[] MARGIN_GRID = {0.0, 0.1, 0.2, 0.3};
-    /** Confidence grid of C-flat: {@code 0.00, 0.05, ..., 0.95}. */
-    static final double[] FLAT_CONFIDENCE_GRID = grid(20, 0.05);
-    /** Margin grid of C-flat. */
-    static final double[] FLAT_MARGIN_GRID = {0.0, 0.05, 0.1, 0.2};
 
     static final SpectralFrame FRAME = new SpectralFrame(SpectralBasis.DFT, SpectralScale.SINGLE,
             ConceptFixtureGenerator.SAMPLE_COUNT, ConceptFixtureGenerator.SAMPLE_RATE, SampleUnit.HERTZ);
@@ -101,6 +93,7 @@ final class NextConceptG3Evaluation {
     private final ConceptModelTrainer trainer = new ConceptModelTrainer();
     private final NextConceptPredictor predictor = new NextConceptPredictor();
     private final RankStatistics statistics = new RankStatistics();
+    private final ThresholdSelection thresholds = new ThresholdSelection();
     private final SelectiveMetrics selective = new SelectiveMetrics();
     private final SeedDerivation seeds = new SeedDerivation();
     private final ConceptHierarchy hierarchy = fixtureHierarchy();
@@ -176,57 +169,15 @@ final class NextConceptG3Evaluation {
         int mostFrequentNext = mostFrequentNext(best);
 
         List<Split> thresholdSplits = splits(SplitRole.THRESHOLD_SELECTION, protocol.thresholdSeed());
-        ConceptThresholds chosen = ConceptThresholds.NONE;
-        double chosenAccuracy = -1.0;
-        double chosenCoverage = -1.0;
-        boolean reached = false;
-        for (double c0 : CONFIDENCE_GRID) {
-            for (double m0 : MARGIN_GRID) {
-                for (double c1 : CONFIDENCE_GRID) {
-                    for (double m1 : MARGIN_GRID) {
-                        var thresholds = ConceptThresholds.of(new double[] {c0, c1}, new double[] {m0, m1});
-                        double[] covered = selectionScore(thresholdSplits,
-                                runC(thresholdSplits, best.withThresholds(thresholds)));
-                        boolean meets = covered[0] >= protocol.selectionCoverage();
-                        if (meets && (!reached || covered[1] > chosenAccuracy
-                                || (covered[1] == chosenAccuracy && covered[0] > chosenCoverage))) {
-                            reached = true;
-                            chosen = thresholds;
-                            chosenAccuracy = covered[1];
-                            chosenCoverage = covered[0];
-                        }
-                    }
-                }
-            }
-        }
-        if (!reached) {
-            double[] none = selectionScore(thresholdSplits, runC(thresholdSplits, best));
-            chosenCoverage = none[0];
-            chosenAccuracy = none[1];
-        }
-        ConceptModel model = best.withThresholds(chosen);
+        ConceptModel trained = best;
+        ThresholdSelection.Chosen chosen = thresholds.select(candidate -> selectionScore(thresholdSplits,
+                runC(thresholdSplits, trained.withThresholds(candidate))), protocol.selectionCoverage());
+        ConceptModel model = best.withThresholds(chosen.thresholds());
         List<Decisions> chosenC = runC(thresholdSplits, model);
-
-        double flatConfidence = 0.0;
-        double flatMargin = 0.0;
-        double flatCoverage = -1.0;
-        double flatAccuracy = 0.0;
-        double gap = Double.POSITIVE_INFINITY;
-        for (double c : FLAT_CONFIDENCE_GRID) {
-            for (double m : FLAT_MARGIN_GRID) {
-                double[] covered = selectionScore(thresholdSplits, flat(chosenC, c, m));
-                double distance = Math.abs(covered[0] - chosenCoverage);
-                if (distance < gap) {
-                    gap = distance;
-                    flatConfidence = c;
-                    flatMargin = m;
-                    flatCoverage = covered[0];
-                    flatAccuracy = covered[1];
-                }
-            }
-        }
-        return new Selection(model, nlls, mostFrequentNext, chosenCoverage, chosenAccuracy, reached, flatConfidence,
-                flatMargin, flatCoverage, flatAccuracy);
+        ThresholdSelection.Flat flatChoice = thresholds.matchFlat((confidence, margin) -> selectionScore(thresholdSplits,
+                flat(chosenC, confidence, margin)), chosen.coverage());
+        return new Selection(model, nlls, mostFrequentNext, chosen.coverage(), chosen.accuracy(), chosen.reached(),
+                flatChoice.confidence(), flatChoice.margin(), flatChoice.coverage(), flatChoice.accuracy());
     }
 
     /** Returns {@code [leaf coverage, accuracy on covered]} of one arm's decisions on non-test splits. */
@@ -688,24 +639,34 @@ final class NextConceptG3Evaluation {
         return patterns;
     }
 
+    /** The decomposed N11 noise windows of {@link #noiseWaves()}. */
+    private Split noiseSplit() {
+        List<SampledWave> waves = noiseWaves();
+        var patterns = new SpectralPattern[waves.size()];
+        for (int w = 0; w < patterns.length; w++) {
+            patterns[w] = decompose(waves.get(w));
+        }
+        return new Split(null, patterns);
+    }
+
     /**
      * Fixture N11: windows of seeded unit-variance Gaussian noise with no concept, in the medium workload's sequence
-     * layout. They carry no labels.
+     * layout. They carry no labels. The ablation of #130 reads the same windows through other transforms.
      */
-    private Split noiseSplit() {
+    List<SampledWave> noiseWaves() {
         var random = new Random(protocol.noiseSeed());
         int n = protocol.sequences() * protocol.windowsPerSequence();
-        var patterns = new SpectralPattern[n];
+        var waves = new ArrayList<SampledWave>(n);
         for (int w = 0; w < n; w++) {
             var samples = new double[ConceptFixtureGenerator.SAMPLE_COUNT];
             for (int i = 0; i < samples.length; i++) {
                 samples[i] = random.nextGaussian();
             }
-            patterns[w] = decompose(new SampledWave(samples, ConceptFixtureGenerator.SAMPLE_RATE, SampleUnit.HERTZ,
+            waves.add(new SampledWave(samples, ConceptFixtureGenerator.SAMPLE_RATE, SampleUnit.HERTZ,
                     new WaveProvenance("ncm-noise-n11", 1, "seed-" + Long.toHexString(protocol.noiseSeed()) + "/w"
                             + w, (long) w * samples.length)));
         }
-        return new Split(null, patterns);
+        return waves;
     }
 
     private SpectralPattern decompose(SampledWave wave) {
@@ -947,13 +908,6 @@ final class NextConceptG3Evaluation {
         return "0x" + Long.toHexString(value).toUpperCase(Locale.ROOT);
     }
 
-    private static double[] grid(int count, double step) {
-        var values = new double[count];
-        for (int i = 0; i < count; i++) {
-            values[i] = StrictMath.rint(i * step * 100.0) / 100.0;
-        }
-        return values;
-    }
 
     // ---------------------------------------------------------------- values
 

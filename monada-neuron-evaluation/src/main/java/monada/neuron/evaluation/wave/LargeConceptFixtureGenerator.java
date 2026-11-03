@@ -33,8 +33,8 @@ import java.util.Random;
  *       depth-1 concept, 0.3 the fixed successor leaf {@code (i + 7) mod 192}, 0.2 a uniform leaf.</li>
  * </ul>
  *
- * <p>Labels are returned apart from the waves, as leaf ordinals; those of a test split are guarded like
- * {@link SplitLabels}.
+ * <p>Labels are returned apart from the waves, as leaf ordinals in {@link GuardedLabels}; those of a test split are
+ * guarded. Each window also carries the digest of its clean samples, as in the medium fixture.
  */
 final class LargeConceptFixtureGenerator {
 
@@ -106,6 +106,7 @@ final class LargeConceptFixtureGenerator {
         double noiseScale = StrictMath.pow(10.0, -snrDb / 10.0);
         int total = Math.multiplyExact(sequences, windowsPerSequence);
         var waves = new ArrayList<SampledWave>(total);
+        var cleanDigests = new ArrayList<String>(total);
         var labels = new int[total];
         for (int sequence = 0; sequence < sequences; sequence++) {
             int leaf = tones.nextInt(LEAVES);
@@ -114,6 +115,7 @@ final class LargeConceptFixtureGenerator {
                     leaf = nextLeaf(leaf, tones);
                 }
                 double[] samples = cleanWindow(leaf, tones);
+                cleanDigests.add(ConceptFixtureGenerator.digest(samples));
                 addNoise(samples, noiseScale, noise);
                 var provenance = new WaveProvenance(ENCODER_ID, 1, String.format(Locale.ROOT,
                         "%s/%s/seed-%x/snr-%s/s%d/w%d", VERSION, role, seed, snrDb, sequence, position),
@@ -122,7 +124,7 @@ final class LargeConceptFixtureGenerator {
                 waves.add(new SampledWave(samples, SAMPLE_RATE, SampleUnit.HERTZ, provenance));
             }
         }
-        return new LargeSplit(role, seed, waves, new LeafLabels(labels, role == SplitRole.TEST));
+        return new LargeSplit(role, seed, waves, cleanDigests, new GuardedLabels(labels, role == SplitRole.TEST));
     }
 
     private int nextLeaf(int current, Random tones) {
@@ -185,52 +187,19 @@ final class LargeConceptFixtureGenerator {
      * @param role split role
      * @param seed split seed
      * @param waves the noisy windows in sequence-major order
-     * @param labels separate leaf-ordinal ground truth
+     * @param cleanDigests per window, the SHA-256 of its clean (pre-noise) samples, for the disjointness check
+     * @param labels separate leaf-ordinal ground truth, guarded for a test split
      */
-    record LargeSplit(SplitRole role, long seed, List<SampledWave> waves, LeafLabels labels) {
+    record LargeSplit(SplitRole role, long seed, List<SampledWave> waves, List<String> cleanDigests,
+                      GuardedLabels labels) {
 
-        /** Copies the waves. */
+        /** Copies the waves and digests. */
         LargeSplit {
             waves = List.copyOf(waves);
-            if (labels.size() != waves.size()) {
-                throw new IllegalArgumentException("one label per window is required");
+            cleanDigests = List.copyOf(cleanDigests);
+            if (labels.size() != waves.size() || cleanDigests.size() != waves.size()) {
+                throw new IllegalArgumentException("one label and one digest per window are required");
             }
-        }
-    }
-
-    /**
-     * Leaf-ordinal labels of one split; a read of guarded labels before {@link #openForScoring()} counts as a leak,
-     * as in {@link SplitLabels}.
-     */
-    static final class LeafLabels {
-
-        private final int[] labels;
-        private boolean open;
-        private int earlyReads;
-
-        LeafLabels(int[] labels, boolean guarded) {
-            this.labels = labels.clone();
-            this.open = !guarded;
-        }
-
-        int size() {
-            return labels.length;
-        }
-
-        int label(int window) {
-            Objects.checkIndex(window, labels.length);
-            if (!open) {
-                earlyReads++;
-            }
-            return labels[window];
-        }
-
-        void openForScoring() {
-            open = true;
-        }
-
-        int earlyReads() {
-            return earlyReads;
         }
     }
 }

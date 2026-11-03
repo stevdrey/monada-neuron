@@ -14,6 +14,7 @@ import monada.neuron.reasoning.concept.NextConceptPredictor;
 import monada.neuron.reasoning.concept.PredictionBudget;
 import monada.neuron.resonance.SpectralResonanceDynamics;
 import monada.neuron.spectral.SampleUnit;
+import monada.neuron.spectral.SampledWave;
 import monada.neuron.spectral.SpectralBasis;
 import monada.neuron.spectral.SpectralFrame;
 import monada.neuron.spectral.SpectralPattern;
@@ -22,6 +23,7 @@ import monada.neuron.spectral.WaveDecomposer;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.OptionalLong;
 
@@ -81,7 +83,7 @@ final class LargeWorkloadEvaluation {
             var windows = new ArrayList<LabeledSequence.Window>(length);
             for (int w = start; w < start + length; w++) {
                 windows.add(new LabeledSequence.Window(trainingPatterns[w],
-                        hierarchy.node(training.labels().label(w)).conceptCode()));
+                        hierarchy.node(training.labels().ordinal(w)).conceptCode()));
             }
             sequences.add(new LabeledSequence(windows));
         }
@@ -91,7 +93,7 @@ final class LargeWorkloadEvaluation {
             ConceptModel candidate = trainer.train(hierarchy, FRAME, sequences, temperature);
             double nll = 0.0;
             for (int w = 0; w < trainingPatterns.length; w++) {
-                int truth = training.labels().label(w);
+                int truth = training.labels().ordinal(w);
                 double q = predictor.predict(ConceptQuery.of(trainingPatterns[w]), candidate, PredictionBudget.DEFAULT)
                         .scores().map(scores -> scores.currentScore(truth)).orElse(0.0);
                 nll -= StrictMath.log(Math.max(q, Double.MIN_NORMAL));
@@ -103,12 +105,12 @@ final class LargeWorkloadEvaluation {
         }
         trainingPatterns = null;
 
-        double[][] trainingFeatures = features(haar, training);
+        double[][] trainingFeatures = features(haar, training.waves());
         var featureSequences = new ArrayList<FeatureSequence>();
         for (int start = 0; start < trainingFeatures.length; start += length) {
             var leaves = new int[length];
             for (int p = 0; p < length; p++) {
-                leaves[p] = training.labels().label(start + p);
+                leaves[p] = training.labels().ordinal(start + p);
             }
             featureSequences.add(new FeatureSequence(Arrays.copyOfRange(trainingFeatures, start,
                     start + length), leaves));
@@ -122,7 +124,7 @@ final class LargeWorkloadEvaluation {
             for (int w = 0; w < trainingFeatures.length; w++) {
                 ScoredPrediction prediction = scorer.predict(trainingFeatures[w], ArmDecisions.NONE, candidate,
                         PredictionBudget.DEFAULT);
-                double q = prediction.scored() ? prediction.current()[training.labels().label(w)] : 0.0;
+                double q = prediction.scored() ? prediction.current()[training.labels().ordinal(w)] : 0.0;
                 nll -= StrictMath.log(Math.max(q, Double.MIN_NORMAL));
             }
             if (nll < dNll) {
@@ -134,7 +136,7 @@ final class LargeWorkloadEvaluation {
         int mostFrequentNext = mostFrequentNext(c);
 
         SpectralPattern[] testPatterns = decompose(dft, test);
-        double[][] testFeatures = features(haar, test);
+        double[][] testFeatures = features(haar, test.waves());
         ConceptModel cModel = c;
         FeatureConceptModel dModel = d;
         ArmDecisions cDecisions = ArmDecisions.run(hierarchy, testPatterns.length, length, (w, previous) ->
@@ -174,16 +176,23 @@ final class LargeWorkloadEvaluation {
         int maxComparisons = Math.max(cDecisions.maxComparisons, dDecisions.maxComparisons);
         boolean bounded = exhausted == 0 && maxComparisons <= PredictionBudget.DEFAULT.maxComparisons()
                 && c.scorableConcepts() <= PredictionBudget.DEFAULT.maxComparisons();
-        boolean disjoint = protocol.trainingSeed() != protocol.testSeed();
+        var trainingDigests = new HashSet<>(training.cleanDigests());
+        int shared = 0;
+        for (String digest : test.cleanDigests()) {
+            shared += trainingDigests.contains(digest) ? 1 : 0;
+        }
+        boolean disjoint = protocol.trainingSeed() != protocol.testSeed() && shared == 0;
         int earlyReads = test.labels().earlyReads();
         var check = new Check("large.bounds", bounded && disjoint && earlyReads == 0, hierarchy.size()
                 + " concepts, depth " + hierarchy.levels() + ", " + test.waves().size() + " held-out windows of "
                 + LargeConceptFixtureGenerator.SAMPLE_COUNT + " samples: at most " + maxComparisons
                 + " comparisons per prediction (budget " + PredictionBudget.DEFAULT.maxComparisons() + "), "
-                + exhausted + " BUDGET_EXHAUSTED; training and test seeds " + (disjoint ? "distinct" : "EQUAL")
-                + "; " + earlyReads + " held-out label reads before scoring");
+                + exhausted + " BUDGET_EXHAUSTED; training and test seeds "
+                + (protocol.trainingSeed() != protocol.testSeed() ? "distinct" : "EQUAL") + ", " + shared + " of "
+                + test.cleanDigests().size() + " held-out clean windows shared with training; " + earlyReads + " held-out label reads before scoring");
         return new Result(check, c, d, cScore, dScore, answerable == 0 ? 0.0 : aRight / (double) answerable,
-                answerable == 0 ? 0.0 : bRight / (double) answerable, answerable, testPatterns, testFeatures, test);
+                answerable == 0 ? 0.0 : bRight / (double) answerable, answerable, Arrays.copyOf(testPatterns, length),
+                test.waves().subList(0, length), test.seed());
     }
 
     /** Leaf of highest centroid similarity, ties to the lower ordinal (control B). */
@@ -260,7 +269,7 @@ final class LargeWorkloadEvaluation {
     }
 
     private int nextLabel(LargeSplit split, int w) {
-        return (w + 1) % protocol.windowsPerSequence() == 0 ? ArmDecisions.NONE : split.labels().label(w + 1);
+        return (w + 1) % protocol.windowsPerSequence() == 0 ? ArmDecisions.NONE : split.labels().ordinal(w + 1);
     }
 
     SpectralPattern[] decompose(ConceptFeatureMap map, LargeSplit split) {
@@ -273,13 +282,13 @@ final class LargeWorkloadEvaluation {
     }
 
     /** Extracts every window's feature, streaming the patterns so only the current and previous are retained. */
-    double[][] features(ConceptFeatureMap map, LargeSplit split) {
+    double[][] features(ConceptFeatureMap map, List<SampledWave> waves) {
         WaveDecomposer decomposer = map.decomposer();
         int dimension = map.dimension(LargeConceptFixtureGenerator.SAMPLE_COUNT);
-        var features = new double[split.waves().size()][];
+        var features = new double[waves.size()][];
         SpectralPattern previous = null;
         for (int w = 0; w < features.length; w++) {
-            SpectralPattern pattern = map.decompose(decomposer, split.waves().get(w));
+            SpectralPattern pattern = map.decompose(decomposer, waves.get(w));
             var feature = new double[dimension];
             boolean start = w % protocol.windowsPerSequence() == 0;
             features[w] = map.extract(pattern, start ? null : previous, dynamics, feature) ? feature : null;
@@ -311,7 +320,7 @@ final class LargeWorkloadEvaluation {
     /**
      * Result of the large workload.
      *
-     * @param check the bounds and leakage check
+     * @param check the bounds, disjointness and leakage check
      * @param c control C's trained model
      * @param d control D's trained model
      * @param cScore C's figures
@@ -319,13 +328,13 @@ final class LargeWorkloadEvaluation {
      * @param aAccuracy control A's accuracy on every window with a successor
      * @param bAccuracy control B's accuracy on every window with a successor
      * @param answerable windows with a successor
-     * @param testPatterns the held-out DFT patterns, for the resource measurements
-     * @param testFeatures the held-out Haar features, for the resource measurements
-     * @param test the held-out split
+     * @param headPatterns the DFT patterns of the first held-out sequence, for the resource measurements
+     * @param headWaves the windows of the first held-out sequence, for the resource measurements
+     * @param testSeed the held-out split seed
      */
     record Result(Check check, ConceptModel c, FeatureConceptModel d, ArmScore cScore, ArmScore dScore,
-                  double aAccuracy, double bAccuracy, int answerable, SpectralPattern[] testPatterns,
-                  double[][] testFeatures, LargeSplit test) {
+                  double aAccuracy, double bAccuracy, int answerable, SpectralPattern[] headPatterns,
+                  List<SampledWave> headWaves, long testSeed) {
     }
 
     /**

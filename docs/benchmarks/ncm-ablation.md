@@ -3,7 +3,9 @@
 **Contract**: `ncm-wave-cognition/2`, Sections 12 to 15
 **Protocol**: [`ncm-ablation/1`](../experiments/ncm-ablation-v1.md), pre-registered in commit `ad0fb7c`, before any
 held-out result of this protocol was produced or committed
-**Run**: Neuron commit `ad0fb7c` (clean), full protocol, every semantic check **PASS**
+**Run**: full protocol, every semantic check **PASS**. Quality figures from commit `ad0fb7c` (clean); the review fixes
+before merge reproduced every quality figure bit for bit, and the cost table and the two checks below come from that
+rerun
 **Verdict**: **NO-GO**. The decision is binding for further investment (contract Section 15, gate G5); it is recorded in
 [ADR 0050](../adr/0050-ncm-investment-decision.md)
 
@@ -95,20 +97,22 @@ machine-specific diagnostics, not gates.
 
 | Scenario | Per window | Per iteration | Allocated per window | Snapshot |
 | --- | ---: | ---: | ---: | ---: |
-| tiny: DFT + C | 5.3 µs | 10.6 µs (2 windows) | 2,672 B | 176 B |
-| medium: DFT + C | 45.9 µs | 2.94 ms per sequence | 27,077 B | 6,480 B |
-| medium: C prediction only | 4.5 µs | 0.29 ms | 3,304 B | 6,480 B |
-| medium: Haar + feature + D | 7.4 µs | 0.47 ms | 9,837 B | 12,496 B |
-| medium: runtime execution, 8 windows | 44.0 µs | 0.35 ms | 27,344 B | 6,480 B |
-| large: DFT + C | 11.29 ms | 722 ms per sequence | 420,061 B | 4,498,432 B |
-| large: C prediction only | 0.64 ms | 41.1 ms | 43,012 B | 4,498,432 B |
-| large: Haar + feature + D | 1.14 ms | 73.1 ms | 157,577 B | 8,687,104 B |
-| large: runtime execution, 8 windows | 11.09 ms | 88.7 ms | 412,877 B | 4,498,432 B |
+| tiny: DFT + C | 2.5 µs | 5.0 µs (2 windows) | 2,012 B | 176 B |
+| medium: DFT + C | 49.9 µs | 3.19 ms per sequence | 26,802 B | 6,480 B |
+| medium: C prediction only | 4.4 µs | 0.28 ms | 3,029 B | 6,480 B |
+| medium: Haar + feature + D | 5.8 µs | 0.37 ms | 9,785 B | 12,496 B |
+| medium: runtime execution, 8 windows | 50.1 µs | 0.40 ms | 27,368 B | 6,480 B |
+| large: DFT + C | 11.03 ms | 706 ms per sequence | 413,790 B | 4,498,432 B |
+| large: C prediction only | 0.59 ms | 37.6 ms | 36,737 B | 4,498,432 B |
+| large: Haar + feature + D | 0.89 ms | 56.8 ms | 157,525 B | 8,687,104 B |
+| large: runtime execution, 8 windows | 11.31 ms | 90.5 ms | 412,901 B | 4,498,432 B |
 
-The reference O(N²) DFT dominates: about 90% of the medium window and 94% of the large one. Prediction at 256
-concepts is linear in concepts × bins (0.64 ms). D is cheaper end to end because the Haar transform is O(N), but its
-snapshot is twice as large (`concepts × N` features instead of `concepts × (N/2 + 1)`). Both runtime executions ended
-`PROCESSED` within the default `WaveCognitionLimits`. For kernel-level figures see
+The prediction rows call the core predictor and the reference scorer directly, without the evaluation's decision
+records, so they carry no harness copies: 36,737 B per large prediction against the 34,683 B JMH measures for the bare
+predictor ([next-concept-g3.md](next-concept-g3.md)). The reference O(N²) DFT dominates: about 91% of the medium
+window and 95% of the large one. Prediction at 256 concepts is linear in concepts × bins (0.59 ms). D is cheaper end to
+end because the Haar transform is O(N), but its snapshot is twice as large (`concepts × N` features instead of
+`concepts × (N/2 + 1)`). Both runtime executions ended `PROCESSED` within the default `WaveCognitionLimits`. For kernel-level figures see
 [wave-decomposer-reference.md](wave-decomposer-reference.md) and [next-concept-g3.md](next-concept-g3.md).
 
 ## Checks
@@ -124,8 +128,8 @@ Every check passed (23 in total). The 6 G3 and 8 G5 checks re-ran unchanged. The
 | `leakage.counterfactual` | permuted held-out labels: every arm bit-identical; D-haar accuracy changes |
 | `determinism` | repeat 1 regenerated, re-answered and re-bootstrapped: bit-identical |
 | `leakage.test-labels` | 21 guarded label sets, 0 early reads |
-| `host.memory-independence` | 128/128 executions identical across four memory compositions (re-run after the review fix of the previous-concept lag; unchanged) |
-| `large.bounds` | at most 256 comparisons per prediction (budget 256), 0 `BUDGET_EXHAUSTED`, distinct seeds, 0 early reads |
+| `host.memory-independence` | 128 executions in sequences of 64: previous concepts, reports and hypotheses identical across four memory compositions |
+| `large.bounds` | at most 256 comparisons per prediction (budget 256), 0 `BUDGET_EXHAUSTED`, distinct seeds and 0 of 1,024 held-out clean windows shared with training, 0 early reads |
 
 ## Environment
 
