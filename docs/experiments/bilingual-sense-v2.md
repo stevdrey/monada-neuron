@@ -52,7 +52,7 @@ metrics, margins, checks, resource limits and the per-direction verdict structur
 
 | Id | v1 rule | v2 rule | Reason |
 | --- | --- | --- | --- |
-| R1 | Two independent bilingual human annotators per item, blind to each other ([Annotation](bilingual-sense-v1.md#annotation); feasibility [item 3](bilingual-sense-feasibility.md#proposed-responsible-annotation)) | Two AI annotator agents **A1** and **A2** from different model families, under the [isolation rules](#isolation-and-blinding) | No human annotators are available |
+| R1 | Two independent bilingual human annotators per item, blind to each other ([Annotation](bilingual-sense-v1.md#annotation); feasibility [item 3](bilingual-sense-feasibility.md#proposed-responsible-annotation)) | Two AI annotator agents **A1** and **A2** from different [model families](#agent-roles), under the [isolation rules](#isolation-and-blinding) | No human annotators are available |
 | R2 | Adjudication by a third person | Adjudication by an AI agent **J**, in two locked calls ([Adjudication](#adjudication)) | As R1 |
 | R3 | Annotators may use the inventory and dictionaries, but no machine translation, LLM or system arm in pass A | Agents receive only the frozen guidelines, the inventory with its cited glosses and the item. No tool, web, retrieval, dictionary lookup, translation system or arm output. Their own trained knowledge cannot be removed and is [disclosed](#correlated-errors-and-contamination) | The annotators are themselves LLMs; tool access would make calls non-reproducible and open undisclosed sources |
 | R4 | "Machine-generated labels are never gold" | The adjudicated agent label is **`agent-gold`**, the only gold of v2. Every artifact, table and report carries that provenance class and never calls it human annotation | Resolves the direct conflict; keeps the distinction visible |
@@ -126,8 +126,9 @@ tracking code-point positions through normalization. This string is the `id` of 
 | Lead | The project owner, human | Inventory, guidelines, calibration outputs, gate counts | Inventory, guidelines, configuration commit, sealed store |
 | H (optional) | The project owner, human | Audit items, source-only | Audit labels; never gold |
 
-- **Family rule.** A1 and A2 come from different providers and different base-model lineages (two fine-tunes of one
-  base model are one family). J comes from a third family if one is available; otherwise J shares a family with one
+- **Family rule.** A **model family** is one developer organization's base-model lineage, whoever hosts it (two
+  fine-tunes of one base model are one family; a model run on a local server is classed by its developer). A1 and A2
+  come from different families, so from different developer organizations and different lineages. J comes from a third family if one is available; otherwise J shares a family with one
   annotator, and that is disclosed in every report.
 - Open-weight models run locally are allowed; their weight file SHA-256 is then registered.
 - The orchestrator, like corpus and annotation tooling in v1, runs offline outside the Gradle build. No provider SDK
@@ -155,7 +156,7 @@ user message) and may not edit the text.
 
 | File | Use | SHA-256 |
 | --- | --- | --- |
-| [pass-a.txt](bilingual-sense-v2/pass-a.txt) | A1/A2 pass A | `145ffc86a45ac03a68c64756893c51200eacfcc48d422e5ba769c8938a7949ac` |
+| [pass-a.txt](bilingual-sense-v2/pass-a.txt) | A1/A2 pass A | `a465ff9c4c14d6789f43b1a5c5ca92ac16b59c8c20215db411dd1be5327fcc34` |
 | [pass-b.txt](bilingual-sense-v2/pass-b.txt) | A1/A2 pass B | `f02549c04e2cdd691eb65b5a2ce5dc3a71dc33c140349187ee5c021e0e7c6129` |
 | [adjudication-1.txt](bilingual-sense-v2/adjudication-1.txt) | J, source only | `5d4fadad0371bfa912af00a4ae26a20eea5653af2dce96325e8b57e2cf35a7e2` |
 | [adjudication-2.txt](bilingual-sense-v2/adjudication-2.txt) | J, translation revealed | `8ea122a715fb9d903f5e12a355698f432edc778e63acfa3b10132b5ee7070262` |
@@ -179,13 +180,19 @@ Placeholders:
 
 ## Annotation procedure
 
-### Pass A (source only)
+### Output validity
 
-**Output validity (every call except the free-text continuation probe).** An output is valid only when it validates against its schema, every cluster
-ordinal it contains (`clusters` of a label, or an integer `realized`) exists in the inventory of the item's
-`(direction, lemma)`, and every cue span satisfies `0 ≤ start < end ≤` the sentence length in code points. A
-response that fails any of these is **invalid**, handled exactly like a schema-invalid one
-([retries](#nondeterminism-failures-and-retries)); it never enters gold, a diagnostic or a lock.
+This rule governs every structured call (pass A, pass B, J call 1, J call 2, stability probe); the free-text
+continuation probe has none. An output is **valid** when it validates against its schema and every cluster ordinal it
+contains (`clusters` of a label, or an integer `realized`) exists in the inventory of the item's
+`(direction, lemma)`. An invalid output is re-asked once ([retries](#nondeterminism-failures-and-retries)) and never
+enters gold, a diagnostic or a lock.
+
+A cue span is **in range** when `0 ≤ start < end ≤` the sentence length in code points. Out-of-range spans do not make
+an output invalid: they are removed from that output and logged as `cue-span-invalid`, and the label stands. Only in
+J call 2 does a span carry weight, as the required evidence for a `SOURCE_CUE` change ([Adjudication](#adjudication)).
+
+### Pass A (source only)
 
 The annotator receives `pass-a.txt` and its output must be valid. The orchestrator appends the raw response and its
 SHA-256 to the log before any pass-B request for that item is created. Pass A is then locked.
@@ -204,8 +211,8 @@ and either annotator names a cluster. Pass B never enters gold.
   as in pass A.
 - J call 2 (`adjudication-2.txt`) reveals both pass-B reports and the translation. Its output must be valid, so a
   `final` naming a cluster outside the inventory is an invalid output, never a change. The orchestrator accepts a
-  changed `final` only when `changeGround` is `SOURCE_CUE` with at least one valid cue span inside the sentence and not
-  contained in the target span, or `INVENTORY_COVERAGE` with `final` = `OOI`. Any other change is rejected, logged,
+  changed `final` only when `changeGround` is `SOURCE_CUE` with at least one in-range cue span (the target
+  span itself counts, for example a plural or tense form of the target), or `INVENTORY_COVERAGE` with `final` = `OOI`. Any other change is rejected, logged,
   and the call-1 label stands. This makes v1's rule mechanical: a translation alone cannot turn `UNA` into `ANS`,
   narrow a set, or move an item between clusters.
 - The final label is `agent-gold`. The call-2 change rate, by ground, is reported per `(direction, lemma)`.
@@ -256,7 +263,7 @@ registered seed where supported, and an output limit large enough for the schema
   the validation result and the SHA-256 of the previous record (a hash chain, so edits are detectable). Held-out
   records go to a separate sealed log ([Held-out handling](#held-out-handling)).
 - **Transport errors** (timeout, rate limit, 5xx): up to 3 retries of the identical request with exponential back-off.
-- **Invalid output** (schema, inventory or span, as defined in [Pass A](#pass-a-source-only)): exactly one re-ask with
+- **Invalid output** (schema or inventory, as defined in [Output validity](#output-validity)): exactly one re-ask with
   the identical request. A valid output is never re-sampled, whatever its content, so no label is chosen by
   retrying.
 - After those attempts an output that is still missing or invalid is **exhausted**. Its effect is fixed per call:
@@ -310,7 +317,7 @@ recorded in the feasibility report before step 8.
 | Gate | Step | Rule |
 | --- | --- | --- |
 | `annotation.availability` | 4 | The configuration commit exists, satisfies the family rule and its file hashes match. Otherwise both directions stop (R6) |
-| `annotation.unlabeled` | 7 | A `(direction, lemma)` with more than 2% of its annotated items `UNLABELED` (an exhausted pass A or J call 1) is dropped. Remaining `UNLABELED` items are excluded and counted. `passB-missing` and `j2-missing` items are not `UNLABELED`; they are reported only |
+| `annotation.unlabeled` | 7 | A `(direction, lemma)` with more than 2% `UNLABELED` items (an exhausted pass A or J call 1) is dropped. The denominator is its step-6 items, all splits pooled (training, validation, held-out); calibration, pilot and probe items are not counted. Remaining `UNLABELED` items are excluded and counted. `passB-missing` and `j2-missing` items are not `UNLABELED`; they are reported only |
 | Agreement (v1) | 7 | Unchanged: α ≥ 0.67 between A1 and A2 on pass A, computed over every item with two valid pass-A labels, whatever happens later in adjudication |
 
 ## Optional owner audit
@@ -320,8 +327,8 @@ auditor is one person, the project owner, who designed the protocol and is not b
 
 - **Declared in advance.** Whether it runs is fixed in the configuration commit. If declared, its result is reported
   whatever it is; an incomplete audit is reported as such and the label status stays `agent-labeled`.
-- **Sample.** After the step-7 gates, the first 100 validation items per direction, over the scored lemmas, in
-  increasing `h(audit, occurrence id)`. Held-out items are never audited. Because families reach validation and
+- **Sample.** After the step-7 gates, the first 100 validation items per direction that have `agent-gold` (not
+  `UNLABELED`), over the scored lemmas, in increasing `h(audit, occurrence id)`. Held-out items are never audited. Because families reach validation and
   held-out by the same keyed hash and are labeled by the same procedure, the validation error rate estimates the
   held-out one; this exchangeability is an assumption, stated as such.
 - **Procedure.** H sees what pass A shows (guidelines, inventory, item), may use dictionaries, and uses no machine
@@ -350,7 +357,9 @@ auditor is one person, the project owner, who designed the protocol and is not b
 ## Data handling
 
 - Only the item fields above, the inventory, the guidelines and, in pass B and J call 2, the translation are sent.
-  No sentence key, family id, split, Europarl speaker field or personal data is sent or stored in the log.
+  No sentence key, family id, split, Europarl speaker field or personal data is sent to any agent. The log stores the
+  occurrence id, which embeds the sentence key, only to join each record to its item; it stores no family id, split,
+  speaker field or personal data.
 - Corpus files stay the recorded snapshot. Only ids, offsets, labels, raw non-held-out outputs and the sentences the
   release needs are published, with v1's attribution rules; held-out raw outputs are published only after step 8.
 
@@ -423,4 +432,8 @@ such evidence needs a later version with human-annotated held-out data.
   for v1's stratum and never sent to agents; every exhausted call has a fixed effect (pass B and J call 2 failures
   no longer leave adjudication undefined); pass B and J call 2 receive the frozen guidelines, as every stateless
   annotation call must; pass-A pairs of items whose J call 1 is exhausted stay in α; every output, J call 2
-  included, is checked against the item's inventory and sentence before it can lock or change a label.
+  included, is checked against the item's inventory before it can lock or change a label. Code-review fixes: the log
+  may hold the occurrence id but sends no key to agents; out-of-range cue spans are dropped instead of invalidating a
+  label; the target span counts as a `SOURCE_CUE`; pass A separates multi-answer `ANS` from `UNA`; the audit samples
+  only items with `agent-gold`; the `annotation.unlabeled` denominator is the step-6 items, all splits pooled; model
+  family is defined by developer lineage; output validity has its own subsection.

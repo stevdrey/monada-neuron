@@ -12,7 +12,9 @@ LABELS
 - UNA (unanswerable): the source sentence does not decide between clusters that could fit.
 - OOI (out of inventory): no cluster fits, including when the marked word is another lemma or another
   sense that the inventory does not list.
-Do not guess a translation the sentence does not support. If the sentence leaves the choice open, answer UNA.
+Do not guess a translation the sentence does not support. If several clusters are each an acceptable translation
+here, list them all (ANS). Answer UNA only when the sentence leaves open which of several clusters is meant and
+they are not all acceptable.
 
 GUIDELINES
 {{GUIDELINES}}
