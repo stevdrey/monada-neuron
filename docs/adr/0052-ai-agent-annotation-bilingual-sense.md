@@ -19,7 +19,7 @@ conflicts with both ADR 0051 and the epic unless the evidence the labels can sup
 
 1. **`bilingual-sense/2`** ([bilingual-sense-v2.md](../experiments/bilingual-sense-v2.md)) replaces v1's human
    annotation with two AI annotators from different model families and an AI adjudicator, with locked source-only
-   pass A, diagnostic pass B, two-call source-first adjudication enforced by a deterministic orchestrator, frozen
+   pass A, diagnostic pass B, a final source-only adjudication followed by a translation-revealed call that records only a diagnostic proposal, run by a deterministic orchestrator, frozen
    prompts and output schema, a configuration commit before calibration, a hash-chained raw-output log, sealed
    held-out outputs and fixed retry rules. Every other v1 rule, including the split key, gates, arms and margins,
    is kept.

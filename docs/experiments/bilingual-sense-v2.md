@@ -69,6 +69,7 @@ metrics, margins, checks, resource limits and the per-direction verdict structur
 | R15 | Calibration sample in `calibration` order; caps "in `cap` order" for every split | [Sample ordering](#sample-ordering) | The two rules overlap for calibration and pilot |
 | R16 | Europarl `file_id` validation at step 2 | Extended with a column-language check ([Sentence keys](#sentence-keys-and-family-ids)) | The `es-en` TSV's column order is unverified |
 | R17 | Held-out gold sealed offline by the lead until step 8 | Sealing extends to every raw agent output on held-out items ([Held-out handling](#held-out-handling)) | Raw outputs reveal gold |
+| R19 | The adjudicator decides from the source, then may consult pass B and the translation to fix an `OOI` miss or a cited, overlooked source cue (feasibility [item 4](bilingual-sense-feasibility.md#proposed-responsible-annotation)) | J's source-only label (call 1) is **final**. J call 2 sees the translation and only records a diagnostic proposal, which never changes gold ([Adjudication](#adjudication)) | No mechanical check can show that a cited span supports a change independently of the translation (for example, citing «banco» after seeing *bank*). An `OOI` miss or overlooked cue that only the translation reveals is therefore not corrected; its proposal rate is reported |
 | R18 | No independent check of label quality beyond α | Optional, pre-declared [owner audit](#optional-owner-audit) and reported [diagnostics](#correlated-errors-and-contamination). New gate `annotation.unlabeled` ([Gates](#added-gates)) | Characterizes uncertainty without a human reference set |
 
 ## Clarifications before partitioning
@@ -122,7 +123,7 @@ tracking code-point positions through normalization. This string is the `id` of 
 | --- | --- | --- | --- |
 | Orchestrator | Deterministic offline script, not an LLM | Everything, mechanically | Prompts, locks, logs, gold, gate counts |
 | A1, A2 | AI annotators, different model families | Their own calls only | Pass A, then pass B, per item |
-| J | AI adjudicator | Disagreeing items only | Source-only label, then final label |
+| J | AI adjudicator | Disagreeing items only | Final source-only label, then a diagnostic proposal |
 | Lead | The project owner, human | Inventory, guidelines, calibration outputs, gate counts | Inventory, guidelines, configuration commit, sealed store |
 | H (optional) | The project owner, human | Audit items, source-only | Audit labels; never gold |
 
@@ -159,9 +160,9 @@ user message) and may not edit the text.
 | [pass-a.txt](bilingual-sense-v2/pass-a.txt) | A1/A2 pass A | `a465ff9c4c14d6789f43b1a5c5ca92ac16b59c8c20215db411dd1be5327fcc34` |
 | [pass-b.txt](bilingual-sense-v2/pass-b.txt) | A1/A2 pass B | `f02549c04e2cdd691eb65b5a2ce5dc3a71dc33c140349187ee5c021e0e7c6129` |
 | [adjudication-1.txt](bilingual-sense-v2/adjudication-1.txt) | J, source only | `5d4fadad0371bfa912af00a4ae26a20eea5653af2dce96325e8b57e2cf35a7e2` |
-| [adjudication-2.txt](bilingual-sense-v2/adjudication-2.txt) | J, translation revealed | `8ea122a715fb9d903f5e12a355698f432edc778e63acfa3b10132b5ee7070262` |
+| [adjudication-2.txt](bilingual-sense-v2/adjudication-2.txt) | J, translation revealed | `386cffd5d1e267547bf4dbaa89b8a9fabdc20a850f341d17b311067cf980d11c` |
 | [continuation.txt](bilingual-sense-v2/continuation.txt) | A1/A2 continuation probe | `5e5881d797935bdfefd18900de5f711acaee6c81f1c8aa5423d90b919c11ef95` |
-| [output-schema.json](bilingual-sense-v2/output-schema.json) | JSON Schema of every output | `30a899814812edca3afb99e173c6043575f5222f5512645bf31add450d2ef71c` |
+| [output-schema.json](bilingual-sense-v2/output-schema.json) | JSON Schema of every output | `84ea050350ae411b9c5027d43c8b4e96bca965c145265c5cc012728d0d4c24ec` |
 
 Placeholders:
 
@@ -189,8 +190,8 @@ contains (`clusters` of a label, or an integer `realized`) exists in the invento
 enters gold, a diagnostic or a lock.
 
 A cue span is **in range** when `0 ≤ start < end ≤` the sentence length in code points. Out-of-range spans do not make
-an output invalid: they are removed from that output and logged as `cue-span-invalid`, and the label stands. Only in
-J call 2 does a span carry weight, as the required evidence for a `SOURCE_CUE` change ([Adjudication](#adjudication)).
+an output invalid: they are removed from that output and logged as `cue-span-invalid`, and the label stands. No span
+ever changes a label.
 
 ### Pass A (source only)
 
@@ -208,14 +209,14 @@ and either annotator names a cluster. Pass B never enters gold.
 - **Agreement** is identical pass-A labels (same kind and, for `ANS`, the same set). An agreed label is `agent-gold`
   without adjudication, as in v1.
 - On disagreement, J call 1 (`adjudication-1.txt`) decides from the source; its output must be valid and is locked
-  as in pass A.
-- J call 2 (`adjudication-2.txt`) reveals both pass-B reports and the translation. Its output must be valid, so a
-  `final` naming a cluster outside the inventory is an invalid output, never a change. The orchestrator accepts a
-  changed `final` only when `changeGround` is `SOURCE_CUE` with at least one in-range cue span (the target
-  span itself counts, for example a plural or tense form of the target), or `INVENTORY_COVERAGE` with `final` = `OOI`. Any other change is rejected, logged,
-  and the call-1 label stands. This makes v1's rule mechanical: a translation alone cannot turn `UNA` into `ANS`,
-  narrow a set, or move an item between clusters.
-- The final label is `agent-gold`. The call-2 change rate, by ground, is reported per `(direction, lemma)`.
+  as in pass A. **Its label is `agent-gold`, and it is final** (R19).
+- J call 2 (`adjudication-2.txt`) then reveals both pass-B reports and the translation and records a **proposal**
+  (`proposed`, `changeGround`, `cueSpans`). The proposal never changes gold, whatever its ground or spans, because no
+  mechanical check can show that a cited source span decides the label independently of the translation. This keeps
+  v1's principle strictly: a translation can never turn `UNA` into `ANS`, narrow a set, or move an item between
+  clusters.
+- Reported per `(direction, lemma)`: the rate of proposals that differ from the call-1 label, by ground, and the
+  rate of `INVENTORY_COVERAGE` proposals as a sign of inventory gaps.
 
 ### Calibration (step 4)
 
@@ -273,7 +274,7 @@ registered seed where supported, and an output limit large enough for the schema
   | Pass A (either annotator) | The item is **`UNLABELED`**: excluded from gold, α and every diagnostic, and counted by `annotation.unlabeled`. Its pass B and J calls are not issued |
   | Pass B (either annotator) | Pass A stands and the item proceeds. If it needs adjudication, J call 1 runs and its label is final: J call 2 is not issued, because its template needs both pass-B reports. The item is counted as `passB-missing`, excluded from the translation-divergent stratum, and not `UNLABELED` |
   | J call 1 | The item is **`UNLABELED`**: excluded from gold and counted by `annotation.unlabeled`. Its two valid pass-A labels **stay** in α and in the A1/A2 diagnostics, because J runs only on disagreements and dropping them would inflate α |
-  | J call 2 | The call-1 label is final, exactly as for a rejected change; counted as `j2-missing` |
+  | J call 2 | No effect on gold (the call-1 label is final in any case); counted as `j2-missing` |
   | Stability or continuation probe | Counted as missing in that diagnostic; no effect on gold |
 
   `passB-missing` and `j2-missing` counts are reported per `(direction, lemma)` ([Gates](#added-gates)).
@@ -307,7 +308,7 @@ Reported diagnostics (none is a gate, none changes gold):
   order with at least 8 tokens, each annotator gets the first `⌊n/2⌋` tokens of the sentence's `n` registered
   tokens, joined by single spaces, in a separate call with `continuation.txt`; the exact-match rate of the remaining
   tokens (the reply tokenized the same way) is reported. A high rate indicates memorization of the source text; a low rate does not prove its absence;
-- the J call-2 change rate and the rejected-change count.
+- the J call-2 proposal rate, by ground.
 
 ## Added gates
 
@@ -333,10 +334,14 @@ auditor is one person, the project owner, who designed the protocol and is not b
   held-out one; this exchangeability is an assumption, stated as such.
 - **Procedure.** H sees what pass A shows (guidelines, inventory, item), may use dictionaries, and uses no machine
   translation, LLM or agent output. H's labels are locked before `agent-gold` for those items is revealed to H.
-- **Error.** An item is an audit error when H's label and `agent-gold` differ in kind (`ANS` / `UNA` / `OOI`), or both
-  are `ANS` with disjoint sets. α (MASI) between H and `agent-gold` is also reported.
+- **Error.** An item is an audit error when H's label and `agent-gold` are not identical: they differ in kind
+  (`ANS` / `UNA` / `OOI`), or both are `ANS` with different sets, including one set strictly containing the other.
+  Reported separately per direction: kind disagreements; `ANS` items with **extra** clusters (in `agent-gold`, not in
+  H's set, so an arm would be credited for an answer H rejects); `ANS` items with **missing** clusters (in H's set, not
+  in `agent-gold`); disjoint sets; and α (MASI) between H and `agent-gold`.
 - **Rule.** A direction is `audited` when its upper 95% Wilson bound on the error rate is at most `0.15`, with exactly
-  100 items: at most 8 errors (bound 0.1500). With fewer than 100 eligible items the direction is not audited.
+  100 items: at most 8 errors (bound 0.1500). The bound measures how often `agent-gold` differs, as an exact label,
+  from one human's source-only label on validation items; it is not an accuracy bound against a human consensus. With fewer than 100 eligible items the direction is not audited.
 - Audit labels never change `agent-gold`, are never used by an arm and do not trigger relabeling.
 
 ## Held-out handling
@@ -426,7 +431,7 @@ such evidence needs a later version with human-annotated held-out data.
 
 ## Changelog
 
-- `bilingual-sense/2` (#188): AI-agent annotation and adjudication (R1–R12, R17, R18) and partitioning
+- `bilingual-sense/2` (#188): AI-agent annotation and adjudication (R1–R12, R17–R19) and partitioning
   clarifications (R13–R16), registered after the snapshot download and before any count, label or system output.
   Review fixes before merge, before any data exists: the Europarl original-language tag is read as offline metadata
   for v1's stratum and never sent to agents; every exhausted call has a fixed effect (pass B and J call 2 failures
@@ -436,4 +441,6 @@ such evidence needs a later version with human-annotated held-out data.
   may hold the occurrence id but sends no key to agents; out-of-range cue spans are dropped instead of invalidating a
   label; the target span counts as a `SOURCE_CUE`; pass A separates multi-answer `ANS` from `UNA`; the audit samples
   only items with `agent-gold`; the `annotation.unlabeled` denominator is the step-6 items, all splits pooled; model
-  family is defined by developer lineage; output validity has its own subsection.
+  family is defined by developer lineage; output validity has its own subsection. Owner review: J's source-only
+  label is final and J call 2 only records a diagnostic proposal (R19); an audit error is any exact-label difference,
+  with extra and missing clusters reported separately.

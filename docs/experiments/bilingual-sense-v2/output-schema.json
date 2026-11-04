@@ -68,12 +68,12 @@
     "adjudication2": {
       "type": "object",
       "properties": {
-        "final": { "$ref": "#/$defs/label" },
+        "proposed": { "$ref": "#/$defs/label" },
         "changeGround": { "enum": ["NONE", "SOURCE_CUE", "INVENTORY_COVERAGE"] },
         "cueSpans": { "$ref": "#/$defs/spans" },
         "note": { "$ref": "#/$defs/note" }
       },
-      "required": ["final", "changeGround", "cueSpans"],
+      "required": ["proposed", "changeGround", "cueSpans"],
       "additionalProperties": false
     }
   }
