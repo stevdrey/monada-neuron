@@ -8,7 +8,8 @@
 | Kind | Feasibility report. It precedes the protocol (#184) and the evaluation (#185) |
 | Audit date | 2026-11-03 |
 | Method | Manual desk audit of public pages and papers (below). No dataset archive was downloaded, no example was labeled and no model was trained or run |
-| Protocol | Step 1 is registered as [`bilingual-sense/1`](bilingual-sense-v1.md) (#184, [ADR 0051](../adr/0051-bilingual-sense-evaluation-protocol.md)) |
+| Protocol | Step 1 is registered as [`bilingual-sense/1`](bilingual-sense-v1.md) (#184, [ADR 0051](../adr/0051-bilingual-sense-evaluation-protocol.md)), revised as [`bilingual-sense/2`](bilingual-sense-v2.md) (#188, [ADR 0052](../adr/0052-ai-agent-annotation-bilingual-sense.md)) for AI-agent annotation |
+| Revisions | 2026-11-04 (#188): [step-2 corpus snapshot](#step-2-corpus-snapshot) recorded |
 | Code changes | None. The runtime, `Signal`, defaults and the opt-in NCM stage are unchanged |
 | Verdict | **Conditionally feasible, narrowed.** No existing dataset can serve as held-out evidence for both directions. The task is feasible only with a new, small, independently annotated dataset over redistributable source text, limited to a pre-declared set of target lemmas. Low-frequency senses enter the evaluation only where they pass the frozen gates of the [executable order](#executable-order) (text counts, pilot projection, then held-out gold counts); otherwise they are reported descriptively or dropped |
 
@@ -249,6 +250,29 @@ Gate proposals for step 1 to freeze (they are not results):
 Rough budget, for planning only: 6 lemmas per direction × 3 clusters × (30 held-out + 20 validation + 40 training)
 families is about 3,240 occurrences and about 6,500 single pass-A annotations before adjudication. The real count
 depends on steps 2 and 5.
+
+## Step 2 corpus snapshot
+
+Recorded under #188 as required by v1's [checksum policy](bilingual-sense-v1.md#sources-and-checksum-policy). This is
+the only snapshot the protocol uses; no file is replaced by a later export.
+
+| File | URL | Local last write (UTC) | Bytes | SHA-256 |
+| --- | --- | --- | ---: | --- |
+| `sentences.tar.bz2` | https://downloads.tatoeba.org/exports/sentences.tar.bz2 | 2026-11-04 03:02:20 | 219,521,071 | `7821ce661c3c093c32cd864c7e1d089c528a3de8a3f6ab6a2127f1eff5ebf36a` |
+| `links.tar.bz2` | https://downloads.tatoeba.org/exports/links.tar.bz2 | 2026-11-04 03:02:12 | 150,383,611 | `69a55057566127a4c2f5cd618ae47167cb66972d67a3f8f39f368c106cd6f50c` |
+| `sentences_base.tar.bz2` | https://downloads.tatoeba.org/exports/sentences_base.tar.bz2 | 2026-11-04 03:02:00 | 63,963,906 | `a7b2c9cf5e188a294e56581e7e95c216c38b18e13da53f7ff3cb36d242a7a2f3` |
+| `europarl-v10.es-en.tsv.gz` | https://www.statmt.org/europarl/v10/training/europarl-v10.es-en.tsv.gz | 2026-11-04 03:07:33 | 211,155,317 | `98e712e93591358b6450e83d6bce6f4e01ffc9e85ec670a99741606efbffb190` |
+
+- **Time precision.** The times are each file's last local write, an approximation of the end of its download, not a
+  server timestamp. The three Tatoeba files carried a server modification date of 2026-10-31 (the weekly export in
+  place at download). Every download finished after the v1 commit (`216db5c`, 2026-11-04 02:38:20 UTC), so this is
+  "the first weekly export downloaded after this protocol is committed".
+- **Verification.** The owner downloaded the files and recorded size and SHA-256; both were recomputed independently
+  from the retained files for #188 and match. The Tatoeba archives passed `bzip2 -t` and Europarl passed `gzip -t`
+  (owner's record).
+- **Not yet done.** No archive has been read beyond the integrity tests: no count, `file_id` validation,
+  column-language check, family, split or gate outcome exists. The checksummed copies are retained by the annotation
+  lead.
 
 ## Gaps and open checks
 

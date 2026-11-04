@@ -11,6 +11,7 @@
 | Binding constraints | [ADR 0050](../adr/0050-ncm-investment-decision.md) (NCM no-go) unchanged |
 | Executes | #185, only in the order below and only past the data gates |
 | Code changes | None. No harness, dependency, `Signal` change or default change is added or authorized by this document |
+| Superseded | By [`bilingual-sense/2`](bilingual-sense-v2.md) (#188, [ADR 0052](../adr/0052-ai-agent-annotation-bilingual-sense.md)) for the rules in its [change record](bilingual-sense-v2.md#change-record), mainly AI-agent annotation; every other rule here applies unchanged. This document is kept as frozen |
 
 This document pre-registers the task, data, partitions, arms, metrics, margins, checks and stop/go rules **before any
 corpus is downloaded and before any example is labeled**. Nothing in it is a result.
@@ -522,6 +523,7 @@ training-split data at any time; it may read the held-out split only at step 8, 
 
 ## Changelog
 
+- `bilingual-sense/2` (#188): see [its changelog](bilingual-sense-v2.md#changelog). No rule in this document was edited.
 - `bilingual-sense/1` (#184): initial protocol. Review fixes before merge, before any data exists:
   - the near-duplicate rule adds an exact equality pass, so short masked sequences that share no 3-gram are merged,
     and the 3-gram pass uses exact prefix filtering;

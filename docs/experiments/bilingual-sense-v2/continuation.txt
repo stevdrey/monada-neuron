@@ -1,0 +1,4 @@
+Continue the following text exactly as you would expect it to continue. Reply with the continuation only,
+on one line, without quotation marks or commentary.
+
+{{PREFIX}}

@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bilingual-sense/2/output-schema",
+  "title": "bilingual-sense/2 agent outputs",
+  "$defs": {
+    "label": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "ANS" },
+            "clusters": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 0 },
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "required": ["kind", "clusters"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": { "kind": { "enum": ["UNA", "OOI"] } },
+          "required": ["kind"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "spans": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          { "type": "integer", "minimum": 0 },
+          { "type": "integer", "minimum": 1 }
+        ],
+        "items": false,
+        "minItems": 2
+      }
+    },
+    "note": { "type": "string", "maxLength": 300 },
+    "passA": {
+      "type": "object",
+      "properties": {
+        "label": { "$ref": "#/$defs/label" },
+        "cueSpans": { "$ref": "#/$defs/spans" },
+        "note": { "$ref": "#/$defs/note" }
+      },
+      "required": ["label", "cueSpans"],
+      "additionalProperties": false
+    },
+    "passB": {
+      "type": "object",
+      "properties": {
+        "realized": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "const": "NONE_UNCLEAR" }
+          ]
+        },
+        "note": { "$ref": "#/$defs/note" }
+      },
+      "required": ["realized"],
+      "additionalProperties": false
+    },
+    "adjudication1": { "$ref": "#/$defs/passA" },
+    "adjudication2": {
+      "type": "object",
+      "properties": {
+        "proposed": { "$ref": "#/$defs/label" },
+        "changeGround": { "enum": ["NONE", "SOURCE_CUE", "INVENTORY_COVERAGE"] },
+        "cueSpans": { "$ref": "#/$defs/spans" },
+        "note": { "$ref": "#/$defs/note" }
+      },
+      "required": ["proposed", "changeGround", "cueSpans"],
+      "additionalProperties": false
+    }
+  }
+}
