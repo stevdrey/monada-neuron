@@ -221,7 +221,8 @@ lemma, 4,800 occurrences and 9,600 pass-A annotations before adjudication.
 New context (held-out family, seen lemma), contrastive pairs (annotator-marked; constructed ones separately),
 translation-divergent, `UNA`, `OOI`, source (Tatoeba / Europarl), original vs translated source sentence, context OOV
 rate (`0`, `(0, 0.3]`, `> 0.3` of window tokens absent from the training vocabulary), and the **memorization probe**:
-30 training occurrences per `(direction, lemma)`, re-scored after fitting and never counted as held-out.
+up to 30 `ANS` training occurrences per `(direction, lemma)` in training-file order (all of them when fewer exist; the count is
+reported), re-scored after fitting and never counted as held-out.
 
 ## Annotation
 
@@ -253,7 +254,9 @@ adjudication by a third person, translation-divergent stratum. Registered additi
 | Minimum per sense | 7 | A `(direction, lemma, cluster)` is **scored** only with at least 30 held-out families whose gold set contains it |
 | Low-frequency | 7 | A cluster below 20% of its lemma's gold `ANS` occurrences is low-frequency. If none is scored in a direction, #185 states that low-frequency senses were not testable there |
 | Abstention items | 7 | H2 is testable in a direction only with at least 30 held-out `UNA ∪ OOI` families of scored lemmas |
-| Minimum per direction | 7 | At least 4 lemmas, each with at least two scored clusters. Otherwise the direction stops; the other proceeds alone, stated as such |
+| Training data | 7 | Read from training gold only, after pilot families are removed. A scored cluster stays scored only if its `ANS` training weight (an item with gold set `G` counts `1/|G|`) is at least 10; a cluster below that, including one with no training item, becomes unscored and is reported descriptively. Arms still see every inventory cluster as a candidate; they fit only what training holds |
+| Validation data | 7 | Read from validation gold only. Each remaining scored lemma needs at least 10 `ANS` validation items; a lemma below that is dropped. The direction needs at least 60 `ANS` validation items over its scored lemmas, so `ANS` coverage is never a zero denominator during selection; otherwise the direction is NOT TESTABLE |
+| Minimum per direction | 7 | Applied after the training and validation gates. At least 4 lemmas, each with at least two scored clusters. Otherwise the direction stops; the other proceeds alone, stated as such |
 | Global stop | 2, 5, 6, 7 | If no direction can meet its minimum, no system is run on this data and the epic records a data no-go |
 
 Every gate outcome is recorded, with counts, in a revision of the feasibility report before step 8.
@@ -537,4 +540,7 @@ training-split data at any time; it may read the held-out split only at step 8, 
     computation on hand-computed values;
   - the projection gate drops a lemma whose pilot holds no `ANS` item, and every zero denominator (α without label
     variation, B with zero similarity, selection with nothing answered, W's zero vector, metric ratios) has a defined
-    outcome.
+    outcome;
+  - new step-7 training and validation data gates require at least 10 `ANS` training weight per scored cluster, 10
+    `ANS` validation items per scored lemma and 60 per direction, so no arm is fitted or selected without the data it
+    needs; the memorization probe uses the `ANS` training items that exist.
