@@ -248,8 +248,8 @@ adjudication by a third person, translation-divergent stratum. Registered additi
 | Gate | Step | Rule |
 | --- | --- | --- |
 | Text | 2–3 | Step 2 counts occurrences and families; the gate is then read from the step-3 map, which does not depend on it, before step 4. A `(direction, lemma)` stays only if it has at least 80 training, 40 validation and 60 held-out candidate families. Counts only |
-| Projection | 5 | For each cluster, the projection is `min(heldOutFamilies, 120) × p⁺`, where 120 is the held-out annotation cap and `p⁺` is the upper bound of the 80% Wilson interval of its pilot share among pilot `ANS` items (an item with gold set `G` counts `1/|G|` toward each cluster in it). A cluster with projection below 30 is removed from the scored set (its items stay and are reported descriptively); a lemma left with fewer than two scorable clusters is dropped before step 6 |
-| Agreement | 7 | Drop a `(direction, lemma)` with pass-A α below 0.67 |
+| Projection | 5 | For each cluster, the projection is `min(heldOutFamilies, 120) × p⁺`, where 120 is the held-out annotation cap and `p⁺` is the upper bound of the 80% Wilson interval of its pilot share among pilot `ANS` items (an item with gold set `G` counts `1/|G|` toward each cluster in it). A cluster with projection below 30 is removed from the scored set (its items stay and are reported descriptively); a lemma left with fewer than two scorable clusters is dropped before step 6. A lemma whose pilot holds no `ANS` item has no defined share; it is dropped before step 6 with that reason, and the minimum-per-direction and global-stop rules then apply |
+| Agreement | 7 | Drop a `(direction, lemma)` with pass-A α below 0.67. α is undefined when the pass-A labels show no variation (zero expected disagreement); such a lemma is dropped with that reason |
 | Minimum per sense | 7 | A `(direction, lemma, cluster)` is **scored** only with at least 30 held-out families whose gold set contains it |
 | Low-frequency | 7 | A cluster below 20% of its lemma's gold `ANS` occurrences is low-frequency. If none is scored in a direction, #185 states that low-frequency senses were not testable there |
 | Abstention items | 7 | H2 is testable in a direction only with at least 30 held-out `UNA ∪ OOI` families of scored lemmas |
@@ -274,7 +274,7 @@ in increasing `h(occurrence, ·)`. B's tie-break and W's vocabulary order both u
 | Arm | Definition | Forced choice and confidence `s` | Grid (points) |
 | --- | --- | --- | --- |
 | A — majority sense | Per `(direction, lemma)`, the cluster with the largest training weight | `k*` = that cluster; `s` = its training share. Always answers | none (1) |
-| B — nearest example | Jaccard similarity over the window token sets (target excluded) to every training item of the lemma; weighted vote of the `k` most similar, ties by lower item order in training-file order | `k*` = top vote; `s` = (top vote share) × (highest similarity). Abstain if `s < τ` | `k ∈ {1, 3, 5}` × `w ∈ {3, 5, S}` × `τ ∈ {0, 0.1, …, 0.9}` (90) |
+| B — nearest example | Jaccard similarity over the window token sets (target excluded) to every training item of the lemma; weighted vote of the `k` most similar, ties by lower item order in training-file order | `k*` = top vote; `s` = (top vote share) × (highest similarity). When every neighbour has similarity 0, `k*` is the lowest-ordinal cluster and `s = 0`. Abstain if `s < τ` | `k ∈ {1, 3, 5}` × `w ∈ {3, 5, S}` × `τ ∈ {0, 0.1, …, 0.9}` (90) |
 | C — contextual lexical | Multinomial naive Bayes per lemma over window tokens, Laplace `α`; tokens absent from training are ignored | `k*` = argmax posterior; `s` = its posterior. Abstain if `s < τ` | `α ∈ {0.1, 0.5, 1}` × `w ∈ {3, 5, S}` × `τ ∈ {0, 0.55, 0.6, …, 0.95}` (90) |
 | N — Neuron hypothesis/evidence | [Below](#arm-n-neuron-candidate) | `k*` = top-ranked cluster; `s` = its score. Abstain if `s < τ` | `λ ∈ {0.5, 1, 2}` × `w ∈ {3, 5, S}` × `τ ∈ {0, 0.1, …, 0.9}` (90) |
 | W — wave tokens (optional) | [Below](#arm-w-optional-wave-token-representation) | as below | as below |
@@ -320,7 +320,7 @@ N is built in the evaluation module only. It adds no type to core and changes ne
 
 For every arm, among the grid points whose `ANS` coverage on validation is at least `0.70`, choose the one with the
 least **selective risk over all validation items** (`ANS` answered wrongly plus `UNA`/`OOI` answered, divided by the
-number of answered items); ties to higher coverage, then to grid order. If no point reaches `0.70`, choose the point
+number of answered items, and `0` when nothing is answered); ties to higher coverage, then to grid order. If no point reaches `0.70`, choose the point
 with the highest coverage and report it. Selection is per direction, shared across that direction's lemmas. The
 held-out split is never read during selection.
 
@@ -351,7 +351,9 @@ Registered construction, inside the evaluation module only, with no DJL, PyTorch
 - Vocabulary fitted on training windows only, in [training-file order](#arms), limit 20,000,
   `L = 64`.
 - Representation: mean of the window's token waves. Classifier: per-lemma nearest class centroid by cosine over the
-  training weights; `k*` = nearest; `s` = softmax of cosines at temperature `0.1`, top probability. Abstain if `s < τ`.
+  training weights; `k*` = nearest; `s` = softmax of cosines at temperature `0.1`, top probability. The cosine with a zero
+  vector (an empty or all-padding window) is `0`, so such an item gets `k*` = the lowest-ordinal cluster and `s = 1/K`.
+  Abstain if `s < τ`.
 - Grid: `w ∈ {3, 5, S}` × `τ ∈ {0, 0.1, …, 0.9}` (30), selected as above.
 
 Controls with identical classifier, grid and data, so that only the representation changes:
@@ -376,7 +378,8 @@ Per arm, per direction, per lemma, per scored sense and per stratum:
   per-sense accuracy is the weighted mean; `Macro` is the unweighted mean over scored `(lemma, cluster)` senses of the
   direction.
 - **Coverage** on `ANS`, **selective accuracy** on answered `ANS`, **abstention precision and recall** for
-  `UNA ∪ OOI`, separately for `UNA` and `OOI`.
+  `UNA ∪ OOI`, separately for `UNA` and `OOI`. A ratio with a zero denominator (for example precision when an arm
+  never abstains) is reported as `n/a`, never as `0` or `1`, and enters no gate.
 - **Risk-coverage curve and AURC** over all held-out items of scored lemmas, ranked by decreasing `s`, where risk
   counts wrong answers on `ANS` and any answer on `UNA`/`OOI`. Tied scores form one block: the curve steps once, to the
   block's combined coverage and mean risk, so the result does not depend on item order (an arm with a constant `s`
@@ -418,9 +421,10 @@ a task where A is often above 0.5. Per-sense intervals at n = 30 (about ±0.17) 
 | `leakage.test-labels` | No held-out gold is read before scoring (guarded labels, as `GuardedLabels` does for NCM) |
 | `leakage.sealed-hash` | Held-out gold SHA-256 equals the hash committed at step 7 |
 | `leakage.inventory-hash` | The inventory hash equals the one committed before calibration (step 4 starts); the guideline hash equals the one committed when calibration ends, before the pilot (step 5) |
-| `nc.label-permutation` | N and C refitted with training labels permuted within each lemma: held-out `Macro` at most `Macro_const + 0.05` |
+| `nc.label-permutation` | N and C refitted with training labels permuted within each lemma. A context-dependent predictor can exceed `Macro_const` by chance, so the rule is statistical: for each (arm, direction), the paired cluster bootstrap of `Macro(arm, permuted) − Macro_const` (with `Macro_const` recomputed in every resample) fails the check only if its one-sided lower bound at level 0.995 exceeds `0`. The nominal false-alarm rate is 0.005 per test and at most 0.02 over the four tests (Bonferroni); the percentile bootstrap makes it approximate |
 | `nc.context-mask` | N with every window token masked: every cluster scores exactly `0`, `k*` is the lowest-ordinal cluster of each lemma (the policy's tie-break), and N abstains on every item when `τ > 0`. Checked structurally, not by an accuracy bound |
-| `nc.heldout-counterfactual` | Held-out labels permuted: every arm's outputs bit-identical, metrics change |
+| `nc.heldout-counterfactual` | Held-out labels permuted within each lemma: every arm's outputs (`k*`, `s`, answer or `ABSTAIN`) are bit-identical. Metrics may legitimately stay equal, so no change is required |
+| `metrics.fixture` | A small committed synthetic fixture with hand-computed values: the harness reproduces exactly its `Macro`, `Macro_const`, coverage, selective risk, tie-aware AURC and AUROC, ECE and Brier, including a case where changing one item's gold flips its correctness by a known amount and a case with zero denominators (`n/a`) |
 | `unseen-lemma.abstain` | At least one unseen-lemma item exists, and every arm abstains on every one |
 | `n.policy-equivalence` | N's scores and ranking equal `ReferenceHypothesisEvaluationPolicy`'s bit-for-bit on every validation item ([Arm N](#arm-n-neuron-candidate)) |
 | `w.reference-equivalence` | (If W runs) waves equal the pinned-commit fixtures bit-for-bit, and the four documented consequences hold as stated (consequence 1 for ids `i ≥ 1`) |
@@ -527,4 +531,10 @@ training-split data at any time; it may read the held-out split only at step 8, 
     instead of storing token positions in `SignalEvidence`;
   - unseen-lemma items come from families already in held-out;
   - training `UNA`/`OOI` items are used by no arm, and training-file order and the bootstrap seed are defined once;
-  - the 455-id collision rule excludes `<pad>` (id 0).
+  - the 455-id collision rule excludes `<pad>` (id 0);
+  - `nc.label-permutation` is a one-sided bootstrap test with a registered false-alarm rate instead of a fixed bound;
+  - `nc.heldout-counterfactual` requires identical outputs only, and the new `metrics.fixture` check verifies metric
+    computation on hand-computed values;
+  - the projection gate drops a lemma whose pilot holds no `ANS` item, and every zero denominator (α without label
+    variation, B with zero similarity, selection with nothing answered, W's zero vector, metric ratios) has a defined
+    outcome.
