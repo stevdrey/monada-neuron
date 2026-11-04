@@ -10,6 +10,7 @@ Use the smallest relevant skill set for the task. `AGENTS.md` remains the reposi
 | --- | --- |
 | `monada-neuron-agent-task-workflow` | Preparing implementation plans, Issues, PR reviews, or agent-scoped work. |
 | `monada-neuron-create-pull-request` | Creating or updating PRs with an `[Issue-N]` summary/title and standardized evidence-based description. |
+| `monada-neuron-implement-issue` | Implementing a GitHub Issue end to end from its number: gathering linked context, clarifying unknowns, looping through independent verification and fixes, and publishing a PR only on a current PASS. |
 | `monada-neuron-independent-verification` | Independently verifying, as a subagent, that a change snapshot meets an Issue's requirements, probing edge cases, and returning PASS / NEEDS CHANGES / BLOCKED evidence before commit, push, or PR. |
 | `monada-neuron-cognitive-architecture` | Changing Monad, Aeon, Node, Signal, resonance, evolution, action, or adapter boundaries. |
 | `monada-neuron-java-27-implementation` | Implementing or reviewing Java 27 code and modern JDK features. |
@@ -40,7 +41,7 @@ A milestone or feature completion update will normally use:
 - `monada-neuron-agent-task-workflow`;
 - `monada-neuron-executive-summary`.
 
-Implementing an Issue end to end will normally use:
+Implementing an Issue end to end starts with `monada-neuron-implement-issue`, which orchestrates:
 
 - `monada-neuron-agent-task-workflow` to shape the task;
 - `monada-neuron-independent-verification`, invoked as a separate subagent, until it returns `PASS` on the final snapshot;
