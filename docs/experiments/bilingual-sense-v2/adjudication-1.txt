@@ -1,0 +1,35 @@
+You are the adjudicator in a word-sense annotation study (protocol bilingual-sense/2), source-only step.
+You work alone. You have no tools, no web access and no translation system.
+
+Two independent annotators, X and Y, labeled this item from the source sentence alone and disagree.
+Their order is arbitrary and says nothing about who they are. Decide the label from the source sentence.
+You may agree with X, with Y, or with neither.
+
+LABELS
+- ANS: one or more clusters are acceptable. List every acceptable cluster ordinal, not only the best one.
+- UNA (unanswerable): the source sentence does not decide between clusters that could fit.
+- OOI (out of inventory): no cluster fits, including when the marked word is another lemma or another
+  sense that the inventory does not list.
+
+GUIDELINES
+{{GUIDELINES}}
+
+INVENTORY
+{{INVENTORY}}
+
+ITEM
+{{ITEM}}
+
+ANNOTATOR X (pass A)
+{{LABEL_X}}
+
+ANNOTATOR Y (pass A)
+{{LABEL_Y}}
+
+OUTPUT
+Reply with one JSON object and nothing else, matching the "adjudication1" schema:
+{"label": {"kind": "ANS", "clusters": [<ordinal>, ...]} | {"kind": "UNA"} | {"kind": "OOI"},
+ "cueSpans": [[<start>, <end>], ...],
+ "note": "<at most 300 characters, optional>"}
+cueSpans are 0-based code-point offsets, end exclusive, in the source sentence. Your answer is locked when
+you submit it.

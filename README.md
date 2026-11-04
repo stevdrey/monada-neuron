@@ -397,6 +397,11 @@ Its pre-registered protocol [`bilingual-sense/1`](docs/experiments/bilingual-sen
 [ADR 0051](docs/adr/0051-bilingual-sense-evaluation-protocol.md)) freezes the sources, family-disjoint splits,
 annotation and data gates, majority, nearest-example and lexical controls, a Neuron hypothesis/evidence candidate, an
 optional wave-token arm with matched controls, margins and per-direction stop/go rules before any data is labeled.
+Because no human annotators are available, [`bilingual-sense/2`](docs/experiments/bilingual-sense-v2.md) (issue #188,
+[ADR 0052](docs/adr/0052-ai-agent-annotation-bilingual-sense.md)) replaces them with two AI annotators from different
+model families and an AI adjudicator under frozen prompts, logging and sealing rules. Its labels are `agent-gold`, not
+human annotation: every verdict is exploratory, optionally bounded by a pre-declared owner audit, and none is
+independently human-validated evidence or opens sentence translation.
 
 ## Design Principles
 

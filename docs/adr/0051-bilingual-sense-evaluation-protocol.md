@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (issue #184; Epic #182; follows the feasibility report of #183; ADR 0050 unchanged and binding)
+Accepted (issue #184; Epic #182; follows the feasibility report of #183; ADR 0050 unchanged and binding).
+Amended by [ADR 0052](0052-ai-agent-annotation-bilingual-sense.md) (#188): annotation and adjudication by AI agents
+under `bilingual-sense/2`, which replaces the rejection of machine labels below; the other decisions stand.
 
 ## Context
 
