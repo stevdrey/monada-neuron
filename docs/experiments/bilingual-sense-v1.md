@@ -254,7 +254,7 @@ adjudication by a third person, translation-divergent stratum. Registered additi
 | Minimum per sense | 7 | A `(direction, lemma, cluster)` is **scored** only with at least 30 held-out families whose gold set contains it |
 | Low-frequency | 7 | A cluster below 20% of its lemma's gold `ANS` occurrences is low-frequency. If none is scored in a direction, #185 states that low-frequency senses were not testable there |
 | Abstention items | 7 | H2 is testable in a direction only with at least 30 held-out `UNA ∪ OOI` families of scored lemmas |
-| Training data | 7 | Read from training gold only, after pilot families are removed. A scored cluster stays scored only if its `ANS` training weight (an item with gold set `G` counts `1/|G|`) is at least 10; a cluster below that, including one with no training item, becomes unscored and is reported descriptively. Arms still see every inventory cluster as a candidate; they fit only what training holds |
+| Training data | 7 | Read from training gold only, after pilot families are removed. A scored cluster stays scored only if its `ANS` training weight (an item with gold set `G` counts `1/|G|`) is at least 10; a cluster below that, including one with no training item, becomes unscored and is reported descriptively. A cluster with zero training weight has a defined outcome in every arm: A, B and C never select it (A and B have no weight for it; C's unsmoothed prior gives it posterior 0), N still scores it from its evidence, and W and its controls exclude it ([Arm W](#arm-w-optional-wave-token-representation)) |
 | Validation data | 7 | Read from validation gold only. Each remaining scored lemma needs at least 10 `ANS` validation items; a lemma below that is dropped. The direction needs at least 60 `ANS` validation items over its scored lemmas, so `ANS` coverage is never a zero denominator during selection; otherwise the direction is NOT TESTABLE |
 | Minimum per direction | 7 | Applied after the training and validation gates. At least 4 lemmas, each with at least two scored clusters. Otherwise the direction stops; the other proceeds alone, stated as such |
 | Global stop | 2, 5, 6, 7 | If no direction can meet its minimum, no system is run on this data and the epic records a data no-go |
@@ -277,8 +277,8 @@ in increasing `h(occurrence, ·)`. B's tie-break and W's vocabulary order both u
 | Arm | Definition | Forced choice and confidence `s` | Grid (points) |
 | --- | --- | --- | --- |
 | A — majority sense | Per `(direction, lemma)`, the cluster with the largest training weight | `k*` = that cluster; `s` = its training share. Always answers | none (1) |
-| B — nearest example | Jaccard similarity over the window token sets (target excluded) to every training item of the lemma; weighted vote of the `k` most similar, ties by lower item order in training-file order | `k*` = top vote; `s` = (top vote share) × (highest similarity). When every neighbour has similarity 0, `k*` is the lowest-ordinal cluster and `s = 0`. Abstain if `s < τ` | `k ∈ {1, 3, 5}` × `w ∈ {3, 5, S}` × `τ ∈ {0, 0.1, …, 0.9}` (90) |
-| C — contextual lexical | Multinomial naive Bayes per lemma over window tokens, Laplace `α`; tokens absent from training are ignored | `k*` = argmax posterior; `s` = its posterior. Abstain if `s < τ` | `α ∈ {0.1, 0.5, 1}` × `w ∈ {3, 5, S}` × `τ ∈ {0, 0.55, 0.6, …, 0.95}` (90) |
+| B — nearest example | Jaccard similarity over the window token sets (target excluded) to every training item of the lemma; weighted vote of the `k` most similar, ties by lower item order in training-file order | `k*` = top vote; `s` = (top vote share) × (highest similarity). When every neighbour has similarity 0, `k*` is the lowest-ordinal cluster with positive training weight and `s = 0`. Abstain if `s < τ` | `k ∈ {1, 3, 5}` × `w ∈ {3, 5, S}` × `τ ∈ {0, 0.1, …, 0.9}` (90) |
+| C — contextual lexical | Multinomial naive Bayes per lemma over window tokens, Laplace `α` on token likelihoods; the class prior is the unsmoothed training-weight share, so a cluster with zero training weight has posterior 0; tokens absent from training are ignored | `k*` = argmax posterior; `s` = its posterior. Abstain if `s < τ` | `α ∈ {0.1, 0.5, 1}` × `w ∈ {3, 5, S}` × `τ ∈ {0, 0.55, 0.6, …, 0.95}` (90) |
 | N — Neuron hypothesis/evidence | [Below](#arm-n-neuron-candidate) | `k*` = top-ranked cluster; `s` = its score. Abstain if `s < τ` | `λ ∈ {0.5, 1, 2}` × `w ∈ {3, 5, S}` × `τ ∈ {0, 0.1, …, 0.9}` (90) |
 | W — wave tokens (optional) | [Below](#arm-w-optional-wave-token-representation) | as below | as below |
 
@@ -354,12 +354,17 @@ Registered construction, inside the evaluation module only, with no DJL, PyTorch
 - Vocabulary fitted on training windows only, in [training-file order](#arms), limit 20,000,
   `L = 64`.
 - Representation: mean of the window's token waves. Classifier: per-lemma nearest class centroid by cosine over the
-  training weights; `k*` = nearest; `s` = softmax of cosines at temperature `0.1`, top probability. The cosine with a zero
-  vector (an empty or all-padding window) is `0`, so such an item gets `k*` = the lowest-ordinal cluster and `s = 1/K`.
+  training weights; `k*` = nearest; `s` = softmax of cosines at temperature `0.1`, top probability.
+- Supported candidates: a centroid exists only for a cluster with positive training weight. The `K′` clusters of the
+  lemma that have one are W's candidates; a cluster with zero training weight has no centroid, takes no part in the
+  argmax or the softmax, and is never predicted by W. Its items are still scored against gold, so W loses them, as
+  A, B and C do. The step-7 training gate guarantees `K′ ≥ 2` for every scored lemma.
+- The cosine with a zero vector (an empty or all-padding window, or a centroid whose training windows are all empty) is
+  `0`. An item whose cosines are all `0` gets `k*` = the lowest-ordinal supported cluster and `s = 1/K′`.
   Abstain if `s < τ`.
 - Grid: `w ∈ {3, 5, S}` × `τ ∈ {0, 0.1, …, 0.9}` (30), selected as above.
 
-Controls with identical classifier, grid and data, so that only the representation changes:
+Controls with identical classifier, supported candidates, grid and data, so that only the representation changes:
 
 | Control | Representation |
 | --- | --- |
@@ -543,4 +548,7 @@ training-split data at any time; it may read the held-out split only at step 8, 
     outcome;
   - new step-7 training and validation data gates require at least 10 `ANS` training weight per scored cluster, 10
     `ANS` validation items per scored lemma and 60 per direction, so no arm is fitted or selected without the data it
-    needs; the memorization probe uses the `ANS` training items that exist.
+    needs; the memorization probe uses the `ANS` training items that exist;
+  - a cluster with zero training weight has a defined outcome in every arm: W and its controls exclude it as a
+    candidate (no centroid exists; the zero-cosine fallback uses the lowest-ordinal supported cluster and `1/K′`),
+    C's unsmoothed prior gives it posterior 0, A and B never select it, and N scores it from evidence.
