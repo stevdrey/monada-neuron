@@ -2,8 +2,9 @@
 # Builds the throwaway fixture repositories for the scenarios in validation.md (round 4 versions).
 # Usage: validation-fixtures.sh <empty-output-dir>. Each fixture has `main` (base) and `topic` (snapshot).
 set -euo pipefail
-out=$1
-rm -rf "$out"; mkdir -p "$out"
+out=${1:?usage: validation-fixtures.sh <empty-output-dir>}
+if [ -e "$out" ] && [ -n "$(ls -A "$out" 2>/dev/null)" ]; then echo "error: $out exists and is not empty" >&2; exit 1; fi
+mkdir -p "$out"
 g() { git -c user.name=fixture -c user.email=fixture@example.invalid "$@"; }
 
 issue() { cat <<'EOF'

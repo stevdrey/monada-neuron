@@ -15,7 +15,7 @@ This skill is the validation half of the loop in epic #190. The orchestrator dri
 
 - Run as a **separate subagent** with its own context. The orchestrator invokes it; the agent that wrote the change must not perform this review in its own context. If no subagent capability exists, the only valid result is `BLOCKED` (reason: no independent reviewer). A self-review is never reported as an independent verification.
 - Treat every author statement (commit messages, PR drafts, "tests pass", summaries) as a hypothesis to check, not as evidence.
-- Do **not** modify the reviewed snapshot: no edits, commits, pushes, stashes, branch switches, PRs, issue comments, or merges in the author's checkout. Repro tests and experiments go in an isolated copy and are reported, not applied.
+- Do **not** modify the reviewed snapshot: no edits, commits, pushes, stashes, branch switches, PRs, issue comments, or merges in the author's checkout. The only exception is the snapshot ref described under step 4 of the procedure. Repro tests and experiments go in an isolated copy and are reported, not applied.
 - Do not silently fix defects. Report them with enough detail for the orchestrator to fix them.
 - Respect repository, platform, and user permissions. A check that needs an action you are not permitted to take is not run; say so.
 
@@ -46,14 +46,13 @@ A result is valid only for the snapshot it names. The identity is the base SHA, 
 base=$(git rev-parse <base-ref>)
 head=$(git rev-parse HEAD)
 tmp=$(mktemp -d)
-cp "$(git rev-parse --git-path index)" "$tmp/index" 2>/dev/null || :  # stat cache only; optional
 GIT_INDEX_FILE=$tmp/index git add -A
 tree=$(GIT_INDEX_FILE=$tmp/index git write-tree)
 rm -rf "$tmp"
-dirty=$(git status --porcelain | wc -l)
-echo "base=$base head=$head tree=$tree dirty_entries=$dirty"
+echo "base=$base head=$head tree=$tree"
 ```
 
+- The index starts empty on purpose. A copy of the author's index would carry skip-worktree and assume-unchanged bits, and `git add -A` would then ignore edits to those files.
 - For a clean committed snapshot, `tree` equals `git rev-parse HEAD^{tree}`; prefer that case.
 - The fingerprint excludes ignored files, and in a repository with `core.fileMode=false` it does not see executable-bit changes. When a required check depends on ignored files (local configuration, build output) or on permissions in such a repository, record that as a limitation in the result.
 - Compute the identity at the **start** and again at the **end** of the review. If it differs from the request or changed during the review, the result is `BLOCKED` (stale snapshot) and no criterion may be reported as satisfied.
@@ -77,7 +76,9 @@ echo "base=$base head=$head tree=$tree dirty_entries=$dirty"
    Distinguish a **demonstrated** defect (reproduced, with steps and observed output) from a **suspected** risk (reasoned, not reproduced). Only demonstrated defects or unmet criteria may be blocking on their own; a suspected risk is blocking only when it makes a required criterion unverifiable.
 4. **Execute in isolation.** Run checks in an environment that cannot alter the author's checkout:
    - committed snapshot: `git worktree add --detach <scratch-dir> <head>`;
-   - uncommitted snapshot: wrap the fingerprinted tree in an unreferenced commit, `snap=$(git commit-tree "$tree" -p "$head" -m verification-snapshot)`, then `git worktree add --detach <scratch-dir> "$snap"`. Confirm that `git -C <scratch-dir> rev-parse HEAD^{tree}` equals `tree`. This carries contents, executable bits and symlinks exactly; copying files by hand can lose them. The commit creates objects but no ref or branch, and the author's working tree, index and refs are unchanged.
+   - uncommitted snapshot: wrap the fingerprinted tree in a commit, `snap=$(git commit-tree "$tree" -p "$head" -m verification-snapshot)`, and keep it reachable with `git update-ref "refs/verification/$tree" "$snap"` so a later recheck can still diff against it. Then run `git worktree add --detach <scratch-dir> "$snap"`. This carries contents, executable bits and symlinks exactly; copying files by hand can lose them. The `refs/verification/` ref is the one allowed exception to leaving the author's refs untouched; it is not a branch or tag, and the author's working tree and index stay unchanged. Delete it (`git update-ref -d`) once the orchestrator no longer needs the snapshot for a recheck.
+   - in both cases, confirm `git -C <scratch-dir> status --porcelain` is empty. Record as a limitation that ignored files (local configuration, build output) are absent from the scratch copy, and that eol or filter attributes (`.gitattributes`, `core.autocrlf`, clean/smudge filters) can make checked-out bytes differ from the author's files.
+   - paths outside the checkout: when the build resolves paths relative to the checkout's parent, place the scratch worktree so those paths resolve the same way, or report the affected checks as NOT RUN. In this repository, `settings.gradle.kts` includes the adapter module only when `../monada-resonance-store` exists (ADR 0018). A check that passed only because a module dropped out of the build is not evidence.
    Run the repository minimum when code, build, or tests are affected, every `expected_checks` entry, and targeted repro or edge-case tests you write in the scratch copy. Manual checks of real behavior (running a CLI, a consumer, a scenario) count when they are recorded. For each check record command, working directory, exit status, the decisive lines of output, and any artifact path. Remove the scratch worktree afterwards (`git worktree remove`).
 5. **Decide statuses** using the rules below, re-fingerprint the snapshot, and return the result.
 
@@ -100,6 +101,8 @@ Overall:
 - `NEEDS CHANGES` — at least one criterion is `UNMET` or `PARTIAL`, or a blocking finding is open. Every such item has a location and reproduction or a precise description of what is missing.
 - `BLOCKED` — verification cannot be completed honestly: no independent subagent, unidentifiable or stale snapshot, a required check or environment unavailable, any required criterion `NOT VERIFIABLE`, or an ambiguity only a human can resolve. If demonstrated defects were also found, report them too, so the orchestrator can fix them while the blocker is resolved.
 
+Precedence: `BLOCKED` over `NEEDS CHANGES` over `PASS`. A `BLOCKED` result still lists every demonstrated defect and every `UNMET` or `PARTIAL` criterion.
+
 When unsure between `PASS` and anything else, it is not `PASS`.
 
 ## Result (output contract)
@@ -111,7 +114,7 @@ Return exactly this Markdown block to the orchestrator. Keep it factual and prop
 
 **Status:** PASS | NEEDS CHANGES | BLOCKED
 **Issue:** #<n> (parent #<epic>)
-**Snapshot:** base=<sha> head=<sha> tree=<git tree sha> dirty_entries=<n> (identical at start and end: yes/no)
+**Snapshot:** base=<sha> head=<sha> tree=<git tree sha> (identical at start and end: yes/no)
 **Recheck of:** <previous snapshot head/tree, or "first run">
 
 ### Criteria
@@ -143,10 +146,10 @@ The `Checks run` and `Checks not run` lines use the PASS / FAIL / NOT RUN vocabu
 
 ## Revalidation
 
-After the orchestrator applies fixes, it invokes a **new** verification on the new snapshot. The reviewer:
+After the orchestrator applies fixes, or resolves a blocker such as a missing environment or an unanswered question, it invokes a **new** verification. The reviewer:
 
-1. recomputes the snapshot identity and confirms it differs from `previous_result`;
-2. re-evaluates every criterion touched by the new diff (`git diff <previous-tree> <new-tree>`, which also shows mode and file-type changes) and every criterion whose evidence came from a check, re-running those checks on the new snapshot;
+1. recomputes the snapshot identity and compares it with `previous_result`. If the identity is unchanged (a recheck after a `BLOCKED` for environment or a human answer), it re-runs every check that was NOT RUN or blocked, re-evaluates every `NOT VERIFIABLE` or ambiguity-blocked criterion with the new environment or answer, and skips step 2;
+2. if the snapshot changed, re-evaluates every criterion touched by the new diff (`git diff <previous-tree> <new-tree>`, which also shows mode and file-type changes) and every criterion whose evidence came from a check, re-running those checks on the new snapshot. If the previous tree is no longer in the repository (pruned, or reviewed in another clone), it uses `git diff <previous-head> <new-tree>` instead and records that the fix diff is approximate;
 3. reports each previous finding as `resolved` (with evidence) or `open`, using its original id;
 4. expects regression coverage for each fixed defect: a test or check that fails on the old snapshot and passes on the new one, or a stated reason why none is practical (a non-blocking finding if missing);
 5. probes the fix itself for new edge cases, re-running every applicable probe class against the changed code, because a fix that makes the reported input work can still be wrong for the rest of its input class.
