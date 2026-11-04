@@ -40,21 +40,27 @@ The reviewer reads the issue itself; `criteria` from the orchestrator is checked
 
 ## Snapshot identity
 
-A result is valid only for the snapshot it names. The identity is the base SHA, the head SHA, and the git tree of the working directory: tracked and untracked, non-ignored files, written through a throwaway index, so the author's index is untouched. A git tree records each path's contents, its executable bit, and whether it is a symlink, so a mode or file-type change alters the identity even when the contents do not.
+A result is valid only for the snapshot it names. The identity is the base SHA, the head SHA, and the git tree of the working directory, written through a throwaway index so the author's index is untouched. The tree covers every tracked file, including tracked files that match ignore rules, plus untracked files that are not ignored. A git tree records each path's contents, its executable bit, and whether it is a symlink, so a mode or file-type change alters the identity even when the contents do not.
 
 ```bash
 base=$(git rev-parse <base-ref>)
 head=$(git rev-parse HEAD)
 tmp=$(mktemp -d)
+git ls-files -z | GIT_INDEX_FILE=$tmp/index git update-index --add --remove -z --stdin
 GIT_INDEX_FILE=$tmp/index git add -A
 tree=$(GIT_INDEX_FILE=$tmp/index git write-tree)
 rm -rf "$tmp"
 echo "base=$base head=$head tree=$tree"
 ```
 
-- The index starts empty on purpose. A copy of the author's index would carry skip-worktree and assume-unchanged bits, and `git add -A` would then ignore edits to those files.
+- The throwaway index is built fresh from the author's list of tracked paths, not copied from the author's index. `update-index --add --remove` re-hashes every tracked path from disk and ignores ignore rules, so tracked ignored files stay in the tree and deleted ones drop out. A copied index would carry skip-worktree and assume-unchanged bits, and a stale stat cache, that let `git add -A` skip edits. `git add -A` then adds the untracked, non-ignored files.
 - For a clean committed snapshot, `tree` equals `git rev-parse HEAD^{tree}`; prefer that case.
-- The fingerprint excludes ignored files, and in a repository with `core.fileMode=false` it does not see executable-bit changes. When a required check depends on ignored files (local configuration, build output) or on permissions in such a repository, record that as a limitation in the result.
+- Hashing every tracked file costs one full read of the checkout per fingerprint.
+- Limitations to record in the result when a required check depends on them:
+  - untracked ignored files (local configuration, build output) are excluded from the fingerprint;
+  - in a repository with `core.fileMode=false`, executable-bit changes are not seen;
+  - in a sparse checkout, tracked files that are absent from disk appear as deleted.
+- `fingerprint-check.sh` in this directory runs this snippet, extracted from this file, against regression cases.
 - Compute the identity at the **start** and again at the **end** of the review. If it differs from the request or changed during the review, the result is `BLOCKED` (stale snapshot) and no criterion may be reported as satisfied.
 - Any later change to the snapshot invalidates the result. A previous `PASS` never carries over to a new snapshot.
 
