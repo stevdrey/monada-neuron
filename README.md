@@ -393,6 +393,10 @@ word in context, or abstaining. Its [data feasibility report](docs/experiments/b
 (issue #183) finds no openly redistributable, human-annotated set for both directions, so the task is feasible only
 with a new, independently annotated dataset over Tatoeba and Europarl text, family-disjoint splits and registered
 stop rules. It changes no code and does not reopen the NCM wave pipeline.
+Its pre-registered protocol [`bilingual-sense/1`](docs/experiments/bilingual-sense-v1.md) (issue #184,
+[ADR 0051](docs/adr/0051-bilingual-sense-evaluation-protocol.md)) freezes the sources, family-disjoint splits,
+annotation and data gates, majority, nearest-example and lexical controls, a Neuron hypothesis/evidence candidate, an
+optional wave-token arm with matched controls, margins and per-direction stop/go rules before any data is labeled.
 
 ## Design Principles
 
