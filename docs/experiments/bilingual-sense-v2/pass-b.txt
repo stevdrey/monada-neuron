@@ -8,6 +8,9 @@ A human translation of the source sentence is now shown. Report which inventory 
 realizes for the marked occurrence, or NONE_UNCLEAR when it realizes none of them or you cannot tell.
 Report what the translation says, not what the source alone justifies.
 
+GUIDELINES
+{{GUIDELINES}}
+
 INVENTORY
 {{INVENTORY}}
 

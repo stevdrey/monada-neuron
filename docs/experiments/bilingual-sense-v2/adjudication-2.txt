@@ -9,6 +9,9 @@ now shown. You may change your label only on one of two grounds:
 - INVENTORY_COVERAGE: the occurrence has a sense that no cluster covers; the new label is then OOI.
 Otherwise keep your label and set changeGround to NONE.
 
+GUIDELINES
+{{GUIDELINES}}
+
 INVENTORY
 {{INVENTORY}}
 

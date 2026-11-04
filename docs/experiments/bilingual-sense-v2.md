@@ -86,8 +86,10 @@ These rules fill gaps in v1 that would otherwise be decided while partitioning. 
   100 data rows in file order by a marker count fixed now. For each column, count the characters `ñ á é í ó ú ¿ ¡`
   plus the tokens (after the registered tokenization) `el la los las de que y en`; a row confirms the assignment when
   the column assigned `spa` has the strictly larger count. If fewer than 90 of the 100 rows confirm it, Europarl is
-  dropped under v1's drop rule. Only these two columns
-  and `file_id` are read; speaker name and affiliation are never read into any artifact or sent to any agent.
+  dropped under v1's drop rule. Besides these two columns, only `file_id` and the speaker's original-language tag
+  are read; the tag is kept as offline item metadata for v1's original-versus-translated stratum. Speaker id, name and
+  affiliation are never read into any artifact, and no Europarl metadata, the language tag included, is sent to any
+  agent.
 - A family's id is `SHA-256(UTF-8(k_min))` in lowercase hex, where `k_min` is the smallest member sentence key in
   byte-wise UTF-8 order. The key already carries the source, so v1's "prefixed with the source name" is satisfied
   without a second prefix.
@@ -154,16 +156,17 @@ user message) and may not edit the text.
 | File | Use | SHA-256 |
 | --- | --- | --- |
 | [pass-a.txt](bilingual-sense-v2/pass-a.txt) | A1/A2 pass A | `145ffc86a45ac03a68c64756893c51200eacfcc48d422e5ba769c8938a7949ac` |
-| [pass-b.txt](bilingual-sense-v2/pass-b.txt) | A1/A2 pass B | `b51efe8ffbd53465df795e4bcba4648a8bb6e0e803257c29ca126d1aac3fc0e5` |
+| [pass-b.txt](bilingual-sense-v2/pass-b.txt) | A1/A2 pass B | `f02549c04e2cdd691eb65b5a2ce5dc3a71dc33c140349187ee5c021e0e7c6129` |
 | [adjudication-1.txt](bilingual-sense-v2/adjudication-1.txt) | J, source only | `5d4fadad0371bfa912af00a4ae26a20eea5653af2dce96325e8b57e2cf35a7e2` |
-| [adjudication-2.txt](bilingual-sense-v2/adjudication-2.txt) | J, translation revealed | `aba8170738d7fb11b746112c1e6e7e3600b693c34681900209f6e41811540eba` |
+| [adjudication-2.txt](bilingual-sense-v2/adjudication-2.txt) | J, translation revealed | `8ea122a715fb9d903f5e12a355698f432edc778e63acfa3b10132b5ee7070262` |
 | [continuation.txt](bilingual-sense-v2/continuation.txt) | A1/A2 continuation probe | `5e5881d797935bdfefd18900de5f711acaee6c81f1c8aa5423d90b919c11ef95` |
 | [output-schema.json](bilingual-sense-v2/output-schema.json) | JSON Schema of every output | `30a899814812edca3afb99e173c6043575f5222f5512645bf31add450d2ef71c` |
 
 Placeholders:
 
 - `{{ROLE}}`: `A1` or `A2`.
-- `{{GUIDELINES}}`: the guidelines file, frozen with its SHA-256 at the end of calibration (v1 rule).
+- `{{GUIDELINES}}`: the guidelines file, frozen with its SHA-256 at the end of calibration (v1 rule). Every call
+  except the continuation probe receives it, since each call is stateless.
 - `{{INVENTORY}}`: the frozen clusters of the item's `(direction, lemma)`, one per line as
   `<ordinal>: <target expressions, comma-separated> — <gloss>`.
 - `{{ITEM}}`: a JSON object `{"direction", "lemma", "sentence", "target", "start", "end", "marked"}`, where `marked`
@@ -248,8 +251,17 @@ registered seed where supported, and an output limit large enough for the schema
 - **Transport errors** (timeout, rate limit, 5xx): up to 3 retries of the identical request with exponential back-off.
 - **Schema-invalid output**: exactly one re-ask with the identical request. A schema-valid output is never re-sampled,
   whatever its content, so no label is chosen by retrying.
-- After those attempts an output that is still missing or invalid makes the item **`UNLABELED`** for that role; an
-  item with an `UNLABELED` pass A or J call is excluded from gold and counted ([Gates](#added-gates)).
+- After those attempts an output that is still missing or invalid is **exhausted**. Its effect is fixed per call:
+
+  | Exhausted call | Effect on the item |
+  | --- | --- |
+  | Pass A (either annotator) | The item is **`UNLABELED`**: excluded from gold, α and every diagnostic, and counted by `annotation.unlabeled`. Its pass B and J calls are not issued |
+  | Pass B (either annotator) | Pass A stands and the item proceeds. If it needs adjudication, J call 1 runs and its label is final: J call 2 is not issued, because its template needs both pass-B reports. The item is counted as `passB-missing`, excluded from the translation-divergent stratum, and not `UNLABELED` |
+  | J call 1 | The item is **`UNLABELED`**, as for pass A |
+  | J call 2 | The call-1 label is final, exactly as for a rejected change; counted as `j2-missing` |
+  | Stability or continuation probe | Counted as missing in that diagnostic; no effect on gold |
+
+  `passB-missing` and `j2-missing` counts are reported per `(direction, lemma)` ([Gates](#added-gates)).
 - **Model drift.** If the reported model id differs from the registered one, or the provider retires it, the run stops.
   Labels already made are kept and reported; continuing needs `bilingual-sense/3` and a relabel of every item with the
   new configuration.
@@ -290,7 +302,7 @@ recorded in the feasibility report before step 8.
 | Gate | Step | Rule |
 | --- | --- | --- |
 | `annotation.availability` | 4 | The configuration commit exists, satisfies the family rule and its file hashes match. Otherwise both directions stop (R6) |
-| `annotation.unlabeled` | 7 | A `(direction, lemma)` with more than 2% of its annotated items `UNLABELED` is dropped. Remaining `UNLABELED` items are excluded and counted |
+| `annotation.unlabeled` | 7 | A `(direction, lemma)` with more than 2% of its annotated items `UNLABELED` (an exhausted pass A or J call 1) is dropped. Remaining `UNLABELED` items are excluded and counted. `passB-missing` and `j2-missing` items are not `UNLABELED`; they are reported only |
 | Agreement (v1) | 7 | Unchanged: α ≥ 0.67 between A1 and A2 on pass A |
 
 ## Optional owner audit
@@ -399,3 +411,7 @@ such evidence needs a later version with human-annotated held-out data.
 
 - `bilingual-sense/2` (#188): AI-agent annotation and adjudication (R1–R12, R17, R18) and partitioning
   clarifications (R13–R16), registered after the snapshot download and before any count, label or system output.
+  Review fixes before merge, before any data exists: the Europarl original-language tag is read as offline metadata
+  for v1's stratum and never sent to agents; every exhausted call has a fixed effect (pass B and J call 2 failures
+  no longer leave adjudication undefined); pass B and J call 2 receive the frozen guidelines, as every stateless
+  annotation call must.
