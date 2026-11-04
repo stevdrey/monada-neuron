@@ -181,8 +181,13 @@ Placeholders:
 
 ### Pass A (source only)
 
-The annotator receives `pass-a.txt`. The output must validate against `passA`, every cluster ordinal must exist in
-the inventory and every cue span must lie inside the sentence. The orchestrator appends the raw response and its
+**Output validity (every call except the free-text continuation probe).** An output is valid only when it validates against its schema, every cluster
+ordinal it contains (`clusters` of a label, or an integer `realized`) exists in the inventory of the item's
+`(direction, lemma)`, and every cue span satisfies `0 ≤ start < end ≤` the sentence length in code points. A
+response that fails any of these is **invalid**, handled exactly like a schema-invalid one
+([retries](#nondeterminism-failures-and-retries)); it never enters gold, a diagnostic or a lock.
+
+The annotator receives `pass-a.txt` and its output must be valid. The orchestrator appends the raw response and its
 SHA-256 to the log before any pass-B request for that item is created. Pass A is then locked.
 
 ### Pass B (translation revealed, diagnostic)
@@ -195,9 +200,11 @@ and either annotator names a cluster. Pass B never enters gold.
 
 - **Agreement** is identical pass-A labels (same kind and, for `ANS`, the same set). An agreed label is `agent-gold`
   without adjudication, as in v1.
-- On disagreement, J call 1 (`adjudication-1.txt`) decides from the source and is locked as in pass A.
-- J call 2 (`adjudication-2.txt`) reveals both pass-B reports and the translation. The orchestrator accepts a changed
-  `final` only when `changeGround` is `SOURCE_CUE` with at least one valid cue span inside the sentence and not
+- On disagreement, J call 1 (`adjudication-1.txt`) decides from the source; its output must be valid and is locked
+  as in pass A.
+- J call 2 (`adjudication-2.txt`) reveals both pass-B reports and the translation. Its output must be valid, so a
+  `final` naming a cluster outside the inventory is an invalid output, never a change. The orchestrator accepts a
+  changed `final` only when `changeGround` is `SOURCE_CUE` with at least one valid cue span inside the sentence and not
   contained in the target span, or `INVENTORY_COVERAGE` with `final` = `OOI`. Any other change is rejected, logged,
   and the call-1 label stands. This makes v1's rule mechanical: a translation alone cannot turn `UNA` into `ANS`,
   narrow a set, or move an item between clusters.
@@ -249,15 +256,16 @@ registered seed where supported, and an output limit large enough for the schema
   the validation result and the SHA-256 of the previous record (a hash chain, so edits are detectable). Held-out
   records go to a separate sealed log ([Held-out handling](#held-out-handling)).
 - **Transport errors** (timeout, rate limit, 5xx): up to 3 retries of the identical request with exponential back-off.
-- **Schema-invalid output**: exactly one re-ask with the identical request. A schema-valid output is never re-sampled,
-  whatever its content, so no label is chosen by retrying.
+- **Invalid output** (schema, inventory or span, as defined in [Pass A](#pass-a-source-only)): exactly one re-ask with
+  the identical request. A valid output is never re-sampled, whatever its content, so no label is chosen by
+  retrying.
 - After those attempts an output that is still missing or invalid is **exhausted**. Its effect is fixed per call:
 
   | Exhausted call | Effect on the item |
   | --- | --- |
   | Pass A (either annotator) | The item is **`UNLABELED`**: excluded from gold, α and every diagnostic, and counted by `annotation.unlabeled`. Its pass B and J calls are not issued |
   | Pass B (either annotator) | Pass A stands and the item proceeds. If it needs adjudication, J call 1 runs and its label is final: J call 2 is not issued, because its template needs both pass-B reports. The item is counted as `passB-missing`, excluded from the translation-divergent stratum, and not `UNLABELED` |
-  | J call 1 | The item is **`UNLABELED`**, as for pass A |
+  | J call 1 | The item is **`UNLABELED`**: excluded from gold and counted by `annotation.unlabeled`. Its two valid pass-A labels **stay** in α and in the A1/A2 diagnostics, because J runs only on disagreements and dropping them would inflate α |
   | J call 2 | The call-1 label is final, exactly as for a rejected change; counted as `j2-missing` |
   | Stability or continuation probe | Counted as missing in that diagnostic; no effect on gold |
 
@@ -303,7 +311,7 @@ recorded in the feasibility report before step 8.
 | --- | --- | --- |
 | `annotation.availability` | 4 | The configuration commit exists, satisfies the family rule and its file hashes match. Otherwise both directions stop (R6) |
 | `annotation.unlabeled` | 7 | A `(direction, lemma)` with more than 2% of its annotated items `UNLABELED` (an exhausted pass A or J call 1) is dropped. Remaining `UNLABELED` items are excluded and counted. `passB-missing` and `j2-missing` items are not `UNLABELED`; they are reported only |
-| Agreement (v1) | 7 | Unchanged: α ≥ 0.67 between A1 and A2 on pass A |
+| Agreement (v1) | 7 | Unchanged: α ≥ 0.67 between A1 and A2 on pass A, computed over every item with two valid pass-A labels, whatever happens later in adjudication |
 
 ## Optional owner audit
 
@@ -414,4 +422,5 @@ such evidence needs a later version with human-annotated held-out data.
   Review fixes before merge, before any data exists: the Europarl original-language tag is read as offline metadata
   for v1's stratum and never sent to agents; every exhausted call has a fixed effect (pass B and J call 2 failures
   no longer leave adjudication undefined); pass B and J call 2 receive the frozen guidelines, as every stateless
-  annotation call must.
+  annotation call must; pass-A pairs of items whose J call 1 is exhausted stay in α; every output, J call 2
+  included, is checked against the item's inventory and sentence before it can lock or change a label.
