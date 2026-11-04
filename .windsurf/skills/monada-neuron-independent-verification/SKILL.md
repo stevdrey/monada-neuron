@@ -40,22 +40,28 @@ The reviewer reads the issue itself; `criteria` from the orchestrator is checked
 
 ## Snapshot identity
 
-A result is valid only for the snapshot it names. Prefer a committed snapshot with a clean tree; then the identity is the commit SHA. For uncommitted work, fingerprint the working tree as well:
+A result is valid only for the snapshot it names. The identity is the base SHA, the head SHA, and the git tree of the working directory: tracked and untracked, non-ignored files, written through a throwaway index, so the author's index is untouched. A git tree records each path's contents, its executable bit, and whether it is a symlink, so a mode or file-type change alters the identity even when the contents do not.
 
 ```bash
 base=$(git rev-parse <base-ref>)
 head=$(git rev-parse HEAD)
-tree=$( { git diff --binary "$base"; git ls-files -z --others --exclude-standard | sort -z | xargs -0 -r sha256sum; } | sha256sum | cut -d' ' -f1)
+tmp=$(mktemp -d)
+cp "$(git rev-parse --git-path index)" "$tmp/index" 2>/dev/null || :  # stat cache only; optional
+GIT_INDEX_FILE=$tmp/index git add -A
+tree=$(GIT_INDEX_FILE=$tmp/index git write-tree)
+rm -rf "$tmp"
 dirty=$(git status --porcelain | wc -l)
 echo "base=$base head=$head tree=$tree dirty_entries=$dirty"
 ```
 
+- For a clean committed snapshot, `tree` equals `git rev-parse HEAD^{tree}`; prefer that case.
+- The fingerprint excludes ignored files, and in a repository with `core.fileMode=false` it does not see executable-bit changes. When a required check depends on ignored files (local configuration, build output) or on permissions in such a repository, record that as a limitation in the result.
 - Compute the identity at the **start** and again at the **end** of the review. If it differs from the request or changed during the review, the result is `BLOCKED` (stale snapshot) and no criterion may be reported as satisfied.
 - Any later change to the snapshot invalidates the result. A previous `PASS` never carries over to a new snapshot.
 
 ## Procedure
 
-1. **Gather context.** Read the issue, its comments, the parent epic, linked issues, relevant specs and ADRs, and the documents `AGENTS.md` requires for the affected area (including the matching skill under `.agents/skills/`). Read the full diff `git diff <base>` (plus untracked files), the surrounding implementation, and the existing tests.
+1. **Gather context.** Read the issue, its comments, the parent epic, linked issues, relevant specs and ADRs, and the documents `AGENTS.md` requires for the affected area (including the matching skill under `.agents/skills/`). Read the full diff `git diff <base> <tree>`, which includes untracked files and mode changes, the surrounding implementation, and the existing tests.
 2. **Build the requirement-to-evidence matrix.** One row per acceptance criterion. Add rows for implied constraints from `AGENTS.md`, ADRs, or the issue's boundaries (non-goals, "no runtime change", mirroring) and mark them as implied. Do not invent requirements. A materially ambiguous criterion becomes a finding that names the question a human must answer.
 3. **Probe deliberately.** For each changed behavior, consider and record which apply:
    - empty, minimal, maximal, and boundary inputs; invalid and `null` inputs; duplicates and ordering;
@@ -71,7 +77,7 @@ echo "base=$base head=$head tree=$tree dirty_entries=$dirty"
    Distinguish a **demonstrated** defect (reproduced, with steps and observed output) from a **suspected** risk (reasoned, not reproduced). Only demonstrated defects or unmet criteria may be blocking on their own; a suspected risk is blocking only when it makes a required criterion unverifiable.
 4. **Execute in isolation.** Run checks in an environment that cannot alter the author's checkout:
    - committed snapshot: `git worktree add --detach <scratch-dir> <head>`;
-   - uncommitted snapshot: a detached worktree at `<head>` with `git diff --binary HEAD` applied and untracked files copied, then re-fingerprinted to confirm it matches.
+   - uncommitted snapshot: wrap the fingerprinted tree in an unreferenced commit, `snap=$(git commit-tree "$tree" -p "$head" -m verification-snapshot)`, then `git worktree add --detach <scratch-dir> "$snap"`. Confirm that `git -C <scratch-dir> rev-parse HEAD^{tree}` equals `tree`. This carries contents, executable bits and symlinks exactly; copying files by hand can lose them. The commit creates objects but no ref or branch, and the author's working tree, index and refs are unchanged.
    Run the repository minimum when code, build, or tests are affected, every `expected_checks` entry, and targeted repro or edge-case tests you write in the scratch copy. Manual checks of real behavior (running a CLI, a consumer, a scenario) count when they are recorded. For each check record command, working directory, exit status, the decisive lines of output, and any artifact path. Remove the scratch worktree afterwards (`git worktree remove`).
 5. **Decide statuses** using the rules below, re-fingerprint the snapshot, and return the result.
 
@@ -105,7 +111,7 @@ Return exactly this Markdown block to the orchestrator. Keep it factual and prop
 
 **Status:** PASS | NEEDS CHANGES | BLOCKED
 **Issue:** #<n> (parent #<epic>)
-**Snapshot:** base=<sha> head=<sha> tree=<sha256 or "clean"> (identical at start and end: yes/no)
+**Snapshot:** base=<sha> head=<sha> tree=<git tree sha> dirty_entries=<n> (identical at start and end: yes/no)
 **Recheck of:** <previous snapshot head/tree, or "first run">
 
 ### Criteria
@@ -140,7 +146,7 @@ The `Checks run` and `Checks not run` lines use the PASS / FAIL / NOT RUN vocabu
 After the orchestrator applies fixes, it invokes a **new** verification on the new snapshot. The reviewer:
 
 1. recomputes the snapshot identity and confirms it differs from `previous_result`;
-2. re-evaluates every criterion touched by the new diff (`git diff <previous-head> <new-head>` plus working-tree changes) and every criterion whose evidence came from a check, re-running those checks on the new snapshot;
+2. re-evaluates every criterion touched by the new diff (`git diff <previous-tree> <new-tree>`, which also shows mode and file-type changes) and every criterion whose evidence came from a check, re-running those checks on the new snapshot;
 3. reports each previous finding as `resolved` (with evidence) or `open`, using its original id;
 4. expects regression coverage for each fixed defect: a test or check that fails on the old snapshot and passes on the new one, or a stated reason why none is practical (a non-blocking finding if missing);
 5. probes the fix itself for new edge cases, re-running every applicable probe class against the changed code, because a fix that makes the reported input work can still be wrong for the rest of its input class.
