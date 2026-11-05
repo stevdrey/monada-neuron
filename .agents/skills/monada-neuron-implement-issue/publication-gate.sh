@@ -16,9 +16,11 @@ verifier=$(cd "$(dirname "$0")/.." && pwd)/monada-neuron-independent-verificatio
 
 # Read only the verification line the verifier's output contract defines; the Markdown is for people.
 # Character classes are spelled out, so a locale cannot widen them to non-ASCII digits or letters.
+! grep -q $'\r' "$result" || deny "result file has CRLF line endings; save it with LF line endings"
 blocks=$(grep -c '^## Independent verification result$' "$result" || true)
 [ "$blocks" = 1 ] || deny "expected exactly one result block, found $blocks"
-lines=$(grep -ci '<!--[[:space:]]*verification' "$result" || true)
+# Only lines that start with the comment count, so a result may quote the line inside a cell or code span.
+lines=$(grep -ci '^[[:space:]]*<!--[[:space:]]*verification' "$result" || true)
 [ "$lines" = 1 ] || deny "expected exactly one verification line, found $lines"
 line=$(awk '/^## Independent verification result$/ { f = 1; next } f && NF { print; exit }' "$result")
 hex='([0123456789abcdef]{40}|[0123456789abcdef]{64})'

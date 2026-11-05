@@ -60,10 +60,18 @@ jobs:
       - name: Run the snapshot fingerprint self-test
         run: .agents/skills/monada-neuron-independent-verification/fingerprint-check.sh
 
+      - name: Install a locale in which [0-9] matches non-ASCII digits
+        # The gate self-test runs its non-ASCII digit cases and locale mutants under it.
+        run: sudo locale-gen en_US.UTF-8
+
       - name: Run the publication gate self-test
+        env:
+          REQUIRE_WIDE_LOCALE: 1
         run: .agents/skills/monada-neuron-implement-issue/publication-gate-check.sh
 
       - name: Check that every publication gate check is needed by a self-test case
+        env:
+          REQUIRE_WIDE_LOCALE: 1
         run: .agents/skills/monada-neuron-implement-issue/publication-gate-check.sh --mutants
 
   verify:

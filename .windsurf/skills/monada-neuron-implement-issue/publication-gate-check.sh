@@ -16,6 +16,11 @@ wide=
 for l in en_US.UTF-8 de_DE.UTF-8 C.UTF-8; do
   if LC_ALL=$l bash -c '[[ ² =~ ^[0-9]$ ]]' 2>/dev/null; then wide=$l && break; fi
 done
+# CI sets REQUIRE_WIDE_LOCALE=1, so the locale cases and mutants cannot be skipped there.
+if [ -z "$wide" ] && [ "${REQUIRE_WIDE_LOCALE:-0}" = 1 ]; then
+  echo "FAIL no installed locale widens [0-9] (REQUIRE_WIDE_LOCALE=1); install en_US.UTF-8"
+  exit 1
+fi
 
 if [ "${1:-}" = --mutants ]; then
   # name@@exact text in the gate@@replacement. Each text must occur in the gate.
@@ -25,6 +30,13 @@ if [ "${1:-}" = --mutants ]; then
     'no block count@@[ "$blocks" = 1 ] || deny@@[ "$blocks" = 1 ] || true'
     'no line count@@[ "$lines" = 1 ] || deny@@[ "$lines" = 1 ] || true'
     'case-sensitive line count@@grep -ci@@grep -c'
+    "line count not anchored@@grep -ci '^[[:space:]]*<!--@@grep -ci '<!--"
+    'no CRLF check@@"$result" || deny "result file has CRLF@@"$result" || true "result file has CRLF'
+    'mode never before-commit@@then mode=before-commit; shift@@then shift'
+    'before-commit falls through@@commit exactly this tree"
+  exit 0@@commit exactly this tree"'
+    'unanchored fingerprint start@@=~ ^base=$hex@@=~ base=$hex'
+    'unanchored fingerprint end@@tree=$hex$ ]]@@tree=$hex ]]'
     'line anywhere in the file@@line=$(awk@@line=$(grep -i "<!-- verification" "$result" | head -n 1) # $(awk'
     'no line format check@@[[ $line =~ $re ]] || deny@@[[ $line =~ $re ]] || true'
     'unanchored line start@@re="^<!--@@re="<!--'
@@ -55,6 +67,8 @@ if [ "${1:-}" = --mutants ]; then
     old=${rest%%@@*} new=${rest#*@@}
     if [[ $name == locale:* && -z $wide ]]; then echo "skipped  $name (no installed locale widens [0-9])"; continue; fi
     [[ $src == *"$old"* ]] || { echo "MUTANT $name: text not found in the gate"; survivors=$((survivors + 1)); continue; }
+    after=${src#*"$old"}
+    [[ $after != *"$old"* ]] || { echo "MUTANT $name: text not unique in the gate"; survivors=$((survivors + 1)); continue; }
     dir=$work/$RANDOM$RANDOM
     mkdir -p "$dir/monada-neuron-implement-issue" "$dir/monada-neuron-independent-verification"
     cp "$here/../monada-neuron-independent-verification/SKILL.md" "$dir/monada-neuron-independent-verification/"
@@ -64,9 +78,14 @@ if [ "${1:-}" = --mutants ]; then
       echo "SURVIVED $name"
       survivors=$((survivors + 1))
     else
-      killers=$(grep '^FAIL ' <<<"$out" | sed 's/^FAIL \([^:]*\):.*/\1/') || killers='(no case failed)'
-      echo "killed   $name — $(wc -l <<<"$killers") case(s), first: $(head -n 1 <<<"$killers")"
-      killed=$((killed + 1))
+      # A run that fails without naming a case (syntax error, harness crash) shows nothing about the check.
+      if killers=$(grep '^FAIL ' <<<"$out" | sed 's/^FAIL \([^:]*\):.*/\1/'); then
+        echo "killed   $name — $(wc -l <<<"$killers") case(s), first: $(head -n 1 <<<"$killers")"
+        killed=$((killed + 1))
+      else
+        echo "ERROR    $name: run failed without a failing case: $(tail -n 1 <<<"$out")"
+        survivors=$((survivors + 1))
+      fi
     fi
   done
   [ "$survivors" = 0 ] || { echo "$survivors mutant(s) survived"; exit 1; }
@@ -160,14 +179,18 @@ cat "$r/pass" "$r/pass" >"$r/two-blocks"
 grep -v '^## Independent verification result$' "$r/pass" >"$r/no-block"
 awk -v l="$line" '{ print } /^### Findings$/ { print l }' "$r/pass" >"$r/duplicated-line"
 awk -v l="$line" '{ print } /^### Findings$/ { print "  " l }' "$r/pass" >"$r/duplicated-indented"
-sed '/^\*\*Status:/a <!--VERIFICATION v1 status=NEEDS_CHANGES -->' "$r/pass" >"$r/duplicated-other-case"
+awk '{ print } /^\*\*Status:/ { print "<!--VERIFICATION v1 status=NEEDS_CHANGES -->" }' "$r/pass" >"$r/duplicated-other-case"
 awk '/^<!-- verification / { held = $0; next } { print } /^\*\*Status:/ { print held }' "$r/pass" >"$r/line-after-status"
-sed '/^## Independent verification result$/a not the line' "$r/pass" >"$r/text-before-line"
+awk '{ print } /^## Independent verification result$/ { print "not the line" }' "$r/pass" >"$r/text-before-line"
 sed 's/^<!-- verification v1 /<!-- verification v2 /' "$r/pass" >"$r/other-version"
 sed 's/ -->$/ --> trailing/' "$r/pass" >"$r/trailing-text"
 sed 's/ -->$/ --> /' "$r/pass" >"$r/trailing-space"
-sed 's/ -->$/ -->\r/' "$r/pass" >"$r/crlf"
+awk '{ sub(/ -->$/, " -->\r") } 1' "$r/pass" >"$r/crlf"
+awk '{ printf "%s\r\n", $0 }' "$r/pass" >"$r/crlf-file"
+# A result may quote the verification line inside a table cell; only a line that starts with it counts.
+awk -v l="$line" '/^\| AC1 / { sub(/C1 \|$/, "C1, `" l "` |") } 1' "$r/pass" >"$r/quoted-line"
 sed 's/^<!-- verification /x <!-- verification /' "$r/pass" >"$r/leading-text"
+sed 's/^<!-- verification /  <!-- verification /' "$r/pass" >"$r/indented-line"
 sed 's/^<!-- verification /<!--  verification /' "$r/pass" >"$r/double-space"
 sed 's/ status=PASS / status=NEEDS CHANGES /' "$r/pass" >"$r/spaced-status"
 sed 's/ status=PASS / status=PASS|NEEDS_CHANGES|BLOCKED /' "$r/pass" >"$r/template-status"
@@ -202,8 +225,11 @@ no "text between heading and line is refused" text-before-line "missing after th
 no "unknown contract version is refused" other-version "malformed"
 no "text after the line is refused" trailing-text "malformed"
 no "trailing space is refused" trailing-space "malformed"
-no "CRLF line ending is refused" crlf "malformed"
-no "text before the comment is refused" leading-text "malformed"
+no "CR at the end of the line is refused" crlf "CRLF line endings"
+no "CRLF result file is refused with a line-ending message" crlf-file "CRLF line endings"
+ok "verification line quoted in an evidence cell is not a duplicate" quoted-line
+no "text before the comment leaves no verification line" leading-text "exactly one verification line, found 0"
+no "indented verification line is refused" indented-line "malformed"
 no "doubled space is refused" double-space "malformed"
 no "status with a space is refused" spaced-status "malformed"
 no "unfilled template status is refused" template-status "malformed"
@@ -238,6 +264,17 @@ expect "verifier without a fingerprint snippet is refused" 1 "could not extract 
   "$work/broken/monada-neuron-implement-issue/publication-gate.sh" --before-commit "$r/pass" base
 expect "fingerprint output in the wrong form is refused" 1 "fingerprint failed" \
   "$work/garbled/monada-neuron-implement-issue/publication-gate.sh" --before-commit "$r/pass" base
+# A valid fingerprint with text before or after it is still the wrong form.
+for edge in prefix suffix; do
+  d=$work/$edge
+  mkdir -p "$d/monada-neuron-implement-issue" "$d/monada-neuron-independent-verification"
+  cp "$gate" "$d/monada-neuron-implement-issue/"
+  fp="base=$base head=$head tree=$tree"
+  [ "$edge" = prefix ] && fp="x $fp" || fp="$fp x"
+  printf '```bash\n# write-tree\necho "%s"\n```\n' "$fp" >"$d/monada-neuron-independent-verification/SKILL.md"
+  expect "fingerprint with text $edge is refused" 1 "fingerprint failed" \
+    "$d/monada-neuron-implement-issue/publication-gate.sh" --before-commit "$r/pass" base
+done
 
 printf 'edited after review\n' >>b.txt
 expect "edit after PASS makes the result stale" 1 "stale result" "$gate" --before-commit "$r/pass" base
