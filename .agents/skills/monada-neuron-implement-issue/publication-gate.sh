@@ -14,45 +14,34 @@ deny() { echo "DENY: $*"; exit 1; }
 verifier=$(cd "$(dirname "$0")/.." && pwd)/monada-neuron-independent-verification/SKILL.md
 [ -f "$verifier" ] || deny "verifier skill not found: $verifier"
 
+# Read only the verification line the verifier's output contract defines; the Markdown is for people.
+# Character classes are spelled out, so a locale cannot widen them to non-ASCII digits or letters.
 blocks=$(grep -c '^## Independent verification result$' "$result" || true)
 [ "$blocks" = 1 ] || deny "expected exactly one result block, found $blocks"
+lines=$(grep -ci '<!--[[:space:]]*verification' "$result" || true)
+[ "$lines" = 1 ] || deny "expected exactly one verification line, found $lines"
+line=$(awk '/^## Independent verification result$/ { f = 1; next } f && NF { print; exit }' "$result")
+hex='([0123456789abcdef]{40}|[0123456789abcdef]{64})'
+num='(0|[123456789][0123456789]*)'
+re="^<!-- verification v1 status=(PASS|NEEDS_CHANGES|BLOCKED) base=$hex head=$hex tree=$hex identical=(yes|no)"
+re+=" criteria=$num satisfied=$num blocking_open=$num -->\$"
+[[ $line =~ $re ]] || deny "verification line is missing after the result heading or malformed: '$line'"
+status=${BASH_REMATCH[1]} v_base=${BASH_REMATCH[2]} v_head=${BASH_REMATCH[3]} v_tree=${BASH_REMATCH[4]}
+identical=${BASH_REMATCH[5]} criteria=${BASH_REMATCH[6]} satisfied=${BASH_REMATCH[7]} blocking_open=${BASH_REMATCH[8]}
 
-status=$(sed -n 's/^\*\*Status:\*\* *//p' "$result")
-[ "$(grep -c '^\*\*Status:\*\*' "$result")" = 1 ] || deny "expected exactly one Status line"
-# One status word, optionally followed by a remark after ' (', ' ;' or ' —'; never an alternative such as '| BLOCKED'.
-[[ $status =~ ^(PASS|NEEDS\ CHANGES|BLOCKED)(\ (\(|\;|—).*)?$ ]] && status=${BASH_REMATCH[1]}
 [ "$status" = PASS ] || deny "status is '$status', not PASS"
-
-snapshot=$(sed -n 's/^\*\*Snapshot:\*\* *//p' "$result")
-[[ $snapshot =~ ^base=([0-9a-f]{40,64})\ head=([0-9a-f]{40,64})\ tree=([0-9a-f]{40,64})\ \(identical\ at\ start\ and\ end:\ (yes|no)(\;\ [^\)]*)?\)$ ]] ||
-  deny "Snapshot line is malformed: '$snapshot'"
-v_base=${BASH_REMATCH[1]} v_head=${BASH_REMATCH[2]} v_tree=${BASH_REMATCH[3]} identical=${BASH_REMATCH[4]}
-[ "$identical" = yes ] || deny "snapshot changed during the review (identical at start and end: $identical)"
-
-# Criteria table: data rows between '### Criteria' and the next heading; the status is the third column.
-# Escaped pipes (`\|`) inside a cell are removed first so they do not shift the columns.
-table=$(awk '/^### Criteria$/ { f = 1; next } /^#/ { f = 0 } f && /^\|/' "$result")
-[[ $(sed -n 1p <<<"$table") =~ ^\|\ *Id\ *\| ]] && [[ $(sed -n 2p <<<"$table") =~ ^\|\ *-+\ *\| ]] ||
-  deny "criteria table has no header and separator row"
-rows=$(sed '1,2d; s/\\|//g' <<<"$table")
-[ -n "$rows" ] || deny "criteria table is empty"
-while IFS='|' read -r _ id _ st _; do
-  id=${id#"${id%%[! ]*}"} id=${id%"${id##*[! ]}"} st=${st#"${st%%[! ]*}"} st=${st%"${st##*[! ]}"}
-  [ "$st" = SATISFIED ] || deny "criterion $id is '$st', not SATISFIED"
-done <<<"$rows"
-
-# A PASS must not leave a blocking finding open. Required checks that did not run are not marked as required in
-# the result, so they stay with the verifier's PASS rule. A finding counts as resolved only when '— resolved'
-# follows its bracket tags; 'unresolved' or 'not resolved' later in the text does not count.
-open=$(awk '/^### Findings$/ { f = 1; next } /^#/ { f = 0 } f && /\[blocking\]/ && !/\] — resolved/' "$result" | head -n 1)
-[ -z "$open" ] || deny "open blocking finding: $open"
+[ "$identical" = yes ] || deny "snapshot changed during the review (identical=$identical)"
+[ "$criteria" != 0 ] || deny "no criteria were verified"
+[ "$satisfied" = "$criteria" ] || deny "only $satisfied of $criteria criteria are SATISFIED"
+# Required checks that did not run are not marked as required in the result, so they stay with the verifier's PASS rule.
+[ "$blocking_open" = 0 ] || deny "$blocking_open blocking finding(s) still open"
 
 # Recompute the snapshot identity with the verifier's own snippet, so both skills share one definition.
 snippet=$(awk '/^```bash$/ { f = 1; next } /^```$/ { if (f) exit } f' "$verifier")
 grep -q write-tree <<<"$snippet" || deny "could not extract the fingerprint snippet from $verifier"
 git rev-parse --verify -q "$base_ref^{commit}" >/dev/null || deny "base ref '$base_ref' does not resolve"
 current=$(BASE_REF=$base_ref bash -c "${snippet//<base-ref>/\"\$BASE_REF\"}")
-[[ $current =~ ^base=([0-9a-f]{40,64})\ head=([0-9a-f]{40,64})\ tree=([0-9a-f]{40,64})$ ]] || deny "fingerprint failed: '$current'"
+[[ $current =~ ^base=$hex\ head=$hex\ tree=$hex$ ]] || deny "fingerprint failed: '$current'"
 c_base=${BASH_REMATCH[1]} c_head=${BASH_REMATCH[2]} c_tree=${BASH_REMATCH[3]}
 
 [ "$c_base" = "$v_base" ] || deny "base moved: $base_ref is $c_base, verified base was $v_base"

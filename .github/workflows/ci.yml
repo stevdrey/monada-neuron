@@ -63,6 +63,9 @@ jobs:
       - name: Run the publication gate self-test
         run: .agents/skills/monada-neuron-implement-issue/publication-gate-check.sh
 
+      - name: Check that every publication gate check is needed by a self-test case
+        run: .agents/skills/monada-neuron-implement-issue/publication-gate-check.sh --mutants
+
   verify:
     name: Build and test (Java 27)
     runs-on: ubuntu-latest

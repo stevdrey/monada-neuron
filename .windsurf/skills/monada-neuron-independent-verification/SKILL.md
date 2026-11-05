@@ -118,6 +118,7 @@ Return exactly this Markdown block to the orchestrator. Keep it factual and prop
 ```markdown
 ## Independent verification result
 
+<!-- verification v1 status=PASS|NEEDS_CHANGES|BLOCKED base=<sha> head=<sha> tree=<sha> identical=yes|no criteria=<n> satisfied=<n> blocking_open=<n> -->
 **Status:** PASS | NEEDS CHANGES | BLOCKED
 **Issue:** #<n> (parent #<epic>)
 **Snapshot:** base=<sha> head=<sha> tree=<git tree sha> (identical at start and end: yes/no)
@@ -129,7 +130,7 @@ Return exactly this Markdown block to the orchestrator. Keep it factual and prop
 | AC1 | ... | SATISFIED | C1, `path/File.java:42` |
 
 ### Findings
-- **F1 [blocking|non-blocking] [demonstrated|suspected]** `path:line` — observed vs expected.
+- **F1 [blocking|non-blocking] [demonstrated|suspected] [open|resolved]** `path:line` — observed vs expected.
   Reproduce: `<exact command or steps>` → `<observed output>`.
 
 ### Probes
@@ -148,6 +149,18 @@ Return exactly this Markdown block to the orchestrator. Keep it factual and prop
 - <untested scenarios, environment differences, assumptions>.
 ```
 
+The first non-blank line after the heading is the **verification line**: one HTML comment that summarizes the block for tools such as the publication gate of `monada-neuron-implement-issue`, which read it instead of the Markdown. Write it exactly once, in this form, with single spaces and nothing else on the line:
+
+- `status` is `PASS`, `NEEDS_CHANGES`, or `BLOCKED`, the overall status with the space replaced by `_`;
+- `base`, `head`, `tree` are the full SHAs of the end-of-review fingerprint, as on the `Snapshot` line;
+- `identical` is `yes` only when the fingerprints at the start and end of the review are equal;
+- `criteria` is the number of rows in the criteria table, implied rows included; `satisfied` is the number of those rows whose status is `SATISFIED`;
+- `blocking_open` is the number of findings tagged both `[blocking]` and `[open]`.
+
+Numbers are ASCII decimals without sign or leading zeros. The line states the same facts as the Markdown below it; a result whose line is missing, duplicated, malformed, or disagrees with the Markdown is not a valid result.
+
+Each finding's bold head carries exactly three tags in this order: severity, evidence kind, and state. The state is `[open]` on a first run and for every finding still open on a recheck, and `[resolved]` only for a previous finding a recheck shows fixed; nothing outside the bold head changes the state.
+
 The `Checks run` and `Checks not run` lines use the PASS / FAIL / NOT RUN vocabulary of the `How to test / verify` heading in `monada-neuron-create-pull-request`, so the orchestrator can transfer them into the PR without reinterpretation. Findings carry ids so a recheck can report each one as resolved or still open.
 
 ## Revalidation
@@ -156,7 +169,7 @@ After the orchestrator applies fixes, or resolves a blocker such as a missing en
 
 1. recomputes the snapshot identity and compares it with `previous_result`. If the identity is unchanged (a recheck after a `BLOCKED` for environment or a human answer), it re-runs every check that was NOT RUN or blocked, re-evaluates every `NOT VERIFIABLE` or ambiguity-blocked criterion with the new environment or answer, and skips step 2;
 2. if the snapshot changed, re-evaluates every criterion touched by the new diff (`git diff <previous-tree> <new-tree>`, which also shows mode and file-type changes) and every criterion whose evidence came from a check, re-running those checks on the new snapshot. If the previous tree is no longer in the repository (pruned, or reviewed in another clone), it uses `git diff <previous-head> <new-tree>` instead and records that the fix diff is approximate;
-3. reports each previous finding as `resolved` (with evidence) or `open`, using its original id;
+3. reports each previous finding with its original id and the state tag `[resolved]` (with evidence) or `[open]`, and counts the open blocking ones in `blocking_open`;
 4. expects regression coverage for each fixed defect: a test or check that fails on the old snapshot and passes on the new one, or a stated reason why none is practical (a non-blocking finding if missing);
 5. probes the fix itself for new edge cases, re-running every applicable probe class against the changed code, because a fix that makes the reported input work can still be wrong for the rest of its input class.
 
