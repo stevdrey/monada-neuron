@@ -246,8 +246,17 @@ chmod +x b.txt
 expect "mode change after PASS makes the result stale" 1 "stale result" "$gate" --before-commit "$r/pass" base
 chmod -x b.txt
 
+# Creating the issue branch in place keeps HEAD and the uncommitted verified changes.
+git switch -q -c issue-in-place
+expect "issue branch created in place before the commit keeps the snapshot" 0 "ALLOW" "$gate" --before-commit "$r/pass" base
+
 g add b.txt && g commit -qm "commit verified snapshot"
 expect "commit of exactly the verified tree may be published" 0 "ALLOW" "$gate" "$r/pass" base
+
+# The sequence from the PR #194 review: commit the verified tree, then create the push branch from the base.
+git switch -q -c issue-from-base base
+expect "branch created from the base after the commit is refused" 1 "(stale result)" "$gate" "$r/pass" base
+git switch -q issue-in-place
 expect "before-commit mode refuses a HEAD that moved" 1 "is not the verified head" "$gate" --before-commit "$r/pass" base
 
 verified_commit=$(git rev-parse HEAD)

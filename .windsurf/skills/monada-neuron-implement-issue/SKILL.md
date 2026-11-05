@@ -77,6 +77,8 @@ An unknown is material when a reasonable reading of the sources leads to a diffe
 
 ## IMPLEMENT and SELF-CHECK
 
+Work on the branch you will publish. Before the first edit, check out the issue's existing branch or create one from the up-to-date base, never `main`. The verified head is then the tip of that branch, and publishing never has to move `HEAD`.
+
 Implement the smallest coherent change that satisfies the checklist, following the implementation skills for the area. Then run the repository minimum when code, build, or tests are affected (`./gradlew test`) and the issue's own verification commands, and record the observed outcomes. Self-checks are the author's evidence; they never replace the independent result.
 
 ## VERIFY: independent subagent
@@ -116,13 +118,13 @@ Escalation is a real stop, not a pause before publishing anyway.
 ## PUBLISH GATE
 
 1. Confirm authorization. Commit, push, and PR creation require the user's authorization: an invocation that asks for a PR, or an explicit yes. Otherwise stop at `REPORT` with the verified, unpublished change.
-2. Run `git fetch origin` first and pass the remote-tracking ref (`origin/<base>`, the ref `GATHER` verified against) as `<base-ref>`, so the gate compares the verified base with the base as it is now. A local `<base>` branch is not updated by a fetch. Before committing a verified uncommitted snapshot, run the gate in `--before-commit` mode: it allows only when the checkout is still exactly the verified snapshot.
+2. Run `git fetch origin` first and pass the remote-tracking ref (`origin/<base>`, the ref `GATHER` verified against) as `<base-ref>`, so the gate compares the verified base with the base as it is now. A local `<base>` branch is not updated by a fetch. Make sure the checkout is on the branch you will push. If it is not, create that branch in place with `git switch -c <branch>`, with no start point: this keeps `HEAD` and the uncommitted verified changes. Switching to another existing branch, or creating one from the base, moves `HEAD` away from the verified snapshot and means `VERIFY` again. Before committing a verified uncommitted snapshot, run the gate in `--before-commit` mode: it allows only when the checkout is still exactly the verified snapshot.
 
    ```bash
    .agents/skills/monada-neuron-implement-issue/publication-gate.sh --before-commit <result-file> origin/<base>
    ```
 
-3. Commit exactly that tree (stage everything the fingerprint included; nothing else), then run the gate in publish mode before pushing:
+3. Commit exactly that tree on that branch (stage everything the fingerprint included; nothing else). Then run the gate in publish mode as the last step before pushing; no branch switch, rebase, merge, or pull may come between the gate and the push:
 
    ```bash
    .agents/skills/monada-neuron-implement-issue/publication-gate.sh <result-file> origin/<base>
@@ -133,8 +135,7 @@ Escalation is a real stop, not a pause before publishing anyway.
 
 ## PUBLISH: commit, push, PR
 
-- Branch: reuse the issue's branch when one exists, otherwise create one from the base; never push to `main`.
-- Push with `git push -u origin <branch>`; never force-push a shared branch without the human's approval.
+- Push the branch the publish-mode gate ran on, with `git push -u origin <branch>`, where `<branch>` is the branch currently checked out. Never push to `main`, and never force-push a shared branch without the human's approval. The branch was chosen in `IMPLEMENT` or created in place in `PUBLISH GATE`; do not create or switch branches here.
 - Create the PR with `monada-neuron-create-pull-request`. Map the verification result into its headings without adding new top-level headings:
   - `How to test / verify`: the result's `Checks run` and `Checks not run` lines with their PASS / FAIL / NOT RUN status unchanged, followed by a traceability list `AC1 — <short criterion> — SATISFIED — <evidence>` for every checklist row, and the verified snapshot (`base`, `head`, `tree`) with the number of verification rounds;
   - `Risk & rollout`: the result's residual risks and limitations;
