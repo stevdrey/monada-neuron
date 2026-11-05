@@ -1,12 +1,101 @@
 #!/usr/bin/env bash
 # Self-test for publication-gate.sh against a throwaway repository and hand-written result blocks.
-# Covers PASS on the current snapshot, other statuses, stale and moved snapshots, commits on top and malformed blocks.
+# Every DENY in the gate has a case here. With --mutants, it also runs this self-test against copies of the gate
+# that each disable or weaken one check, and fails if any copy still passes (a check no case depends on).
+# GATE overrides the gate under test; the mutant run uses it.
 set -euo pipefail
 
-gate=$(cd "$(dirname "$0")" && pwd)/publication-gate.sh
+here=$(cd "$(dirname "$0")" && pwd)
+gate=${GATE:-$here/publication-gate.sh}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 g() { git -c user.name=t -c user.email=t@example.invalid "$@"; }
+# A locale in which a bash range such as [0-9] also matches non-ASCII digits (en_US.UTF-8 with glibc does). The
+# non-ASCII cases run the gate under it, so a gate that relied on ranges would fail them; empty if none is installed.
+wide=
+for l in en_US.UTF-8 de_DE.UTF-8 C.UTF-8; do
+  if LC_ALL=$l bash -c '[[ ² =~ ^[0-9]$ ]]' 2>/dev/null; then wide=$l && break; fi
+done
+# CI sets REQUIRE_WIDE_LOCALE=1, so the locale cases and mutants cannot be skipped there.
+if [ -z "$wide" ] && [ "${REQUIRE_WIDE_LOCALE:-0}" = 1 ]; then
+  echo "FAIL no installed locale widens [0-9] (REQUIRE_WIDE_LOCALE=1); install en_US.UTF-8"
+  exit 1
+fi
+
+if [ "${1:-}" = --mutants ]; then
+  # name@@exact text in the gate@@replacement. Each text must occur in the gate.
+  mutants=(
+    'no result-file check@@[ -f "$result" ] || deny@@[ -f "$result" ] || true'
+    'no verifier-file check@@[ -f "$verifier" ] || deny@@[ -f "$verifier" ] || true'
+    'no block count@@[ "$blocks" = 1 ] || deny@@[ "$blocks" = 1 ] || true'
+    'no line count@@[ "$lines" = 1 ] || deny@@[ "$lines" = 1 ] || true'
+    'case-sensitive line count@@grep -ci@@grep -c'
+    "line count not anchored@@grep -ci '^[[:space:]]*<!--@@grep -ci '<!--"
+    'no CRLF check@@"$result" || deny "result file has CRLF@@"$result" || true "result file has CRLF'
+    'mode never before-commit@@then mode=before-commit; shift@@then shift'
+    'before-commit falls through@@commit exactly this tree"
+  exit 0@@commit exactly this tree"'
+    'unanchored fingerprint start@@=~ ^base=$hex@@=~ base=$hex'
+    'unanchored fingerprint end@@tree=$hex$ ]]@@tree=$hex ]]'
+    'line anywhere in the file@@line=$(awk@@line=$(grep -i "<!-- verification" "$result" | head -n 1) # $(awk'
+    'no line format check@@[[ $line =~ $re ]] || deny@@[[ $line =~ $re ]] || true'
+    'unanchored line start@@re="^<!--@@re="<!--'
+    'unanchored line end@@-->\$"@@-->"'
+    "locale: hex as a range@@sha='([0123456789abcdef]{40}|[0123456789abcdef]{64}|none)'@@sha='([0-9a-f]{40}|[0-9a-f]{64}|none)'"
+    "locale: numbers as ranges@@num='(0|[123456789][0123456789]*)'@@num='(0|[1-9][0-9]*)'"
+    "any SHA length@@sha='([0123456789abcdef]{40}|@@sha='([0123456789abcdef]{40,64}|"
+    "none not accepted@@{64}|none)'@@{64})'"
+    'none under any status@@[ "$status" = BLOCKED ] ||
+  deny@@[ "$status" = BLOCKED ] ||
+  true'
+    "leading zeros allowed@@num='(0|[123456789][0123456789]*)'@@num='([0123456789]+)'"
+    'no status check@@[ "$status" = PASS ] || deny@@[ "$status" = PASS ] || true'
+    'no identical check@@[ "$identical" = yes ] || deny@@[ "$identical" = yes ] || true'
+    'no empty-criteria check@@[ "$criteria" != 0 ] || deny@@[ "$criteria" != 0 ] || true'
+    'no satisfied check@@[ "$satisfied" = "$criteria" ] || deny@@[ "$satisfied" = "$criteria" ] || true'
+    'no open-blocking check@@[ "$blocking_open" = 0 ] || deny@@[ "$blocking_open" = 0 ] || true'
+    'no snippet check@@grep -q write-tree <<<"$snippet" || deny@@grep -q write-tree <<<"$snippet" || true'
+    'no base-ref check@@>/dev/null || deny@@>/dev/null || true'
+    'no fingerprint check@@tree=$hex$ ]] || deny@@tree=$hex$ ]] || true'
+    'no base check@@[ "$c_base" = "$v_base" ] || deny@@[ "$c_base" = "$v_base" ] || true'
+    'no tree check@@[ "$c_tree" = "$v_tree" ] || deny@@[ "$c_tree" = "$v_tree" ] || true'
+    'no before-commit head check@@[ "$c_head" = "$v_head" ] || deny@@[ "$c_head" = "$v_head" ] || true'
+    'no HEAD tree check@@= "$v_tree" ] || deny "HEAD^@@= "$v_tree" ] || true "HEAD^'
+    'merges on top allowed@@[ "$parents" = 2 ]@@[ "$parents" -ge 2 ]'
+    'any parent allowed@@[ "$(git rev-parse HEAD^)" = "$v_head" ]@@true'
+  )
+  src=$(<"$here/publication-gate.sh")
+  survivors=0 killed=0
+  for m in "${mutants[@]}"; do
+    name=${m%%@@*} rest=${m#*@@}
+    old=${rest%%@@*} new=${rest#*@@}
+    if [[ $name == locale:* && -z $wide ]]; then echo "skipped  $name (no installed locale widens [0-9])"; continue; fi
+    [[ $src == *"$old"* ]] || { echo "MUTANT $name: text not found in the gate"; survivors=$((survivors + 1)); continue; }
+    after=${src#*"$old"}
+    [[ $after != *"$old"* ]] || { echo "MUTANT $name: text not unique in the gate"; survivors=$((survivors + 1)); continue; }
+    dir=$work/$RANDOM$RANDOM
+    mkdir -p "$dir/monada-neuron-implement-issue" "$dir/monada-neuron-independent-verification"
+    cp "$here/../monada-neuron-independent-verification/SKILL.md" "$dir/monada-neuron-independent-verification/"
+    printf '%s\n' "${src/"$old"/"$new"}" >"$dir/monada-neuron-implement-issue/publication-gate.sh"
+    chmod +x "$dir/monada-neuron-implement-issue/publication-gate.sh"
+    if out=$(GATE=$dir/monada-neuron-implement-issue/publication-gate.sh "$here/publication-gate-check.sh" 2>&1); then
+      echo "SURVIVED $name"
+      survivors=$((survivors + 1))
+    else
+      # A run that fails without naming a case (syntax error, harness crash) shows nothing about the check.
+      if killers=$(grep '^FAIL ' <<<"$out" | sed 's/^FAIL \([^:]*\):.*/\1/'); then
+        echo "killed   $name — $(wc -l <<<"$killers") case(s), first: $(head -n 1 <<<"$killers")"
+        killed=$((killed + 1))
+      else
+        echo "ERROR    $name: run failed without a failing case: $(tail -n 1 <<<"$out")"
+        survivors=$((survivors + 1))
+      fi
+    fi
+  done
+  [ "$survivors" = 0 ] || { echo "$survivors mutant(s) survived"; exit 1; }
+  echo "$killed of ${#mutants[@]} mutants killed, none survived"
+  exit 0
+fi
 
 git init -q -b main "$work/repo"
 cd "$work/repo"
@@ -25,23 +114,26 @@ GIT_INDEX_FILE=$tmp/index git add -A
 tree=$(GIT_INDEX_FILE=$tmp/index git write-tree)
 rm -rf "$tmp"
 
-result() { # file status identical ac2-status [base] [head] [tree]
+# result file [status] [identical] [criteria] [satisfied] [blocking_open] [base] [head] [tree]
+# The Markdown always says PASS with every criterion SATISFIED: the gate must decide from the verification line alone.
+result() {
   cat >"$1" <<EOF
 ## Independent verification result
 
-**Status:** $2
+<!-- verification v1 status=${2:-PASS} base=${7:-$base} head=${8:-$head} tree=${9:-$tree} identical=${3:-yes} criteria=${4:-2} satisfied=${5:-2} blocking_open=${6:-0} -->
+**Status:** PASS
 **Issue:** #7 (parent #1)
-**Snapshot:** base=${5:-$base} head=${6:-$head} tree=${7:-$tree} (identical at start and end: $3)
+**Snapshot:** base=$base head=$head tree=$tree (identical at start and end: yes)
 **Recheck of:** first run
 
 ### Criteria
 | Id | Criterion (short) | Status | Evidence |
 | --- | --- | --- | --- |
 | AC1 | first | SATISFIED | C1 |
-| AC2 | second, \`a \\| b\` | $4 | C2, \`x \\|\\| y\` |
+| AC2 | second, \`a \\| b\` | SATISFIED | C2 |
 
 ### Findings
-- none
+- **F1 [non-blocking] [suspected] [open]** \`a.sh:1\` — slow on large input.
 
 ### Checks run
 - \`tests/run.sh\` (cwd repo) — PASS — 2/2.
@@ -64,51 +156,140 @@ expect() { # name want-status want-text command...
 
 r=$work/results
 mkdir "$r"
-result "$r/pass" PASS yes SATISFIED
-result "$r/needs" "NEEDS CHANGES" yes PARTIAL
-result "$r/blocked" BLOCKED yes "NOT VERIFIABLE"
-result "$r/changed" PASS no SATISFIED
-result "$r/partial" PASS yes PARTIAL
-result "$r/other-base" PASS yes SATISFIED "$head"
-sed '/^\*\*Snapshot:/d' "$r/pass" >"$r/no-snapshot"
-cat "$r/pass" "$r/pass" >"$r/two-blocks"
-awk '/^\| AC/ { next } 1' "$r/pass" >"$r/no-rows"
-awk '/^\| (Id|---) / { next } 1' "$r/partial" >"$r/no-header"
-# Each half of the header check alone: with no separator the first data row would be skipped, so make it PARTIAL.
-sed '/^| --- /d; s/^| AC1 | first | SATISFIED/| AC1 | first | PARTIAL/' "$r/pass" >"$r/no-separator"
-sed 's/^| Id |/| ID |/' "$r/pass" >"$r/other-header"
-sed 's/^- none$/- **F1 [blocking] [demonstrated]** `a.sh:1` — wrong output./' "$r/pass" >"$r/open-blocking"
-sed 's/^- none$/- **F1 [blocking] [demonstrated] — resolved.** `a.sh:1` fixed./' "$r/pass" >"$r/resolved-blocking"
-sed 's/end: yes)$/end: yes; matches the request)/; s/^\*\*Status:\*\* PASS$/**Status:** PASS (round 2)/' "$r/pass" >"$r/extra-text"
-sed 's/^- none$/- **F1 [blocking] [demonstrated]** `a.sh:1` — unresolved variable reference./' "$r/pass" >"$r/unresolved-word"
-sed 's/^\*\*Status:\*\* PASS$/**Status:** PASS | NEEDS CHANGES | BLOCKED/' "$r/pass" >"$r/template-status"
-sed 's/^\*\*Status:\*\* PASS$/**Status:** PASS2/' "$r/pass" >"$r/glued-status"
-sed 's/end: yes)$/end: yes\/no)/' "$r/pass" >"$r/template-identical"
-sed 's/end: yes)$/end: yes-no)/' "$r/pass" >"$r/glued-identical"
+result "$r/pass"
+result "$r/needs" NEEDS_CHANGES yes 2 1 1
+result "$r/blocked" BLOCKED
+result "$r/changed" PASS no
+result "$r/no-criteria" PASS yes 0 0
+result "$r/partial" PASS yes 2 1
+result "$r/open-blocking" PASS yes 2 2 1
+result "$r/other-base" PASS yes 2 2 0 "$head"
+result "$r/long-sha" PASS yes 2 2 0 "${base}0"
+result "$r/sha256" PASS yes 2 2 0 "$base$(printf '%024d' 0)"
+result "$r/upper-sha" PASS yes 2 2 0 "$(tr a-f A-F <<<"$base")"
+result "$r/leading-zero" PASS yes 02 02
+result "$r/arabic-digit" PASS yes 2 2 "٠"
+result "$r/superscript-sha" PASS yes 2 2 0 "${base%?}²"
+result "$r/superscript" PASS yes "²" "²"
+result "$r/plus" PASS yes 2 2 +0
+# A snapshot the verifier could not compute: 'none' is contract-valid only with BLOCKED, and never allows.
+result "$r/blocked-unavailable" BLOCKED no 0 0 0 none none none
+result "$r/blocked-no-head" BLOCKED no 2 0 0 "$base" none none
+result "$r/pass-none" PASS yes 2 2 0 "$base" "$head" none
+result "$r/needs-none" NEEDS_CHANGES yes 2 1 0 "$base" none "$tree"
+result "$r/upper-none" BLOCKED no 0 0 0 NONE NONE NONE
+line=$(grep '^<!-- verification ' "$r/pass")
 
-expect "PASS on the uncommitted verified snapshot, before commit" 0 "ALLOW" "$gate" --before-commit "$r/pass" base
+# Markdown that disagrees with the line: the line decides in both directions.
+sed 's/^\*\*Status:\*\* PASS$/**Status:** NEEDS CHANGES/; s/| SATISFIED |/| UNMET |/; s/\[non-blocking\]/[blocking]/' \
+  "$r/pass" >"$r/markdown-says-fail"
+# Placement, count and form of the line.
+grep -v '^<!-- verification ' "$r/pass" >"$r/no-line"
+cat "$r/pass" "$r/pass" >"$r/two-blocks"
+grep -v '^## Independent verification result$' "$r/pass" >"$r/no-block"
+awk -v l="$line" '{ print } /^### Findings$/ { print l }' "$r/pass" >"$r/duplicated-line"
+awk -v l="$line" '{ print } /^### Findings$/ { print "  " l }' "$r/pass" >"$r/duplicated-indented"
+awk '{ print } /^\*\*Status:/ { print "<!--VERIFICATION v1 status=NEEDS_CHANGES -->" }' "$r/pass" >"$r/duplicated-other-case"
+awk '/^<!-- verification / { held = $0; next } { print } /^\*\*Status:/ { print held }' "$r/pass" >"$r/line-after-status"
+awk '{ print } /^## Independent verification result$/ { print "not the line" }' "$r/pass" >"$r/text-before-line"
+sed 's/^<!-- verification v1 /<!-- verification v2 /' "$r/pass" >"$r/other-version"
+sed 's/ -->$/ --> trailing/' "$r/pass" >"$r/trailing-text"
+sed 's/ -->$/ --> /' "$r/pass" >"$r/trailing-space"
+awk '{ sub(/ -->$/, " -->\r") } 1' "$r/pass" >"$r/crlf"
+awk '{ printf "%s\r\n", $0 }' "$r/pass" >"$r/crlf-file"
+# A result may quote the verification line inside a table cell; only a line that starts with it counts.
+awk -v l="$line" '/^\| AC1 / { sub(/C1 \|$/, "C1, `" l "` |") } 1' "$r/pass" >"$r/quoted-line"
+sed 's/^<!-- verification /x <!-- verification /' "$r/pass" >"$r/leading-text"
+sed 's/^<!-- verification /  <!-- verification /' "$r/pass" >"$r/indented-line"
+sed 's/^<!-- verification /<!--  verification /' "$r/pass" >"$r/double-space"
+sed 's/ status=PASS / status=NEEDS CHANGES /' "$r/pass" >"$r/spaced-status"
+sed 's/ status=PASS / status=PASS|NEEDS_CHANGES|BLOCKED /' "$r/pass" >"$r/template-status"
+sed 's/ status=PASS / status=pass /' "$r/pass" >"$r/lower-status"
+sed 's/ identical=yes / identical=yes|no /' "$r/pass" >"$r/template-identical"
+sed 's/ criteria=2 satisfied=2 / satisfied=2 criteria=2 /' "$r/pass" >"$r/reordered"
+sed 's/ blocking_open=0 -->$/ -->/' "$r/pass" >"$r/missing-field"
+sed -n '/^```markdown$/,/^```$/p' "$here/../monada-neuron-independent-verification/SKILL.md" | sed '1d;$d' >"$r/template"
+
+ok() { expect "$1" 0 "ALLOW" "$gate" --before-commit "$r/$2" base; }
+no() { expect "$1" 1 "$3" "$gate" --before-commit "$r/$2" base; }
+
+ok "PASS on the uncommitted verified snapshot, before commit" pass
 expect "publish refused until the verified tree is committed" 1 "commit the verified snapshot first" "$gate" "$r/pass" base
-expect "NEEDS CHANGES is refused" 1 "status is 'NEEDS CHANGES'" "$gate" --before-commit "$r/needs" base
-expect "BLOCKED is refused" 1 "status is 'BLOCKED'" "$gate" --before-commit "$r/blocked" base
-expect "snapshot changed during review is refused" 1 "identical at start and end: no" "$gate" --before-commit "$r/changed" base
-expect "PASS with a PARTIAL row is refused" 1 "criterion AC2 is 'PARTIAL'" "$gate" --before-commit "$r/partial" base
-expect "verified against another base is refused" 1 "base moved" "$gate" --before-commit "$r/other-base" base
-expect "missing Snapshot line is refused" 1 "Snapshot line is malformed" "$gate" --before-commit "$r/no-snapshot" base
-expect "two result blocks are refused" 1 "exactly one result block, found 2" "$gate" --before-commit "$r/two-blocks" base
-expect "empty criteria table is refused" 1 "criteria table is empty" "$gate" --before-commit "$r/no-rows" base
-expect "criteria table without a header is refused" 1 "no header and separator row" "$gate" --before-commit "$r/no-header" base
-expect "criteria table without a separator is refused" 1 "no header and separator row" "$gate" --before-commit "$r/no-separator" base
-expect "criteria table with an unexpected header is refused" 1 "no header and separator row" "$gate" --before-commit "$r/other-header" base
-expect "PASS with an open blocking finding is refused" 1 "open blocking finding: - **F1 [blocking]" "$gate" --before-commit "$r/open-blocking" base
-expect "PASS with a resolved blocking finding is allowed" 0 "ALLOW" "$gate" --before-commit "$r/resolved-blocking" base
-expect "extra text after the identical value and the status is allowed" 0 "ALLOW" "$gate" --before-commit "$r/extra-text" base
-expect "'unresolved' in a blocking finding's text is not a resolution" 1 "open blocking finding" "$gate" --before-commit "$r/unresolved-word" base
-expect "unfilled template status line is refused" 1 "not PASS" "$gate" --before-commit "$r/template-status" base
-expect "status word with glued text is refused" 1 "status is 'PASS2'" "$gate" --before-commit "$r/glued-status" base
-expect "unfilled template identical value is refused" 1 "Snapshot line is malformed" "$gate" --before-commit "$r/template-identical" base
-expect "identical value with glued text is refused" 1 "Snapshot line is malformed" "$gate" --before-commit "$r/glued-identical" base
 expect "missing result file is refused" 1 "result file not found" "$gate" "$r/absent" base
+no "NEEDS_CHANGES is refused although the Markdown says PASS" needs "status is 'NEEDS_CHANGES', not PASS"
+no "BLOCKED is refused" blocked "status is 'BLOCKED', not PASS"
+no "snapshot changed during the review is refused" changed "identical=no"
+no "zero criteria is refused" no-criteria "no criteria were verified"
+no "PASS with an unsatisfied criterion is refused" partial "only 1 of 2 criteria are SATISFIED"
+no "PASS with an open blocking finding is refused" open-blocking "1 blocking finding(s) still open"
+no "verified against another base is refused" other-base "base moved"
+ok "Markdown that reports failures does not override a PASS line" markdown-says-fail
+no "missing verification line is refused" no-line "exactly one verification line, found 0"
+no "two result blocks are refused" two-blocks "exactly one result block, found 2"
+no "missing result heading is refused" no-block "exactly one result block, found 0"
+no "duplicated verification line is refused" duplicated-line "exactly one verification line, found 2"
+no "indented duplicate line is refused" duplicated-indented "exactly one verification line, found 2"
+no "duplicate line in another case is refused" duplicated-other-case "exactly one verification line, found 2"
+no "line after the Status line is refused" line-after-status "missing after the result heading or malformed"
+no "text between heading and line is refused" text-before-line "missing after the result heading or malformed"
+no "unknown contract version is refused" other-version "malformed"
+no "text after the line is refused" trailing-text "malformed"
+no "trailing space is refused" trailing-space "malformed"
+no "CR at the end of the line is refused" crlf "CRLF line endings"
+no "CRLF result file is refused with a line-ending message" crlf-file "CRLF line endings"
+ok "verification line quoted in an evidence cell is not a duplicate" quoted-line
+no "text before the comment leaves no verification line" leading-text "exactly one verification line, found 0"
+no "indented verification line is refused" indented-line "malformed"
+no "doubled space is refused" double-space "malformed"
+no "status with a space is refused" spaced-status "malformed"
+no "unfilled template status is refused" template-status "malformed"
+no "lower-case status is refused" lower-status "malformed"
+no "unfilled template identical value is refused" template-identical "malformed"
+no "reordered fields are refused" reordered "malformed"
+no "missing field is refused" missing-field "malformed"
+no "verifier's template block is refused" template "malformed"
+no "41-character SHA is refused" long-sha "malformed"
+no "upper-case SHA is refused" upper-sha "malformed"
+no "64-character SHA is accepted as a SHA and compared" sha256 "base moved"
+no "number with a leading zero is refused" leading-zero "malformed"
+[ -n "$wide" ] || echo "note: no installed locale widens [0-9]; the non-ASCII cases run in the current locale"
+for c in arabic-digit superscript superscript-sha; do
+  expect "non-ASCII digit is refused ($c, ${wide:-current locale})" 1 "malformed" \
+    env ${wide:+"LC_ALL=$wide"} "$gate" --before-commit "$r/$c" base
+done
+no "signed number is refused" plus "malformed"
+no "BLOCKED with an unavailable snapshot is contract-valid and refused" blocked-unavailable "status is 'BLOCKED', not PASS"
+no "BLOCKED with only the head unavailable is refused" blocked-no-head "status is 'BLOCKED', not PASS"
+no "none under PASS is refused" pass-none "only BLOCKED may say none"
+no "none under NEEDS_CHANGES is refused" needs-none "only BLOCKED may say none"
+no "upper-case NONE is refused" upper-none "malformed"
 expect "unknown base ref is refused" 1 "does not resolve" "$gate" --before-commit "$r/pass" no-such-ref
+
+# The gate needs the verifier's SKILL.md next to its own directory and a usable fingerprint snippet in it.
+lone=$work/lone/monada-neuron-implement-issue
+mkdir -p "$lone" "$work/broken/monada-neuron-implement-issue" "$work/broken/monada-neuron-independent-verification" \
+  "$work/garbled/monada-neuron-implement-issue" "$work/garbled/monada-neuron-independent-verification"
+cp "$gate" "$lone/"
+cp "$gate" "$work/broken/monada-neuron-implement-issue/"
+cp "$gate" "$work/garbled/monada-neuron-implement-issue/"
+printf '# no snippet\n' >"$work/broken/monada-neuron-independent-verification/SKILL.md"
+printf '```bash\necho write-tree\n```\n' >"$work/garbled/monada-neuron-independent-verification/SKILL.md"
+expect "missing verifier skill is refused" 1 "verifier skill not found" "$lone/publication-gate.sh" --before-commit "$r/pass" base
+expect "verifier without a fingerprint snippet is refused" 1 "could not extract the fingerprint snippet" \
+  "$work/broken/monada-neuron-implement-issue/publication-gate.sh" --before-commit "$r/pass" base
+expect "fingerprint output in the wrong form is refused" 1 "fingerprint failed" \
+  "$work/garbled/monada-neuron-implement-issue/publication-gate.sh" --before-commit "$r/pass" base
+# A valid fingerprint with text before or after it is still the wrong form.
+for edge in prefix suffix; do
+  d=$work/$edge
+  mkdir -p "$d/monada-neuron-implement-issue" "$d/monada-neuron-independent-verification"
+  cp "$gate" "$d/monada-neuron-implement-issue/"
+  fp="base=$base head=$head tree=$tree"
+  [ "$edge" = prefix ] && fp="x $fp" || fp="$fp x"
+  printf '```bash\n# write-tree\necho "%s"\n```\n' "$fp" >"$d/monada-neuron-independent-verification/SKILL.md"
+  expect "fingerprint with text $edge is refused" 1 "fingerprint failed" \
+    "$d/monada-neuron-implement-issue/publication-gate.sh" --before-commit "$r/pass" base
+done
 
 printf 'edited after review\n' >>b.txt
 expect "edit after PASS makes the result stale" 1 "stale result" "$gate" --before-commit "$r/pass" base
@@ -131,6 +312,9 @@ git switch -q issue-in-place
 expect "before-commit mode refuses a HEAD that moved" 1 "is not the verified head" "$gate" --before-commit "$r/pass" base
 
 verified_commit=$(git rev-parse HEAD)
+# A commit with the verified tree whose parent is not the verified head.
+g reset -q --hard "$(g commit-tree "$tree" -p base -m elsewhere)"
+expect "a commit on another parent is refused" 1 "neither the verified head nor a single commit" "$gate" "$r/pass" base
 # A merge whose first parent is the verified head and whose tree is the verified tree is still not one commit.
 side=$(g commit-tree "$(git rev-parse 'base^{tree}')" -p base -m side)
 g reset -q --hard "$(g commit-tree "$tree" -p "$head" -p "$side" -m merge)"
