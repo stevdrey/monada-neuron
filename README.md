@@ -402,6 +402,9 @@ Because no human annotators are available, [`bilingual-sense/2`](docs/experiment
 model families and an AI adjudicator under frozen prompts, logging and sealing rules. Its labels are `agent-gold`, not
 human annotation: every verdict is exploratory, optionally bounded by a pre-declared owner audit, and none is
 independently human-validated evidence or opens sentence translation.
+The step-8 [harness](docs/benchmarks/bilingual-sense.md) (issue #185, `runBilingualSense`) implements the arms,
+selection, metrics, bootstrap and checks in the evaluation module and runs only as a synthetic self-test until the v2
+prerequisites (agent configuration, steps 2 to 7, sealed hashes) hold; it has produced no result.
 
 ## Design Principles
 

@@ -116,6 +116,17 @@ tasks.register<JavaExec>("runNcmAblation") {
     args(quotedBenchmarkArgs())
 }
 
+// Bilingual sense harness (Issue #185; protocol docs/experiments/bilingual-sense-v2.md). Step 8 is blocked by the v2
+// prerequisites, so only the synthetic self-test runs: -PbenchmarkArgs="--synthetic". The protocol caps the heap at 2 GiB.
+tasks.register<JavaExec>("runBilingualSense") {
+    group = "benchmark"
+    description = "Runs the bilingual-sense/2 harness self-test over synthetic data; real step 8 waits on v2 prerequisites (Issue #185)"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("monada.neuron.evaluation.bilingual.BilingualSenseRunner")
+    maxHeapSize = "2g"
+    args(quotedBenchmarkArgs())
+}
+
 tasks.register<JavaExec>("jmh") {
     group = "benchmark"
     description = "Runs JMH microbenchmarks"
