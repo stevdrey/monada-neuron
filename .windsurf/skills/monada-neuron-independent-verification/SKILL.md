@@ -171,7 +171,7 @@ The orchestrator's claim that something is fixed is not evidence. A recheck that
 
 ## Handoff
 
-The result goes to the orchestrator only. The orchestrator owns corrections, commit, push, PR creation (`monada-neuron-create-pull-request`), and any human communication. This skill never publishes, merges, or closes issues. Publication as verified requires a `PASS` whose snapshot equals the snapshot being published.
+The result goes to the orchestrator only. The orchestrator owns corrections, commit, push, PR creation (`monada-neuron-create-pull-request`), and any human communication. This skill never publishes, merges, or closes issues. Publication as verified requires a `PASS` for the change being published: the same base and tree, with `HEAD` either the verified head or a single commit on top of it that records exactly the verified tree (the orchestrator committing a verified uncommitted snapshot).
 
 ## Validation
 

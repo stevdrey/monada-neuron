@@ -140,7 +140,7 @@ Escalation is a real stop, not a pause before publishing anyway.
   - `Risk & rollout`: the result's residual risks and limitations;
   - `Notes for reviewers`: non-blocking findings left open, disputed findings and their human decision, scope clarifications;
   - `Why`: `Closes #N` only when every acceptance criterion is satisfied without a scope reduction; otherwise `Related to #N`. Reference the epic as `Related to #<epic>`.
-- After creating the PR, fetch it again and confirm the title, body, and head SHA. If the pushed head differs from the verified one, the PR is not verified: say so and verify again.
+- After creating the PR, fetch it again and confirm the title, body, and head SHA. The PR head must be the commit the publish-mode gate allowed: the verified head itself, or the single commit on top of it that carries the verified tree. If it is any other commit, the PR is not verified: say so and verify again.
 - Do not merge, approve, enable auto-merge, or close the issue.
 
 ### When verification cannot pass
