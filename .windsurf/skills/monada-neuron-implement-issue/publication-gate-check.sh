@@ -41,9 +41,13 @@ if [ "${1:-}" = --mutants ]; then
     'no line format check@@[[ $line =~ $re ]] || deny@@[[ $line =~ $re ]] || true'
     'unanchored line start@@re="^<!--@@re="<!--'
     'unanchored line end@@-->\$"@@-->"'
-    'locale: hex as a range@@[0123456789abcdef]{40}|[0123456789abcdef]{64}@@[0-9a-f]{40}|[0-9a-f]{64}'
+    "locale: hex as a range@@sha='([0123456789abcdef]{40}|[0123456789abcdef]{64}|none)'@@sha='([0-9a-f]{40}|[0-9a-f]{64}|none)'"
     "locale: numbers as ranges@@num='(0|[123456789][0123456789]*)'@@num='(0|[1-9][0-9]*)'"
-    'any SHA length@@{40}|@@{40,64}|'
+    "any SHA length@@sha='([0123456789abcdef]{40}|@@sha='([0123456789abcdef]{40,64}|"
+    "none not accepted@@{64}|none)'@@{64})'"
+    'none under any status@@[ "$status" = BLOCKED ] ||
+  deny@@[ "$status" = BLOCKED ] ||
+  true'
     "leading zeros allowed@@num='(0|[123456789][0123456789]*)'@@num='([0123456789]+)'"
     'no status check@@[ "$status" = PASS ] || deny@@[ "$status" = PASS ] || true'
     'no identical check@@[ "$identical" = yes ] || deny@@[ "$identical" = yes ] || true'
@@ -168,6 +172,12 @@ result "$r/arabic-digit" PASS yes 2 2 "٠"
 result "$r/superscript-sha" PASS yes 2 2 0 "${base%?}²"
 result "$r/superscript" PASS yes "²" "²"
 result "$r/plus" PASS yes 2 2 +0
+# A snapshot the verifier could not compute: 'none' is contract-valid only with BLOCKED, and never allows.
+result "$r/blocked-unavailable" BLOCKED no 0 0 0 none none none
+result "$r/blocked-no-head" BLOCKED no 2 0 0 "$base" none none
+result "$r/pass-none" PASS yes 2 2 0 "$base" "$head" none
+result "$r/needs-none" NEEDS_CHANGES yes 2 1 0 "$base" none "$tree"
+result "$r/upper-none" BLOCKED no 0 0 0 NONE NONE NONE
 line=$(grep '^<!-- verification ' "$r/pass")
 
 # Markdown that disagrees with the line: the line decides in both directions.
@@ -248,6 +258,11 @@ for c in arabic-digit superscript superscript-sha; do
     env ${wide:+"LC_ALL=$wide"} "$gate" --before-commit "$r/$c" base
 done
 no "signed number is refused" plus "malformed"
+no "BLOCKED with an unavailable snapshot is contract-valid and refused" blocked-unavailable "status is 'BLOCKED', not PASS"
+no "BLOCKED with only the head unavailable is refused" blocked-no-head "status is 'BLOCKED', not PASS"
+no "none under PASS is refused" pass-none "only BLOCKED may say none"
+no "none under NEEDS_CHANGES is refused" needs-none "only BLOCKED may say none"
+no "upper-case NONE is refused" upper-none "malformed"
 expect "unknown base ref is refused" 1 "does not resolve" "$gate" --before-commit "$r/pass" no-such-ref
 
 # The gate needs the verifier's SKILL.md next to its own directory and a usable fingerprint snippet in it.

@@ -24,13 +24,17 @@ lines=$(grep -ci '^[[:space:]]*<!--[[:space:]]*verification' "$result" || true)
 [ "$lines" = 1 ] || deny "expected exactly one verification line, found $lines"
 line=$(awk '/^## Independent verification result$/ { f = 1; next } f && NF { print; exit }' "$result")
 hex='([0123456789abcdef]{40}|[0123456789abcdef]{64})'
+# A SHA the verifier could not compute is 'none', which its contract allows only in a BLOCKED result.
+sha='([0123456789abcdef]{40}|[0123456789abcdef]{64}|none)'
 num='(0|[123456789][0123456789]*)'
-re="^<!-- verification v1 status=(PASS|NEEDS_CHANGES|BLOCKED) base=$hex head=$hex tree=$hex identical=(yes|no)"
+re="^<!-- verification v1 status=(PASS|NEEDS_CHANGES|BLOCKED) base=$sha head=$sha tree=$sha identical=(yes|no)"
 re+=" criteria=$num satisfied=$num blocking_open=$num -->\$"
 [[ $line =~ $re ]] || deny "verification line is missing after the result heading or malformed: '$line'"
 status=${BASH_REMATCH[1]} v_base=${BASH_REMATCH[2]} v_head=${BASH_REMATCH[3]} v_tree=${BASH_REMATCH[4]}
 identical=${BASH_REMATCH[5]} criteria=${BASH_REMATCH[6]} satisfied=${BASH_REMATCH[7]} blocking_open=${BASH_REMATCH[8]}
 
+[[ "$v_base $v_head $v_tree" != *none* ]] || [ "$status" = BLOCKED ] ||
+  deny "status $status with an unavailable snapshot (base=$v_base head=$v_head tree=$v_tree); only BLOCKED may say none"
 [ "$status" = PASS ] || deny "status is '$status', not PASS"
 [ "$identical" = yes ] || deny "snapshot changed during the review (identical=$identical)"
 [ "$criteria" != 0 ] || deny "no criteria were verified"

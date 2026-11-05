@@ -118,7 +118,7 @@ Return exactly this Markdown block to the orchestrator. Keep it factual and prop
 ```markdown
 ## Independent verification result
 
-<!-- verification v1 status=PASS|NEEDS_CHANGES|BLOCKED base=<sha> head=<sha> tree=<sha> identical=yes|no criteria=<n> satisfied=<n> blocking_open=<n> -->
+<!-- verification v1 status=PASS|NEEDS_CHANGES|BLOCKED base=<sha|none> head=<sha|none> tree=<sha|none> identical=yes|no criteria=<n> satisfied=<n> blocking_open=<n> -->
 **Status:** PASS | NEEDS CHANGES | BLOCKED
 **Issue:** #<n> (parent #<epic>)
 **Snapshot:** base=<sha> head=<sha> tree=<git tree sha> (identical at start and end: yes/no)
@@ -152,9 +152,9 @@ Return exactly this Markdown block to the orchestrator. Keep it factual and prop
 The first non-blank line after the heading is the **verification line**: one HTML comment that summarizes the block for tools such as the publication gate of `monada-neuron-implement-issue`, which read it instead of the Markdown. Write it exactly once, in this form, with single spaces and nothing else on the line:
 
 - `status` is `PASS`, `NEEDS_CHANGES`, or `BLOCKED`, the overall status with the space replaced by `_`;
-- `base`, `head`, `tree` are the full SHAs of the end-of-review fingerprint, as on the `Snapshot` line;
+- `base`, `head`, `tree` are the full SHAs of the end-of-review fingerprint, as on the `Snapshot` line. A value that could not be computed (unreadable checkout, unresolvable base ref, failed fingerprint) is the literal `none`, never a guess; any `none` requires `status=BLOCKED` and `identical=no`, and the `Snapshot` line names what was unavailable;
 - `identical` is `yes` only when the fingerprints at the start and end of the review are equal;
-- `criteria` is the number of rows in the criteria table, implied rows included; `satisfied` is the number of those rows whose status is `SATISFIED`;
+- `criteria` is the number of rows in the criteria table, implied rows included; `satisfied` is the number of those rows whose status is `SATISFIED`. When the issue or its criteria could not be identified, the table is empty and both are `0` (status `BLOCKED`);
 - `blocking_open` is the number of findings tagged both `[blocking]` and `[open]`.
 
 Numbers are ASCII decimals without sign or leading zeros. The line states the same facts as the Markdown below it; a result whose line is missing, duplicated, malformed, or disagrees with the Markdown is not a valid result.
