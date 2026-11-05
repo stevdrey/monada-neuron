@@ -19,10 +19,12 @@ blocks=$(grep -c '^## Independent verification result$' "$result" || true)
 
 status=$(sed -n 's/^\*\*Status:\*\* *//p' "$result")
 [ "$(grep -c '^\*\*Status:\*\*' "$result")" = 1 ] || deny "expected exactly one Status line"
+# One status word, optionally followed by a remark after ' (', ' ;' or ' —'; never an alternative such as '| BLOCKED'.
+[[ $status =~ ^(PASS|NEEDS\ CHANGES|BLOCKED)(\ (\(|\;|—).*)?$ ]] && status=${BASH_REMATCH[1]}
 [ "$status" = PASS ] || deny "status is '$status', not PASS"
 
 snapshot=$(sed -n 's/^\*\*Snapshot:\*\* *//p' "$result")
-[[ $snapshot =~ ^base=([0-9a-f]{40,64})\ head=([0-9a-f]{40,64})\ tree=([0-9a-f]{40,64})\ \(identical\ at\ start\ and\ end:\ ([a-z]+)\)$ ]] ||
+[[ $snapshot =~ ^base=([0-9a-f]{40,64})\ head=([0-9a-f]{40,64})\ tree=([0-9a-f]{40,64})\ \(identical\ at\ start\ and\ end:\ (yes|no)(\;\ [^\)]*)?\)$ ]] ||
   deny "Snapshot line is malformed: '$snapshot'"
 v_base=${BASH_REMATCH[1]} v_head=${BASH_REMATCH[2]} v_tree=${BASH_REMATCH[3]} identical=${BASH_REMATCH[4]}
 [ "$identical" = yes ] || deny "snapshot changed during the review (identical at start and end: $identical)"
@@ -34,11 +36,16 @@ table=$(awk '/^### Criteria$/ { f = 1; next } /^#/ { f = 0 } f && /^\|/' "$resul
   deny "criteria table has no header and separator row"
 rows=$(sed '1,2d; s/\\|//g' <<<"$table")
 [ -n "$rows" ] || deny "criteria table is empty"
-while IFS= read -r row; do
-  id=$(awk -F'|' '{ gsub(/^ +| +$/, "", $2); print $2 }' <<<"$row")
-  st=$(awk -F'|' '{ gsub(/^ +| +$/, "", $4); print $4 }' <<<"$row")
+while IFS='|' read -r _ id _ st _; do
+  id=${id#"${id%%[! ]*}"} id=${id%"${id##*[! ]}"} st=${st#"${st%%[! ]*}"} st=${st%"${st##*[! ]}"}
   [ "$st" = SATISFIED ] || deny "criterion $id is '$st', not SATISFIED"
 done <<<"$rows"
+
+# A PASS must not leave a blocking finding open. Required checks that did not run are not marked as required in
+# the result, so they stay with the verifier's PASS rule. A finding counts as resolved only when '— resolved'
+# follows its bracket tags; 'unresolved' or 'not resolved' later in the text does not count.
+open=$(awk '/^### Findings$/ { f = 1; next } /^#/ { f = 0 } f && /\[blocking\]/ && !/\] — resolved/' "$result" | head -n 1)
+[ -z "$open" ] || deny "open blocking finding: $open"
 
 # Recompute the snapshot identity with the verifier's own snippet, so both skills share one definition.
 snippet=$(awk '/^```bash$/ { f = 1; next } /^```$/ { if (f) exit } f' "$verifier")

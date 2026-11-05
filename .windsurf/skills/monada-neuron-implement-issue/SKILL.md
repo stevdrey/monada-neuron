@@ -104,7 +104,7 @@ A result is current only while the fingerprint of the checkout equals the result
 
 Go to `ESCALATE`, report to the human with the latest result block, the open findings, and what was tried, and wait for a decision when:
 
-- the same finding id is reported open after three `FIX` rounds;
+- the same finding is reported open after three `FIX` rounds, counting a finding the reviewer describes as the remainder of an earlier finding's defect class as the same finding even under a new id;
 - the number of open blocking findings plus unmet criteria has not decreased for two consecutive verifications;
 - a `BLOCKED` cause (missing environment, permission, sibling repository, unanswered question) cannot be resolved by the agent;
 - the orchestrator disputes a finding;
@@ -128,7 +128,7 @@ Escalation is a real stop, not a pause before publishing anyway.
    .agents/skills/monada-neuron-implement-issue/publication-gate.sh <result-file> origin/<base>
    ```
 
-   Publish mode allows only when the status is `PASS`, the snapshot was identical at the start and end of the review, every criteria row is `SATISFIED`, the base ref still resolves to the verified base, the checkout and `HEAD^{tree}` equal the verified tree, and `HEAD` is the verified head or one commit directly on top of it. Any denial means `VERIFY` again on what you intend to publish.
+   Publish mode allows only when the status is `PASS`, the snapshot was identical at the start and end of the review, every criteria row is `SATISFIED`, no `[blocking]` finding is left without `— resolved` (required checks reported NOT RUN stay with the verifier's PASS rule, because the result does not mark which checks are required), the base ref still resolves to the verified base, the checkout and `HEAD^{tree}` equal the verified tree, and `HEAD` is the verified head or one commit directly on top of it. Any denial means `VERIFY` again on what you intend to publish.
 4. The gate is a mechanical check, not a substitute for reading the result. It cannot see whether the reviewer was independent or whether the criteria passed to it were complete; those remain the orchestrator's responsibility.
 
 ## PUBLISH: commit, push, PR

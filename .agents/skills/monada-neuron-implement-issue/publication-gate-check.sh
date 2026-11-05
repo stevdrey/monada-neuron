@@ -77,6 +77,14 @@ awk '/^\| (Id|---) / { next } 1' "$r/partial" >"$r/no-header"
 # Each half of the header check alone: with no separator the first data row would be skipped, so make it PARTIAL.
 sed '/^| --- /d; s/^| AC1 | first | SATISFIED/| AC1 | first | PARTIAL/' "$r/pass" >"$r/no-separator"
 sed 's/^| Id |/| ID |/' "$r/pass" >"$r/other-header"
+sed 's/^- none$/- **F1 [blocking] [demonstrated]** `a.sh:1` — wrong output./' "$r/pass" >"$r/open-blocking"
+sed 's/^- none$/- **F1 [blocking] [demonstrated] — resolved.** `a.sh:1` fixed./' "$r/pass" >"$r/resolved-blocking"
+sed 's/end: yes)$/end: yes; matches the request)/; s/^\*\*Status:\*\* PASS$/**Status:** PASS (round 2)/' "$r/pass" >"$r/extra-text"
+sed 's/^- none$/- **F1 [blocking] [demonstrated]** `a.sh:1` — unresolved variable reference./' "$r/pass" >"$r/unresolved-word"
+sed 's/^\*\*Status:\*\* PASS$/**Status:** PASS | NEEDS CHANGES | BLOCKED/' "$r/pass" >"$r/template-status"
+sed 's/^\*\*Status:\*\* PASS$/**Status:** PASS2/' "$r/pass" >"$r/glued-status"
+sed 's/end: yes)$/end: yes\/no)/' "$r/pass" >"$r/template-identical"
+sed 's/end: yes)$/end: yes-no)/' "$r/pass" >"$r/glued-identical"
 
 expect "PASS on the uncommitted verified snapshot, before commit" 0 "ALLOW" "$gate" --before-commit "$r/pass" base
 expect "publish refused until the verified tree is committed" 1 "commit the verified snapshot first" "$gate" "$r/pass" base
@@ -91,6 +99,14 @@ expect "empty criteria table is refused" 1 "criteria table is empty" "$gate" --b
 expect "criteria table without a header is refused" 1 "no header and separator row" "$gate" --before-commit "$r/no-header" base
 expect "criteria table without a separator is refused" 1 "no header and separator row" "$gate" --before-commit "$r/no-separator" base
 expect "criteria table with an unexpected header is refused" 1 "no header and separator row" "$gate" --before-commit "$r/other-header" base
+expect "PASS with an open blocking finding is refused" 1 "open blocking finding: - **F1 [blocking]" "$gate" --before-commit "$r/open-blocking" base
+expect "PASS with a resolved blocking finding is allowed" 0 "ALLOW" "$gate" --before-commit "$r/resolved-blocking" base
+expect "extra text after the identical value and the status is allowed" 0 "ALLOW" "$gate" --before-commit "$r/extra-text" base
+expect "'unresolved' in a blocking finding's text is not a resolution" 1 "open blocking finding" "$gate" --before-commit "$r/unresolved-word" base
+expect "unfilled template status line is refused" 1 "not PASS" "$gate" --before-commit "$r/template-status" base
+expect "status word with glued text is refused" 1 "status is 'PASS2'" "$gate" --before-commit "$r/glued-status" base
+expect "unfilled template identical value is refused" 1 "Snapshot line is malformed" "$gate" --before-commit "$r/template-identical" base
+expect "identical value with glued text is refused" 1 "Snapshot line is malformed" "$gate" --before-commit "$r/glued-identical" base
 expect "missing result file is refused" 1 "result file not found" "$gate" "$r/absent" base
 expect "unknown base ref is refused" 1 "does not resolve" "$gate" --before-commit "$r/pass" no-such-ref
 

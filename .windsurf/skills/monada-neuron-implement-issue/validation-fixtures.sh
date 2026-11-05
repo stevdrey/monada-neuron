@@ -48,17 +48,16 @@ EOF
 # A fake gh: serves `issue view` from issue.md, answers `repo view`, `pr list` and `pr view`, and records every call.
 fake_gh() { # $1 scenario dir, $2 issue number
   mkdir -p "$1/bin"
-  cat >"$1/bin/gh" <<EOF
-#!/usr/bin/env bash
-dir=$1
-number=$2
-EOF
+  { echo '#!/usr/bin/env bash'; printf 'dir=%q\nnumber=%q\n' "$1" "$2"; } >"$1/bin/gh"
   cat >>"$1/bin/gh" <<'EOF'
 printf '%s\n' "$*" >>"$dir/gh-calls.log"
 case "$1 $2" in
   "repo view") echo '{"nameWithOwner":"fixture/stats"}' ;;
   "issue view")
-    [ "$3" = "$number" ] || { echo "issue $3 not found" >&2; exit 1; }
+    # The issue number is the first all-digit argument, wherever flags such as --repo put it.
+    want=""
+    for a in "${@:3}"; do [[ $a =~ ^[0-9]+$ ]] && { want=$a; break; }; done
+    [ "$want" = "$number" ] || { echo "issue ${want:-?} not found" >&2; exit 1; }
     if [[ " $* " == *" --json "* ]]; then
       jq -n --arg body "$(cat "$dir/issue.md")" --argjson n "$number" \
         '{number: $n, title: "Add a stats.sh max command", state: "OPEN", body: $body, comments: [], labels: [], url: "https://example.invalid/fixture/stats/issues/\($n)"}'
