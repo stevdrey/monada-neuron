@@ -44,6 +44,25 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: scripts/check-adr-numbers.sh --require-prs --pr "${{ github.event.pull_request.number || 0 }}"
 
+  agent-skills:
+    # The Windsurf copy of the skills drifted from the canonical one once already (fixed in #193). The two skill
+    # self-tests guard the snapshot fingerprint and the publication gate that the issue workflow relies on (#192).
+    name: Agent skills are mirrored and self-tests pass
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Check that .windsurf/skills mirrors .agents/skills
+        run: diff -r .agents/skills .windsurf/skills
+
+      - name: Run the snapshot fingerprint self-test
+        run: .agents/skills/monada-neuron-independent-verification/fingerprint-check.sh
+
+      - name: Run the publication gate self-test
+        run: .agents/skills/monada-neuron-implement-issue/publication-gate-check.sh
+
   verify:
     name: Build and test (Java 27)
     runs-on: ubuntu-latest
