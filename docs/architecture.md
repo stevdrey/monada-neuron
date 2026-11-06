@@ -630,6 +630,34 @@ data never travels inside a `Signal`. All artifacts are cycle-local and bounded,
 and memory, recall and ranking stay in Monada Resonance Store. Binding stop/go gates decide whether later issues proceed;
 G3 is no-go, so cycle integration exists only as the experimental opt-in of contract `/2`, never as a default.
 
+## Visual Geometry Research Extension (specified; no code yet)
+
+Epic #138 researches a geometry first visual path that keeps an object's canonical shape apart from its instances
+(position, size, pose), its appearance (RGB color, alpha, texture) and its 2D spatial spectrum, then measures how well
+each one reconstructs. The [Visual Geometry Experiment Contract](specs/visual-geometry-v1.md) (`visual-geometry/1`,
+issue #141) and [ADR 0053](adr/0053-visual-geometry-experiment-protocol.md) specify it before any code exists: the
+vocabulary and truth tables, numeric conventions, 72 mask and 48 RGB fixtures at 32x32 and 64x64 with gold values and
+keyed hash splits, frozen thresholds, gates V0 to V6 and the verdict rule for Epic #139. No visual type exists yet;
+every name below is a sketch owned by one of issues #142 to #151.
+
+```text
+Host or evaluation runner -> BinaryMask | RgbaImage | Annotation   (typed, caller owned; no Signal, no stage)
+  -> PrimitiveFitter -> ranked ShapeHypothesis list | typed Abstain
+  -> VisualGeometry (canonical, exact equality on a 2^-12 grid) + Contour / SignedDistanceField views
+  -> ShapeInstance = geometry reference + similarity Transform2D
+  -> ImagePlane / RgbaImage with explicit sRGB and linear conversions
+  -> Dft2d | Haar2d (forward and inverse, typed rejection above 64x64)
+  -> Compositor: instances + Appearance -> RgbaImage
+  -> monada-neuron-evaluation: fixtures, baselines, ablation runner, go or no go report
+```
+
+Contracts and scalar references belong to the opt in package `monada.neuron.visual`, with no stage and no default
+composition; fixtures, metrics and the runner belong to the evaluation module. A 2D spatial frequency is not a light
+frequency, RGB is not three wavelengths, and labels stay host supplied. `Signal`, `FrequencyState`,
+`ScalarResonanceMetric`, the stage order and the Store formats are unchanged, nothing image shaped enters them, and
+Neuron keeps no geometry registry: durable visual atoms need a Store side decision. The 2D transforms copy the numeric
+rules of ADR 0036 and ADR 0040 but take no dependency on `monada.neuron.spectral`.
+
 ## Target Module Boundaries
 
 As the repository grows, prefer boundaries similar to:
