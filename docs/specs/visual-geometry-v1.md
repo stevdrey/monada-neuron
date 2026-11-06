@@ -160,7 +160,7 @@ the children keep the issue titles and build into the package named here (ADR 00
 | `BinaryMask` | #143 | `width`, `height`, `long[] words` | bit `i = y * width + x` lives in word `i >>> 6`, bit `i & 63`, least significant bit first; tail bits are zero; `1 <= width, height <= 64`; the factory copies the array and returns `Result` |
 | `Contour` | #145 | `List<Ring> rings`; `Ring(double[] xy, boolean hole)` closed | derived view; pixel edge polygon over a square raster; outer rings have a positive shoelace sum (clockwise on screen), holes negative; each ring starts at its minimum `(y, x)` vertex; only turning vertices are kept; ring order: outer rings by start vertex, each followed by its holes by start vertex |
 | `SignedDistanceField` | #145 | `width`, `height`, `double[] distances` in pixels | negative inside, positive outside, clamped to `[-4, 4]`; band `4.0` is a constant of the contract; outside the raster is background; empty mask gives `+4` everywhere (Section 4.6) |
-| `Transform2D` | #146 | `tx`, `ty`, `scale`, `rotation` | finite; `tx`, `ty` in `[-1, 2]`; `scale > 0`; `rotation` stored in `(-π, π]`, positive clockwise on screen; `inverse()` defined |
+| `Transform2D` | #146 | `tx`, `ty`, `scale`, `rotation` | finite; `tx`, `ty` in `[-1, 2]`; `scale > 0`; `rotation` stored in `(-π, π]`, positive clockwise on screen; `applyInverse` defined for every valid value, as a point map rather than a `Transform2D`, because the inverse translation `-R(-rotation) (tx, ty) / scale` can leave `[-1, 2]` (`tx 1`, `scale 0.25` inverts to `tx -4`) |
 | `ShapeInstance` | #146 | `geometry` (shared reference), `transform`, `ordinal` | many instances to one geometry; carries no color; `ordinal` orders draw order, ties keep list order |
 | `ImagePlane` | #147 | `width`, `height`, `double[] samples`, `ColorSpace` (`SRGB`, `LINEAR`) | samples in `[0, 1]`, finite; `1 <= width, height <= 64`, rectangular allowed; copied at construction; the factory returns `Result` |
 | `RgbaImage` | #147 | `r`, `g`, `b`, `alpha` planes, `colorSpace` | all planes same size; `colorSpace` applies to `r`, `g`, `b`; `alpha` is straight (unassociated) and linear by definition |
@@ -205,7 +205,7 @@ public record Contour(List<Ring> rings) { static Contour of(BinaryMask m); Resul
 public record SignedDistanceField(int width, int height, double[] distances) { static Result<SignedDistanceField> of(Contour c, int n); BinaryMask mask(); }
 
 // #146 (proposed, owned by issue #146)
-public record Transform2D(double tx, double ty, double scale, double rotation) { Transform2D inverse(); double[] apply(double x, double y); }
+public record Transform2D(double tx, double ty, double scale, double rotation) { double[] apply(double x, double y); double[] applyInverse(double x, double y); }
 public record ShapeInstance(VisualGeometry geometry, Transform2D transform, int ordinal) {}
 public final class InstanceRasterizer { Result<BinaryMask> render(ShapeInstance i, int n); }
 
@@ -248,7 +248,7 @@ canonical point `p` to `R(rotation) * (scale * (p - c)) + c + (tx, ty)` with `c 
 
 A primitive is canonical when its axis aligned bounding box is centered at `(0.5, 0.5)`, its larger extent is `1`
 within one grid step, and its rotation is `0`. For a square, rotation `0` means axis aligned; for a triangle, the
-longest edge lies horizontal at the bottom with the third vertex above, ties pick the lexicographically smallest
+longest edge, measured on the snapped numerators (Section 4.8 item 1), lies horizontal at the bottom with the third vertex above, ties pick the lexicographically smallest
 vertex sequence; a circle has no rotation. A composite is canonical at rotation `0` as given by its frozen gold
 decomposition (composites are never re oriented); its parts and holes are canonicalized as a whole, not
 individually.
@@ -336,13 +336,19 @@ required report field, not a gate.
 
 These close the gaps a fixture author would otherwise fill by guessing.
 
-1. **Grid snap**: nearest `k / 4096`, ties to even: `Math.rint(v * 4096) / 4096`.
+1. **Grid snap**: nearest `k / 4096`, ties to even: `Math.rint(v * 4096) / 4096`. One exception keeps a snapped
+   triangle canonical: when nearest snapping leaves another edge longer than the bottom edge (compared as exact
+   squared lengths of the numerators), the apex `y` rounds up (`Math.ceil`) and the base `y` rounds down
+   (`Math.floor`) instead. Before snapping, a centered triangle's apex `y` and base `y` sum to `1`, so rounding both
+   inward keeps the box centered exactly. A true equilateral triangle has apex `y` `274.38 / 4096` and base `y`
+   `3821.62 / 4096`; nearest snapping would give `274` and `3822`, whose sloping edges (squared `16782608`) exceed the
+   bottom (`16777216`), so `T1` is `275` and `3821` (sloping edges squared `16768420`).
 2. **Triangle vertex order**: clockwise on screen (positive shoelace sum, `y` down), starting at the minimum `(y, x)`
    vertex, the same rule as contour rings. Every canonical `Triangle` and every triangle in a gold decomposition is
    written in this order.
 3. **Composite ordering keys**: a triangle's `(cx, cy)` is its bounding box center; the kind ordinal is the
    `permits` order (Circle `0`, Square `1`, Triangle `2`, Composite `3`).
-4. **Catalogue triangles** (canonical numerators): `T1` equilateral `(2048, 274), (4096, 3822), (0, 3822)`; `T2` right
+4. **Catalogue triangles** (canonical numerators): `T1` equilateral `(2048, 275), (4096, 3821), (0, 3821)`; `T2` right
    isosceles with the hypotenuse at the bottom `(2048, 1024), (4096, 3072), (0, 3072)`; `T3` scalene `3 : 4 : 5` with
    side `3` on the left and the apex at `x = 0.36` before snapping `(1475, 1065), (4096, 3031), (0, 3031)`. "Right angle
    at the bottom left" describes `T2` as it is placed inside composites (legs on the axes), not its canonical form.
@@ -352,8 +358,9 @@ These close the gaps a fixture author would otherwise fill by guessing.
 6. **Composite layouts**: two circles, dumbbell and touching squares are horizontal with a shared `cy = 0.5`, and a
    gap is measured edge to edge. The snowman is vertical, largest circle at the bottom, shared `cx = 0.5`, gaps edge
    to edge. The notch is a square hole flush with the top edge, centered horizontally. The L shape is a square with a
-   square hole of side `1 - arm width` in its top right corner. The `T1` hole has the same orientation as its outer
-   `T1` and the same bounding box center.
+   square hole of side `1 - arm width` in its top right corner. The outer part of a `T1` frame is the catalogue `T1`
+   itself, so canonicalizing the composite as a whole leaves its numerators unchanged; the `T1` hole has the same
+   orientation as its outer `T1` and the same bounding box center.
 7. **Ellipses** (`m-amb-03`, `04`): major extent `0.75` and `0.45`, ratio `1.2 : 1`, major axis horizontal, centered.
    **Pentagon** (`m-amb-05`): one vertex straight up. **Hexagon** (`m-amb-06`): two vertices on the horizontal axis.
    For both polygons the extent is the larger bounding box extent and the box is centered.
@@ -583,10 +590,10 @@ at least `24` px.
 | `m-pos-14` | square | 6 | `square(2048,2048,4096,0)` | 24, 48 | 32, 64 | 32, 64 | 196 | train |
 | `m-pos-15` | square | 7 | `square(2048,2048,4096,0)` | 12, 24 | 32, 64 | 64 | 130 | train |
 | `m-pos-16` | square | 8 | `square(2048,2048,4096,0)` | 24, 48 | 32, 64 | 32, 64 | 24 | test |
-| `m-pos-17` | T1 | 1 | `triangle(2048,274,4096,3822,0,3822)` | 24, 48 | 32, 64 | 32, 64 | 58 | test |
-| `m-pos-18` | T1 | 2 | `triangle(2048,274,4096,3822,0,3822)` | 24, 48 | 32, 64 | 32, 64 | 13 | test |
-| `m-pos-19` | T1 | 3 | `triangle(2048,274,4096,3822,0,3822)` | 12, 24 | 32, 64 | 64 | 250 | train |
-| `m-pos-20` | T1 | 4 | `triangle(2048,274,4096,3822,0,3822)` | 6, 12 | 64 | none | 82 | validation |
+| `m-pos-17` | T1 | 1 | `triangle(2048,275,4096,3821,0,3821)` | 24, 48 | 32, 64 | 32, 64 | 58 | test |
+| `m-pos-18` | T1 | 2 | `triangle(2048,275,4096,3821,0,3821)` | 24, 48 | 32, 64 | 32, 64 | 13 | test |
+| `m-pos-19` | T1 | 3 | `triangle(2048,275,4096,3821,0,3821)` | 12, 24 | 32, 64 | 64 | 250 | train |
+| `m-pos-20` | T1 | 4 | `triangle(2048,275,4096,3821,0,3821)` | 6, 12 | 64 | none | 82 | validation |
 | `m-pos-21` | T2 | 5 | `triangle(2048,1024,4096,3072,0,3072)` | 24, 48 | 32, 64 | 32, 64 | 124 | train |
 | `m-pos-22` | T2 | 6 | `triangle(2048,1024,4096,3072,0,3072)` | 24, 48 | 32, 64 | 32, 64 | 142 | train |
 | `m-pos-23` | T3 | 7 | `triangle(1475,1065,4096,3031,0,3031)` | 12, 24 | 32, 64 | 64 | 67 | validation |
@@ -623,8 +630,8 @@ composite render has a rendered extent of at least `12` px, so every composite i
 | `m-cmp-10` | two circles r 0.2, gap 0.05 | 1 | `composite(parts=[circle(964,2048,964);circle(3132,2048,964)],holes=[])` | 153 | train |
 | `m-cmp-11` | two circles r 0.2, gap 0.2 | 1 | `composite(parts=[circle(819,2048,819);circle(3277,2048,819)],holes=[])` | 21 | test |
 | `m-cmp-12` | two circles r 0.2, gap 0.4 | 1 | `composite(parts=[circle(683,2048,683);circle(3413,2048,683)],holes=[])` | 66 | validation |
-| `m-cmp-13` | T1 with T1 hole, hole extent 0.3 | 1 | `composite(parts=[triangle(2048,274,4096,3822,0,3822)],holes=[triangle(2048,1516,2662,2580,1434,2580)])` | 143 | train |
-| `m-cmp-14` | T1 with T1 hole, hole extent 0.6 | 1 | `composite(parts=[triangle(2048,274,4096,3822,0,3822)],holes=[triangle(2048,984,3277,3112,819,3112)])` | 17 | test |
+| `m-cmp-13` | T1 with T1 hole, hole extent 0.3 | 1 | `composite(parts=[triangle(2048,275,4096,3821,0,3821)],holes=[triangle(2048,1516,2662,2580,1434,2580)])` | 143 | train |
+| `m-cmp-14` | T1 with T1 hole, hole extent 0.6 | 1 | `composite(parts=[triangle(2048,275,4096,3821,0,3821)],holes=[triangle(2048,984,3277,3112,819,3112)])` | 17 | test |
 | `m-cmp-15` | snowman, gap 0 | 1 | `composite(parts=[circle(2048,396,396);circle(2048,1453,661);circle(2048,3105,991)],holes=[])` | 17 | test |
 | `m-cmp-16` | snowman, gap 0.05 | 1 | `composite(parts=[circle(2048,367,367);circle(2048,1498,611);circle(2048,3179,917)],holes=[])` | 135 | train |
 | `m-cmp-17` | square with edge notch, notch side 0.1 | 1 | `composite(parts=[square(2048,2048,4096,0)],holes=[square(2048,205,410,0)])` | 225 | train |
@@ -1005,7 +1012,7 @@ The lossy spectral bar may fail on checkerboards and noise; that is an allowed n
 |---|---|---|---|
 | geometry | per mask id, the fitted canonical geometry (through the `ReuseMap`) and pose; per fitted layer of a shape render id, the same from its coverage mask | analytic render at fixture size | IoU, boundary distances, pose error, bytes per shape, reuse counts |
 | rgb | the fixture's `RgbaImage` as 8 bit planes | identity | PSNR `100 dB` by definition, bytes `4 · W · H` against PNG and WebP |
-| spectral | the `K` real truncation of DFT2D and of Haar2D of each `R`, `G`, `B` plane; the alpha plane is stored as its 8 bit bytes unchanged, like the rgb arm (the lossless checks of Section 9.2 still transform `A`, Section 6; only the lossy arm leaves it alone, because the 40 dB bar is a color claim) | inverse, clamp, re encode; alpha by identity | PSNR over `R`, `G`, `B`, alpha byte error `0` by construction, bytes `8 · K` per color plane plus `W · H` for alpha whenever the fixture's alpha is not all `255` (the ids whose formula sets `A` below `1`: `c-grad-06`, `c-chan-04` to `06`, `c-deg-01` to `03`, and any shape render id whose stored alpha is not all `255`) |
+| spectral | the `K` real truncation of DFT2D and of Haar2D of each `R`, `G`, `B` plane; the alpha plane is stored as its 8 bit bytes unchanged, like the rgb arm (the lossless checks of Section 9.2 still transform `A`, Section 6; only the lossy arm leaves it alone, because the 40 dB bar is a color claim) | inverse, clamp, re encode; alpha by identity | PSNR over `R`, `G`, `B`, alpha byte error `0` by construction, bytes `8 · K + W · H / 8` per color plane (the `K` kept reals as doubles plus a position bitmap with one bit per coefficient, set for each kept Haar coefficient and for the stored member of each kept DFT bin; the kept positions depend on the image, so they are counted) plus `W · H` for alpha whenever the fixture's alpha is not all `255` (the ids whose formula sets `A` below `1`: `c-grad-06`, `c-chan-04` to `06`, `c-deg-01` to `03`, and any shape render id whose stored alpha is not all `255`) |
 | combined | per shape render id, the stored background layers plus each fitted layer's instance from the geometry arm, each with its `Appearance` from `gold_layers` (flat or texture, alpha) | `Compositor`, layers in `gold_layers` order | per layer IoU, agreeing pixel color check, PSNR against the stored RGBA, reuse counts, bytes |
 
 ### 11.3 Verdict rule for Epic #139 (preregistered, evaluated once on the test split)
@@ -1138,6 +1145,13 @@ ADR or verdict.
   fall back to absolute `1e-9` on zero energy, self conjugate bins count as `1` real, aggregated PSNR reports mean,
   median and count below `40 dB`, and the spectral arm stores alpha by identity; random bytes and draws are defined
   from `nextLong()` alone; the single package `monada.neuron.visual` is recorded as deliberate.
+- `/1` (issue #141, PR #198 review before first merge, 2026-11-06): `T1` becomes `(2048, 275), (4096, 3821),
+  (0, 3821)`, because the earlier `274` and `3822` made the sloping edges longer than the bottom edge and broke the
+  orientation rule, and the grid snap gains the inward rounding rule that produces it (`m-pos-17` to `20`,
+  `m-cmp-13`, `m-cmp-14` follow; splits are keyed by id and do not move); `Transform2D` exposes `applyInverse` as a
+  point map instead of `inverse()`, whose result could leave the translation bounds; the spectral arm's bytes add a
+  `W · H / 8` position bitmap per color plane, because magnitude selected positions are not recoverable from the
+  values.
 
 ## 16. References
 
