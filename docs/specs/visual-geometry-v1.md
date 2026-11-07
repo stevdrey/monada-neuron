@@ -382,14 +382,18 @@ These close the gaps a fixture author would otherwise fill by guessing.
   edge (the notch, the L shape) leaves no enclosed background to infer it from. Unsupervised decomposition is out of
   scope. The runner builds the annotation of a composite id, of `m-amb-09` and `10`, and of an annotated layer from the
   kinds of the parts and holes of its gold decomposition.
-- **`PART_COUNT_MISMATCH`**: with an annotation, the fitter abstains with this reason when the mask has more 8
-  connected foreground components than annotated parts (a part is connected, so it cannot span two components), or
-  more enclosed 4 connected background components than annotated holes. #144 exercises it in unit tests with tiny
-  inline masks; no fixture id targets it.
+- **`PART_COUNT_MISMATCH`**: with an annotation that names no holes, the fitter abstains with this reason when the
+  mask has more 8 connected foreground components than annotated parts (a union of `k` connected parts has at most
+  `k` components). An annotation with holes never takes this reason, and enclosed background is not counted: one hole
+  can split one part (a unit square minus a concentric circle of radius `0.5` renders as four components), and parts
+  alone can enclose background (eight squares in a ring), so neither count bounds the annotation. A part thinner than
+  about one pixel can still rasterize as separate pieces; this check does not guard against that. #144 exercises it in
+  unit tests with tiny inline masks; no fixture id targets it, and no composite fixture reaches it (every `m-cmp` id has
+  at most as many foreground components as parts at 32 and 64).
 - **Precedence before fitting**, in this order: no foreground pixel is `EMPTY`; a foreground bounding box with
   either side (width or height) below `2` pixels is `TOO_SMALL`, so a single row or a single column abstains however
-  long it is; a foreground fraction of `0.999` or more is `FULL`; with an annotation, the component count check above
-  is `PART_COUNT_MISMATCH`.
+  long it is; a foreground fraction of `0.999` or more is `FULL`; with an annotation that names no holes, the
+  component count check above is `PART_COUNT_MISMATCH`.
 - **Candidates** come from the frozen catalogue: circle, square, and the catalogue triangles `T1`, `T2`, `T3`
   (Section 4.8 item 4). `ordinal` is the catalogue index (`0` circle, `1` square, `2` to `4` triangles `T1` to `T3`).
   The fitter may also propose a free form triangle (ordinal `5`); it snaps to a catalogue triangle when its score is
