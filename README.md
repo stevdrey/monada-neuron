@@ -388,6 +388,14 @@ meets the registered quality rule, the hierarchy and coherence add nothing, and 
 magnitudes. [ADR 0050](docs/adr/0050-ncm-investment-decision.md) keeps NCM an experimental opt-in with no further
 investment.
 
+Epic #138 researches a separate, geometry first visual path: keep an object's canonical shape apart from its instances
+(position, size, pose), its RGB color and alpha, and its 2D spatial frequencies, then measure how well each one
+reconstructs on 32x32 and 64x64 fixtures. The [Visual Geometry Experiment Contract](docs/specs/visual-geometry-v1.md)
+(`visual-geometry/1`, issue #141, [ADR 0053](docs/adr/0053-visual-geometry-experiment-protocol.md)) freezes the
+vocabulary, numeric conventions, fixtures, splits, thresholds and go or no go gates before any code exists. A spatial
+frequency is not a light frequency, labels stay host supplied, and the `Signal` path, the stage order and the Store
+formats are unchanged. No visual type is implemented yet.
+
 Epic #182 researches a separate, bounded language task: selecting an English or Spanish expression for an ambiguous
 word in context, or abstaining. Its [data feasibility report](docs/experiments/bilingual-sense-feasibility.md)
 (issue #183) finds no openly redistributable, human-annotated set for both directions, so the task is feasible only
