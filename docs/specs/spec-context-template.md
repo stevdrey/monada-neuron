@@ -62,7 +62,8 @@ State whether preview/incubator/native APIs are allowed for the task. If used, r
 - [ ] Tests cover normal and edge cases.
 - [ ] Architectural boundaries remain intact.
 - [ ] Data-structure/algorithm choices are appropriate for the workload.
-- [ ] Performance claims include reproducible evidence when relevant.
+- [ ] Performance claims include reproducible evidence when relevant (a claim evidence report, see
+      `.agents/skills/monada-neuron-evaluation-benchmarking/SKILL.md`).
 - [ ] Experimental/native/accelerator behavior has a reference or fallback path where practical.
 - [ ] Documentation/ADR is updated when the decision is durable.
 ```

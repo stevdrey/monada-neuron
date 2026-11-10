@@ -165,6 +165,10 @@ Measure at least:
 
 Also vary batch/problem size to identify the crossover point where acceleration becomes beneficial.
 
+A stated speedup needs a claim evidence report (`monada-neuron-evaluation-benchmarking`, section "Claim Evidence
+Report", subsection "SIMD, native, and accelerated paths"). It records whether the accelerated path and the
+reference use the same arithmetic, and checks the gain against the lane count or another arithmetic bound.
+
 ## Determinism and Precision
 
 Parallel/SIMD/GPU floating-point reductions may reorder operations. Define allowed numerical tolerance explicitly.

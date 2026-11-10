@@ -76,6 +76,7 @@ echo "base=$base head=$head tree=$tree"
    - concurrency, cancellation, and shared state, when the change is concurrent;
    - compatibility: public API, JPMS exports, serialized or persisted formats, consumers;
    - resource behavior: allocation in hot paths, unbounded growth, leaks;
+   - numerical claims: when the change states a measured gain, check its claim evidence report against the invalid-claim rules in `monada-neuron-evaluation-benchmarking` ("Claim Evidence Report"), and replay it when the environment allows; a claim with no report, a report with status `UNSUPPORTED` or `PENDING`, or a stated claim broader than the report's statement to ship is an unmet criterion only when an acceptance criterion requires the claim, and a non-blocking finding otherwise;
    - documentation, ADR, and skill-mirror consistency (`diff -r .agents/skills .windsurf/skills` for skill changes);
    - scope control: unrelated changes, violated non-goals, cognitive and memory ownership boundaries.
    Probe the whole input class a changed check, parser, or condition accepts or rejects, not only the examples in the issue or the tests. Record every probe class as exercised or not applicable (with a reason) in the result; an unrecorded class is not covered.

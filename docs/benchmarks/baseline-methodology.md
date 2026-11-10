@@ -233,6 +233,12 @@ at every larger sampled size; one pair failed that condition in one fork.
 The former approximate `70.3 B/pair` Vector end-to-end row is superseded for
 the SIMD retention decision by this controlled JMH and JFR evidence.
 
+A 2026-11-10 replay of the 1,000 to 100,000-pair rows on different hardware (AMD Ryzen 7 7730U, Zulu 27+35) is
+recorded in [claim-evidence-simd-resonance.md](claim-evidence-simd-resonance.md). It confirms that Vector is faster
+at every replayed size, measures 5.0x to 8.5x rather than 6.2x to 6.7x, and narrows the claim. Both ratios exceed
+the four-lane bound. The two backends use different arithmetic, so the excess is not attributable to lanes, and its
+cause is pending in that report. The table above is unchanged.
+
 ### PR #38 bounded Aeon coordination validation gate
 
 `AeonCoordinationBenchmark` compares the deterministic sequential coordinator with the bounded parallel coordinator
