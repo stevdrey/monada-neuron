@@ -133,7 +133,7 @@ public final class BilingualSenseRunner {
                         + "gold are generated; no corpus, annotation or held-out split of `bilingual-sense/2` was read. "
                         + "Arm W is omitted (optional under the protocol).\n\n");
         for (DirectionResult direction : outcome.directions()) {
-            sb.append("### ").append(direction.direction().label()).append(": ").append(direction.verdict())
+            sb.append("### ").append(direction.direction().label()).append(": ").append(direction.verdictLabel())
                     .append("\n\n").append(direction.reason()).append(".\n\n");
             direction.notes().forEach(note -> sb.append("- ").append(note).append('\n'));
             if (direction.arms().isEmpty()) {
@@ -166,18 +166,22 @@ public final class BilingualSenseRunner {
                     .append(BilingualSenseEvaluation.H2A_MARGIN).append(" |\n\n")
                     .append("H2b: AUROC(N) lower bound > ").append(BilingualSenseEvaluation.H2B_BOUND)
                     .append("; Macro_const ").append(format(direction.macroConstant())).append(".\n\n");
-            sb.append("Per scored sense (reported, never gated):\n\n");
+            sb.append("Per group (reported, never gated; value [95% interval]):\n\n");
             for (ArmResult arm : direction.arms()) {
-                var parts = new ArrayList<String>();
-                arm.perSense().forEach((sense, value) -> parts.add(sense + " " + format(value)));
-                sb.append("- ").append(arm.arm()).append(": ").append(String.join(", ", parts)).append('\n');
-            }
-            sb.append("\nStrata:\n\n");
-            for (ArmResult arm : direction.arms()) {
-                sb.append("- ").append(arm.arm()).append(": ");
-                var parts = new ArrayList<String>();
-                arm.strata().forEach((name, summary) -> parts.add(name + " (" + summary + ")"));
-                sb.append(String.join("; ", parts)).append('\n');
+                sb.append("| ").append(arm.arm()).append(" group | n | Forced | Macro | Coverage | Selective | ")
+                        .append("Abstention P | Abstention R | AURC | AUROC | ECE | Brier |\n| :--- |")
+                        .append(" ---: |".repeat(11)).append('\n');
+                arm.groups().forEach((name, group) -> {
+                    sb.append("| ").append(name).append(" | ").append(group.items());
+                    for (String metric : List.of("forcedAccuracy", "macro", "coverage", "selectiveAccuracy",
+                            "abstentionPrecision", "abstentionRecall", "aurc", "auroc", "ece", "brier")) {
+                        sb.append(" | ").append(estimate(group.metrics().get(metric)));
+                    }
+                    sb.append(" |\n");
+                });
+                var curve = new ArrayList<String>();
+                arm.riskCoverage().forEach(step -> curve.add(format(step.coverage()) + ":" + format(step.risk())));
+                sb.append("\nRisk-coverage (coverage:risk): ").append(String.join(" ", curve)).append("\n\n");
             }
             sb.append("\n| Arm | Fit | Selection | Median / item | p95 / item | Allocated / item | Retained state |\n")
                     .append("| :--- | ---: | ---: | ---: | ---: | ---: | ---: |\n");
@@ -202,7 +206,14 @@ public final class BilingualSenseRunner {
         for (int d = 0; d < outcome.directions().size(); d++) {
             DirectionResult direction = outcome.directions().get(d);
             sb.append(d == 0 ? "" : ", ").append("{ \"direction\": \"").append(direction.direction().label())
-                    .append("\", \"verdict\": \"").append(direction.verdict()).append("\", \"arms\": [");
+                    .append("\", \"verdict\": \"").append(direction.verdictLabel())
+                    .append("\", \"reason\": ").append(quoted(direction.reason()))
+                    .append(", \"macroConstant\": ").append(number(direction.macroConstant()))
+                    .append(", \"notes\": [");
+            for (int n = 0; n < direction.notes().size(); n++) {
+                sb.append(n == 0 ? "" : ", ").append(quoted(direction.notes().get(n)));
+            }
+            sb.append("], \"arms\": [");
             for (int a = 0; a < direction.arms().size(); a++) {
                 ArmResult arm = direction.arms().get(a);
                 sb.append(a == 0 ? "" : ", ").append("{ \"arm\": \"").append(arm.arm()).append("\", \"selected\": \"")
@@ -210,8 +221,30 @@ public final class BilingualSenseRunner {
                         .append(", \"aurc\": ").append(json(arm.aurc())).append(", \"auroc\": ")
                         .append(json(arm.auroc()));
                 arm.values().forEach((name, value) -> sb.append(", \"").append(name).append("\": ")
-                        .append(value.isPresent() ? Double.toString(value.getAsDouble()) : "null"));
-                sb.append(" }");
+                        .append(number(value)));
+                sb.append(", \"groups\": {");
+                var firstGroup = new boolean[] {true};
+                arm.groups().forEach((name, group) -> {
+                    sb.append(firstGroup[0] ? " " : ", ").append(quoted(name)).append(": { \"items\": ")
+                            .append(group.items());
+                    group.metrics().forEach((metric, estimate) ->
+                            sb.append(", ").append(quoted(metric)).append(": ").append(json(estimate)));
+                    sb.append(" }");
+                    firstGroup[0] = false;
+                });
+                sb.append(" }, \"riskCoverage\": [");
+                for (int r = 0; r < arm.riskCoverage().size(); r++) {
+                    var step = arm.riskCoverage().get(r);
+                    sb.append(r == 0 ? "" : ", ").append("[").append(step.coverage()).append(", ").append(step.risk())
+                            .append("]");
+                }
+                var cost = arm.cost();
+                sb.append("], \"cost\": { \"fitNanos\": ").append(cost.fitNanos()).append(", \"selectNanos\": ")
+                        .append(cost.selectNanos()).append(", \"medianNanos\": ").append(cost.medianNanos())
+                        .append(", \"p95Nanos\": ").append(cost.p95Nanos()).append(", \"bytesPerItem\": ")
+                        .append(number(cost.bytesPerItem())).append(", \"retainedBytes\": ")
+                        .append(cost.retainedBytes()).append(", \"withinBudget\": ").append(cost.withinBudget())
+                        .append(" } }");
             }
             sb.append("], \"h1\": {");
             appendEstimates(sb, direction.h1());
@@ -236,6 +269,14 @@ public final class BilingualSenseRunner {
                 + ", \"lower\": " + number(estimate.interval().lower()) + ", \"upper\": "
                 + number(estimate.interval().upper()) + ", \"undefinedResamples\": " + estimate.interval().undefined()
                 + " }";
+    }
+
+    private String number(OptionalDouble value) {
+        return value.isPresent() ? Double.toString(value.getAsDouble()) : "null";
+    }
+
+    private String quoted(String text) {
+        return '"' + text.replace("\\", "\\\\").replace("\"", "\\\"") + '"';
     }
 
     private String number(double value) {

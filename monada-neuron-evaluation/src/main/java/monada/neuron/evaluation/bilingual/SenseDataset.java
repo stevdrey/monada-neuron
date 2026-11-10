@@ -5,6 +5,7 @@ import monada.neuron.evaluation.bilingual.SensePartitions.Split;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -57,9 +58,11 @@ record SenseDataset(String provenance, String labelStatus, List<DatasetItem> tra
      * @param clusters per scored {@code (direction, lemma)} key, its scored cluster ordinals in increasing order
      * @param testableDirections directions that passed every step-7 gate
      * @param abstentionTestable directions where H2 is testable (at least 30 held-out {@code UNA}/{@code OOI} families)
+     * @param droppedLemmas {@code (direction, lemma)} keys dropped offline (agreement, projection, unlabeled)
+     * @param removedClusters {@code <lemma key>#<cluster>} entries removed offline by the projection gate
      */
     record ScoredSet(Map<String, List<Integer>> clusters, Set<Direction> testableDirections,
-                     Set<Direction> abstentionTestable) {
+                     Set<Direction> abstentionTestable, Set<String> droppedLemmas, Set<String> removedClusters) {
 
         /** Returns whether a lemma is scored. */
         boolean scoredLemma(String lemmaKey) {
@@ -75,12 +78,15 @@ record SenseDataset(String provenance, String labelStatus, List<DatasetItem> tra
      * @param guidelineSha256 guideline hash committed when calibration ended
      * @param guidelineBytes the guideline file
      * @param heldOutGoldSha256 held-out gold hash committed at step 7
+     * @param sealedLogSha256 sealed raw-output log hash committed at step 7 (v2)
+     * @param sealedLogBytes the sealed log file
      */
     record CommittedHashes(String inventorySha256, byte[] inventoryBytes, String guidelineSha256,
-                           byte[] guidelineBytes, String heldOutGoldSha256) {
+                           byte[] guidelineBytes, String heldOutGoldSha256, String sealedLogSha256,
+                           byte[] sealedLogBytes) {
     }
 
-    /** Validates sizes. */
+    /** Validates sizes, every {@code ANS} gold set against its item's inventory, and the scored clusters. */
     SenseDataset {
         Objects.requireNonNull(provenance, "provenance must not be null");
         Objects.requireNonNull(labelStatus, "labelStatus must not be null");
@@ -92,6 +98,37 @@ record SenseDataset(String provenance, String labelStatus, List<DatasetItem> tra
         if (training.size() != trainingGold.size() || validation.size() != validationGold.size()
                 || heldOut.size() != heldOutGold.size()) {
             throw new IllegalArgumentException("every split needs one gold label per item");
+        }
+        var inventorySizes = new HashMap<String, Integer>();
+        for (List<DatasetItem> split : List.of(training, validation, heldOut)) {
+            for (DatasetItem item : split) {
+                if (item.input().hasInventory()) {
+                    inventorySizes.put(item.input().lemmaKey(), item.input().inventory().size());
+                }
+            }
+        }
+        requireWithinInventory(training, trainingGold);
+        requireWithinInventory(validation, validationGold);
+        heldOutGold.requireWithinInventory(heldOut);
+        scored.clusters().forEach((lemma, clusters) -> {
+            Integer size = inventorySizes.get(lemma);
+            if (size == null || clusters.stream().anyMatch(k -> k < 0 || k >= size)) {
+                throw new IllegalArgumentException("scored clusters " + clusters + " are outside the inventory of " + lemma);
+            }
+        });
+    }
+
+    private static void requireWithinInventory(List<DatasetItem> items, List<SenseGold> gold) {
+        for (int i = 0; i < items.size(); i++) {
+            requireWithinInventory(items.get(i), gold.get(i));
+        }
+    }
+
+    /** Rejects an {@code ANS} gold set whose item has no inventory or that names a cluster outside it. */
+    static void requireWithinInventory(DatasetItem item, SenseGold gold) {
+        if (gold instanceof SenseGold.Answerable answerable && (!item.input().hasInventory()
+                || answerable.mask() >>> item.input().inventory().size() != 0)) {
+            throw new IllegalArgumentException("gold outside the inventory of " + item.occurrenceId());
         }
     }
 

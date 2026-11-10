@@ -10,7 +10,7 @@ import java.util.Comparator;
 /**
  * The registered keyed hash of {@code bilingual-sense/1} (kept unchanged by v2, so the split is not re-rolled):
  * {@code h(label, id) = HMAC-SHA-256(key = "bilingual-sense/1", message = label + ":" + id)} read as an unsigned 256-bit
- * integer, and {@code u(label, id) = h / 2^256}.
+ * integer.
  *
  * <p>Not thread-safe: one {@link Mac} is reused by every call; the harness is single-threaded when scoring.
  */
@@ -19,8 +19,6 @@ final class KeyedHash {
     /** The HMAC key, which v2 keeps as {@code "bilingual-sense/1"}. */
     static final String KEY = "bilingual-sense/1";
 
-    /** Label of the direction assignment of a two-language family. */
-    static final String DIRECTION = "direction";
     /** Label of the split order within a primary stratum. */
     static final String SPLIT = "split";
     /** Label of the order of occurrences within a family. */
@@ -43,14 +41,6 @@ final class KeyedHash {
     BigInteger h(String label, String id) {
         byte[] digest = mac.doFinal((label + ":" + id).getBytes(StandardCharsets.UTF_8));
         return new BigInteger(1, digest);
-    }
-
-    /**
-     * Returns {@code u(label, id) = h(label, id) / 2^256}, in {@code [0, 1)}, truncated to the 53 leading bits a double
-     * holds exactly (so {@code u < 0.5} agrees with the top bit of {@code h}).
-     */
-    double u(String label, String id) {
-        return h(label, id).shiftRight(256 - 53).longValueExact() * 0x1.0p-53;
     }
 
     /** Returns a comparator of ids by increasing {@code h(label, id)}, ties (never expected) by the id itself. */

@@ -47,6 +47,7 @@ final class BilingualSenseEvaluation {
     static final double H2A_MARGIN = 0.02;
     /** H2b bound on the abstention AUROC of N. */
     static final double H2B_BOUND = 0.70;
+    private static final String GATE_STOP = "the direction stopped at a step-7 data gate";
     /** One-sided level of {@code nc.label-permutation}. */
     static final double PERMUTATION_LEVEL = 0.995;
     /** Budget: fitting plus selection per direction and arm. */
@@ -62,6 +63,31 @@ final class BilingualSenseEvaluation {
     /** Warm-up and measured iterations of the cost measurement. */
     static final int WARMUP = 3;
     static final int MEASURED = 10;
+
+    /** The registered arms, in pipeline order. */
+    static final List<String> ARMS = List.of("A", "B", "C", "N");
+    /** The controls N is compared with. */
+    static final List<String> CONTROLS = List.of("A", "B", "C");
+    /** The candidate arm. */
+    static final String NEURON = "N";
+
+    /** A per-direction verdict; the label status is held beside it. */
+    enum Verdict {
+        EXPLORATORY_GO("EXPLORATORY GO"),
+        NO_GO("NO-GO"),
+        NOT_TESTABLE("NOT TESTABLE"),
+        UNTRUSTWORTHY("UNTRUSTWORTHY");
+
+        private final String label;
+
+        Verdict(String label) {
+            this.label = label;
+        }
+
+        String label() {
+            return label;
+        }
+    }
 
     /** A semantic check. */
     record Check(String name, boolean passed, String detail) implements EvaluationCheck {
@@ -86,13 +112,23 @@ final class BilingualSenseEvaluation {
      * @param aurc AURC
      * @param auroc abstention AUROC
      * @param values every other point metric, by name, empty when {@code n/a}
-     * @param perSense per scored sense, its accuracy (reported, never gated)
-     * @param strata per stratum, its summary
+     * @param groups the metric bundle with intervals for the direction and each lemma, scored sense and stratum
+     *     (reported, never gated)
+     * @param riskCoverage the risk-coverage curve over the direction's scored items
      * @param cost cost measurements
      */
     record ArmResult(String arm, Selection selection, String selectionDescription, Estimate macro, Estimate aurc,
-                     Estimate auroc, Map<String, OptionalDouble> values, Map<String, OptionalDouble> perSense,
-                     Map<String, String> strata, Cost cost) {
+                     Estimate auroc, Map<String, OptionalDouble> values, Map<String, GroupResult> groups,
+                     List<SenseMetrics.RiskStep> riskCoverage, Cost cost) {
+    }
+
+    /**
+     * The metric bundle of one group of held-out items.
+     *
+     * @param items number of items in the group
+     * @param metrics each metric of {@link SenseMetrics#BUNDLE} with its paired 95% interval
+     */
+    record GroupResult(int items, Map<String, Estimate> metrics) {
     }
 
     /**
@@ -124,7 +160,8 @@ final class BilingualSenseEvaluation {
      * Results of one direction.
      *
      * @param direction the direction
-     * @param verdict the verdict with its label status
+     * @param verdict the verdict
+     * @param labelStatus the dataset's label status
      * @param reason why the verdict was reached
      * @param arms per-arm results; empty when the direction is not testable
      * @param h1 {@code Macro(N) - Macro(X)} for {@code X = A, B, C}
@@ -132,9 +169,14 @@ final class BilingualSenseEvaluation {
      * @param macroConstant {@code Macro_const}
      * @param notes descriptive notes (low-frequency testability, item counts)
      */
-    record DirectionResult(Direction direction, String verdict, String reason, List<ArmResult> arms,
-                           Map<String, Estimate> h1, Map<String, Estimate> h2a, OptionalDouble macroConstant,
-                           List<String> notes) {
+    record DirectionResult(Direction direction, Verdict verdict, String labelStatus, String reason,
+                           List<ArmResult> arms, Map<String, Estimate> h1, Map<String, Estimate> h2a,
+                           OptionalDouble macroConstant, List<String> notes) {
+
+        /** Returns the display form: the verdict followed by its label status. */
+        String verdictLabel() {
+            return verdict.label() + " (" + labelStatus + ")";
+        }
     }
 
     /**
@@ -161,6 +203,20 @@ final class BilingualSenseEvaluation {
      */
     record Pipeline(SenseWindows windows, List<SenseArm> arms, long[] fitNanos, Map<Direction, Selection[]> selections,
                             Map<Direction, long[]> selectNanos, Map<Direction, Outputs[]> heldOut) {
+
+        /** Returns the position of the named arm in {@link #arms}. */
+        int index(String name) {
+            for (int a = 0; a < arms.size(); a++) {
+                if (arms.get(a).name().equals(name)) {
+                    return a;
+                }
+            }
+            throw new IllegalArgumentException("arm " + name + " is not in this pipeline");
+        }
+
+        SenseArm arm(String name) {
+            return arms.get(index(name));
+        }
     }
 
     private final int resamples;
@@ -211,14 +267,16 @@ final class BilingualSenseEvaluation {
 
     /**
      * Returns the directions with their verdicts withheld when any check failed: {@code UNTRUSTWORTHY}, except that
-     * {@code NOT TESTABLE} (a data gate, or H2 not testable) takes precedence.
+     * {@code NOT TESTABLE} (a data gate, or H2 not testable) takes precedence and an earlier reason is kept.
      */
     private List<DirectionResult> withheld(List<DirectionResult> directions, String labelStatus, List<Check> checks) {
         boolean anyFailed = checks.stream().anyMatch(check -> !check.passed());
         var results = new ArrayList<DirectionResult>();
         for (DirectionResult result : directions) {
-            results.add(anyFailed && !result.verdict().startsWith("NOT TESTABLE")
-                    ? new DirectionResult(result.direction(), "UNTRUSTWORTHY (" + labelStatus + ")",
+            boolean withhold = anyFailed && result.verdict() != Verdict.NOT_TESTABLE
+                    && result.verdict() != Verdict.UNTRUSTWORTHY;
+            results.add(withhold
+                    ? new DirectionResult(result.direction(), Verdict.UNTRUSTWORTHY, labelStatus,
                     "a check failed; no verdict is recorded", result.arms(), result.h1(), result.h2a(),
                     result.macroConstant(), result.notes())
                     : result);
@@ -236,13 +294,16 @@ final class BilingualSenseEvaluation {
         if (dataset.scored().testableDirections().isEmpty()) {
             return globalStop(dataset, checks);
         }
+        if (checks.stream().anyMatch(check -> !check.passed())) {
+            return preflightHalt(dataset, checks);
+        }
 
-        Pipeline pipeline = pipeline(dataset, List.of("A", "B", "C", "N"));
+        Pipeline pipeline = pipeline(dataset, ARMS);
         Pipeline counterfactual = pipeline(dataset.withHeldOutGold(dataset.heldOutGold().permutedWithin(
-                dataset.heldOut().stream().map(item -> item.input().lemmaKey()).toList(), hash)), List.of("A", "B", "C", "N"));
+                dataset.heldOut().stream().map(item -> item.input().lemmaKey()).toList(), hash)), ARMS);
         checks.add(heldOutCounterfactual(pipeline, counterfactual));
         checks.add(unseenLemma(dataset, pipeline));
-        NeuronSenseArm neuron = (NeuronSenseArm) pipeline.arms().get(3);
+        NeuronSenseArm neuron = (NeuronSenseArm) pipeline.arm(NEURON);
         checks.add(contextMask(dataset, neuron));
         checks.add(policyEquivalence(dataset, neuron));
 
@@ -254,10 +315,14 @@ final class BilingualSenseEvaluation {
                 : earlyReads + " held-out gold reads happened before scoring"));
         dataset.heldOutGold().openForScoring();
         String goldHash = SenseDataset.sha256(dataset.heldOutGoldText());
-        boolean sealed = goldHash.equals(dataset.hashes().heldOutGoldSha256());
-        checks.add(new Check("leakage.sealed-hash", sealed, sealed
-                ? "held-out gold SHA-256 equals the step-7 commitment " + goldHash
-                : "held-out gold SHA-256 " + goldHash + " differs from " + dataset.hashes().heldOutGoldSha256()));
+        String logHash = SenseDataset.sha256(dataset.hashes().sealedLogBytes());
+        boolean sealed = goldHash.equals(dataset.hashes().heldOutGoldSha256())
+                && logHash.equals(dataset.hashes().sealedLogSha256());
+        checks.add(new Check("leakage.sealed-hash", sealed, (sealed
+                ? "held-out gold and sealed log SHA-256 equal the step-7 commitments: "
+                : "held-out gold or sealed log SHA-256 differs from the step-7 commitments: ")
+                + goldHash + ", " + logHash));
+        checks.add(stepSevenConsistency(dataset));
         checks.add(new MetricsFixture().check());
 
         var fingerprint = new StringBuilder();
@@ -267,9 +332,7 @@ final class BilingualSenseEvaluation {
         boolean permutationPassed = true;
         for (Direction direction : Direction.values()) {
             if (!dataset.scored().testableDirections().contains(direction)) {
-                directions.add(new DirectionResult(direction, "NOT TESTABLE (" + dataset.labelStatus() + ")",
-                        "the direction stopped at a step-7 data gate", List.of(), Map.of(), Map.of(),
-                        OptionalDouble.empty(), List.of()));
+                directions.add(stopped(direction, dataset, Verdict.NOT_TESTABLE, GATE_STOP));
                 continue;
             }
             DirectionResult result = score(dataset, direction, pipeline, resources, fingerprint);
@@ -277,7 +340,7 @@ final class BilingualSenseEvaluation {
             // nc.label-permutation: N and C refitted on training labels permuted within each lemma.
             Scope scope = scope(dataset, direction);
             var bootstrap = new ClusterBootstrap(scope.families(), resamples, ClusterBootstrap.SEED);
-            for (int a = 0; a < 2; a++) {
+            for (int a = 0; a < permuted.arms().size(); a++) {
                 Outputs outputs = restrict(permuted.heldOut().get(direction)[a], scope.items());
                 double[] values = bootstrap.values(items -> difference(
                         metrics.macro(scope.labels(), outputs, items, scope.senses()),
@@ -309,14 +372,57 @@ final class BilingualSenseEvaluation {
         checks.add(new MetricsFixture().check());
         var directions = new ArrayList<DirectionResult>();
         for (Direction direction : Direction.values()) {
-            directions.add(new DirectionResult(direction, "NOT TESTABLE (" + dataset.labelStatus() + ")",
-                    "global stop: no direction met its step-7 minimum, so no system ran and the held-out gold stayed "
-                            + "sealed", List.of(), Map.of(), Map.of(), OptionalDouble.empty(), List.of()));
+            directions.add(stopped(direction, dataset, Verdict.NOT_TESTABLE, "global stop: no direction met its step-7 "
+                    + "minimum, so no system ran and the held-out gold stayed sealed"));
         }
         var metadata = metadata(dataset);
         metadata.put("globalStop", "no system was run; data no-go");
         return new Outcome(checks, withheld(directions, dataset.labelStatus(), checks),
                 SenseDataset.sha256("global stop"), List.of(), metadata);
+    }
+
+    /**
+     * A check that reads no system output failed, so the run is already untrustworthy: no system reads the single-use
+     * held-out split and its gold stays sealed.
+     */
+    private Outcome preflightHalt(SenseDataset dataset, List<Check> checks) {
+        var directions = new ArrayList<DirectionResult>();
+        for (Direction direction : Direction.values()) {
+            directions.add(dataset.scored().testableDirections().contains(direction)
+                    ? stopped(direction, dataset, Verdict.UNTRUSTWORTHY, "a preflight check failed, so no system ran "
+                    + "and the held-out gold stayed sealed")
+                    : stopped(direction, dataset, Verdict.NOT_TESTABLE, GATE_STOP));
+        }
+        var metadata = metadata(dataset);
+        metadata.put("preflightHalt", "no system was run; the held-out split was not read");
+        return new Outcome(checks, directions, SenseDataset.sha256("preflight halt"), List.of(), metadata);
+    }
+
+    /** A direction with a verdict reached without running any arm on it. */
+    private DirectionResult stopped(Direction direction, SenseDataset dataset, Verdict verdict, String reason) {
+        return new DirectionResult(direction, verdict, dataset.labelStatus(), reason, List.of(), Map.of(), Map.of(),
+                OptionalDouble.empty(), List.of());
+    }
+
+    /** Re-applies the gold-count gates to the now open gold and compares them with the recorded step-7 outcome. */
+    private Check stepSevenConsistency(SenseDataset dataset) {
+        var heldOutGold = new ArrayList<SenseGold>();
+        for (int i = 0; i < dataset.heldOutGold().size(); i++) {
+            heldOutGold.add(dataset.heldOutGold().get(i));
+        }
+        var recorded = dataset.scored();
+        var recomputed = new SenseGates().scoredSet(dataset.training(), dataset.trainingGold(), dataset.validation(),
+                dataset.validationGold(), dataset.heldOut(), heldOutGold, recorded.droppedLemmas(),
+                recorded.removedClusters());
+        boolean same = recomputed.clusters().equals(recorded.clusters())
+                && recomputed.testableDirections().equals(recorded.testableDirections())
+                && recomputed.abstentionTestable().equals(recorded.abstentionTestable());
+        return new Check("gates.step7-consistency", same, same
+                ? "the gold-count gates re-applied to the gold reproduce the recorded step-7 outcome ("
+                + recorded.clusters().size() + " scored lemmas)"
+                : "recorded " + recorded.clusters() + " " + recorded.testableDirections() + " "
+                + recorded.abstentionTestable() + ", recomputed " + recomputed.clusters() + " "
+                + recomputed.testableDirections() + " " + recomputed.abstentionTestable());
     }
 
     private Map<String, String> metadata(SenseDataset dataset) {
@@ -476,7 +582,7 @@ final class BilingualSenseEvaluation {
         notes.add(scope.items().length + " held-out items of " + scope.lemmas().size() + " scored lemmas, "
                 + new HashSet<>(scope.families()).size() + " families, " + scope.senses().size() + " scored senses");
         notes.add(lowFrequency(scope));
-        var strata = strata(dataset, direction, scope, pipeline);
+        List<Group> groups = groups(dataset, direction, scope, pipeline);
         var arms = new ArrayList<ArmResult>();
         for (int a = 0; a < outputs.length; a++) {
             SenseArm arm = pipeline.arms().get(a);
@@ -499,10 +605,9 @@ final class BilingualSenseEvaluation {
             values.put("memorizationProbe", probeAccuracy(dataset, direction, arm, selected));
             double gap = difference(values.get("memorizationProbe"), values.get("forcedAccuracy"));
             values.put("generalizationGap", Double.isNaN(gap) ? OptionalDouble.empty() : OptionalDouble.of(gap));
-            var perSense = new LinkedHashMap<String, OptionalDouble>();
-            for (Sense sense : scope.senses()) {
-                perSense.put(scope.lemmas().get(sense.lemma()) + "#" + sense.cluster(),
-                        metrics.macro(scope.labels(), o, all, List.of(sense)));
+            var groupResults = new LinkedHashMap<String, GroupResult>();
+            for (Group group : groups) {
+                groupResults.put(group.name(), groupResult(group, scope, o, bootstrap));
             }
             Estimate macro = estimate(bootstrap, items -> value(metrics.macro(scope.labels(), o, items,
                     scope.senses())), all);
@@ -511,24 +616,23 @@ final class BilingualSenseEvaluation {
             Cost cost = cost(dataset, direction, pipeline, a, resources);
             String description = arm.describe(selected.configuration()) + ", tau=" + selected.tau()
                     + (selected.reachedCoverage() ? "" : " (coverage 0.70 not reached)");
-            arms.add(new ArmResult(arm.name(), selected, description, macro, aurc, auroc, values, perSense,
-                    strata.get(a), cost));
+            arms.add(new ArmResult(arm.name(), selected, description, macro, aurc, auroc, values, groupResults,
+                    metrics.riskCoverage(scope.labels(), o, all), cost));
             fingerprint.append(direction).append(arm.name()).append(selected);
             for (int i = 0; i < o.choice().length; i++) {
                 fingerprint.append(o.choice()[i]).append(Double.toHexString(o.confidence()[i]))
                         .append(o.answered()[i] ? 'a' : 'x');
             }
-            fingerprint.append(macro).append(aurc).append(auroc);
+            fingerprint.append(macro).append(aurc).append(auroc).append(groupResults);
         }
 
-        Outputs n = outputs[3];
+        Outputs n = outputs[pipeline.index(NEURON)];
         var h1 = new LinkedHashMap<String, Estimate>();
         var h2a = new LinkedHashMap<String, Estimate>();
         boolean h1Pass = true;
         boolean h2aPass = true;
-        for (int x = 0; x < 3; x++) {
-            Outputs control = outputs[x];
-            String name = pipeline.arms().get(x).name();
+        for (String name : CONTROLS) {
+            Outputs control = outputs[pipeline.index(name)];
             Estimate macroDifference = estimate(bootstrap, items -> difference(
                     metrics.macro(scope.labels(), n, items, scope.senses()),
                     metrics.macro(scope.labels(), control, items, scope.senses())), all);
@@ -540,32 +644,93 @@ final class BilingualSenseEvaluation {
             h2aPass &= aurcDifference.interval().lower() > H2A_MARGIN;
             fingerprint.append(macroDifference).append(aurcDifference);
         }
-        boolean h2bPass = arms.get(3).auroc().interval().lower() > H2B_BOUND;
+        ArmResult neuron = arms.get(pipeline.index(NEURON));
+        boolean h2bPass = neuron.auroc().interval().lower() > H2B_BOUND;
         OptionalDouble macroConstant = metrics.macroConstant(scope.labels(), all, scope.senses(), scope.clusters());
-        boolean budget = arms.get(3).cost().withinBudget();
-        String status = dataset.labelStatus();
-        String verdict;
-        String reason;
-        if (!dataset.scored().abstentionTestable().contains(direction)) {
-            verdict = "NOT TESTABLE (" + status + ")";
-            reason = "H2 is not testable: fewer than " + SenseGates.MIN_ABSTENTION_ITEMS
+        boolean budget = neuron.cost().withinBudget();
+        boolean h2Testable = dataset.scored().abstentionTestable().contains(direction);
+        Verdict verdict = verdict(h2Testable, h1Pass && h2aPass && h2bPass, budget);
+        String reason = switch (verdict) {
+            case NOT_TESTABLE -> "H2 is not testable: fewer than " + SenseGates.MIN_ABSTENTION_ITEMS
                     + " held-out UNA/OOI families of scored lemmas";
-        } else if (h1Pass && h2aPass && h2bPass && budget) {
-            verdict = "EXPLORATORY GO (" + status + ")";
-            reason = "H1, H2a and H2b pass and N is within budget";
-        } else {
-            verdict = "NO-GO (" + status + ")";
-            reason = "H1 " + (h1Pass ? "pass" : "fail") + ", H2a " + (h2aPass ? "pass" : "fail") + ", H2b "
+            case EXPLORATORY_GO -> "H1, H2a and H2b pass and N is within budget";
+            default -> "H1 " + (h1Pass ? "pass" : "fail") + ", H2a " + (h2aPass ? "pass" : "fail") + ", H2b "
                     + (h2bPass ? "pass" : "fail") + ", N budget " + (budget ? "met" : "exceeded");
-        }
-        return new DirectionResult(direction, verdict, reason, arms, h1, h2a, macroConstant, notes);
+        };
+        return new DirectionResult(direction, verdict, dataset.labelStatus(), reason, arms, h1, h2a, macroConstant,
+                notes);
     }
 
-    /** Summaries of every registered stratum, per arm (index aligned with the pipeline's arms). */
-    private List<Map<String, String>> strata(SenseDataset dataset, Direction direction, Scope scope,
-                                             Pipeline pipeline) {
+    /** The per-direction verdict rule, before any failed check withholds it. */
+    Verdict verdict(boolean h2Testable, boolean hypothesesPass, boolean neuronWithinBudget) {
+        if (!h2Testable) {
+            return Verdict.NOT_TESTABLE;
+        }
+        return hypothesesPass && neuronWithinBudget ? Verdict.EXPLORATORY_GO : Verdict.NO_GO;
+    }
+
+    /** A named group of scored held-out items, by position in the scope. */
+    private record Group(String name, int[] items, boolean[] member, List<Sense> senses) {
+    }
+
+    private Group group(String name, List<Integer> items, int total, List<Sense> senses) {
+        var member = new boolean[total];
+        items.forEach(item -> member[item] = true);
+        return new Group(name, items.stream().mapToInt(Integer::intValue).toArray(), member, senses);
+    }
+
+    /** The registered reporting groups: the direction, each lemma, each scored sense and each stratum. */
+    private List<Group> groups(SenseDataset dataset, Direction direction, Scope scope, Pipeline pipeline) {
+        int total = scope.items().length;
+        var groups = new ArrayList<Group>();
+        var everything = new ArrayList<Integer>();
+        for (int s = 0; s < total; s++) {
+            everything.add(s);
+        }
+        groups.add(group("direction", everything, total, scope.senses()));
+        for (int lemma = 0; lemma < scope.lemmas().size(); lemma++) {
+            int index = lemma;
+            groups.add(group("lemma " + scope.lemmas().get(lemma),
+                    everything.stream().filter(s -> scope.labels().lemma()[s] == index).toList(), total,
+                    scope.senses().stream().filter(sense -> sense.lemma() == index).toList()));
+        }
+        for (Sense sense : scope.senses()) {
+            groups.add(group("sense " + scope.lemmas().get(sense.lemma()) + "#" + sense.cluster(),
+                    everything.stream().filter(s -> scope.labels().lemma()[s] == sense.lemma()
+                            && (scope.labels().mask()[s] & (1 << sense.cluster())) != 0).toList(), total,
+                    List.of(sense)));
+        }
+        strata(dataset, direction, scope, pipeline).forEach((name, items) ->
+                groups.add(group("stratum " + name, items, total, scope.senses())));
+        return groups;
+    }
+
+    /** Returns a bootstrap resample restricted to a group's items, keeping how often each was drawn. */
+    int[] groupSample(int[] sample, boolean[] member) {
+        return Arrays.stream(sample).filter(item -> member[item]).toArray();
+    }
+
+    /** Computes a group's metric bundle and its paired 95% intervals. */
+    private GroupResult groupResult(Group group, Scope scope, Outputs outputs, ClusterBootstrap bootstrap) {
+        double[] point = metrics.bundle(scope.labels(), outputs, group.items(), group.senses());
+        double[][] table = bootstrap.table(sample -> metrics.bundle(scope.labels(), outputs,
+                groupSample(sample, group.member()), group.senses()));
+        var estimates = new LinkedHashMap<String, Estimate>();
+        for (int m = 0; m < point.length; m++) {
+            int metric = m;
+            double[] column = Arrays.stream(table).mapToDouble(row -> row[metric]).toArray();
+            estimates.put(SenseMetrics.BUNDLE.get(m), new Estimate(
+                    Double.isNaN(point[m]) ? OptionalDouble.empty() : OptionalDouble.of(point[m]),
+                    bootstrap.percentile95(column)));
+        }
+        return new GroupResult(group.items().length, estimates);
+    }
+
+    /** Returns the items of every registered stratum, by position in the scope. */
+    private Map<String, List<Integer>> strata(SenseDataset dataset, Direction direction, Scope scope,
+                                              Pipeline pipeline) {
         var groups = new LinkedHashMap<String, List<Integer>>();
-        var majority = (MajoritySenseArm) pipeline.arms().getFirst();
+        var majority = (MajoritySenseArm) pipeline.arm("A");
         var vocabulary = new HashSet<String>();
         var windows = new SenseWindows(new SenseTokenizer());
         for (DatasetItem item : dataset.training()) {
@@ -597,21 +762,7 @@ final class BilingualSenseEvaluation {
             double rate = tokens.length == 0 ? 0.0 : (double) unknown / tokens.length;
             add(groups, rate == 0.0 ? "context OOV 0" : rate <= 0.3 ? "context OOV (0, 0.3]" : "context OOV > 0.3", s);
         }
-        var result = new ArrayList<Map<String, String>>();
-        for (int a = 0; a < pipeline.arms().size(); a++) {
-            Outputs o = restrict(pipeline.heldOut().get(direction)[a], scope.items());
-            var summaries = new LinkedHashMap<String, String>();
-            for (var group : groups.entrySet()) {
-                int[] items = group.getValue().stream().mapToInt(Integer::intValue).toArray();
-                summaries.put(group.getKey(), "n=" + items.length + ", forced "
-                        + format(metrics.forcedAccuracy(scope.labels(), o, items)) + ", coverage "
-                        + format(metrics.coverage(scope.labels(), o, items)) + ", abstention recall "
-                        + format(metrics.abstentionRecall(scope.labels(), o, items,
-                        (1 << SenseMetrics.UNA) | (1 << SenseMetrics.OOI))));
-            }
-            result.add(summaries);
-        }
-        return result;
+        return groups;
     }
 
     /** Memorization probe: up to 30 {@code ANS} training items per scored lemma, in training-file order. */
@@ -854,22 +1005,29 @@ final class BilingualSenseEvaluation {
                 + "ReferenceHypothesisEvaluationPolicy's bit for bit" : "no validation item to check");
     }
 
-    private Check budget(List<DirectionResult> directions) {
+    /**
+     * The {@code budget} check: inference must have been measured and the heap limit respected. An arm over its limits
+     * is reported here and, for N, gives {@code NO-GO} through the verdict rule; it does not withhold the verdict.
+     */
+    Check budget(List<DirectionResult> directions) {
+        var unmeasured = new ArrayList<String>();
         var over = new ArrayList<String>();
         for (DirectionResult direction : directions) {
             for (ArmResult arm : direction.arms()) {
-                if (!arm.cost().withinBudget()) {
-                    over.add(direction.direction().label() + " " + arm.arm()
-                            + (arm.cost().measured() ? "" : " (inference not measured)"));
+                String name = direction.direction().label() + " " + arm.arm();
+                if (!arm.cost().measured()) {
+                    unmeasured.add(name + " (inference not measured)");
+                } else if (!arm.cost().withinBudget()) {
+                    over.add(name);
                 }
             }
         }
         long heap = Runtime.getRuntime().maxMemory();
         boolean heapOk = heap <= HEAP_BUDGET_BYTES;
-        boolean passed = over.isEmpty() && heapOk;
-        return new Check("budget", passed, (over.isEmpty() ? "every arm within its fit, inference and state budget"
-                : "over budget or unverified: " + over) + "; max heap " + (heap >> 20) + " MiB"
-                + (heapOk ? " (limit 2048)" : " exceeds the 2 GiB limit"));
+        return new Check("budget", unmeasured.isEmpty() && heapOk,
+                (unmeasured.isEmpty() ? "" : "unverified: " + unmeasured + "; ")
+                        + (over.isEmpty() ? "no arm over its fit, inference or state limit" : "over budget: " + over)
+                        + "; max heap " + (heap >> 20) + " MiB" + (heapOk ? " (limit 2048)" : " exceeds the 2 GiB limit"));
     }
 
     /** Training labels permuted within each lemma: the {@code ANS} gold sets shuffled among the lemma's ANS items. */

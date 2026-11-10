@@ -9,29 +9,18 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.OptionalDouble;
 import java.util.Set;
 
 /**
- * The frozen data gates of {@code bilingual-sense/1} and the gate added by v2, as pure functions over counts and gold
- * weights. They read no system output. Steps 2 to 7 apply them offline and record every outcome in the feasibility
- * report; the harness re-applies the step-7 gates to the gold it is given, so a disagreement with the recorded outcome
- * is visible.
+ * The frozen data gates of {@code bilingual-sense/1} that read gold counts, as pure functions. The gates that read
+ * pass-A labels, the pilot and step-6 records are offline tooling; their outcomes arrive as dropped lemmas and removed
+ * clusters. {@code BilingualSenseEvaluation} re-applies these gates to the gold it is given and fails check
+ * {@code gates.step7-consistency} when the recorded step-7 outcome disagrees.
  */
 final class SenseGates {
 
-    /** Text gate minimum candidate families per split: training, validation, held-out. */
-    static final int TEXT_TRAINING = 80;
-    static final int TEXT_VALIDATION = 40;
-    static final int TEXT_HELD_OUT = 60;
-    /** Held-out annotation cap used by the projection gate. */
-    static final int HELD_OUT_CAP = 120;
-    /** Minimum projected and actual held-out families per scored cluster. */
+    /** Minimum held-out families per scored cluster. */
     static final int MIN_PER_SENSE = 30;
-    /** Two-sided 80% normal quantile of the projection gate's Wilson interval. */
-    static final double Z80 = 1.2815515655446004;
-    /** Minimum pass-A agreement (inter-agent consistency under v2). */
-    static final double MIN_ALPHA = 0.67;
     /** Minimum held-out {@code UNA} or {@code OOI} families of scored lemmas for H2. */
     static final int MIN_ABSTENTION_ITEMS = 30;
     /** Minimum {@code ANS} training weight per scored cluster. */
@@ -41,41 +30,6 @@ final class SenseGates {
     static final int MIN_VALIDATION_PER_DIRECTION = 60;
     /** Minimum scored lemmas per direction, each with at least two scored clusters. */
     static final int MIN_LEMMAS = 4;
-
-    /** Text gate: at least 80 training, 40 validation and 60 held-out candidate families. */
-    boolean text(int training, int validation, int heldOut) {
-        return training >= TEXT_TRAINING && validation >= TEXT_VALIDATION && heldOut >= TEXT_HELD_OUT;
-    }
-
-    /**
-     * Returns the upper bound of the two-sided 80% Wilson interval of {@code successes / n}; {@code successes} may be
-     * fractional (an item with gold set {@code G} counts {@code 1/|G|}). Empty when {@code n = 0}.
-     */
-    OptionalDouble wilsonUpper80(double successes, int n) {
-        if (n <= 0) {
-            return OptionalDouble.empty();
-        }
-        double p = successes / n;
-        double z2 = Z80 * Z80;
-        double centre = p + z2 / (2.0 * n);
-        double spread = Z80 * Math.sqrt(p * (1.0 - p) / n + z2 / (4.0 * n * (double) n));
-        return OptionalDouble.of(Math.min(1.0, (centre + spread) / (1.0 + z2 / n)));
-    }
-
-    /**
-     * Projection gate of one cluster: {@code min(heldOutFamilies, 120) x p+ >= 30}, {@code p+} the Wilson upper bound
-     * of its pilot share among pilot {@code ANS} items. False when the pilot holds no {@code ANS} item (the lemma is
-     * then dropped with that reason).
-     */
-    boolean projection(int heldOutFamilies, double pilotWeight, int pilotAnswerable) {
-        OptionalDouble upper = wilsonUpper80(pilotWeight, pilotAnswerable);
-        return upper.isPresent() && Math.min(heldOutFamilies, HELD_OUT_CAP) * upper.getAsDouble() >= MIN_PER_SENSE;
-    }
-
-    /** Agreement gate: {@code alpha >= 0.67}; an undefined {@code alpha} (no label variation) drops the lemma. */
-    boolean agreement(OptionalDouble alpha) {
-        return alpha.isPresent() && alpha.getAsDouble() >= MIN_ALPHA;
-    }
 
     /** Minimum per sense: at least 30 held-out families whose gold set contains the cluster. */
     boolean minimumPerSense(int heldOutFamilies) {
@@ -117,13 +71,14 @@ final class SenseGates {
 
     /**
      * Applies the step-7 gates that read gold counts (minimum per sense, training data, validation data, minimum per
-     * direction, abstention items) to the given splits and returns the scored set. The agreement, projection and
-     * {@code annotation.unlabeled} gates read pass-A labels, the pilot and step-6 records, which are offline; lemmas they
-     * dropped are passed in {@code dropped}.
+     * direction, abstention items) to the given splits and returns the scored set.
+     *
+     * @param dropped {@code (direction, lemma)} keys dropped offline (agreement, projection, unlabeled)
+     * @param removedClusters {@code <lemma key>#<cluster>} entries the projection gate removed; never scored again
      */
     ScoredSet scoredSet(List<DatasetItem> training, List<SenseGold> trainingGold, List<DatasetItem> validation,
                         List<SenseGold> validationGold, List<DatasetItem> heldOut, List<SenseGold> heldOutGold,
-                        Set<String> dropped) {
+                        Set<String> dropped, Set<String> removedClusters) {
         var trainingUnits = new HashMap<String, long[]>();
         var inventories = new LinkedHashMap<String, SenseInventory>();
         for (int i = 0; i < training.size(); i++) {
@@ -167,7 +122,7 @@ final class SenseGates {
             var scored = new ArrayList<Integer>();
             for (int k = 0; k < entry.getValue().size(); k++) {
                 int families = heldOutFamilies.getOrDefault(key + "#" + k, Set.of()).size();
-                if (minimumPerSense(families) && trainingWeight(trainingUnits.get(key)[k],
+                if (!removedClusters.contains(key + "#" + k) && minimumPerSense(families) && trainingWeight(trainingUnits.get(key)[k],
                         LemmaTraining.unitsPerItem(entry.getValue().size()))) {
                     scored.add(k);
                 }
@@ -202,11 +157,6 @@ final class SenseGates {
                 abstention.add(direction);
             }
         }
-        return new ScoredSet(clusters, testable, abstention);
-    }
-
-    /** v2 {@code annotation.unlabeled}: a lemma with more than 2% {@code UNLABELED} step-6 items is dropped. */
-    boolean unlabeled(int unlabeled, int items) {
-        return items > 0 && unlabeled * 50L <= items;
+        return new ScoredSet(clusters, testable, abstention, dropped, removedClusters);
     }
 }

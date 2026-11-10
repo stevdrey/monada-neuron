@@ -36,6 +36,13 @@ final class GuardedGold {
         return labels.get(index);
     }
 
+    /** Validates every label against its item's inventory; returns nothing, so it reveals no label and is no leak. */
+    void requireWithinInventory(List<SenseDataset.DatasetItem> items) {
+        for (int i = 0; i < labels.size(); i++) {
+            SenseDataset.requireWithinInventory(items.get(i), labels.get(i));
+        }
+    }
+
     void openForScoring() {
         open = true;
     }

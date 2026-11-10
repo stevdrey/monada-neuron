@@ -4,7 +4,6 @@ import monada.neuron.evaluation.bilingual.SenseTokenizer.Token;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -47,11 +46,5 @@ class SenseTokenizerTest {
         assertEquals(List.of(SenseTokenizer.TARGET), tokenizer.masked(tokens, 0));
         List<Token> other = tokenizer.tokenize("The bank, again.");
         assertEquals(List.of("the", SenseTokenizer.TARGET, "again"), tokenizer.masked(other, 1));
-    }
-
-    @Test
-    void matchesWholeDeclaredFormsOnly() {
-        List<Token> tokens = tokenizer.tokenize("Banks bank embankment bank's");
-        assertEquals(List.of(0, 1, 3), tokenizer.matches(tokens, Set.of("bank", "banks")));
     }
 }

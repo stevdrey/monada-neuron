@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.SplittableRandom;
+import java.util.function.Function;
 import java.util.function.ToDoubleFunction;
 
 /**
@@ -66,6 +67,15 @@ final class ClusterBootstrap {
             values[r] = statistic.applyAsDouble(samples[r]);
         }
         return values;
+    }
+
+    /** Returns a vector statistic on every resample, indexed by resample. */
+    double[][] table(Function<int[], double[]> statistic) {
+        var table = new double[samples.length][];
+        for (int r = 0; r < samples.length; r++) {
+            table[r] = statistic.apply(samples[r]);
+        }
+        return table;
     }
 
     /**

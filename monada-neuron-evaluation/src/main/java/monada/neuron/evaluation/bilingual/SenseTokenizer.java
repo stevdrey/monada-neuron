@@ -4,7 +4,6 @@ import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 
 /**
  * The registered tokenization, identical for every arm: Unicode NFKC, case folding with {@link Locale#ROOT}, split on
@@ -106,17 +105,6 @@ final class SenseTokenizer {
             }
         }
         return sequence;
-    }
-
-    /** Returns the indices of the whole tokens of {@code tokens} that equal one of the declared forms. */
-    List<Integer> matches(List<Token> tokens, Set<String> forms) {
-        var found = new ArrayList<Integer>();
-        for (int t = 0; t < tokens.size(); t++) {
-            if (forms.contains(tokens.get(t).text())) {
-                found.add(t);
-            }
-        }
-        return found;
     }
 
     private int flush(List<Token> tokens, StringBuilder current, int start, int end) {

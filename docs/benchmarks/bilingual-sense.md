@@ -6,7 +6,7 @@
 | :--- | :--- |
 | Issue | [#185](https://github.com/stevdrey/monada-neuron/issues/185) (NCM Research 3/3, Epic [#182](https://github.com/stevdrey/monada-neuron/issues/182)) |
 | Protocol | [`bilingual-sense/2`](../experiments/bilingual-sense-v2.md), amending [`bilingual-sense/1`](../experiments/bilingual-sense-v1.md); [ADR 0051](../adr/0051-bilingual-sense-evaluation-protocol.md), [ADR 0052](../adr/0052-ai-agent-annotation-bilingual-sense.md) |
-| What exists | The step-8 harness: arms A, B, C and N, the selection rule, metrics, paired cluster bootstrap, gates, every registered check except `w.*`, verdict rule and report, unit-tested and run end to end on **synthetic** data |
+| What exists | The step-8 harness: arms A, B, C and N, the selection rule, metrics with intervals per direction, lemma, scored sense and stratum, paired cluster bootstrap, the gold-count gates, every registered check except `w.*`, verdict rule and report, unit-tested and run end to end on **synthetic** data |
 | What does not | Any result. No corpus has been counted, split or labeled; no `agent-gold` exists; the held-out split has never been read |
 | Label status | None yet. Every future verdict carries `agent-labeled` or `agent-labeled, audited` |
 | Arm W | Omitted (optional under the protocol); no wave-token result is produced and `w.*` checks do not apply |
@@ -49,15 +49,16 @@ protocol's limit. Exit status: 0 all checks pass, 1 a check failed, 2 invalid ar
 | --- | --- |
 | System input only; no translation, alignment, pass-B, family or split field | `SenseItem` (record components checked by `leakage.input-surface`) |
 | Tokenization: NFKC, `Locale.ROOT` case folding, whitespace split, punctuation tokens; v2 offsets in stored code points | `SenseTokenizer` (normalizes one base code point plus its combining marks at a time, so offsets map back) |
-| Keyed hash `HMAC-SHA-256("bilingual-sense/1", label:id)`, `u = h / 2^256` | `KeyedHash` (checked against Python's `hmac` vectors) |
-| Family and sentence keys (v2 R13), occurrence id (v2 R14), direction rule, split quantiles 0.05 / 0.50 / 0.70 / 1.00 | `SensePartitions` |
+| Keyed hash `HMAC-SHA-256("bilingual-sense/1", label:id)` | `KeyedHash` (checked against Python's `hmac` vectors) |
+| Family id (v2 R13) and occurrence id (v2 R14) | `SensePartitions`. Direction and split assignment are offline step-3 tooling |
 | Near-duplicate rule: equality pass + 3-gram Jaccard ≥ 0.5 with exact prefix filtering | `NearDuplicateMerger` (verified against brute force) |
 | Arms A, B, C, N and their 1 / 90 / 90 / 90-point grids | `MajoritySenseArm`, `NearestExampleArm`, `ContextualLexicalArm`, `NeuronSenseArm` |
 | N tied to core: bit-identical scores and ranking vs `ReferenceHypothesisEvaluationPolicy` | `NeuronPolicyOracle` (`n.policy-equivalence`; the only use of `SignalEvidence`) |
 | Selection on validation: coverage ≥ 0.70, least selective risk, ties to coverage then grid order | `GridSelection` |
+| Risk-coverage curve, and every metric per lemma, scored sense and stratum with paired intervals | `SenseMetrics.riskCoverage`, `SenseMetrics.bundle`, reported per group by `BilingualSenseEvaluation` |
 | Metrics: forced accuracy, Macro, Macro_const, coverage, selective accuracy, abstention P/R, tie-aware AURC and AUROC, ECE, Brier, `n/a` denominators | `SenseMetrics` (`metrics.fixture`: `MetricsFixture`, 21 hand-computed values) |
 | Paired cluster bootstrap over held-out families, `B = 2000`, seed `0x1840_B007` | `ClusterBootstrap` |
-| Step-7 gates, projection Wilson bound, v2 `annotation.unlabeled` | `SenseGates` |
+| Step-7 gates that read gold counts, re-applied after the gold opens (`gates.step7-consistency`) | `SenseGates`. Text, projection, agreement and `annotation.unlabeled` are offline; their drops and removals arrive with the scored set |
 | Guarded held-out gold | `GuardedGold` (`leakage.test-labels`) |
 | Checks, H1 / H2a / H2b, verdict with label status, strata, memorization probe, cost | `BilingualSenseEvaluation` |
 
@@ -85,6 +86,18 @@ alike; none changes a rule, grid, margin or gate.
   the lemma's `ANS` training items (group `training|<direction>|<lemma>`), so `UNA`/`OOI` items stay unused.
 - **Strata.** The context OOV rate uses the whole-sentence window against the vocabulary of every training sentence of
   the direction. The low-frequency statement uses held-out gold.
+- **Preflight halt.** If input-surface, family-disjoint, near-duplicate or inventory-hash fails, no system reads the
+  held-out split and its gold stays sealed; the direction is `UNTRUSTWORTHY`, since the split is single-use.
+- **`gates.step7-consistency`.** A harness check beyond the registered list: the gold-count gates are re-applied after
+  the gold opens, and a disagreement with the recorded step-7 outcome makes the run `UNTRUSTWORTHY`.
+- **Budget.** The protocol both lists `budget` as a check whose failure makes a run untrustworthy and says an arm over
+  budget "is reported as such and cannot support a GO". The harness follows the second, more specific rule: an arm over
+  its limits is reported, and N over budget gives `NO-GO`. A control over budget is reported and does not change N's
+  verdict, so N can still reach GO: only N's result is what a GO rests on. The check fails only if inference was not
+  measured or the 2 GiB heap limit is exceeded.
+- **Validating held-out gold.** Building a dataset checks that every held-out `ANS` gold set lies within its inventory,
+  before any system runs. The check returns nothing and can only reject the dataset, naming the occurrence id, so no
+  arm or output can depend on it; `leakage.test-labels` does not count it as a read.
 - **Verdict precedence.** `NOT TESTABLE` (a step-7 data gate, or H2 not testable) takes precedence over
   `UNTRUSTWORTHY`; a failed check, `determinism` included, makes every other direction `UNTRUSTWORTHY`. `determinism`
   compares the fingerprints (which also cover the label-permutation control's outputs) and every check outcome of the
@@ -113,7 +126,7 @@ alike; none changes a rule, grid, margin or gate.
 `SyntheticSenseWorkload` generates five lemmas per direction with planted cue tokens per cluster, 5% two-cluster gold
 sets, `UNA` items with no cue, `OOI` items with foreign cues and 12 unseen-lemma items per direction; every sentence
 carries a unique middle token so no two are near-duplicates. On it (seed `0x18505E1F`, 2,000 resamples, measured
-cost) every one of the 14 checks passes and the run takes about 17 s on an AMD Ryzen 7 7730U (Azul JDK 27). Held-out
+cost) every one of the 15 checks passes and the run takes about 75 s on an AMD Ryzen 7 7730U (Azul JDK 27). Held-out
 inference, tokenization included, has a median of about 6–12 µs per item for N and C and 12–23 µs for B (limit 10 ms);
 the estimated retained state is below 0.5 MiB per arm (limit 64 MiB).
 
@@ -133,4 +146,4 @@ about the task; it shows only that the harness can produce a negative verdict an
   it); the future loader must guarantee and check that order.
 - `retainedBytes` is an estimate from array and map sizes, not a heap measurement.
 - Agreement α (MASI) and the projection gate's pilot shares are computed offline at steps 5–7; the harness takes their
-  outcome as the step-7 scored set and only re-applies the gold-count gates.
+  drops and removals with the step-7 scored set and re-applies only the gold-count gates.

@@ -70,7 +70,7 @@ final class SyntheticSenseWorkload {
 
     private final long seed;
     private final KeyedHash hash = new KeyedHash();
-    private final SensePartitions partitions = new SensePartitions(hash);
+    private final SensePartitions partitions = new SensePartitions();
 
     SyntheticSenseWorkload(long seed) {
         this.seed = seed;
@@ -130,11 +130,13 @@ final class SyntheticSenseWorkload {
                     .append(SenseDataset.goldText(splitGold.get(2).get(i))).append('\n');
         }
         ScoredSet scored = new SenseGates().scoredSet(splitItems.get(0), splitGold.get(0), splitItems.get(1),
-                splitGold.get(1), splitItems.get(2), splitGold.get(2), Set.of());
+                splitGold.get(1), splitItems.get(2), splitGold.get(2), Set.of(), Set.of());
         byte[] inventoryBytes = inventoryText.toString().getBytes(StandardCharsets.UTF_8);
         byte[] guidelineBytes = "synthetic self-test: no guidelines exist".getBytes(StandardCharsets.UTF_8);
+        byte[] logBytes = "synthetic self-test: no agent log exists".getBytes(StandardCharsets.UTF_8);
         var hashes = new CommittedHashes(SenseDataset.sha256(inventoryBytes), inventoryBytes,
-                SenseDataset.sha256(guidelineBytes), guidelineBytes, SenseDataset.sha256(heldOutText.toString()));
+                SenseDataset.sha256(guidelineBytes), guidelineBytes, SenseDataset.sha256(heldOutText.toString()),
+                SenseDataset.sha256(logBytes), logBytes);
         return new SenseDataset(PROVENANCE, "synthetic, not agent-labeled", splitItems.get(0), splitGold.get(0),
                 splitItems.get(1), splitGold.get(1), splitItems.get(2), new GuardedGold(splitGold.get(2), true),
                 Set.of(), Set.of(), scored, hashes);

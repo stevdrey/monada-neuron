@@ -45,6 +45,16 @@ class SenseMetricsTest {
     }
 
     @Test
+    void riskCoverageHasOneStepPerTieBlock() {
+        var labels = new Labels(new int[4], new byte[] {0, 0, SenseMetrics.UNA, 0}, new int[] {1, 1, 0, 1});
+        var outputs = new Outputs(new int[] {0, 1, 0, 0}, new double[] {0.5, 0.5, 0.5, 0.9},
+                new boolean[] {true, true, true, true});
+        assertEquals(List.of(new SenseMetrics.RiskStep(1, 0, 4), new SenseMetrics.RiskStep(4, 2, 4)),
+                metrics.riskCoverage(labels, outputs, metrics.all(4)));
+        assertEquals(0.5, metrics.riskCoverage(labels, outputs, metrics.all(4)).getLast().risk());
+    }
+
+    @Test
     void bootstrapResamplesRepeatItemsOfADrawnFamily() {
         var bootstrap = new ClusterBootstrap(List.of("f1", "f1", "f2"), 50, ClusterBootstrap.SEED);
         double[] sizes = bootstrap.values(items -> items.length);

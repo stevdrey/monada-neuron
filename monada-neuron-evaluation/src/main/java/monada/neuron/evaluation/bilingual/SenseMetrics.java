@@ -1,5 +1,6 @@
 package monada.neuron.evaluation.bilingual;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.OptionalDouble;
@@ -20,6 +21,11 @@ final class SenseMetrics {
 
     /** Equal-mass calibration bins. */
     static final int ECE_BINS = 10;
+
+    /** The names of {@link #bundle}'s values, in order. */
+    static final List<String> BUNDLE = List.of("forcedAccuracy", "macro", "coverage", "selectiveAccuracy",
+            "abstentionPrecision", "abstentionRecall", "abstentionPrecisionUNA", "abstentionRecallUNA",
+            "abstentionPrecisionOOI", "abstentionRecallOOI", "aurc", "auroc", "ece", "brier");
 
     /**
      * Gold of a set of items.
@@ -53,6 +59,45 @@ final class SenseMetrics {
      * @param cluster cluster ordinal
      */
     record Sense(int lemma, int cluster) {
+    }
+
+    /**
+     * One step of the risk-coverage curve: after a tie block, the items covered so far and the errors among them.
+     *
+     * @param covered items ranked so far
+     * @param errors wrong answers on {@code ANS} plus any answer on {@code UNA}/{@code OOI} among them
+     * @param total items ranked
+     */
+    record RiskStep(int covered, int errors, int total) {
+
+        double coverage() {
+            return (double) covered / total;
+        }
+
+        double risk() {
+            return (double) errors / covered;
+        }
+    }
+
+    /** Returns every metric of {@link #BUNDLE} over {@code items}, {@code NaN} where undefined. */
+    double[] bundle(Labels labels, Outputs outputs, int[] items, List<Sense> senses) {
+        int una = 1 << UNA;
+        int ooi = 1 << OOI;
+        return new double[] {
+                value(forcedAccuracy(labels, outputs, items)), value(macro(labels, outputs, items, senses)),
+                value(coverage(labels, outputs, items)), value(selectiveAccuracy(labels, outputs, items)),
+                value(abstentionPrecision(labels, outputs, items, una | ooi)),
+                value(abstentionRecall(labels, outputs, items, una | ooi)),
+                value(abstentionPrecision(labels, outputs, items, una)),
+                value(abstentionRecall(labels, outputs, items, una)),
+                value(abstentionPrecision(labels, outputs, items, ooi)),
+                value(abstentionRecall(labels, outputs, items, ooi)),
+                value(aurc(labels, outputs, items)), value(auroc(labels, outputs, items)),
+                value(ece(labels, outputs, items)), value(brier(labels, outputs, items))};
+    }
+
+    private double value(OptionalDouble metric) {
+        return metric.isPresent() ? metric.getAsDouble() : Double.NaN;
     }
 
     /** Forced accuracy on {@code ANS}: {@code k* in G}. */
@@ -239,9 +284,19 @@ final class SenseMetrics {
         if (items.length == 0) {
             return OptionalDouble.empty();
         }
-        int[] order = byDecreasingScore(outputs.confidence(), items);
         double area = 0.0;
-        int seen = 0;
+        int previous = 0;
+        for (RiskStep step : riskCoverage(labels, outputs, items)) {
+            area += (double) (step.covered() - previous) / step.total() * ((double) step.errors() / step.covered());
+            previous = step.covered();
+        }
+        return OptionalDouble.of(area);
+    }
+
+    /** Returns the risk-coverage curve: one step per block of tied {@code s}, by decreasing {@code s}. */
+    List<RiskStep> riskCoverage(Labels labels, Outputs outputs, int[] items) {
+        int[] order = byDecreasingScore(outputs.confidence(), items);
+        var steps = new ArrayList<RiskStep>();
         int errors = 0;
         int b = 0;
         while (b < order.length) {
@@ -253,11 +308,10 @@ final class SenseMetrics {
                 }
                 end++;
             }
-            seen += end - b;
-            area += (double) (end - b) / order.length * ((double) errors / seen);
+            steps.add(new RiskStep(end, errors, order.length));
             b = end;
         }
-        return OptionalDouble.of(area);
+        return steps;
     }
 
     /**

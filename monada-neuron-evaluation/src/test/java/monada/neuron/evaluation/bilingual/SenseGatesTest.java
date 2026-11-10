@@ -10,7 +10,6 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.OptionalDouble;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -23,8 +22,6 @@ class SenseGatesTest {
 
     @Test
     void thresholdsAreInclusiveAtTheirRegisteredValues() {
-        assertTrue(gates.text(80, 40, 60));
-        assertFalse(gates.text(79, 40, 60));
         assertTrue(gates.minimumPerSense(30));
         assertFalse(gates.minimumPerSense(29));
         assertTrue(gates.trainingWeight(60, 6));
@@ -37,14 +34,14 @@ class SenseGatesTest {
         assertTrue(gates.abstentionItems(30));
         assertTrue(gates.lowFrequency(19, 100));
         assertFalse(gates.lowFrequency(20, 100));
-        assertTrue(gates.unlabeled(2, 100));
-        assertFalse(gates.unlabeled(3, 100));
-        assertTrue(gates.unlabeled(7, 350));
-        assertFalse(gates.unlabeled(8, 350));
     }
 
     /** Four three-cluster lemmas: {@code thirds} items of gold {0,1,2} plus 4 singletons per cluster in training. */
     private ScoredSet scoredSetWithThirds(int thirds) {
+        return scoredSetWithThirds(thirds, Set.of(), Set.of());
+    }
+
+    private ScoredSet scoredSetWithThirds(int thirds, Set<String> dropped, Set<String> removedClusters) {
         var training = new ArrayList<DatasetItem>();
         var trainingGold = new ArrayList<SenseGold>();
         var validation = new ArrayList<DatasetItem>();
@@ -77,7 +74,8 @@ class SenseGatesTest {
                 validationGold.add(SenseGold.answerable(1));
             }
         }
-        return gates.scoredSet(training, trainingGold, validation, validationGold, heldOut, heldOutGold, Set.of());
+        return gates.scoredSet(training, trainingGold, validation, validationGold, heldOut, heldOutGold, dropped,
+                removedClusters);
     }
 
     @Test
@@ -92,27 +90,18 @@ class SenseGatesTest {
     }
 
     @Test
-    void agreementDropsAnUndefinedAlpha() {
-        assertTrue(gates.agreement(OptionalDouble.of(0.67)));
-        assertFalse(gates.agreement(OptionalDouble.of(0.669)));
-        assertFalse(gates.agreement(OptionalDouble.empty()));
+    void aClusterRemovedByTheProjectionGateIsNeverScored() {
+        ScoredSet scored = scoredSetWithThirds(18, Set.of(), Set.of("EN>ES|a#2"));
+        assertEquals(List.of(0, 1), scored.clusters().get("EN>ES|a"));
+        assertEquals(List.of(0, 1, 2), scored.clusters().get("EN>ES|b"));
+        assertEquals(Set.of("EN>ES|a#2"), scored.removedClusters());
     }
 
     @Test
-    void projectionUsesTheCappedHeldOutCountAndTheWilsonUpperBound() {
-        // p = 0.2 over n = 20: Wilson 80% upper bound.
-        double z = SenseGates.Z80;
-        double p = 0.2;
-        int n = 20;
-        double expected = (p + z * z / (2 * n) + z * Math.sqrt(p * (1 - p) / n + z * z / (4.0 * n * n)))
-                / (1 + z * z / n);
-        assertEquals(expected, gates.wilsonUpper80(4.0, 20).getAsDouble(), 1e-15);
-        assertTrue(gates.wilsonUpper80(4.0, 0).isEmpty());
-        // The bound is about 0.335: 120 x 0.335 = 40.2 >= 30 passes; the cap applies to 500 families as to 120.
-        assertTrue(gates.projection(500, 4.0, 20));
-        assertEquals(gates.projection(500, 4.0, 20), gates.projection(120, 4.0, 20));
-        assertFalse(gates.projection(80, 4.0, 20), "80 x 0.335 = 26.8 < 30");
-        assertFalse(gates.projection(500, 0.0, 0), "no pilot ANS item: no defined share");
+    void aLemmaDroppedOfflineIsNeverScored() {
+        ScoredSet scored = scoredSetWithThirds(18, Set.of("EN>ES|a"), Set.of());
+        assertEquals(Set.of("EN>ES|b", "EN>ES|c", "EN>ES|d"), scored.clusters().keySet());
+        assertEquals(Set.of("EN>ES|a"), scored.droppedLemmas());
     }
 
     @Test
