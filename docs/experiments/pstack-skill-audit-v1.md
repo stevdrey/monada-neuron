@@ -16,8 +16,8 @@ is a scoping document. It changes no code, runtime behavior, skill, CI job, or d
 
 **No ADR.** None of the ADR triggers in `AGENTS.md` applies: the audit fixes no cognitive boundary, module ownership,
 signal representation, memory ownership, concurrency model, persistence or interoperability contract, hardware
-acceleration strategy, preview or incubator API dependency, or data layout. Selections are inputs to a pilot, and the durable adoption decision belongs to #204. #204 should add an ADR only if what it adopts
-meets one of those triggers.
+acceleration strategy, preview or incubator API dependency, or data layout. Selections are inputs to a pilot, and the
+durable adoption decision belongs to #204. #204 should add an ADR only if what it adopts meets one of those triggers.
 
 **What this audit does not claim.** It does not show that any selected practice finds more defects or costs less than
 the current process. That comparison is #204. The audit read upstream instructions and did not run them.
@@ -33,9 +33,10 @@ the current process. That comparison is #204. The audit read upstream instructio
 | `blast-radius` | ADAPT | #203 | The evidence ladder and "the one fact it is safe because of" sharpen existing probes. |
 | `architect` | REJECT the workflow, ADAPT a screen | #203 | Four of its eight design red flags map to Neuron boundaries. The sketch-and-implement workflow would be a second implementation loop. |
 
-`arena` was read only because `interrogate`, `blast-radius`, and `architect` depend on it. It is rejected with them
-(techniques IR4, BR7, AR2). The other 51 of the 58 upstream skills, including `poteto-mode`, the `principle-*` skills,
-`reflect`, and `recall`, were not assessed and are not selected. No wholesale installation of pstack is proposed.
+`arena` was read only because `interrogate` and `architect` use it for fan-out, and `blast-radius` uses it in an
+optional step for wide changes. It is rejected with them (techniques IR4, BR7, AR2). The other 51 of the 58 upstream
+skills, including `poteto-mode`, the `principle-*` skills, `reflect`, and `recall`, were not assessed and are not
+selected. No wholesale installation of pstack is proposed.
 
 ## Decision vocabulary
 
@@ -82,7 +83,7 @@ The selected practices extend the following. They must not restate or replace th
 | Implementation loop | `monada-neuron-implement-issue` (#192) | Issue-to-PR state machine, clarification, fix rounds, escalation, publication gate | Any second implementation or fix loop |
 | PR format | `monada-neuron-create-pull-request` | Headings, exact commands, PASS / FAIL / NOT RUN | PR body rules |
 | Review checklist | `docs/specs/pr-review-checklist.md` | Architecture, Java 27, algorithms, performance, concurrency, testing, docs | Existing questions |
-| CI gates | `.github/workflows/ci.yml` | ADR numbers, skill mirror, fingerprint and gate self-tests with mutants, `check`, `consumerSmokeTest`, `jpmsConsumerTest`, `forgeHostConsumerTest`, Store adapter, integration tests, `embeddedHostConsumerTest` | Consumer verification paths |
+| CI gates | `.github/workflows/ci.yml` | ADR numbers, skill mirror, the snapshot fingerprint self-test, the publication gate self-test with its `--mutants` mode, `check`, `consumerSmokeTest`, `jpmsConsumerTest`, `forgeHostConsumerTest`, Store adapter, integration tests, `embeddedHostConsumerTest` | Consumer verification paths |
 
 **Precedent worth reusing.** The self-test of `publication-gate.sh` has a `--mutants` mode that shows every check is
 needed, which is the same discipline as upstream's rule that a check must be seen to fail (FV4). Baseline
@@ -144,7 +145,7 @@ apart from short phrases and section names.
 
 | Id | Upstream technique | Existing Neuron coverage | Decision | Delta or reason |
 | :--- | :--- | :--- | :--- | :--- |
-| IR1 | A finding survives only when a run proves it (§intro) | Verifier: only demonstrated defects are blocking on their own | ADAPT | Keep `[suspected]` findings as non-blocking, as the verifier requires. Upstream drops them. A suspected risk that makes a criterion unverifiable stays blocking. |
+| IR1 | A finding survives only when a run proves it (§intro) | Verifier: only demonstrated defects are blocking on their own | ADAPT | Keep `[suspected]` findings as non-blocking, as the verifier requires. Upstream drops them. A finding blocks only under the verifier's existing rule: as a `[demonstrated]` finding (BR1), through an `UNMET` or `PARTIAL` criterion, or as a suspected risk that makes a required criterion unverifiable. |
 | IR2 | Report findings; do not apply fixes (§intro) | Independence rules | REJECT `duplicate` | Already mandatory. |
 | IR3 | State intent from the message, commits, and PR text (§Frame) | Criteria come from the Issue; author statements are hypotheses | REJECT `conflict` | Using the author's text as the standard would weaken independence. |
 | IR4 | Fan out adversaries through `arena` worktrees, by default on two model families (§Fan out) | One independent subagent | REJECT `conflict` | P3 runs on every review, so fan-out there would be the automatic multi-model review the Epic excludes. Without a settings file it would also send code to a second model family. |
@@ -196,7 +197,8 @@ Upstream text has no authority. It is source material. Where an addition conflic
 yields and the conflict is reported. The one conflict found so far, between #203's "direct proof" wording and the
 verifier's blocking rule, is resolved in BR1.
 
-Cost limits are proposals. #201 to #203 may tighten them, and #204 fixes the limits it compares against.
+Only P2 proposes a cost limit. The other practices record cost for #204. #201 to #203 may tighten P2's limit or
+propose their own, and #204 fixes the limits it compares against.
 
 ### P1. Claim evidence report
 
@@ -233,8 +235,8 @@ Cost limits are proposals. #201 to #203 may tighten them, and #204 fixes the lim
 3. All-or-nothing compaction (ADR 0031): rich state, though single-threaded and outside the examples #202 lists.
 
 **Candidate mechanisms.** The version catalog lists JUnit and Guava, and `monada-neuron-evaluation` declares JMH. The
-repository has no TLA+, jcstress, or property-based library. A JUnit-driven enumeration of schedules needs no new dependency. TLC would need a recorded version and a
-check that it runs on JDK 27, which this audit did not perform.
+repository has no TLA+, jcstress, or property-based library. A JUnit-driven enumeration of schedules needs no new
+dependency. TLC would need a recorded version and a check that it runs on JDK 27, which this audit did not perform.
 
 ### P3. Proof-graded findings
 
@@ -335,11 +337,11 @@ reach credentials. The data paths it found leaving the machine are the multi-mod
 ### Reproducing the source facts
 
 ```bash
-gh api repos/backnotprop/pstack/git/trees/08547969e1dffaa6457ea65141cc62c1d9a2eef1?recursive=1 --jq '.tree[] | select(.path | test("^skills/(benchmark-checklist|create-formal-verification-skill|statechart|interrogate|blast-radius|arena)/SKILL.md$|^skills/statechart/references/render.md$|^skills/architect/|^LICENSE$")) | "\(.path) \(.sha)"'
+gh api 'repos/backnotprop/pstack/git/trees/08547969e1dffaa6457ea65141cc62c1d9a2eef1?recursive=1' --jq '.tree[] | select(.path | test("^skills/(benchmark-checklist|create-formal-verification-skill|statechart|interrogate|blast-radius|arena)/SKILL.md$|^skills/statechart/references/render.md$|^skills/architect/|^LICENSE$")) | "\(.path) \(.sha)"'
 ```
 
 ```bash
-gh api repos/cursor/plugins/git/trees/de8ee15dd1194627d21eb5fcd41cb1873208dabb?recursive=1 --jq '.tree[] | select(.path | test("^pstack/skills/(benchmark-checklist|create-formal-verification-skill|statechart|interrogate|blast-radius|arena)/SKILL.md$|^pstack/skills/statechart/references/render.md$|^pstack/skills/architect/|^pstack/LICENSE$")) | "\(.path) \(.sha)"'
+gh api 'repos/cursor/plugins/git/trees/de8ee15dd1194627d21eb5fcd41cb1873208dabb?recursive=1' --jq '.tree[] | select(.path | test("^pstack/skills/(benchmark-checklist|create-formal-verification-skill|statechart|interrogate|blast-radius|arena)/SKILL.md$|^pstack/skills/statechart/references/render.md$|^pstack/skills/architect/|^pstack/LICENSE$")) | "\(.path) \(.sha)"'
 ```
 
 ## Review against accepted ADRs
@@ -358,8 +360,7 @@ gh api repos/cursor/plugins/git/trees/de8ee15dd1194627d21eb5fcd41cb1873208dabb?r
 
 The table covers every ADR this audit cites, and none of those conflicts with a selected practice. No ADR mentions
 agent skills or independent verification. Another ADR can become relevant only through the diff under review, and
-that review applies it as usual. Rejected techniques tagged `conflict` name what they conflict
-with in the matrix.
+that review applies it as usual. Rejected techniques tagged `conflict` name what they conflict with in the matrix.
 
 ## Limitations
 
