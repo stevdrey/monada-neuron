@@ -173,16 +173,52 @@ final class BilingualSenseEvaluation {
         this.measureCost = measureCost;
     }
 
-    /** Runs the evaluation twice from fresh datasets and returns the first pass with the determinism check. */
+    /**
+     * Runs the evaluation twice from fresh datasets and returns the first pass with the determinism check. The check
+     * covers the fingerprints and every check outcome, so a check that fails only in the second pass is not lost, and
+     * a failure suppresses the verdicts as any other failed check does.
+     */
     Outcome run(Supplier<SenseDataset> datasets) {
         Outcome first = once(datasets.get());
         Outcome second = once(datasets.get());
         var checks = new ArrayList<>(first.checks());
-        boolean same = first.fingerprint().equals(second.fingerprint());
+        boolean sameFingerprint = first.fingerprint().equals(second.fingerprint());
+        List<String> differing = differingChecks(first.checks(), second.checks());
+        boolean same = sameFingerprint && differing.isEmpty();
         checks.add(new Check("determinism", same, same
                 ? "a second full run is bit-identical in outputs, selections and intervals (" + first.fingerprint() + ")"
-                : "fingerprints differ: " + first.fingerprint() + " vs " + second.fingerprint()));
-        return new Outcome(checks, first.directions(), first.fingerprint(), first.resources(), first.metadata());
+                : (sameFingerprint ? "fingerprints match" : "fingerprints differ: " + first.fingerprint() + " vs "
+                + second.fingerprint()) + "; check outcomes that differ: " + differing));
+        return new Outcome(checks, withheld(first.directions(), first.metadata().get("labelStatus"), checks),
+                first.fingerprint(), first.resources(), first.metadata());
+    }
+
+    /** Returns the names of the checks whose outcome differs between two passes of the same run. */
+    private List<String> differingChecks(List<Check> first, List<Check> second) {
+        var names = new ArrayList<String>();
+        for (int c = 0; c < first.size(); c++) {
+            if (first.get(c).passed() != second.get(c).passed()) {
+                names.add(first.get(c).name());
+            }
+        }
+        return names;
+    }
+
+    /**
+     * Returns the directions with their verdicts withheld when any check failed: {@code UNTRUSTWORTHY}, except that
+     * {@code NOT TESTABLE} (a data gate, or H2 not testable) takes precedence.
+     */
+    private List<DirectionResult> withheld(List<DirectionResult> directions, String labelStatus, List<Check> checks) {
+        boolean anyFailed = checks.stream().anyMatch(check -> !check.passed());
+        var results = new ArrayList<DirectionResult>();
+        for (DirectionResult result : directions) {
+            results.add(anyFailed && !result.verdict().startsWith("NOT TESTABLE")
+                    ? new DirectionResult(result.direction(), "UNTRUSTWORTHY (" + labelStatus + ")",
+                    "a check failed; no verdict is recorded", result.arms(), result.h1(), result.h2a(),
+                    result.macroConstant(), result.notes())
+                    : result);
+        }
+        return results;
     }
 
     /** One full pass. */
@@ -239,26 +275,21 @@ final class BilingualSenseEvaluation {
                         metrics.macro(scope.labels(), outputs, items, scope.senses()),
                         metrics.macroConstant(scope.labels(), items, scope.senses(), scope.clusters())));
                 double lower = bootstrap.lowerBound(values, PERMUTATION_LEVEL);
-                boolean fails = lower > 0.0;
+                // An undefined bound (NaN) cannot show the control is harmless, so it fails too.
+                boolean fails = !(lower <= 0.0);
                 permutationPassed &= !fails;
                 permutation.add(direction.label() + " " + permuted.arms().get(a).name() + ": lower "
-                        + format(lower) + (fails ? " > 0 (FAIL)" : " <= 0"));
+                        + format(lower) + (fails ? " not <= 0 (FAIL)" : " <= 0"));
+                fingerprint.append(direction).append(permuted.arms().get(a).name())
+                        .append(permuted.selections().get(direction)[a])
+                        .append(Arrays.toString(outputs.choice())).append(Arrays.toString(outputs.confidence()))
+                        .append(Arrays.toString(outputs.answered())).append(Double.toHexString(lower));
             }
         }
         checks.add(new Check("nc.label-permutation", permutationPassed,
                 "Macro(arm, permuted) - Macro_const, one-sided lower bound at 0.995: " + String.join("; ", permutation)));
         checks.add(budget(directions));
 
-        boolean anyFailed = checks.stream().anyMatch(check -> !check.passed());
-        var finalDirections = new ArrayList<DirectionResult>();
-        for (DirectionResult result : directions) {
-            // NOT TESTABLE (a data gate, or H2 not testable) takes precedence over UNTRUSTWORTHY.
-            finalDirections.add(anyFailed && !result.verdict().startsWith("NOT TESTABLE")
-                    ? new DirectionResult(result.direction(), "UNTRUSTWORTHY (" + dataset.labelStatus() + ")",
-                    "a check failed; no verdict is recorded", result.arms(), result.h1(), result.h2a(),
-                    result.macroConstant(), result.notes())
-                    : result);
-        }
         var metadata = new LinkedHashMap<String, String>();
         metadata.put("protocol", PROTOCOL_ID);
         metadata.put("provenance", dataset.provenance());
@@ -267,7 +298,8 @@ final class BilingualSenseEvaluation {
         metadata.put("armW", "omitted: optional under the protocol; no wave-token result is produced");
         metadata.put("items", "training " + dataset.training().size() + ", validation " + dataset.validation().size()
                 + ", held-out " + dataset.heldOut().size());
-        return new Outcome(checks, finalDirections, SenseDataset.sha256(fingerprint.toString()), resources, metadata);
+        return new Outcome(checks, withheld(directions, dataset.labelStatus(), checks),
+                SenseDataset.sha256(fingerprint.toString()), resources, metadata);
     }
 
     /** Fits the named arms, selects per direction on validation and answers the held-out split; no held-out gold. */

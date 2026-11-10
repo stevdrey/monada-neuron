@@ -8,11 +8,14 @@ import monada.neuron.evaluation.bilingual.SenseDataset.DatasetItem;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.RecordComponent;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -126,6 +129,76 @@ class BilingualSenseEvaluationTest {
         assertEquals(Direction.ES_EN, esEn.direction());
         assertTrue(esEn.verdict().startsWith("NOT TESTABLE"));
         assertTrue(esEn.arms().isEmpty());
+    }
+
+    /** Supplies {@code first}, then {@code second}, one per pass of a run. */
+    private Supplier<SenseDataset> passes(SenseDataset first, SenseDataset second) {
+        var datasets = new ArrayDeque<>(List.of(first, second));
+        return datasets::removeFirst;
+    }
+
+    @Test
+    void aFailedDeterminismCheckWithholdsTheVerdicts() {
+        var other = new SyntheticSenseWorkload(SyntheticSenseWorkload.SEED + 1);
+        Outcome outcome = new BilingualSenseEvaluation(RESAMPLES, true)
+                .run(passes(workload.generate(), other.generate()));
+        Map<String, Check> checks = checks(outcome);
+        assertFalse(checks.get("determinism").passed());
+        checks.values().stream().filter(check -> !check.name().equals("determinism"))
+                .forEach(check -> assertTrue(check.passed(), check.name() + ": " + check.detail()));
+        for (DirectionResult direction : outcome.directions()) {
+            assertTrue(direction.verdict().startsWith("UNTRUSTWORTHY"), direction.verdict());
+            assertEquals("a check failed; no verdict is recorded", direction.reason());
+        }
+    }
+
+    @Test
+    void aFailedDeterminismCheckLeavesNotTestableInPlace() {
+        var other = new SyntheticSenseWorkload(SyntheticSenseWorkload.SEED + 1);
+        Outcome outcome = new BilingualSenseEvaluation(RESAMPLES, true)
+                .run(passes(withoutAbstention(workload.generate()), withoutAbstention(other.generate())));
+        assertFalse(checks(outcome).get("determinism").passed());
+        for (DirectionResult direction : outcome.directions()) {
+            assertTrue(direction.verdict().startsWith("NOT TESTABLE"), direction.verdict());
+        }
+    }
+
+    @Test
+    void aCheckThatFailsOnlyInTheSecondPassFailsDeterminism() {
+        SenseDataset second = workload.generate();
+        second.heldOutGold().get(0);
+        Outcome outcome = new BilingualSenseEvaluation(RESAMPLES, true).run(passes(workload.generate(), second));
+        Map<String, Check> checks = checks(outcome);
+        assertTrue(checks.get("leakage.test-labels").passed(), "the first pass read nothing early");
+        assertFalse(checks.get("determinism").passed());
+        assertTrue(checks.get("determinism").detail().contains("leakage.test-labels"), checks.get("determinism").detail());
+        for (DirectionResult direction : outcome.directions()) {
+            assertTrue(direction.verdict().startsWith("UNTRUSTWORTHY"), direction.verdict());
+        }
+    }
+
+    @Test
+    void anUndefinedPermutationBoundFailsTheCheck() {
+        SenseDataset base = workload.generate();
+        // Cluster 30 is in no gold set, so Macro is undefined in every resample.
+        var clusters = new LinkedHashMap<String, List<Integer>>();
+        base.scored().clusters().keySet().forEach(lemma -> clusters.put(lemma, List.of(30)));
+        var scored = new SenseDataset.ScoredSet(clusters, base.scored().testableDirections(),
+                base.scored().abstentionTestable());
+        var undefined = new SenseDataset(base.provenance(), base.labelStatus(), base.training(), base.trainingGold(),
+                base.validation(), base.validationGold(), base.heldOut(), base.heldOutGold(),
+                base.calibrationFamilies(), base.pilotFamilies(), scored, base.hashes());
+        Check check = checks(new BilingualSenseEvaluation(RESAMPLES, false).once(undefined))
+                .get("nc.label-permutation");
+        assertFalse(check.passed(), check.detail());
+        assertTrue(check.detail().contains("n/a not <= 0 (FAIL)"), check.detail());
+    }
+
+    private SenseDataset withoutAbstention(SenseDataset base) {
+        var scored = new SenseDataset.ScoredSet(base.scored().clusters(), base.scored().testableDirections(), Set.of());
+        return new SenseDataset(base.provenance(), base.labelStatus(), base.training(), base.trainingGold(),
+                base.validation(), base.validationGold(), base.heldOut(), base.heldOutGold(),
+                base.calibrationFamilies(), base.pilotFamilies(), scored, base.hashes());
     }
 
     @Test

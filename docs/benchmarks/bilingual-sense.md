@@ -86,7 +86,10 @@ alike; none changes a rule, grid, margin or gate.
 - **Strata.** The context OOV rate uses the whole-sentence window against the vocabulary of every training sentence of
   the direction. The low-frequency statement uses held-out gold.
 - **Verdict precedence.** `NOT TESTABLE` (a step-7 data gate, or H2 not testable) takes precedence over
-  `UNTRUSTWORTHY`; a failed check makes every other direction `UNTRUSTWORTHY`.
+  `UNTRUSTWORTHY`; a failed check, `determinism` included, makes every other direction `UNTRUSTWORTHY`. `determinism`
+  compares the fingerprints (which also cover the label-permutation control's outputs) and every check outcome of the
+  two passes, so a check that fails only in the second pass also fails it. An undefined `nc.label-permutation` bound
+  fails that check.
 - **Oracle indices.** In `n.policy-equivalence` each hypothesis's `SignalEvidence` entries carry `0..m−1`, `m` its own
   cue count.
 - **Lemma without training.** A and C answer the lowest ordinal with `s = 0`; the step-7 gates keep such a lemma out of
