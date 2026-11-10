@@ -161,6 +161,85 @@ class SenseArmsTest {
     }
 
     @Test
+    void majorityTieIsExactUnderFractionalGold() {
+        var four = new SenseInventory(Direction.EN_ES, "bank",
+                List.of(List.of("a"), List.of("b"), List.of("c"), List.of("d")));
+        var examples = new ArrayList<TrainingExample>();
+        var input = new SenseItem(Direction.EN_ES, "bank", four, "bank word", 0, 4);
+        // Cluster 0 receives 18 thirds and cluster 1 six ones: both exactly 6, although the thirds sum below 6 as doubles.
+        for (int i = 0; i < 18; i++) {
+            examples.add(new TrainingExample(input, new SenseGold.Answerable(0b1101)));
+        }
+        for (int i = 0; i < 6; i++) {
+            examples.add(new TrainingExample(input, new SenseGold.Answerable(0b0010)));
+        }
+        var arm = new MajoritySenseArm();
+        arm.fit(examples);
+        assertEquals(new Prediction(0, 0.25), arm.predict(input, 0));
+    }
+
+    @Test
+    void neuronSeesExactlyZeroEvidenceFromAUniformFractionalToken() {
+        var examples = new ArrayList<TrainingExample>();
+        for (int i = 0; i < 18; i++) {
+            examples.add(example("same", 0b111));
+        }
+        var arm = new NeuronSenseArm(windows);
+        arm.fit(examples);
+        // n_k = n / K exactly, so d = 0 for every cluster and no cue exists; as doubles d would be a tiny non-zero.
+        Scored scored = arm.score(item("same"), 3);
+        assertTrue(scored.cues().stream().allMatch(List::isEmpty));
+    }
+
+    @Test
+    void contextualLexicalBreaksAnExactPosteriorTieTowardTheLowerOrdinal() {
+        var examples = new ArrayList<TrainingExample>();
+        int[][] counts = {{1, 2, 7}, {2, 7, 1}};
+        for (int cluster = 0; cluster < 2; cluster++) {
+            for (int token = 0; token < 3; token++) {
+                for (int n = 0; n < counts[cluster][token]; n++) {
+                    examples.add(example("t" + token, 1 << cluster));
+                }
+            }
+        }
+        var arm = new ContextualLexicalArm(windows);
+        arm.fit(examples);
+        // Configuration 8: alpha = 1, w = S. The products are equal, but the log sums differ in their term order.
+        assertEquals(new Prediction(0, 0.5), arm.predict(item("t0 t1 t2"), 8));
+    }
+
+    @Test
+    void contextualLexicalPosteriorIsExact() {
+        var arm = new ContextualLexicalArm(windows);
+        arm.fit(List.of(example("a", 0b01), example("b", 0b01), example("c", 0b01), example("d", 0b10),
+                example("e", 0b10)));
+        // No known token: the posterior is the prior, exactly 3/5.
+        Prediction prediction = arm.predict(item("zebra"), 8);
+        assertEquals(new Prediction(0, 0.6), prediction);
+        assertTrue(prediction.answers(0.6));
+    }
+
+    @Test
+    void nearestExampleConfidenceIsOneDivisionOfExactIntegers() {
+        var arm = new NearestExampleArm(windows);
+        arm.fit(List.of(example("t1 t2 t3", 0b001), example("t1", 0b010), example("t2", 0b100)));
+        // Share 1/3 and similarity 3/10: exactly 1/10, where (1/3) x (3/10) in doubles is 0.09999999999999999.
+        Prediction prediction = arm.predict(item("t1 t2 t3 u1 u2 u3 u4 u5 u6 u7"), 5);
+        assertEquals(new Prediction(0, 0.1), prediction);
+        assertTrue(prediction.answers(0.1));
+    }
+
+    @Test
+    void nearestExampleConfidenceHitsARegisteredThresholdExactly() {
+        var arm = new NearestExampleArm(windows);
+        arm.fit(List.of(example("t1 t2 t3 t4 t5 t6 t7 t8 t9", 0b001), example("t1", 0b010), example("t2", 0b100)));
+        // k = 3, w = S: three one-vote clusters (share 1/3) and highest similarity 9/10, so s is exactly 3/10.
+        Prediction prediction = arm.predict(item("t1 t2 t3 t4 t5 t6 t7 t8 t9 u"), 5);
+        assertEquals(new Prediction(0, 0.3), prediction);
+        assertTrue(prediction.answers(0.3));
+    }
+
+    @Test
     void maskedContextScoresZeroEverywhere() {
         var arm = new NeuronSenseArm(windows);
         arm.fit(training());

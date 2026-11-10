@@ -2,11 +2,16 @@ package monada.neuron.evaluation.bilingual;
 
 import monada.neuron.evaluation.bilingual.GridSelection.Selection;
 import monada.neuron.evaluation.bilingual.SenseArm.Prediction;
+import monada.neuron.evaluation.bilingual.SenseDataset.DatasetItem;
+import monada.neuron.evaluation.bilingual.SenseDataset.ScoredSet;
 import monada.neuron.evaluation.bilingual.SenseMetrics.Labels;
+import monada.neuron.evaluation.bilingual.SensePartitions.Split;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.OptionalDouble;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -22,18 +27,68 @@ class SenseGatesTest {
         assertFalse(gates.text(79, 40, 60));
         assertTrue(gates.minimumPerSense(30));
         assertFalse(gates.minimumPerSense(29));
-        assertTrue(gates.trainingWeight(10.0));
-        assertFalse(gates.trainingWeight(9.5));
+        assertTrue(gates.trainingWeight(60, 6));
+        assertFalse(gates.trainingWeight(59, 6));
         assertTrue(gates.validationPerLemma(10));
         assertTrue(gates.validationPerDirection(60));
         assertFalse(gates.validationPerDirection(59));
         assertTrue(gates.minimumPerDirection(4));
         assertFalse(gates.minimumPerDirection(3));
         assertTrue(gates.abstentionItems(30));
-        assertTrue(gates.lowFrequency(19.0, 100.0));
-        assertFalse(gates.lowFrequency(20.0, 100.0));
+        assertTrue(gates.lowFrequency(19, 100));
+        assertFalse(gates.lowFrequency(20, 100));
         assertTrue(gates.unlabeled(2, 100));
         assertFalse(gates.unlabeled(3, 100));
+        assertTrue(gates.unlabeled(7, 350));
+        assertFalse(gates.unlabeled(8, 350));
+    }
+
+    /** Four three-cluster lemmas: {@code thirds} items of gold {0,1,2} plus 4 singletons per cluster in training. */
+    private ScoredSet scoredSetWithThirds(int thirds) {
+        var training = new ArrayList<DatasetItem>();
+        var trainingGold = new ArrayList<SenseGold>();
+        var validation = new ArrayList<DatasetItem>();
+        var validationGold = new ArrayList<SenseGold>();
+        var heldOut = new ArrayList<DatasetItem>();
+        var heldOutGold = new ArrayList<SenseGold>();
+        for (String lemma : List.of("a", "b", "c", "d")) {
+            var inventory = new SenseInventory(Direction.EN_ES, lemma, List.of(List.of("x"), List.of("y"), List.of("z")));
+            var input = new SenseItem(Direction.EN_ES, lemma, inventory, lemma + " word", 0, 1);
+            int family = 0;
+            for (int i = 0; i < thirds; i++) {
+                training.add(new DatasetItem(lemma + family, lemma + family++, Split.TRAINING, input, "s", null, false));
+                trainingGold.add(SenseGold.answerable(0b111));
+            }
+            for (int cluster = 0; cluster < 3; cluster++) {
+                for (int i = 0; i < 4; i++) {
+                    training.add(new DatasetItem(lemma + family, lemma + family++, Split.TRAINING, input, "s", null,
+                            false));
+                    trainingGold.add(SenseGold.answerable(1 << cluster));
+                }
+                for (int i = 0; i < 30; i++) {
+                    heldOut.add(new DatasetItem(lemma + family, lemma + family++, Split.HELD_OUT, input, "s", null,
+                            false));
+                    heldOutGold.add(SenseGold.answerable(1 << cluster));
+                }
+            }
+            for (int i = 0; i < 20; i++) {
+                validation.add(new DatasetItem(lemma + family, lemma + family++, Split.VALIDATION, input, "s", null,
+                        false));
+                validationGold.add(SenseGold.answerable(1));
+            }
+        }
+        return gates.scoredSet(training, trainingGold, validation, validationGold, heldOut, heldOutGold, Set.of());
+    }
+
+    @Test
+    void trainingWeightGateIsExactAtTenWithFractionalGold() {
+        // 18 thirds + 4 is exactly 10 per cluster; as doubles it accumulates to 9.999999999999998.
+        ScoredSet exact = scoredSetWithThirds(18);
+        assertEquals(List.of(0, 1, 2), exact.clusters().get("EN>ES|a"));
+        assertEquals(4, exact.clusters().size());
+        assertTrue(exact.testableDirections().contains(Direction.EN_ES));
+        // 17 thirds + 4 is 9.67: no cluster is scored.
+        assertTrue(scoredSetWithThirds(17).clusters().isEmpty());
     }
 
     @Test

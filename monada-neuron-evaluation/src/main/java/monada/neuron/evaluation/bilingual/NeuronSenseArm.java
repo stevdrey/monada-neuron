@@ -21,8 +21,9 @@ import java.util.Map;
  * it with cluster {@code k}. Tokens with {@code n(c) < 2} give no evidence. Otherwise, with
  * {@code r_k(c) = (n_k(c) + 1) / (n(c) + K)}, {@code d = (K / (K - 1)) (r_k(c) - 1/K)},
  * {@code weight = min(1, lambda |d| log2(1 + n(c)))} and the relation is {@code SUPPORTS} for {@code d > 0},
- * {@code CONTRADICTS} for {@code d < 0} and none for {@code d = 0} ({@code d} is computed as
- * {@code (K (n_k + 1) - (n + K)) / ((K - 1)(n + K))}, so its sign is exact when the weights are).
+ * {@code CONTRADICTS} for {@code d < 0} and none for {@code d = 0}. {@code n(c)} is the integer count of those items,
+ * since each item's weights sum to 1, and {@code d} is computed in exact gold units as
+ * {@code (K (n_k + 1) - (n + K)) / ((K - 1)(n + K))}, so the {@code n(c) < 2} gate and the sign of {@code d} are exact.
  *
  * <p>Each window token position yields at most one cue per cluster. Per cluster the 16 largest weights are kept (the
  * bound of {@code HypothesisLimits.DEFAULT}), ties to the lower position, and summed in position order. Score ties rank
@@ -57,11 +58,11 @@ final class NeuronSenseArm implements SenseArm {
     record Scored(double[] scores, List<List<SenseCue>> cues, int choice) {
     }
 
-    /** Per window: per vocabulary token, {@code n(c)} and {@code n_k(c)}. */
-    private record WindowModel(Map<String, double[]> clusterCounts, Map<String, Double> totals) {
+    /** Per window: per vocabulary token, {@code n(c)} as an item count and {@code n_k(c)} in gold units. */
+    private record WindowModel(Map<String, long[]> clusterUnits, Map<String, Integer> totals) {
     }
 
-    private record LemmaModel(int clusters, WindowModel[] windows) {
+    private record LemmaModel(int clusters, long unitsPerItem, WindowModel[] windows) {
     }
 
     private final SenseWindows windows;
@@ -100,26 +101,24 @@ final class NeuronSenseArm implements SenseArm {
             int k = lemma.inventory().size();
             var perWindow = new WindowModel[WINDOWS.length];
             for (int w = 0; w < WINDOWS.length; w++) {
-                var clusterCounts = new HashMap<String, double[]>();
-                var totals = new HashMap<String, Double>();
+                var clusterUnits = new HashMap<String, long[]>();
+                var totals = new HashMap<String, Integer>();
                 for (int i = 0; i < lemma.examples().size(); i++) {
                     Window window = windows.window(lemma.examples().get(i).input(), WINDOWS[w]);
                     var distinct = new HashSet<String>();
                     for (String token : window.tokens()) {
                         if (distinct.add(token)) {
-                            double[] counts = clusterCounts.computeIfAbsent(token, _ -> new double[k]);
-                            double itemWeight = 0.0;
+                            long[] units = clusterUnits.computeIfAbsent(token, _ -> new long[k]);
                             for (int c = 0; c < k; c++) {
-                                counts[c] += lemma.weights()[i][c];
-                                itemWeight += lemma.weights()[i][c];
+                                units[c] += lemma.units()[i][c];
                             }
-                            totals.merge(token, itemWeight, Double::sum);
+                            totals.merge(token, 1, Integer::sum);
                         }
                     }
                 }
-                perWindow[w] = new WindowModel(clusterCounts, totals);
+                perWindow[w] = new WindowModel(clusterUnits, totals);
             }
-            models.put(entry.getKey(), new LemmaModel(k, perWindow));
+            models.put(entry.getKey(), new LemmaModel(k, lemma.unitsPerItem(), perWindow));
         }
     }
 
@@ -155,18 +154,20 @@ final class NeuronSenseArm implements SenseArm {
             WindowModel windowModel = model.windows()[configuration % WINDOWS.length];
             for (int p = 0; p < window.tokens().length; p++) {
                 String token = window.tokens()[p];
-                Double n = windowModel.totals().get(token);
-                if (n == null || n < 2.0) {
+                Integer n = windowModel.totals().get(token);
+                if (n == null || n < 2) {
                     continue;
                 }
-                double[] counts = windowModel.clusterCounts().get(token);
+                long[] units = windowModel.clusterUnits().get(token);
+                long perItem = model.unitsPerItem();
+                long smoothedTotal = (n + (long) k) * perItem;
                 double strength = lambda * Math.log(1.0 + n) / LOG_2;
                 for (int c = 0; c < k; c++) {
-                    double numerator = k * (counts[c] + 1.0) - (n + k);
-                    if (numerator == 0.0) {
+                    long numerator = k * (units[c] + perItem) - smoothedTotal;
+                    if (numerator == 0) {
                         continue;
                     }
-                    double d = numerator / ((k - 1.0) * (n + k));
+                    double d = (double) numerator / ((k - 1) * smoothedTotal);
                     double weight = Math.min(1.0, strength * Math.abs(d));
                     if (weight > 0.0) {
                         candidates.get(c).add(new SenseCue(c, window.positions()[p],

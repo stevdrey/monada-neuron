@@ -2,6 +2,9 @@ package monada.neuron.evaluation.bilingual;
 
 import monada.neuron.evaluation.bilingual.SenseWindows.Window;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.math.MathContext;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -12,19 +15,23 @@ import java.util.Map;
  * class prior is the unsmoothed training-weight share, so a cluster with zero training weight has posterior 0; tokens
  * absent from training are ignored.
  *
- * <p>{@code k*} is the argmax posterior (ties to the lower ordinal) and {@code s} its posterior. Grid:
+ * <p>{@code k*} is the argmax posterior (ties to the lower ordinal) and {@code s} its posterior. Counts and
+ * {@code alpha} are rational, so the posterior is computed exactly with integers: a sum of floating-point logarithms
+ * depends on the order of its terms and would break exact ties and exact thresholds by rounding. Grid:
  * {@code alpha in {0.1, 0.5, 1}} x {@code w in {3, 5, S}} x {@code tau in {0, 0.55, 0.6, ..., 0.95}} (90 points).
  */
 final class ContextualLexicalArm implements SenseArm {
 
-    private static final double[] ALPHAS = {0.1, 0.5, 1.0};
+    /** The registered {@code alpha} values, in tenths. */
+    private static final int[] ALPHA_TENTHS = {1, 5, 10};
+    private static final MathContext PRECISION = new MathContext(40);
     private static final double[] THRESHOLDS = {0.0, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95};
 
-    /** Per window: the vocabulary, the weighted token counts per cluster and the per-cluster totals. */
-    private record WindowModel(Map<String, Integer> vocabulary, double[][] counts, double[] totals) {
+    /** Per window: the vocabulary and, in gold units, the token counts per cluster and the per-cluster totals. */
+    private record WindowModel(Map<String, Integer> vocabulary, long[][] counts, long[] totals) {
     }
 
-    private record LemmaModel(double[] prior, WindowModel[] windows) {
+    private record LemmaModel(long[] priorUnits, long unitsPerItem, WindowModel[] windows) {
     }
 
     private final SenseWindows windows;
@@ -41,12 +48,12 @@ final class ContextualLexicalArm implements SenseArm {
 
     @Override
     public int configurations() {
-        return ALPHAS.length * WINDOWS.length;
+        return ALPHA_TENTHS.length * WINDOWS.length;
     }
 
     @Override
     public String describe(int configuration) {
-        return "alpha=" + ALPHAS[configuration / WINDOWS.length] + ", w="
+        return "alpha=" + ALPHA_TENTHS[configuration / WINDOWS.length] / 10.0 + ", w="
                 + SenseArm.windowLabel(configuration % WINDOWS.length);
     }
 
@@ -61,14 +68,6 @@ final class ContextualLexicalArm implements SenseArm {
         for (var entry : LemmaTraining.group(training).entrySet()) {
             LemmaTraining lemma = entry.getValue();
             int k = lemma.inventory().size();
-            double total = 0.0;
-            for (double weight : lemma.clusterWeights()) {
-                total += weight;
-            }
-            var prior = new double[k];
-            for (int c = 0; c < k; c++) {
-                prior[c] = lemma.clusterWeights()[c] / total;
-            }
             var perWindow = new WindowModel[WINDOWS.length];
             for (int w = 0; w < WINDOWS.length; w++) {
                 var vocabulary = new HashMap<String, Integer>();
@@ -79,21 +78,20 @@ final class ContextualLexicalArm implements SenseArm {
                         vocabulary.computeIfAbsent(token, _ -> vocabulary.size());
                     }
                 }
-                var counts = new double[k][vocabulary.size()];
-                var totals = new double[k];
+                var unitCounts = new long[k][vocabulary.size()];
+                var unitTotals = new long[k];
                 for (int i = 0; i < windowsOfItems.length; i++) {
                     for (String token : windowsOfItems[i].tokens()) {
                         int id = vocabulary.get(token);
                         for (int c = 0; c < k; c++) {
-                            double weight = lemma.weights()[i][c];
-                            counts[c][id] += weight;
-                            totals[c] += weight;
+                            unitCounts[c][id] += lemma.units()[i][c];
+                            unitTotals[c] += lemma.units()[i][c];
                         }
                     }
                 }
-                perWindow[w] = new WindowModel(vocabulary, counts, totals);
+                perWindow[w] = new WindowModel(vocabulary, unitCounts, unitTotals);
             }
-            models.put(entry.getKey(), new LemmaModel(prior, perWindow));
+            models.put(entry.getKey(), new LemmaModel(lemma.clusterUnits(), lemma.unitsPerItem(), perWindow));
         }
     }
 
@@ -106,14 +104,18 @@ final class ContextualLexicalArm implements SenseArm {
         if (model == null) {
             return new Prediction(0, 0.0);
         }
-        double alpha = ALPHAS[configuration / WINDOWS.length];
+        long alphaTenths = ALPHA_TENTHS[configuration / WINDOWS.length];
         int w = configuration % WINDOWS.length;
         WindowModel windowModel = model.windows()[w];
-        int k = model.prior().length;
-        int vocabularySize = windowModel.vocabulary().size();
-        var log = new double[k];
+        int k = model.priorUnits().length;
+        long perItem = model.unitsPerItem();
+        long vocabularySize = windowModel.vocabulary().size();
+        // Each likelihood is (count + alpha) / (total + alpha V); multiplied through by 10 x perItem it is integral.
+        var numerators = new BigInteger[k];
+        var denominators = new BigInteger[k];
         for (int c = 0; c < k; c++) {
-            log[c] = model.prior()[c] > 0.0 ? Math.log(model.prior()[c]) : Double.NEGATIVE_INFINITY;
+            numerators[c] = BigInteger.valueOf(model.priorUnits()[c]);
+            denominators[c] = BigInteger.ONE;
         }
         for (String token : windows.window(item, WINDOWS[w]).tokens()) {
             Integer id = windowModel.vocabulary().get(token);
@@ -121,26 +123,32 @@ final class ContextualLexicalArm implements SenseArm {
                 continue;
             }
             for (int c = 0; c < k; c++) {
-                if (log[c] != Double.NEGATIVE_INFINITY) {
-                    log[c] += Math.log((windowModel.counts()[c][id] + alpha)
-                            / (windowModel.totals()[c] + alpha * vocabularySize));
-                }
+                numerators[c] = numerators[c].multiply(BigInteger.valueOf(
+                        10 * windowModel.counts()[c][id] + alphaTenths * perItem));
+                denominators[c] = denominators[c].multiply(BigInteger.valueOf(
+                        10 * windowModel.totals()[c] + alphaTenths * vocabularySize * perItem));
             }
         }
+        // Over a common denominator the posterior of c is proportional to its numerator times the other denominators.
+        var joint = new BigInteger[k];
+        BigInteger sum = BigInteger.ZERO;
         int top = 0;
-        for (int c = 1; c < k; c++) {
-            if (log[c] > log[top]) {
+        for (int c = 0; c < k; c++) {
+            joint[c] = numerators[c];
+            for (int other = 0; other < k; other++) {
+                if (other != c) {
+                    joint[c] = joint[c].multiply(denominators[other]);
+                }
+            }
+            sum = sum.add(joint[c]);
+            if (joint[c].compareTo(joint[top]) > 0) {
                 top = c;
             }
         }
-        if (log[top] == Double.NEGATIVE_INFINITY) {
+        if (sum.signum() == 0) {
             return new Prediction(0, 0.0);
         }
-        double sum = 0.0;
-        for (int c = 0; c < k; c++) {
-            sum += Math.exp(log[c] - log[top]);
-        }
-        return new Prediction(top, 1.0 / sum);
+        return new Prediction(top, new BigDecimal(joint[top]).divide(new BigDecimal(sum), PRECISION).doubleValue());
     }
 
     @Override

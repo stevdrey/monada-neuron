@@ -194,6 +194,15 @@ class BilingualSenseEvaluationTest {
         assertTrue(check.detail().contains("n/a not <= 0 (FAIL)"), check.detail());
     }
 
+    @Test
+    void permutationBoundFailsOnlyAboveZeroOrWhenUndefined() {
+        var evaluation = new BilingualSenseEvaluation(RESAMPLES, false);
+        assertFalse(evaluation.permutationFails(-0.1));
+        assertFalse(evaluation.permutationFails(0.0));
+        assertTrue(evaluation.permutationFails(0.001));
+        assertTrue(evaluation.permutationFails(Double.NaN));
+    }
+
     private SenseDataset withoutAbstention(SenseDataset base) {
         var scored = new SenseDataset.ScoredSet(base.scored().clusters(), base.scored().testableDirections(), Set.of());
         return new SenseDataset(base.provenance(), base.labelStatus(), base.training(), base.trainingGold(),
@@ -213,6 +222,65 @@ class BilingualSenseEvaluationTest {
                 .directions()) {
             assertTrue(direction.verdict().startsWith("NOT TESTABLE"), direction.verdict());
         }
+    }
+
+    /** Returns the dataset with only {@code testable} directions passing step 7. */
+    private SenseDataset withTestable(SenseDataset base, Set<Direction> testable) {
+        var scored = new SenseDataset.ScoredSet(base.scored().clusters(), testable, base.scored().abstentionTestable());
+        return new SenseDataset(base.provenance(), base.labelStatus(), base.training(), base.trainingGold(),
+                base.validation(), base.validationGold(), base.heldOut(), base.heldOutGold(),
+                base.calibrationFamilies(), base.pilotFamilies(), scored, base.hashes());
+    }
+
+    @Test
+    void aGlobalStopRunsNoSystemAndLeavesTheGoldSealed() {
+        SenseDataset stopped = withTestable(workload.generate(), Set.of());
+        Outcome outcome = new BilingualSenseEvaluation(RESAMPLES, false).once(stopped);
+        assertFalse(stopped.heldOutGold().isOpen());
+        assertEquals(0, stopped.heldOutGold().earlyReads());
+        assertEquals("no system was run; data no-go", outcome.metadata().get("globalStop"));
+        assertFalse(checks(outcome).containsKey("n.policy-equivalence"), "no arm was fitted");
+        for (DirectionResult direction : outcome.directions()) {
+            assertTrue(direction.verdict().startsWith("NOT TESTABLE"), direction.verdict());
+            assertTrue(direction.reason().startsWith("global stop"), direction.reason());
+            assertTrue(direction.arms().isEmpty());
+        }
+    }
+
+    @Test
+    void aStoppedDirectionIsNeverAnswered() {
+        SenseDataset dataset = withTestable(workload.generate(), Set.of(Direction.EN_ES));
+        var pipeline = new BilingualSenseEvaluation(RESAMPLES, false).pipeline(dataset, List.of("A"));
+        assertEquals(Set.of(Direction.EN_ES), pipeline.heldOut().keySet());
+        assertEquals(Set.of(Direction.EN_ES), pipeline.selections().keySet());
+        var outputs = pipeline.heldOut().get(Direction.EN_ES)[0];
+        int stopped = 0;
+        for (int i = 0; i < dataset.heldOut().size(); i++) {
+            if (dataset.heldOut().get(i).input().direction() == Direction.ES_EN) {
+                stopped++;
+                assertEquals(-1, outputs.choice()[i], "A would choose a cluster for any item it was given");
+                assertFalse(outputs.answered()[i]);
+            }
+        }
+        assertTrue(stopped > 0);
+        assertEquals(0, dataset.heldOutGold().earlyReads());
+        var majority = (MajoritySenseArm) pipeline.arms().getFirst();
+        assertEquals(-1, majority.majorityCluster("ES>EN|banco"), "a stopped direction is not fitted");
+        assertTrue(majority.majorityCluster("EN>ES|bank") >= 0);
+    }
+
+    @Test
+    void neuronChecksCoverOnlyTheDirectionsThatPassedStepSeven() {
+        SenseDataset dataset = withTestable(workload.generate(), Set.of(Direction.EN_ES));
+        long validation = dataset.validation().stream().filter(item -> item.input().hasInventory()
+                && item.input().direction() == Direction.EN_ES).count();
+        long heldOut = dataset.heldOut().stream().filter(item -> item.input().hasInventory()
+                && item.input().direction() == Direction.EN_ES).count();
+        Map<String, Check> checks = checks(new BilingualSenseEvaluation(RESAMPLES, false).once(dataset));
+        String masked = checks.get("nc.context-mask").detail();
+        assertTrue(masked.startsWith((validation + heldOut) * 9 + " masked"), masked);
+        String policy = checks.get("n.policy-equivalence").detail();
+        assertTrue(policy.startsWith(validation * 9 + " (validation item"), policy);
     }
 
     @Test

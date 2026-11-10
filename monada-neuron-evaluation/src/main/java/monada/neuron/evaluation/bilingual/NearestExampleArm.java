@@ -95,23 +95,26 @@ final class NearestExampleArm implements SenseArm {
         }).filter(id -> id >= 0).distinct().sorted().toArray();
 
         int[][] sets = model.sets()[w];
+        var common = new int[sets.length];
+        var union = new int[sets.length];
         var similarity = new double[sets.length];
         for (int i = 0; i < sets.length; i++) {
-            similarity[i] = jaccard(query, unknown.size(), sets[i]);
+            common[i] = common(query, sets[i]);
+            union[i] = query.length + unknown.size() + sets[i].length - common[i];
+            similarity[i] = union[i] == 0 ? 0.0 : (double) common[i] / union[i];
         }
         int[] nearest = nearest(similarity, k);
         LemmaTraining training = model.training();
-        var votes = new double[training.inventory().size()];
-        double highest = 0.0;
-        double total = 0.0;
+        var votes = new long[training.inventory().size()];
+        long total = 0;
+        int highest = nearest[0];
         for (int i : nearest) {
-            highest = Math.max(highest, similarity[i]);
             for (int c = 0; c < votes.length; c++) {
-                votes[c] += training.weights()[i][c];
-                total += training.weights()[i][c];
+                votes[c] += training.units()[i][c];
+                total += training.units()[i][c];
             }
         }
-        if (highest == 0.0) {
+        if (similarity[highest] == 0.0) {
             return new Prediction(training.lowestSupported(), 0.0);
         }
         int top = 0;
@@ -120,7 +123,8 @@ final class NearestExampleArm implements SenseArm {
                 top = c;
             }
         }
-        return new Prediction(top, votes[top] / total * highest);
+        // One division of exact integers, so s equals a registered threshold exactly when the rational does.
+        return new Prediction(top, (double) (votes[top] * common[highest]) / (total * union[highest]));
     }
 
     /** Returns the indices of the {@code k} most similar items, ties by the lower index (training-file order). */
@@ -141,11 +145,8 @@ final class NearestExampleArm implements SenseArm {
         return chosen;
     }
 
-    /**
-     * Jaccard similarity of a query set (known ids plus {@code unknown} distinct tokens absent from training) and a
-     * training set; 0 when both are empty.
-     */
-    private double jaccard(int[] known, int unknown, int[] training) {
+    /** Returns the number of ids shared by two sorted, duplicate-free arrays. */
+    private int common(int[] known, int[] training) {
         int i = 0;
         int j = 0;
         int common = 0;
@@ -160,8 +161,7 @@ final class NearestExampleArm implements SenseArm {
                 j++;
             }
         }
-        int union = known.length + unknown + training.length - common;
-        return union == 0 ? 0.0 : (double) common / union;
+        return common;
     }
 
     @Override
@@ -174,7 +174,7 @@ final class NearestExampleArm implements SenseArm {
                     bytes += 16L + 4L * set.length;
                 }
             }
-            bytes += 8L * model.training().weights().length * model.training().inventory().size();
+            bytes += 8L * model.training().units().length * model.training().inventory().size();
         }
         return bytes;
     }

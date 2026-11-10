@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.OptionalDouble;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.function.ToDoubleFunction;
 
@@ -153,8 +154,12 @@ final class BilingualSenseEvaluation {
         }
     }
 
-    /** Fitted arms, selections and outputs of one pass, computed before the held-out gold is opened. */
-    private record Pipeline(SenseWindows windows, List<SenseArm> arms, long[] fitNanos, Map<Direction, Selection[]> selections,
+    /**
+     * Fitted arms, selections and outputs of one pass, computed before the held-out gold is opened. {@code selections}
+     * and {@code heldOut} hold only the directions that passed step 7; each {@code heldOut} array is indexed by held-out
+     * item, and an item of another direction was never given to the arm ({@code k* = -1}, not answered).
+     */
+    record Pipeline(SenseWindows windows, List<SenseArm> arms, long[] fitNanos, Map<Direction, Selection[]> selections,
                             Map<Direction, long[]> selectNanos, Map<Direction, Outputs[]> heldOut) {
     }
 
@@ -228,6 +233,9 @@ final class BilingualSenseEvaluation {
         checks.add(familyDisjoint(dataset));
         checks.add(nearDuplicate(dataset));
         checks.add(inventoryHash(dataset));
+        if (dataset.scored().testableDirections().isEmpty()) {
+            return globalStop(dataset, checks);
+        }
 
         Pipeline pipeline = pipeline(dataset, List.of("A", "B", "C", "N"));
         Pipeline counterfactual = pipeline(dataset.withHeldOutGold(dataset.heldOutGold().permutedWithin(
@@ -275,8 +283,7 @@ final class BilingualSenseEvaluation {
                         metrics.macro(scope.labels(), outputs, items, scope.senses()),
                         metrics.macroConstant(scope.labels(), items, scope.senses(), scope.clusters())));
                 double lower = bootstrap.lowerBound(values, PERMUTATION_LEVEL);
-                // An undefined bound (NaN) cannot show the control is harmless, so it fails too.
-                boolean fails = !(lower <= 0.0);
+                boolean fails = permutationFails(lower);
                 permutationPassed &= !fails;
                 permutation.add(direction.label() + " " + permuted.arms().get(a).name() + ": lower "
                         + format(lower) + (fails ? " not <= 0 (FAIL)" : " <= 0"));
@@ -290,6 +297,29 @@ final class BilingualSenseEvaluation {
                 "Macro(arm, permuted) - Macro_const, one-sided lower bound at 0.995: " + String.join("; ", permutation)));
         checks.add(budget(directions));
 
+        return new Outcome(checks, withheld(directions, dataset.labelStatus(), checks),
+                SenseDataset.sha256(fingerprint.toString()), resources, metadata(dataset));
+    }
+
+    /**
+     * The global stop of the protocol: no direction met its minimum, so no system is run on this data, the held-out
+     * gold stays sealed and the epic records a data no-go. Only the checks that read no system output and no gold run.
+     */
+    private Outcome globalStop(SenseDataset dataset, List<Check> checks) {
+        checks.add(new MetricsFixture().check());
+        var directions = new ArrayList<DirectionResult>();
+        for (Direction direction : Direction.values()) {
+            directions.add(new DirectionResult(direction, "NOT TESTABLE (" + dataset.labelStatus() + ")",
+                    "global stop: no direction met its step-7 minimum, so no system ran and the held-out gold stayed "
+                            + "sealed", List.of(), Map.of(), Map.of(), OptionalDouble.empty(), List.of()));
+        }
+        var metadata = metadata(dataset);
+        metadata.put("globalStop", "no system was run; data no-go");
+        return new Outcome(checks, withheld(directions, dataset.labelStatus(), checks),
+                SenseDataset.sha256("global stop"), List.of(), metadata);
+    }
+
+    private Map<String, String> metadata(SenseDataset dataset) {
         var metadata = new LinkedHashMap<String, String>();
         metadata.put("protocol", PROTOCOL_ID);
         metadata.put("provenance", dataset.provenance());
@@ -298,12 +328,22 @@ final class BilingualSenseEvaluation {
         metadata.put("armW", "omitted: optional under the protocol; no wave-token result is produced");
         metadata.put("items", "training " + dataset.training().size() + ", validation " + dataset.validation().size()
                 + ", held-out " + dataset.heldOut().size());
-        return new Outcome(checks, withheld(directions, dataset.labelStatus(), checks),
-                SenseDataset.sha256(fingerprint.toString()), resources, metadata);
+        return metadata;
     }
 
-    /** Fits the named arms, selects per direction on validation and answers the held-out split; no held-out gold. */
-    private Pipeline pipeline(SenseDataset dataset, List<String> names) {
+    /**
+     * Returns whether a {@code nc.label-permutation} one-sided lower bound fails the check: it exceeds 0, or it is
+     * undefined ({@code NaN}), which cannot show that the control is harmless.
+     */
+    boolean permutationFails(double lower) {
+        return !(lower <= 0.0);
+    }
+
+    /**
+     * Fits the named arms and, for each direction that passed step 7, selects on validation and answers that
+     * direction's held-out items; a stopped direction is neither fitted, selected nor answered. No held-out gold is read.
+     */
+    Pipeline pipeline(SenseDataset dataset, List<String> names) {
         var windows = new SenseWindows(new SenseTokenizer());
         var arms = new ArrayList<SenseArm>();
         for (String name : names) {
@@ -315,7 +355,8 @@ final class BilingualSenseEvaluation {
                 default -> throw new IllegalArgumentException("unknown arm " + name);
             });
         }
-        List<TrainingExample> training = trainingExamples(dataset.training(), dataset.trainingGold());
+        Set<Direction> testable = dataset.scored().testableDirections();
+        List<TrainingExample> training = trainingExamples(dataset.training(), dataset.trainingGold(), testable);
         var fitNanos = new long[arms.size()];
         for (int a = 0; a < arms.size(); a++) {
             long start = System.nanoTime();
@@ -325,7 +366,7 @@ final class BilingualSenseEvaluation {
         var selections = new LinkedHashMap<Direction, Selection[]>();
         var selectNanos = new LinkedHashMap<Direction, long[]>();
         var heldOut = new LinkedHashMap<Direction, Outputs[]>();
-        for (Direction direction : Direction.values()) {
+        for (Direction direction : testable.stream().sorted().toList()) {
             var validationItems = new ArrayList<SenseItem>();
             var validationGold = new ArrayList<SenseGold>();
             for (int i = 0; i < dataset.validation().size(); i++) {
@@ -345,13 +386,31 @@ final class BilingualSenseEvaluation {
                 chosen[a] = validationItems.isEmpty() ? new Selection(0, 0, 0.0, 0.0, 0.0, false)
                         : selection.select(arms.get(a), validationItems, labels);
                 nanos[a] = System.nanoTime() - start;
-                outputs[a] = predict(arms.get(a), chosen[a], heldOutItems);
+                outputs[a] = answerDirection(arms.get(a), chosen[a], heldOutItems, direction);
             }
             selections.put(direction, chosen);
             selectNanos.put(direction, nanos);
             heldOut.put(direction, outputs);
         }
         return new Pipeline(windows, List.copyOf(arms), fitNanos, selections, selectNanos, heldOut);
+    }
+
+    /** Answers the items of one direction; every other item stays unanswered and is never given to the arm. */
+    private Outputs answerDirection(SenseArm arm, Selection point, List<SenseItem> items, Direction direction) {
+        var choice = new int[items.size()];
+        var confidence = new double[items.size()];
+        var answered = new boolean[items.size()];
+        for (int i = 0; i < items.size(); i++) {
+            if (items.get(i).direction() != direction) {
+                choice[i] = -1;
+                continue;
+            }
+            Prediction prediction = arm.predict(items.get(i), point.configuration());
+            choice[i] = prediction.choice();
+            confidence[i] = prediction.confidence();
+            answered[i] = prediction.answers(point.tau());
+        }
+        return new Outputs(choice, confidence, answered);
     }
 
     /** Answers every item at a selected grid point. */
@@ -576,26 +635,26 @@ final class BilingualSenseEvaluation {
     }
 
     private String lowFrequency(Scope scope) {
-        var lemmaWeight = new double[scope.clusters().length];
-        var senseWeight = new HashMap<Sense, Double>();
+        var lemmaUnits = new long[scope.clusters().length];
+        var senseUnits = new HashMap<Sense, Long>();
         for (int s = 0; s < scope.items().length; s++) {
             if (scope.labels().kind()[s] != SenseMetrics.ANS) {
                 continue;
             }
             int lemma = scope.labels().lemma()[s];
             int mask = scope.labels().mask()[s];
-            double share = 1.0 / Integer.bitCount(mask);
-            lemmaWeight[lemma] += 1.0;
+            long perItem = LemmaTraining.unitsPerItem(scope.clusters()[lemma]);
+            lemmaUnits[lemma] += perItem;
             for (int k = 0; k < scope.clusters()[lemma]; k++) {
                 if ((mask & (1 << k)) != 0) {
-                    senseWeight.merge(new Sense(lemma, k), share, Double::sum);
+                    senseUnits.merge(new Sense(lemma, k), perItem / Integer.bitCount(mask), Long::sum);
                 }
             }
         }
         var gates = new SenseGates();
         var low = new ArrayList<String>();
         for (Sense sense : scope.senses()) {
-            if (gates.lowFrequency(senseWeight.getOrDefault(sense, 0.0), lemmaWeight[sense.lemma()])) {
+            if (gates.lowFrequency(senseUnits.getOrDefault(sense, 0L), lemmaUnits[sense.lemma()])) {
                 low.add(scope.lemmas().get(sense.lemma()) + "#" + sense.cluster());
             }
         }
@@ -708,7 +767,7 @@ final class BilingualSenseEvaluation {
     }
 
     private Check heldOutCounterfactual(Pipeline pipeline, Pipeline counterfactual) {
-        for (Direction direction : Direction.values()) {
+        for (Direction direction : pipeline.heldOut().keySet()) {
             Outputs[] a = pipeline.heldOut().get(direction);
             Outputs[] b = counterfactual.heldOut().get(direction);
             for (int arm = 0; arm < a.length; arm++) {
@@ -730,7 +789,7 @@ final class BilingualSenseEvaluation {
         int count = 0;
         for (int i = 0; i < dataset.heldOut().size(); i++) {
             SenseItem input = dataset.heldOut().get(i).input();
-            if (input.hasInventory()) {
+            if (input.hasInventory() || !pipeline.heldOut().containsKey(input.direction())) {
                 continue;
             }
             count++;
@@ -749,7 +808,8 @@ final class BilingualSenseEvaluation {
         int checked = 0;
         for (List<DatasetItem> split : List.of(dataset.validation(), dataset.heldOut())) {
             for (DatasetItem item : split) {
-                if (!item.input().hasInventory()) {
+                if (!item.input().hasInventory()
+                        || !dataset.scored().testableDirections().contains(item.input().direction())) {
                     continue;
                 }
                 for (int c = 0; c < neuron.configurations(); c++) {
@@ -776,7 +836,8 @@ final class BilingualSenseEvaluation {
         var oracle = new NeuronPolicyOracle();
         int checked = 0;
         for (DatasetItem item : dataset.validation()) {
-            if (!item.input().hasInventory()) {
+            if (!item.input().hasInventory()
+                    || !dataset.scored().testableDirections().contains(item.input().direction())) {
                 continue;
             }
             for (int c = 0; c < neuron.configurations(); c++) {
@@ -829,10 +890,12 @@ final class BilingualSenseEvaluation {
         return permuted;
     }
 
-    private List<TrainingExample> trainingExamples(List<DatasetItem> items, List<SenseGold> gold) {
+    private List<TrainingExample> trainingExamples(List<DatasetItem> items, List<SenseGold> gold,
+                                                   Set<Direction> directions) {
         var examples = new ArrayList<TrainingExample>();
         for (int i = 0; i < items.size(); i++) {
-            if (gold.get(i) instanceof SenseGold.Answerable answerable && items.get(i).input().hasInventory()) {
+            if (gold.get(i) instanceof SenseGold.Answerable answerable && items.get(i).input().hasInventory()
+                    && directions.contains(items.get(i).input().direction())) {
                 examples.add(new TrainingExample(items.get(i).input(), answerable));
             }
         }

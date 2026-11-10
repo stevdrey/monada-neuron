@@ -92,6 +92,17 @@ alike; none changes a rule, grid, margin or gate.
   fails that check.
 - **Oracle indices.** In `n.policy-equivalence` each hypothesis's `SignalEvidence` entries carry `0..m−1`, `m` its own
   cue count.
+- **Exact gold weights.** Every gate the harness computes from gold, and every arm tie-break and threshold on `1/|G|`
+  weights, uses exact integer units of `1 / lcm(1..K)`: training weight, low frequency, A's and B's ties, B's `s`, C's
+  posterior (computed with integers, so exact ties go to the lower ordinal), N's `n(c) < 2` and the sign of `d`
+  (`n(c)` is an item count, since each item's weights sum to 1). Summed as doubles, these depend on item order and
+  miss inclusive boundaries. The reported metrics (Macro and the like) remain floating point and enter only margins;
+  N's score stays floating point because it must equal the core policy bit for bit; the offline projection gate takes
+  its pilot weight as given.
+- **Stopped directions.** A direction that stopped at step 7 is neither fitted, selected nor answered, in any pipeline.
+  When no direction passes (the global stop), no system runs and the held-out gold stays sealed. A direction that
+  passed step 7 but cannot test H2 still runs and reports H1 and the other metrics; the protocol does not stop it, and
+  its verdict is `NOT TESTABLE`.
 - **Lemma without training.** A and C answer the lowest ordinal with `s = 0`; the step-7 gates keep such a lemma out of
   scoring.
 - **Cost.** Per-item latency includes tokenization (the window cache is cleared before each measured item); fit time is

@@ -32,19 +32,15 @@ final class SenseGates {
     static final double Z80 = 1.2815515655446004;
     /** Minimum pass-A agreement (inter-agent consistency under v2). */
     static final double MIN_ALPHA = 0.67;
-    /** Low-frequency share threshold. */
-    static final double LOW_FREQUENCY = 0.20;
     /** Minimum held-out {@code UNA} or {@code OOI} families of scored lemmas for H2. */
     static final int MIN_ABSTENTION_ITEMS = 30;
     /** Minimum {@code ANS} training weight per scored cluster. */
-    static final double MIN_TRAINING_WEIGHT = 10.0;
+    static final int MIN_TRAINING_WEIGHT = 10;
     /** Minimum {@code ANS} validation items per scored lemma and per direction. */
     static final int MIN_VALIDATION_PER_LEMMA = 10;
     static final int MIN_VALIDATION_PER_DIRECTION = 60;
     /** Minimum scored lemmas per direction, each with at least two scored clusters. */
     static final int MIN_LEMMAS = 4;
-    /** v2 {@code annotation.unlabeled}: maximum share of {@code UNLABELED} items. */
-    static final double MAX_UNLABELED = 0.02;
 
     /** Text gate: at least 80 training, 40 validation and 60 held-out candidate families. */
     boolean text(int training, int validation, int heldOut) {
@@ -86,9 +82,9 @@ final class SenseGates {
         return heldOutFamilies >= MIN_PER_SENSE;
     }
 
-    /** Low-frequency: the cluster holds less than 20% of its lemma's gold {@code ANS} weight. */
-    boolean lowFrequency(double clusterWeight, double lemmaWeight) {
-        return lemmaWeight > 0.0 && clusterWeight / lemmaWeight < LOW_FREQUENCY;
+    /** Low-frequency: the cluster holds less than 20% of its lemma's gold {@code ANS} weight, compared exactly. */
+    boolean lowFrequency(long clusterUnits, long lemmaUnits) {
+        return lemmaUnits > 0 && clusterUnits * 5 < lemmaUnits;
     }
 
     /** Abstention items: H2 is testable only with at least 30 held-out {@code UNA} or {@code OOI} families. */
@@ -96,9 +92,12 @@ final class SenseGates {
         return families >= MIN_ABSTENTION_ITEMS;
     }
 
-    /** Training data: a scored cluster stays scored only with {@code ANS} training weight of at least 10. */
-    boolean trainingWeight(double weight) {
-        return weight >= MIN_TRAINING_WEIGHT;
+    /**
+     * Training data: a scored cluster stays scored only with {@code ANS} training weight of at least 10, compared in
+     * exact gold units ({@link LemmaTraining#unitsPerItem}).
+     */
+    boolean trainingWeight(long units, long unitsPerItem) {
+        return units >= MIN_TRAINING_WEIGHT * unitsPerItem;
     }
 
     /** Validation data per lemma: at least 10 {@code ANS} validation items. */
@@ -125,17 +124,18 @@ final class SenseGates {
     ScoredSet scoredSet(List<DatasetItem> training, List<SenseGold> trainingGold, List<DatasetItem> validation,
                         List<SenseGold> validationGold, List<DatasetItem> heldOut, List<SenseGold> heldOutGold,
                         Set<String> dropped) {
-        var trainingWeight = new HashMap<String, double[]>();
+        var trainingUnits = new HashMap<String, long[]>();
         var inventories = new LinkedHashMap<String, SenseInventory>();
         for (int i = 0; i < training.size(); i++) {
             SenseItem input = training.get(i).input();
             if (input.hasInventory() && trainingGold.get(i) instanceof SenseGold.Answerable gold) {
                 inventories.putIfAbsent(input.lemmaKey(), input.inventory());
-                double[] weights = trainingWeight.computeIfAbsent(input.lemmaKey(),
-                        _ -> new double[input.inventory().size()]);
-                for (int k = 0; k < weights.length; k++) {
+                long[] units = trainingUnits.computeIfAbsent(input.lemmaKey(),
+                        _ -> new long[input.inventory().size()]);
+                long share = LemmaTraining.unitsPerItem(units.length) / gold.size();
+                for (int k = 0; k < units.length; k++) {
                     if (gold.contains(k)) {
-                        weights[k] += 1.0 / gold.size();
+                        units[k] += share;
                     }
                 }
             }
@@ -167,7 +167,8 @@ final class SenseGates {
             var scored = new ArrayList<Integer>();
             for (int k = 0; k < entry.getValue().size(); k++) {
                 int families = heldOutFamilies.getOrDefault(key + "#" + k, Set.of()).size();
-                if (minimumPerSense(families) && trainingWeight(trainingWeight.get(key)[k])) {
+                if (minimumPerSense(families) && trainingWeight(trainingUnits.get(key)[k],
+                        LemmaTraining.unitsPerItem(entry.getValue().size()))) {
                     scored.add(k);
                 }
             }
@@ -206,6 +207,6 @@ final class SenseGates {
 
     /** v2 {@code annotation.unlabeled}: a lemma with more than 2% {@code UNLABELED} step-6 items is dropped. */
     boolean unlabeled(int unlabeled, int items) {
-        return items > 0 && unlabeled <= MAX_UNLABELED * items;
+        return items > 0 && unlabeled * 50L <= items;
     }
 }

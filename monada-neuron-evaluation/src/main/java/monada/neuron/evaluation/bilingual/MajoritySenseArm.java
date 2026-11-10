@@ -41,16 +41,16 @@ final class MajoritySenseArm implements SenseArm {
     public void fit(List<TrainingExample> training) {
         majority.clear();
         for (var entry : LemmaTraining.group(training).entrySet()) {
-            double[] weights = entry.getValue().clusterWeights();
-            double total = 0.0;
+            long[] units = entry.getValue().clusterUnits();
+            long total = 0;
             int best = 0;
-            for (int c = 0; c < weights.length; c++) {
-                total += weights[c];
-                if (weights[c] > weights[best]) {
+            for (int c = 0; c < units.length; c++) {
+                total += units[c];
+                if (units[c] > units[best]) {
                     best = c;
                 }
             }
-            majority.put(entry.getKey(), new Prediction(best, weights[best] / total));
+            majority.put(entry.getKey(), new Prediction(best, (double) units[best] / total));
         }
     }
 
