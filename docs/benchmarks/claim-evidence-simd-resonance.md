@@ -151,7 +151,7 @@ public class SemanticCheck {
 ```
 
 ```bash
-java --add-modules jdk.incubator.vector \
+"$TOOLCHAIN_JAVA" --add-modules jdk.incubator.vector \
   -cp build/classes/java/main:monada-neuron-evaluation/build/classes/java/main "$OUT/SemanticCheck.java"
 ```
 
