@@ -1,0 +1,13 @@
+diff --git a/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java b/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
+index 2af372e..fba0051 100644
+--- a/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
++++ b/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
+@@ -893,7 +893,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
+     }
+ 
+     private void rethrowDeterministicFailure(Throwable primary, List<Throwable> concurrentFailures) {
+-        for (var failure : concurrentFailures) {
++        for (var failure : concurrentFailures.reversed()) {
+             if (failure != primary) {
+                 primary.addSuppressed(failure);
+             }
