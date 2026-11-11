@@ -47,7 +47,7 @@ PR #35 (committed, unchanged): Intel Core i7-6500U, Temurin 26+35. This replay: 
 Values are JMH mean ± 99.9% error over 9 iterations. The ratio range uses the minimum and maximum iteration of each
 side.
 
-| Metric | Pairs | Scalar | Vector | Ratio Scalar/Vector | Result |
+| Metric | Pairs | Scalar | Vector | Speedup Scalar/Vector (latency only) | Result |
 | :--- | ---: | ---: | ---: | ---: | :--- |
 | PR #35 latency, ns/op | 1,000 | 78,002.71 | 12,620.64 | 6.18 | better |
 | PR #35 latency, ns/op | 10,000 | 956,206.48 | 142,138.04 | 6.73 | better |

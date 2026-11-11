@@ -32,9 +32,9 @@ differ from `JAVA_HOME` or the `java` on `PATH`.
 
 ### Results
 
-| Metric | Size | Baseline | Variant | Ratio | Result |
+| Metric | Size | Baseline | Variant | Gain (direction) | Result |
 | :--- | ---: | ---: | ---: | ---: | :--- |
-| (metric, unit) | (n) | (value ± error or range) | (value ± error or range) | (variant/baseline) | (better, worse, no measurable difference, inconclusive) |
+| (metric, unit) | (n) | (value ± error or range) | (value ± error or range) | (baseline/variant for lower-is-better such as latency; variant/baseline for higher-is-better such as throughput; variant minus baseline for bounded scores such as recall; state which) | (better, worse, no measurable difference, inconclusive) |
 
 ### Knowledge, recall, and ranking evaluations only
 

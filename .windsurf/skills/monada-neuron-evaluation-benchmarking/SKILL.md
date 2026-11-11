@@ -128,7 +128,11 @@ The claim's author fills every field, or writes `pending: <reason>`. A reviewer 
    load at run time.
 7. **Method**: warm-up, measurement iterations, forks or repetitions, and mode. Non-JMH system runs alternate
    baseline and variant over at least five runs. JMH keeps its forks and error statistics.
-8. **Results and variability**: per side, central value with error or range, not a single number.
+8. **Results and variability**: per side, central value with error or range, not a single number. A gain is a
+   factor above 1 when the variant is better: baseline/variant for lower-is-better metrics (latency, allocation,
+   memory) and variant/baseline for higher-is-better metrics (throughput). Bounded scores such as recall or MRR are
+   compared as a difference, variant minus baseline. Name the direction in the column heading, for example
+   `Speedup Scalar/Vector`, so a gain cannot be read inverted.
 9. **Semantic check**: how the variant was shown to produce the reference result on the measured workload.
 10. **Work performed**: a counter, checksum, or terminal-status assertion showing that the timed region did the
     claimed work.
