@@ -34,13 +34,15 @@ declare -A expected=(
   [m1-first-completed-failure]=MATCHES_SEQUENTIAL_ORACLE
   [m2-no-sibling-cancel]=NO_RUNNABLE_TASK_AFTER_END
   [m3-unbounded-window]=BOUNDED_IN_ORDER_SUBMISSION
-  [m4-reversed-suppressed]=SUPPRESSES_ONLY_LATER_FAILURES
+  [m4-reversed-suppressed]=SUPPRESSES_COMPLETED_LATER_FAILURES
   [m5-lost-refill]=NO_WAIT_WITHOUT_PENDING_WORK
+  [m6-no-suppressed]=SUPPRESSES_COMPLETED_LATER_FAILURES
 )
-held=(MATCHES_SEQUENTIAL_ORACLE SUPPRESSES_ONLY_LATER_FAILURES BOUNDED_IN_ORDER_SUBMISSION
+held=(MATCHES_SEQUENTIAL_ORACLE SUPPRESSES_COMPLETED_LATER_FAILURES BOUNDED_IN_ORDER_SUBMISSION
       NO_RUNNABLE_TASK_AFTER_END NO_WAIT_WITHOUT_PENDING_WORK)
 if [ ${#selected[@]} -eq 0 ]; then
-  selected=(m1-first-completed-failure m2-no-sibling-cancel m3-unbounded-window m4-reversed-suppressed m5-lost-refill)
+  selected=(m1-first-completed-failure m2-no-sibling-cancel m3-unbounded-window m4-reversed-suppressed m5-lost-refill
+            m6-no-suppressed)
 fi
 
 work=$(mktemp -d)

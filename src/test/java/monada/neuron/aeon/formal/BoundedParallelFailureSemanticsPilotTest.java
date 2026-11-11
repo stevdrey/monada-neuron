@@ -9,9 +9,11 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -92,6 +94,30 @@ class BoundedParallelFailureSemanticsPilotTest {
                 () -> assertEquals(counterexample.events(), replay.events()),
                 () -> assertEquals(ScheduleRun.render(counterexample.outcome()), ScheduleRun.render(replay.outcome())),
                 () -> assertTrue(FailureSemanticsProperty.EVERY_LATER_FAILURE_IS_SUPPRESSED.violation(replay).isPresent()));
+    }
+
+    @Test
+    void aCoordinatorThatNeverEndsIsReportedAsAViolation() {
+        // The run a coordinator produces when it ignores the harness's interrupt: control lost, no outcome.
+        var neverEnded = new ScheduleRun(
+                new ScheduleWorkload(2, 2, 0b01),
+                new int[] {0},
+                List.of("execute(task 0)", "the coordinator neither waited nor ended within 10 s"),
+                List.of(),
+                List.of(),
+                false,
+                true,
+                List.of(),
+                new Outcome.DidNotEnd(),
+                new Outcome.Threw(new InputFailure(0)));
+
+        for (var property : FailureSemanticsProperty.values()) {
+            assertDoesNotThrow(() -> property.violation(neverEnded), property.name());
+        }
+        assertAll(
+                () -> assertTrue(FailureSemanticsProperty.NO_WAIT_WITHOUT_PENDING_WORK.violation(neverEnded).isPresent()),
+                () -> assertTrue(FailureSemanticsProperty.MATCHES_SEQUENTIAL_ORACLE.violation(neverEnded).isPresent()),
+                () -> assertTrue(neverEnded.describe().contains("coordinate: did not end")));
     }
 
     private static void write(String name, String text) {

@@ -38,28 +38,44 @@ enum FailureSemanticsProperty {
                             : Optional.of("oracle threw InputFailure(" + expectedInput + "), coordinate "
                                     + ScheduleRun.render(run.outcome()));
                 }
+                // The oracle runs synchronously, so it always ends; keep the switch exhaustive anyway.
+                case Outcome.DidNotEnd _ -> Optional.of("the sequential oracle did not end");
             };
         }
     },
 
-    /** ADR 0016 decision 5: only later, completed concurrent failures are attached as suppressed. */
-    SUPPRESSES_ONLY_LATER_FAILURES(true,
-            "every suppressed exception belongs to a failing input after the thrown one, appears once, and the "
-                    + "suppressed exceptions are in input order") {
+    /**
+     * ADR 0016 decision 5: the subsequent completed concurrent failures are attached as suppressed, in input order.
+     * In this model no task completes while the coordinator reconciles, so the failures that had completed when
+     * {@code coordinate} threw are exactly those in the run's completion order.
+     */
+    SUPPRESSES_COMPLETED_LATER_FAILURES(true,
+            "the suppressed exceptions are exactly the failures of later inputs whose tasks had completed when "
+                    + "coordinate threw, each once, in input order") {
         @Override
         Optional<String> violation(ScheduleRun run) {
             if (!(run.outcome() instanceof Outcome.Threw(InputFailure primary))) {
                 return Optional.empty();
             }
-            int previous = primary.inputIndex();
+            var expected = new ArrayList<Integer>();
+            for (int task : run.completionOrder()) {
+                if (task > primary.inputIndex() && run.workload().fails(task)) {
+                    expected.add(task);
+                }
+            }
+            expected.sort(null);
+            var actual = new ArrayList<Integer>();
             for (var suppressed : primary.getSuppressed()) {
-                if (!(suppressed instanceof InputFailure later) || later.inputIndex() <= previous) {
+                if (!(suppressed instanceof InputFailure later)) {
                     return Optional.of("thrown InputFailure(" + primary.inputIndex() + ") suppresses "
                             + Arrays.toString(primary.getSuppressed()));
                 }
-                previous = later.inputIndex();
+                actual.add(later.inputIndex());
             }
-            return Optional.empty();
+            return actual.equals(expected)
+                    ? Optional.empty()
+                    : Optional.of("thrown InputFailure(" + primary.inputIndex() + ") suppresses inputs " + actual
+                            + ", but the later failures completed before it was thrown are " + expected);
         }
     },
 

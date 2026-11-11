@@ -1,5 +1,6 @@
 import java.security.MessageDigest
 import java.util.HexFormat
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 
 plugins {
     `java-library`
@@ -278,7 +279,7 @@ tasks.register<Test>("formalPilotCheck") {
     testLogging {
         events("passed", "failed")
         showStandardStreams = true
-        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        exceptionFormat = TestExceptionFormat.FULL
     }
 }
 

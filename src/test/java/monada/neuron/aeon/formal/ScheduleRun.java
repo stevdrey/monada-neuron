@@ -12,11 +12,12 @@ import java.util.List;
  * @param choices the scheduler choices that produced this run; replaying them reproduces it
  * @param events the schedule in code terms, in the order it happened
  * @param completionOrder input indexes in the order their tasks completed
- * @param submissionViolations submissions out of input order, repeated, or above the window
+ * @param submissionViolations submissions beyond the inputs or above the window, and tasks that propagated
+ *     another input than their submission position
  * @param stuckWithoutPendingWork whether the coordinator waited for a completion while no task could run
  * @param controlLost whether the coordinator neither waited nor finished within the control timeout
  * @param runnableAfterEnd submitted tasks that could still start after {@code coordinate} ended
- * @param outcome what {@code coordinate} returned or threw
+ * @param outcome what {@code coordinate} returned or threw, or {@link Outcome.DidNotEnd} if it never ended
  * @param oracle what {@code DeterministicAeonCoordinator} returned or threw on the same workload
  */
 record ScheduleRun(
@@ -47,6 +48,9 @@ record ScheduleRun(
 
         /** {@code coordinate} threw. */
         record Threw(Throwable failure) implements Outcome {}
+
+        /** {@code coordinate} neither returned nor threw, even after the harness interrupted and joined it. */
+        record DidNotEnd() implements Outcome {}
     }
 
     /** Renders the run as a readable counterexample. */
@@ -73,6 +77,7 @@ record ScheduleRun(
                         .toList();
                 yield "threw " + name(failure) + " suppressed=" + suppressed;
             }
+            case Outcome.DidNotEnd _ -> "did not end";
         };
     }
 

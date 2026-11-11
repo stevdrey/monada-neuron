@@ -1,11 +1,11 @@
 formal pilot #202: BoundedParallelAeonCoordinator direct-path failure semantics, inputs 1..5, maxParallelism 2..inputs+1, every failure mask
 java.version=27 java.vm=OpenJDK 64-Bit Server VM 27+35 processors=16
-workloads=258 schedules=360328 longestSchedule=10 events exploreMillis=26759
+workloads=258 schedules=360328 longestSchedule=10 events exploreMillis=30952
 
 MATCHES_SEQUENTIAL_ORACLE: HOLDS within bounds (violating schedules: 0)
   coordinate returns exactly the sequential oracle's results in input order, or throws the exception of the same input as the oracle (the earliest failing input)
-SUPPRESSES_ONLY_LATER_FAILURES: HOLDS within bounds (violating schedules: 0)
-  every suppressed exception belongs to a failing input after the thrown one, appears once, and the suppressed exceptions are in input order
+SUPPRESSES_COMPLETED_LATER_FAILURES: HOLDS within bounds (violating schedules: 0)
+  the suppressed exceptions are exactly the failures of later inputs whose tasks had completed when coordinate threw, each once, in input order
 BOUNDED_IN_ORDER_SUBMISSION: HOLDS within bounds (violating schedules: 0)
   no more tasks are submitted than there are inputs, no submission leaves more than maxParallelism tasks unfinished, and every task that runs propagates the input of its submission position
 NO_RUNNABLE_TASK_AFTER_END: HOLDS within bounds (violating schedules: 0)

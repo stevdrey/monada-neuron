@@ -11,7 +11,7 @@
 | Last confirmed at | `main` at `9861b56b81404c3a2c5908daa38a78809dc428e7` (product code is unchanged by this pilot) |
 | Date | 2026-11-10 |
 | Consumer | [#204](https://github.com/stevdrey/monada-neuron/issues/204) (go/no-go) |
-| Result | All five ADR 0016 properties hold on every schedule within the bounds. Both deliberately false properties and all five scratch breaks are caught. No finding against the code. |
+| Result | All five ADR 0016 properties hold on every schedule within the bounds. Both deliberately false properties and all six scratch breaks are caught. No finding against the code. |
 
 **What this pilot claims.** Within the model and bounds stated below, every schedule of the direct path satisfies the
 five properties in "Properties". **What it does not claim.** It is not a proof that the coordinator, or the
@@ -27,7 +27,7 @@ cognitive boundary, concurrency model, contract, data layout, or dependency, so 
 ```bash
 ./gradlew formalPilotCheck                          # bound 4: 17,500 schedules, 2 to 4 s of exploration
 ./gradlew formalPilotCheck -PformalPilotMaxInputs=5 # bound 5: 360,328 schedules, 27 to 88 s (host load)
-scripts/formal-pilot-mutants.sh                     # baseline plus five scratch breaks in a temporary copy
+scripts/formal-pilot-mutants.sh                     # baseline plus six scratch breaks in a temporary copy
 ```
 
 `formalPilotCheck` writes `build/reports/formal-pilot/exhaustive-max-inputs-<n>.txt` and `negative-controls.txt`.
@@ -96,7 +96,9 @@ inside it. Every other step is the real coordinator's.
 - The coordinator thread is not interrupted by its caller.
 
 Under these assumptions the explorer also requires that the coordinator never waits while no task can run, and that
-it ends; a run that neither waits nor ends within 10 seconds counts as a violation.
+it ends; a run that neither waits nor ends within 10 seconds counts as a violation. The harness then interrupts the
+coordinator and joins it for up to 10 more seconds; if it still has not ended, its outcome is recorded as `did not
+end` and the run is reported like any other counterexample.
 
 ### Bounds (FV6, SC6)
 
@@ -137,7 +139,7 @@ Each property is a plain sentence; the code is `FailureSemanticsProperty` in
 | Property | Source | Sentence | Harm if broken |
 | :--- | :--- | :--- | :--- |
 | `MATCHES_SEQUENTIAL_ORACLE` | ADR 0016 decisions 3, 5, 6 | `coordinate` returns exactly the sequential oracle's results in input order, or throws the exception of the same input as the oracle (the earliest failing input). | The result or the reported failure would depend on thread timing. |
-| `SUPPRESSES_ONLY_LATER_FAILURES` | Decision 5 | Every suppressed exception belongs to a failing input after the thrown one, appears once, and the suppressed exceptions are in input order. | Diagnostics would differ between runs in order or content beyond which tasks had completed. |
+| `SUPPRESSES_COMPLETED_LATER_FAILURES` | Decision 5 | The suppressed exceptions are exactly the failures of later inputs whose tasks had completed when `coordinate` threw, each once, in input order. In this model no task completes while the coordinator reconciles, so those are the later failing inputs in the run's completion order. | Diagnostics of concurrent failures would be lost, duplicated, or in an order that depends on thread timing. |
 | `BOUNDED_IN_ORDER_SUBMISSION` | Decision 1 | No more tasks are submitted than there are inputs, no submission leaves more than `maxParallelism` tasks unfinished, and every task that runs propagates the input matching its submission position. A task cancelled before it runs is not checked for its input; its position is still counted. | A caller-supplied executor would receive more work than the configured bound. |
 | `NO_RUNNABLE_TASK_AFTER_END` | Decision 5 | When `coordinate` returns or throws, every submitted task has completed or been cancelled, so none can still start. | Discarded work would keep using CPU after the call failed. |
 | `NO_WAIT_WITHOUT_PENDING_WORK` | Progress under the fairness assumptions | The coordinator never waits for a completion while no submitted task can run, and always ends. | The calling cognitive cycle would hang. |
@@ -177,11 +179,12 @@ checkout is never edited. Each property is shown failing on at least one break.
 
 | Mutant | Change | Target property | Result | Smallest counterexample |
 | :--- | :--- | :--- | :--- | :--- |
-| `m1-first-completed-failure` | Throw a failure as soon as its task completes | `MATCHES_SEQUENTIAL_ORACLE` | Killed (3,499 schedules) | 2 inputs, both fail; task 1 completes first; `InputFailure(1)` is thrown where the oracle throws `InputFailure(0)`. |
+| `m1-first-completed-failure` | Throw a failure as soon as its task completes | `MATCHES_SEQUENTIAL_ORACLE` | Killed (3,499 schedules), also `SUPPRESSES_COMPLETED_LATER_FAILURES` (3,904) | 2 inputs, both fail; task 1 completes first; `InputFailure(1)` is thrown where the oracle throws `InputFailure(0)`. |
 | `m2-no-sibling-cancel` | Drop `cancelTasks` on the failure path | `NO_RUNNABLE_TASK_AFTER_END` | Killed (6,446) | 2 inputs, input 0 fails first; task 1 is still runnable after `coordinate` threw. |
 | `m3-unbounded-window` | Submit every input at once | `BOUNDED_IN_ORDER_SUBMISSION` | Killed (6,376) | 3 inputs, window 2; 3 tasks in flight after `execute(task 2)`. |
-| `m4-reversed-suppressed` | Attach suppressed failures in reverse order | `SUPPRESSES_ONLY_LATER_FAILURES` | Killed (2,997) | 3 inputs, all fail; `InputFailure(0)` suppresses `[2, 1]`. |
+| `m4-reversed-suppressed` | Attach suppressed failures in reverse order | `SUPPRESSES_COMPLETED_LATER_FAILURES` | Killed (2,997) | 3 inputs, all fail; `InputFailure(0)` suppresses `[2, 1]`. |
 | `m5-lost-refill` | Never submit the last input | `NO_WAIT_WITHOUT_PENDING_WORK` | Killed (184), also `MATCHES_SEQUENTIAL_ORACLE` (184) | 3 inputs, window 2, no failure; after tasks 0 and 1 complete, the coordinator waits with nothing to run. |
+| `m6-no-suppressed` | Drop `addSuppressed` entirely | `SUPPRESSES_COMPLETED_LATER_FAILURES` | Killed (9,245) | 2 inputs, both fail; task 1 completes, then task 0; `InputFailure(0)` is thrown with no suppressed exception where `[1]` had completed. |
 
 The baseline (no patch) passes in the same run. Full output: [`logs/mutants.txt`](formal-pilot-aeon-failure-semantics-v1/logs/mutants.txt).
 
@@ -189,6 +192,13 @@ The baseline (no patch) passes in the same run. Full output: [`logs/mutants.txt`
 
 None. On unmodified code no property is violated within the bounds, so there is no counterexample to replay and no
 Issue to open against the coordinator.
+
+**Correction during review.** The first version of the suppression property only checked that the suppressed
+exceptions were later, distinct, and in order, so an empty list always passed: a scratch break that drops
+`addSuppressed` entirely survived it (found by the automated review of PR #207). The property now requires the
+suppressed list to equal the completed later failures, and mutant `m6-no-suppressed` shows it. The same review found
+that a coordinator that ignores the harness's interrupt left the outcome empty and aborted reporting; it is now an
+explicit `did not end` outcome, covered by the test `aCoordinatorThatNeverEndsIsReportedAsAViolation`.
 
 ### Observations outside the properties
 
@@ -198,8 +208,9 @@ These are not violations of ADR 0016, which speaks only of input-task failures, 
    throws `IllegalStateException` without cancelling tasks still in flight.
 2. If the executor rejects a refill submission (line 824), the exception leaves earlier tasks in flight uncancelled.
 
-Both leave discarded work running after the call ends. Whether that is acceptable is a question for the owner of
-ADR 0016; it would need a separate Issue before any change.
+Both leave discarded work running after the call ends. Neither has been reproduced by a test. Whether that is
+acceptable is a question for the owner of ADR 0016, tracked in
+[#208](https://github.com/stevdrey/monada-neuron/issues/208).
 
 ## Cost, portability, and maintainability (FV8)
 
@@ -208,8 +219,8 @@ ADR 0016; it would need a separate Issue before any change.
 | Dependencies | None added. JUnit and the JDK only; no runtime, CI, or published-artifact change. |
 | Tool availability | Runs wherever `./gradlew test` runs. No download, network access, or second language. |
 | Runtime | One command; bound 4 explores in 2 to 4 s, bound 5 in 27 to 88 s, both under the audit's five-minute limit. |
-| Portability | Relies on `Thread.getState()` and an empty-queue check to detect that the coordinator waits; both are standard Java SE. A 10-second control timeout turns a harness that loses control into a reported violation, not a hang. |
-| Size | About 1,000 lines of test code in 7 files, 5 mutant patches, one script. |
+| Portability | Relies on `Thread.getState()` and an empty-queue check to detect that the coordinator waits; both are standard Java SE. A 10-second control timeout turns a harness that loses control into a reported violation, not a hang; a coordinator that also ignores the interrupt is reported as `did not end`. |
+| Size | About 1,050 lines of test code in 7 files, 6 mutant patches, one script. |
 | Maintenance risk | The harness reads one private detail reflectively: the completion queue captured by the direct task. A refactoring of `submitDirectTasks` can break it; the harness then fails with a message that names the method. Line numbers in the correspondence table need refreshing when the coordinator changes. Nothing checks staleness automatically before #204 decides. |
 | Gate status | Not a CI gate and not part of `./gradlew test`. Adoption, wider use, or a CI job is #204's decision. |
 

@@ -126,6 +126,12 @@ final class ScheduledCoordinatorRun implements Executor {
             complete(task, "while the coordinator waits in completedTaskIndexes.take()");
         }
 
+        // Read once: a coordinator that ignored the interrupt may still set it later.
+        var observed = outcome;
+        if (observed == null) {
+            observed = new ScheduleRun.Outcome.DidNotEnd();
+            record("coordinate did not end after the interrupt and a " + CONTROL_TIMEOUT.toSeconds() + " s join");
+        }
         var runnableAfterEnd = new ArrayList<Integer>();
         synchronized (this) {
             for (int task = 0; task < submitted.size(); task++) {
@@ -146,7 +152,7 @@ final class ScheduledCoordinatorRun implements Executor {
                     stuck,
                     controlLost,
                     runnableAfterEnd,
-                    outcome,
+                    observed,
                     oracle);
         }
     }
