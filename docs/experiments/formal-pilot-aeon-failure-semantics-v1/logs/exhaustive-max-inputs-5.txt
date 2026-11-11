@@ -1,0 +1,302 @@
+formal pilot #202: BoundedParallelAeonCoordinator direct-path failure semantics, inputs 1..5, maxParallelism 2..inputs+1, every failure mask
+java.version=27 java.vm=OpenJDK 64-Bit Server VM 27+35 processors=16
+workloads=258 schedules=360328 longestSchedule=10 events exploreMillis=28632
+
+MATCHES_SEQUENTIAL_ORACLE: HOLDS within bounds (violating schedules: 0)
+  coordinate returns exactly the sequential oracle's results in input order, or throws the exception of the same input as the oracle (the earliest failing input)
+SUPPRESSES_COMPLETED_LATER_FAILURES: HOLDS within bounds (violating schedules: 0)
+  the suppressed exceptions are exactly the failures of later inputs whose tasks had completed when coordinate threw, each once, in input order
+BOUNDED_IN_ORDER_SUBMISSION: HOLDS within bounds (violating schedules: 0)
+  no more tasks are submitted than there are inputs, no submission leaves more than maxParallelism tasks unfinished, and every task that runs propagates the input of its submission position
+NO_RUNNABLE_TASK_AFTER_END: HOLDS within bounds (violating schedules: 0)
+  when coordinate returns or throws, every submitted task has completed or been cancelled, so none can still start
+NO_WAIT_WITHOUT_PENDING_WORK: HOLDS within bounds (violating schedules: 0)
+  the coordinator never waits for a completion while no submitted task can run, and always ends
+EVERY_LATER_FAILURE_IS_SUPPRESSED: REFUTED as expected (violating schedules: 87276)
+  (deliberately false) every failing input after the thrown one is attached as suppressed
+FIRST_COMPLETED_FAILURE_IS_THROWN: REFUTED as expected (violating schedules: 147104)
+  (deliberately false) the thrown exception is the failure that completed first
+
+smallest counterexample, EVERY_LATER_FAILURE_IS_SUPPRESSED ((deliberately false) every failing input after the thrown one is attached as suppressed)
+violation: failing input 1 is not suppressed by InputFailure(0)
+workload: inputs=2 maxParallelism=2 failing={0,1}
+replay choices: [0, 0, 0]
+schedule:
+  1. execute(task 0)
+  2. execute(task 1)
+  3. task 0 completes, propagate throws InputFailure(0), while the coordinator waits in completedTaskIndexes.take()
+  4. task 1 is cancelled before it runs
+coordinate: threw InputFailure(0) suppressed=[]
+sequential oracle: threw InputFailure(0) suppressed=[]
+
+smallest counterexample, FIRST_COMPLETED_FAILURE_IS_THROWN ((deliberately false) the thrown exception is the failure that completed first)
+violation: InputFailure(1) completed first, but coordinate threw InputFailure(0)
+workload: inputs=2 maxParallelism=2 failing={0,1}
+replay choices: [0, 0, 1, 0]
+schedule:
+  1. execute(task 0)
+  2. execute(task 1)
+  3. task 1 completes, propagate throws InputFailure(1), while the coordinator waits in completedTaskIndexes.take()
+  4. task 0 completes, propagate throws InputFailure(0), while the coordinator waits in completedTaskIndexes.take()
+coordinate: threw InputFailure(0) suppressed=[InputFailure(1)]
+sequential oracle: threw InputFailure(0) suppressed=[]
+
+schedules per workload:
+  inputs=1 maxParallelism=2 failing={} schedules=2
+  inputs=1 maxParallelism=2 failing={0} schedules=2
+  inputs=2 maxParallelism=2 failing={} schedules=8
+  inputs=2 maxParallelism=2 failing={0} schedules=8
+  inputs=2 maxParallelism=2 failing={1} schedules=8
+  inputs=2 maxParallelism=2 failing={0,1} schedules=8
+  inputs=2 maxParallelism=3 failing={} schedules=8
+  inputs=2 maxParallelism=3 failing={0} schedules=8
+  inputs=2 maxParallelism=3 failing={1} schedules=8
+  inputs=2 maxParallelism=3 failing={0,1} schedules=8
+  inputs=3 maxParallelism=2 failing={} schedules=36
+  inputs=3 maxParallelism=2 failing={0} schedules=19
+  inputs=3 maxParallelism=2 failing={1} schedules=36
+  inputs=3 maxParallelism=2 failing={0,1} schedules=19
+  inputs=3 maxParallelism=2 failing={2} schedules=36
+  inputs=3 maxParallelism=2 failing={0,2} schedules=19
+  inputs=3 maxParallelism=2 failing={1,2} schedules=36
+  inputs=3 maxParallelism=2 failing={0,1,2} schedules=19
+  inputs=3 maxParallelism=3 failing={} schedules=48
+  inputs=3 maxParallelism=3 failing={0} schedules=44
+  inputs=3 maxParallelism=3 failing={1} schedules=48
+  inputs=3 maxParallelism=3 failing={0,1} schedules=44
+  inputs=3 maxParallelism=3 failing={2} schedules=48
+  inputs=3 maxParallelism=3 failing={0,2} schedules=44
+  inputs=3 maxParallelism=3 failing={1,2} schedules=48
+  inputs=3 maxParallelism=3 failing={0,1,2} schedules=44
+  inputs=3 maxParallelism=4 failing={} schedules=48
+  inputs=3 maxParallelism=4 failing={0} schedules=44
+  inputs=3 maxParallelism=4 failing={1} schedules=48
+  inputs=3 maxParallelism=4 failing={0,1} schedules=44
+  inputs=3 maxParallelism=4 failing={2} schedules=48
+  inputs=3 maxParallelism=4 failing={0,2} schedules=44
+  inputs=3 maxParallelism=4 failing={1,2} schedules=48
+  inputs=3 maxParallelism=4 failing={0,1,2} schedules=44
+  inputs=4 maxParallelism=2 failing={} schedules=164
+  inputs=4 maxParallelism=2 failing={0} schedules=41
+  inputs=4 maxParallelism=2 failing={1} schedules=91
+  inputs=4 maxParallelism=2 failing={0,1} schedules=41
+  inputs=4 maxParallelism=2 failing={2} schedules=164
+  inputs=4 maxParallelism=2 failing={0,2} schedules=41
+  inputs=4 maxParallelism=2 failing={1,2} schedules=91
+  inputs=4 maxParallelism=2 failing={0,1,2} schedules=41
+  inputs=4 maxParallelism=2 failing={3} schedules=164
+  inputs=4 maxParallelism=2 failing={0,3} schedules=41
+  inputs=4 maxParallelism=2 failing={1,3} schedules=91
+  inputs=4 maxParallelism=2 failing={0,1,3} schedules=41
+  inputs=4 maxParallelism=2 failing={2,3} schedules=164
+  inputs=4 maxParallelism=2 failing={0,2,3} schedules=41
+  inputs=4 maxParallelism=2 failing={1,2,3} schedules=91
+  inputs=4 maxParallelism=2 failing={0,1,2,3} schedules=41
+  inputs=4 maxParallelism=3 failing={} schedules=336
+  inputs=4 maxParallelism=3 failing={0} schedules=182
+  inputs=4 maxParallelism=3 failing={1} schedules=314
+  inputs=4 maxParallelism=3 failing={0,1} schedules=182
+  inputs=4 maxParallelism=3 failing={2} schedules=336
+  inputs=4 maxParallelism=3 failing={0,2} schedules=182
+  inputs=4 maxParallelism=3 failing={1,2} schedules=314
+  inputs=4 maxParallelism=3 failing={0,1,2} schedules=182
+  inputs=4 maxParallelism=3 failing={3} schedules=336
+  inputs=4 maxParallelism=3 failing={0,3} schedules=182
+  inputs=4 maxParallelism=3 failing={1,3} schedules=314
+  inputs=4 maxParallelism=3 failing={0,1,3} schedules=182
+  inputs=4 maxParallelism=3 failing={2,3} schedules=336
+  inputs=4 maxParallelism=3 failing={0,2,3} schedules=182
+  inputs=4 maxParallelism=3 failing={1,2,3} schedules=314
+  inputs=4 maxParallelism=3 failing={0,1,2,3} schedules=182
+  inputs=4 maxParallelism=4 failing={} schedules=384
+  inputs=4 maxParallelism=4 failing={0} schedules=320
+  inputs=4 maxParallelism=4 failing={1} schedules=360
+  inputs=4 maxParallelism=4 failing={0,1} schedules=320
+  inputs=4 maxParallelism=4 failing={2} schedules=384
+  inputs=4 maxParallelism=4 failing={0,2} schedules=320
+  inputs=4 maxParallelism=4 failing={1,2} schedules=360
+  inputs=4 maxParallelism=4 failing={0,1,2} schedules=320
+  inputs=4 maxParallelism=4 failing={3} schedules=384
+  inputs=4 maxParallelism=4 failing={0,3} schedules=320
+  inputs=4 maxParallelism=4 failing={1,3} schedules=360
+  inputs=4 maxParallelism=4 failing={0,1,3} schedules=320
+  inputs=4 maxParallelism=4 failing={2,3} schedules=384
+  inputs=4 maxParallelism=4 failing={0,2,3} schedules=320
+  inputs=4 maxParallelism=4 failing={1,2,3} schedules=360
+  inputs=4 maxParallelism=4 failing={0,1,2,3} schedules=320
+  inputs=4 maxParallelism=5 failing={} schedules=384
+  inputs=4 maxParallelism=5 failing={0} schedules=320
+  inputs=4 maxParallelism=5 failing={1} schedules=360
+  inputs=4 maxParallelism=5 failing={0,1} schedules=320
+  inputs=4 maxParallelism=5 failing={2} schedules=384
+  inputs=4 maxParallelism=5 failing={0,2} schedules=320
+  inputs=4 maxParallelism=5 failing={1,2} schedules=360
+  inputs=4 maxParallelism=5 failing={0,1,2} schedules=320
+  inputs=4 maxParallelism=5 failing={3} schedules=384
+  inputs=4 maxParallelism=5 failing={0,3} schedules=320
+  inputs=4 maxParallelism=5 failing={1,3} schedules=360
+  inputs=4 maxParallelism=5 failing={0,1,3} schedules=320
+  inputs=4 maxParallelism=5 failing={2,3} schedules=384
+  inputs=4 maxParallelism=5 failing={0,2,3} schedules=320
+  inputs=4 maxParallelism=5 failing={1,2,3} schedules=360
+  inputs=4 maxParallelism=5 failing={0,1,2,3} schedules=320
+  inputs=5 maxParallelism=2 failing={} schedules=748
+  inputs=5 maxParallelism=2 failing={0} schedules=85
+  inputs=5 maxParallelism=2 failing={1} schedules=201
+  inputs=5 maxParallelism=2 failing={0,1} schedules=85
+  inputs=5 maxParallelism=2 failing={2} schedules=417
+  inputs=5 maxParallelism=2 failing={0,2} schedules=85
+  inputs=5 maxParallelism=2 failing={1,2} schedules=201
+  inputs=5 maxParallelism=2 failing={0,1,2} schedules=85
+  inputs=5 maxParallelism=2 failing={3} schedules=748
+  inputs=5 maxParallelism=2 failing={0,3} schedules=85
+  inputs=5 maxParallelism=2 failing={1,3} schedules=201
+  inputs=5 maxParallelism=2 failing={0,1,3} schedules=85
+  inputs=5 maxParallelism=2 failing={2,3} schedules=417
+  inputs=5 maxParallelism=2 failing={0,2,3} schedules=85
+  inputs=5 maxParallelism=2 failing={1,2,3} schedules=201
+  inputs=5 maxParallelism=2 failing={0,1,2,3} schedules=85
+  inputs=5 maxParallelism=2 failing={4} schedules=748
+  inputs=5 maxParallelism=2 failing={0,4} schedules=85
+  inputs=5 maxParallelism=2 failing={1,4} schedules=201
+  inputs=5 maxParallelism=2 failing={0,1,4} schedules=85
+  inputs=5 maxParallelism=2 failing={2,4} schedules=417
+  inputs=5 maxParallelism=2 failing={0,2,4} schedules=85
+  inputs=5 maxParallelism=2 failing={1,2,4} schedules=201
+  inputs=5 maxParallelism=2 failing={0,1,2,4} schedules=85
+  inputs=5 maxParallelism=2 failing={3,4} schedules=748
+  inputs=5 maxParallelism=2 failing={0,3,4} schedules=85
+  inputs=5 maxParallelism=2 failing={1,3,4} schedules=201
+  inputs=5 maxParallelism=2 failing={0,1,3,4} schedules=85
+  inputs=5 maxParallelism=2 failing={2,3,4} schedules=417
+  inputs=5 maxParallelism=2 failing={0,2,3,4} schedules=85
+  inputs=5 maxParallelism=2 failing={1,2,3,4} schedules=201
+  inputs=5 maxParallelism=2 failing={0,1,2,3,4} schedules=85
+  inputs=5 maxParallelism=3 failing={} schedules=2448
+  inputs=5 maxParallelism=3 failing={0} schedules=800
+  inputs=5 maxParallelism=3 failing={1} schedules=1596
+  inputs=5 maxParallelism=3 failing={0,1} schedules=800
+  inputs=5 maxParallelism=3 failing={2} schedules=2298
+  inputs=5 maxParallelism=3 failing={0,2} schedules=800
+  inputs=5 maxParallelism=3 failing={1,2} schedules=1596
+  inputs=5 maxParallelism=3 failing={0,1,2} schedules=800
+  inputs=5 maxParallelism=3 failing={3} schedules=2448
+  inputs=5 maxParallelism=3 failing={0,3} schedules=800
+  inputs=5 maxParallelism=3 failing={1,3} schedules=1596
+  inputs=5 maxParallelism=3 failing={0,1,3} schedules=800
+  inputs=5 maxParallelism=3 failing={2,3} schedules=2298
+  inputs=5 maxParallelism=3 failing={0,2,3} schedules=800
+  inputs=5 maxParallelism=3 failing={1,2,3} schedules=1596
+  inputs=5 maxParallelism=3 failing={0,1,2,3} schedules=800
+  inputs=5 maxParallelism=3 failing={4} schedules=2448
+  inputs=5 maxParallelism=3 failing={0,4} schedules=800
+  inputs=5 maxParallelism=3 failing={1,4} schedules=1596
+  inputs=5 maxParallelism=3 failing={0,1,4} schedules=800
+  inputs=5 maxParallelism=3 failing={2,4} schedules=2298
+  inputs=5 maxParallelism=3 failing={0,2,4} schedules=800
+  inputs=5 maxParallelism=3 failing={1,2,4} schedules=1596
+  inputs=5 maxParallelism=3 failing={0,1,2,4} schedules=800
+  inputs=5 maxParallelism=3 failing={3,4} schedules=2448
+  inputs=5 maxParallelism=3 failing={0,3,4} schedules=800
+  inputs=5 maxParallelism=3 failing={1,3,4} schedules=1596
+  inputs=5 maxParallelism=3 failing={0,1,3,4} schedules=800
+  inputs=5 maxParallelism=3 failing={2,3,4} schedules=2298
+  inputs=5 maxParallelism=3 failing={0,2,3,4} schedules=800
+  inputs=5 maxParallelism=3 failing={1,2,3,4} schedules=1596
+  inputs=5 maxParallelism=3 failing={0,1,2,3,4} schedules=800
+  inputs=5 maxParallelism=4 failing={} schedules=3600
+  inputs=5 maxParallelism=4 failing={0} schedules=1907
+  inputs=5 maxParallelism=4 failing={1} schedules=3126
+  inputs=5 maxParallelism=4 failing={0,1} schedules=1907
+  inputs=5 maxParallelism=4 failing={2} schedules=3414
+  inputs=5 maxParallelism=4 failing={0,2} schedules=1907
+  inputs=5 maxParallelism=4 failing={1,2} schedules=3126
+  inputs=5 maxParallelism=4 failing={0,1,2} schedules=1907
+  inputs=5 maxParallelism=4 failing={3} schedules=3600
+  inputs=5 maxParallelism=4 failing={0,3} schedules=1907
+  inputs=5 maxParallelism=4 failing={1,3} schedules=3126
+  inputs=5 maxParallelism=4 failing={0,1,3} schedules=1907
+  inputs=5 maxParallelism=4 failing={2,3} schedules=3414
+  inputs=5 maxParallelism=4 failing={0,2,3} schedules=1907
+  inputs=5 maxParallelism=4 failing={1,2,3} schedules=3126
+  inputs=5 maxParallelism=4 failing={0,1,2,3} schedules=1907
+  inputs=5 maxParallelism=4 failing={4} schedules=3600
+  inputs=5 maxParallelism=4 failing={0,4} schedules=1907
+  inputs=5 maxParallelism=4 failing={1,4} schedules=3126
+  inputs=5 maxParallelism=4 failing={0,1,4} schedules=1907
+  inputs=5 maxParallelism=4 failing={2,4} schedules=3414
+  inputs=5 maxParallelism=4 failing={0,2,4} schedules=1907
+  inputs=5 maxParallelism=4 failing={1,2,4} schedules=3126
+  inputs=5 maxParallelism=4 failing={0,1,2,4} schedules=1907
+  inputs=5 maxParallelism=4 failing={3,4} schedules=3600
+  inputs=5 maxParallelism=4 failing={0,3,4} schedules=1907
+  inputs=5 maxParallelism=4 failing={1,3,4} schedules=3126
+  inputs=5 maxParallelism=4 failing={0,1,3,4} schedules=1907
+  inputs=5 maxParallelism=4 failing={2,3,4} schedules=3414
+  inputs=5 maxParallelism=4 failing={0,2,3,4} schedules=1907
+  inputs=5 maxParallelism=4 failing={1,2,3,4} schedules=3126
+  inputs=5 maxParallelism=4 failing={0,1,2,3,4} schedules=1907
+  inputs=5 maxParallelism=5 failing={} schedules=3840
+  inputs=5 maxParallelism=5 failing={0} schedules=2930
+  inputs=5 maxParallelism=5 failing={1} schedules=3338
+  inputs=5 maxParallelism=5 failing={0,1} schedules=2930
+  inputs=5 maxParallelism=5 failing={2} schedules=3648
+  inputs=5 maxParallelism=5 failing={0,2} schedules=2930
+  inputs=5 maxParallelism=5 failing={1,2} schedules=3338
+  inputs=5 maxParallelism=5 failing={0,1,2} schedules=2930
+  inputs=5 maxParallelism=5 failing={3} schedules=3840
+  inputs=5 maxParallelism=5 failing={0,3} schedules=2930
+  inputs=5 maxParallelism=5 failing={1,3} schedules=3338
+  inputs=5 maxParallelism=5 failing={0,1,3} schedules=2930
+  inputs=5 maxParallelism=5 failing={2,3} schedules=3648
+  inputs=5 maxParallelism=5 failing={0,2,3} schedules=2930
+  inputs=5 maxParallelism=5 failing={1,2,3} schedules=3338
+  inputs=5 maxParallelism=5 failing={0,1,2,3} schedules=2930
+  inputs=5 maxParallelism=5 failing={4} schedules=3840
+  inputs=5 maxParallelism=5 failing={0,4} schedules=2930
+  inputs=5 maxParallelism=5 failing={1,4} schedules=3338
+  inputs=5 maxParallelism=5 failing={0,1,4} schedules=2930
+  inputs=5 maxParallelism=5 failing={2,4} schedules=3648
+  inputs=5 maxParallelism=5 failing={0,2,4} schedules=2930
+  inputs=5 maxParallelism=5 failing={1,2,4} schedules=3338
+  inputs=5 maxParallelism=5 failing={0,1,2,4} schedules=2930
+  inputs=5 maxParallelism=5 failing={3,4} schedules=3840
+  inputs=5 maxParallelism=5 failing={0,3,4} schedules=2930
+  inputs=5 maxParallelism=5 failing={1,3,4} schedules=3338
+  inputs=5 maxParallelism=5 failing={0,1,3,4} schedules=2930
+  inputs=5 maxParallelism=5 failing={2,3,4} schedules=3648
+  inputs=5 maxParallelism=5 failing={0,2,3,4} schedules=2930
+  inputs=5 maxParallelism=5 failing={1,2,3,4} schedules=3338
+  inputs=5 maxParallelism=5 failing={0,1,2,3,4} schedules=2930
+  inputs=5 maxParallelism=6 failing={} schedules=3840
+  inputs=5 maxParallelism=6 failing={0} schedules=2930
+  inputs=5 maxParallelism=6 failing={1} schedules=3338
+  inputs=5 maxParallelism=6 failing={0,1} schedules=2930
+  inputs=5 maxParallelism=6 failing={2} schedules=3648
+  inputs=5 maxParallelism=6 failing={0,2} schedules=2930
+  inputs=5 maxParallelism=6 failing={1,2} schedules=3338
+  inputs=5 maxParallelism=6 failing={0,1,2} schedules=2930
+  inputs=5 maxParallelism=6 failing={3} schedules=3840
+  inputs=5 maxParallelism=6 failing={0,3} schedules=2930
+  inputs=5 maxParallelism=6 failing={1,3} schedules=3338
+  inputs=5 maxParallelism=6 failing={0,1,3} schedules=2930
+  inputs=5 maxParallelism=6 failing={2,3} schedules=3648
+  inputs=5 maxParallelism=6 failing={0,2,3} schedules=2930
+  inputs=5 maxParallelism=6 failing={1,2,3} schedules=3338
+  inputs=5 maxParallelism=6 failing={0,1,2,3} schedules=2930
+  inputs=5 maxParallelism=6 failing={4} schedules=3840
+  inputs=5 maxParallelism=6 failing={0,4} schedules=2930
+  inputs=5 maxParallelism=6 failing={1,4} schedules=3338
+  inputs=5 maxParallelism=6 failing={0,1,4} schedules=2930
+  inputs=5 maxParallelism=6 failing={2,4} schedules=3648
+  inputs=5 maxParallelism=6 failing={0,2,4} schedules=2930
+  inputs=5 maxParallelism=6 failing={1,2,4} schedules=3338
+  inputs=5 maxParallelism=6 failing={0,1,2,4} schedules=2930
+  inputs=5 maxParallelism=6 failing={3,4} schedules=3840
+  inputs=5 maxParallelism=6 failing={0,3,4} schedules=2930
+  inputs=5 maxParallelism=6 failing={1,3,4} schedules=3338
+  inputs=5 maxParallelism=6 failing={0,1,3,4} schedules=2930
+  inputs=5 maxParallelism=6 failing={2,3,4} schedules=3648
+  inputs=5 maxParallelism=6 failing={0,2,3,4} schedules=2930
+  inputs=5 maxParallelism=6 failing={1,2,3,4} schedules=3338
+  inputs=5 maxParallelism=6 failing={0,1,2,3,4} schedules=2930

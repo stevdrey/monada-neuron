@@ -1,5 +1,6 @@
 import java.security.MessageDigest
 import java.util.HexFormat
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 
 plugins {
     `java-library`
@@ -246,11 +247,40 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        // The bounded formal-verification pilot (Issue #202) is not a per-PR gate; it runs only through
+        // `formalPilotCheck` until Issue #204 decides whether to adopt it.
+        excludeTags("formal-pilot")
+    }
     // Boundary tests read Javadoc from the sources, and an edit to Javadoc alone leaves the compiled classes unchanged.
     inputs.dir(layout.projectDirectory.dir("src/main/java"))
         .withPropertyName("mainSources")
         .withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+// Explores every schedule of BoundedParallelAeonCoordinator's direct path within fixed bounds and checks
+// ADR 0016's failure semantics on each (Issue #202, docs/experiments/formal-pilot-aeon-failure-semantics-v1.md).
+// Test-only: it adds no dependency and does not run in `test`. `-PformalPilotMaxInputs=<n>` widens the bound.
+tasks.register<Test>("formalPilotCheck") {
+    group = "verification"
+    description = "Runs the bounded schedule exploration of the parallel Aeon coordinator's failure semantics"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform {
+        includeTags("formal-pilot")
+    }
+    val maxInputs = providers.gradleProperty("formalPilotMaxInputs").orElse("4")
+    inputs.property("formalPilotMaxInputs", maxInputs)
+    systemProperty("formalPilot.maxInputs", maxInputs.get())
+    val reportDir = layout.buildDirectory.dir("reports/formal-pilot").get().asFile
+    systemProperty("formalPilot.reportDir", reportDir.absolutePath)
+    outputs.dir(reportDir)
+    outputs.upToDateWhen { false }
+    testLogging {
+        events("passed", "failed")
+        showStandardStreams = true
+        exceptionFormat = TestExceptionFormat.FULL
+    }
 }
 
 tasks.withType<JavaCompile> {

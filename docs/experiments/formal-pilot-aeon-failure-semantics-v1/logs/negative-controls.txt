@@ -1,0 +1,54 @@
+formal pilot #202: negative controls, inputs 1..2
+java.version=27 java.vm=OpenJDK 64-Bit Server VM 27+35 processors=16
+workloads=10 schedules=68 longestSchedule=4 events exploreMillis=11
+
+MATCHES_SEQUENTIAL_ORACLE: HOLDS within bounds (violating schedules: 0)
+  coordinate returns exactly the sequential oracle's results in input order, or throws the exception of the same input as the oracle (the earliest failing input)
+SUPPRESSES_COMPLETED_LATER_FAILURES: HOLDS within bounds (violating schedules: 0)
+  the suppressed exceptions are exactly the failures of later inputs whose tasks had completed when coordinate threw, each once, in input order
+BOUNDED_IN_ORDER_SUBMISSION: HOLDS within bounds (violating schedules: 0)
+  no more tasks are submitted than there are inputs, no submission leaves more than maxParallelism tasks unfinished, and every task that runs propagates the input of its submission position
+NO_RUNNABLE_TASK_AFTER_END: HOLDS within bounds (violating schedules: 0)
+  when coordinate returns or throws, every submitted task has completed or been cancelled, so none can still start
+NO_WAIT_WITHOUT_PENDING_WORK: HOLDS within bounds (violating schedules: 0)
+  the coordinator never waits for a completion while no submitted task can run, and always ends
+EVERY_LATER_FAILURE_IS_SUPPRESSED: REFUTED as expected (violating schedules: 6)
+  (deliberately false) every failing input after the thrown one is attached as suppressed
+FIRST_COMPLETED_FAILURE_IS_THROWN: REFUTED as expected (violating schedules: 6)
+  (deliberately false) the thrown exception is the failure that completed first
+
+smallest counterexample, EVERY_LATER_FAILURE_IS_SUPPRESSED ((deliberately false) every failing input after the thrown one is attached as suppressed)
+violation: failing input 1 is not suppressed by InputFailure(0)
+workload: inputs=2 maxParallelism=2 failing={0,1}
+replay choices: [0, 0, 0]
+schedule:
+  1. execute(task 0)
+  2. execute(task 1)
+  3. task 0 completes, propagate throws InputFailure(0), while the coordinator waits in completedTaskIndexes.take()
+  4. task 1 is cancelled before it runs
+coordinate: threw InputFailure(0) suppressed=[]
+sequential oracle: threw InputFailure(0) suppressed=[]
+
+smallest counterexample, FIRST_COMPLETED_FAILURE_IS_THROWN ((deliberately false) the thrown exception is the failure that completed first)
+violation: InputFailure(1) completed first, but coordinate threw InputFailure(0)
+workload: inputs=2 maxParallelism=2 failing={0,1}
+replay choices: [0, 0, 1, 0]
+schedule:
+  1. execute(task 0)
+  2. execute(task 1)
+  3. task 1 completes, propagate throws InputFailure(1), while the coordinator waits in completedTaskIndexes.take()
+  4. task 0 completes, propagate throws InputFailure(0), while the coordinator waits in completedTaskIndexes.take()
+coordinate: threw InputFailure(0) suppressed=[InputFailure(1)]
+sequential oracle: threw InputFailure(0) suppressed=[]
+
+schedules per workload:
+  inputs=1 maxParallelism=2 failing={} schedules=2
+  inputs=1 maxParallelism=2 failing={0} schedules=2
+  inputs=2 maxParallelism=2 failing={} schedules=8
+  inputs=2 maxParallelism=2 failing={0} schedules=8
+  inputs=2 maxParallelism=2 failing={1} schedules=8
+  inputs=2 maxParallelism=2 failing={0,1} schedules=8
+  inputs=2 maxParallelism=3 failing={} schedules=8
+  inputs=2 maxParallelism=3 failing={0} schedules=8
+  inputs=2 maxParallelism=3 failing={1} schedules=8
+  inputs=2 maxParallelism=3 failing={0,1} schedules=8
