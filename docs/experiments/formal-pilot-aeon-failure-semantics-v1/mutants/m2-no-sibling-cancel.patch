@@ -1,12 +1,11 @@
 diff --git a/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java b/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
-index 2af372e..8f0dab6 100644
 --- a/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
 +++ b/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
-@@ -274,7 +274,6 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
-             while (nextToReconcile < nextToSubmit && completed[nextToReconcile]) {
-                 if (failures[nextToReconcile] != null) {
-                     var concurrentFailures = collectCompletedFailures(tasks, nextToReconcile + 1, nextToSubmit);
--                    cancelTasks(tasks, nextToReconcile + 1, nextToSubmit);
-                     rethrowDeterministicFailure(failures[nextToReconcile], concurrentFailures);
+@@ -300,7 +300,6 @@
                  }
-                 inputResults.add(new AeonInputResult(stableInputs.get(nextToReconcile), results[nextToReconcile]));
+             }
+         } catch (Throwable abnormalExit) {
+-            cancelSubmittedTasks(tasks, nextToReconcile);
+             throw abnormalExit;
+         }
+         return new AeonCoordinationResult(inputResults);

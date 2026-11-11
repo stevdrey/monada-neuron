@@ -1,13 +1,12 @@
 diff --git a/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java b/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
-index 2af372e..7561128 100644
 --- a/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
 +++ b/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
-@@ -254,7 +254,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
-         int nextToSubmit = submitDirectTasks(
-                 tasks,
-                 0,
--                Math.min(inputCount, maxParallelism),
-+                inputCount,
-                 startNodes,
-                 stableInputs,
-                 processor,
+@@ -261,7 +261,7 @@
+             nextToSubmit = submitDirectTasks(
+                     tasks,
+                     0,
+-                    Math.min(inputCount, maxParallelism),
++                    inputCount,
+                     startNodes,
+                     stableInputs,
+                     processor,

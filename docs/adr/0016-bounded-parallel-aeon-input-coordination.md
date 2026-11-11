@@ -50,6 +50,18 @@ deterministic semantics require:
    subsequent completed concurrent exceptions as suppressed (`addSuppressed`). Cancellation interrupts cooperative
    processors but cannot forcibly stop a processor that ignores interruption.
 6. **Reference Oracle**: `DeterministicAeonCoordinator` remains the semantic oracle and fallback.
+7. **Abnormal-Exit Cancellation** (added by Issue #208): Whenever `coordinate` ends with an exception, for any reason,
+   every task it has already submitted is done or cancelled with `cancel(true)` before the exception leaves the call.
+   This covers the input failures of decision 5 and also failures of the coordinator itself: a caller interrupt
+   while it waits, an executor that rejects a submission (the rejected task is cancelled too, so it can never run
+   later), and any other exception raised while it submits, awaits, or reconciles. The coordinator rethrows the
+   original exception unchanged; when the caller was interrupted it throws `IllegalStateException` with the
+   `InterruptedException` as cause and leaves the caller's interrupt status set. The direct path cancels the
+   unreconciled window from one handler around its submission loop; the experimental contextual path cancels the
+   current wave from one handler per wave, since earlier waves are already reconciled. The cost is a scan of the
+   unreconciled window (direct) or one wave of at most `maxParallelism` tasks (contextual) on abnormal exit only;
+   the normal path allocates nothing new. As in decision 5, cancellation is cooperative: a processor that is
+   already running and ignores interruption can still run briefly after `coordinate` has thrown.
 
 ## Alternatives Considered
 
@@ -81,6 +93,10 @@ coarsely and efficiently.
 - `CognitiveContext` retains its sequential, single-threaded invariants and deterministic diagnostic traces.
 - Workloads that cannot prove independence safely fall back to the sequential oracle without runtime failures.
 - Multi-failure exception handling is strictly deterministic and matches the failure point of the sequential oracle.
+- No submitted input task outlives an abnormal `coordinate` call in a runnable state, whether the call ended because
+  of an input failure, a caller interrupt, or an executor rejection. Callers that interrupt a coordinating thread can
+  rely on its interrupt status surviving the wrapped exception. `BoundedParallelAeonCoordinatorAbnormalExitTest`
+  covers both paths with deterministic recording and rejecting executors.
 
 ## Follow-Up
 
