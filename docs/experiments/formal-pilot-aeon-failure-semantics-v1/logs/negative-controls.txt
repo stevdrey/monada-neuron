@@ -1,6 +1,6 @@
 formal pilot #202: negative controls, inputs 1..2
 java.version=27 java.vm=OpenJDK 64-Bit Server VM 27+35 processors=16
-workloads=10 schedules=68 longestSchedule=4 events exploreMillis=14
+workloads=10 schedules=68 longestSchedule=4 events exploreMillis=11
 
 MATCHES_SEQUENTIAL_ORACLE: HOLDS within bounds (violating schedules: 0)
   coordinate returns exactly the sequential oracle's results in input order, or throws the exception of the same input as the oracle (the earliest failing input)

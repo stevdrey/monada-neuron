@@ -40,6 +40,12 @@ record ScheduleRun(
         runnableAfterEnd = List.copyOf(runnableAfterEnd);
     }
 
+    /** Returns a copy, so a caller cannot change a stored counterexample's replay. */
+    @Override
+    public int[] choices() {
+        return choices.clone();
+    }
+
     /** What a coordinator call produced. */
     sealed interface Outcome {
 

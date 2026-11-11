@@ -1,6 +1,6 @@
 formal pilot #202: BoundedParallelAeonCoordinator direct-path failure semantics, inputs 1..4, maxParallelism 2..inputs+1, every failure mask
 java.version=27 java.vm=OpenJDK 64-Bit Server VM 27+35 processors=16
-workloads=98 schedules=17500 longestSchedule=8 events exploreMillis=1863
+workloads=98 schedules=17500 longestSchedule=8 events exploreMillis=1969
 
 MATCHES_SEQUENTIAL_ORACLE: HOLDS within bounds (violating schedules: 0)
   coordinate returns exactly the sequential oracle's results in input order, or throws the exception of the same input as the oracle (the earliest failing input)

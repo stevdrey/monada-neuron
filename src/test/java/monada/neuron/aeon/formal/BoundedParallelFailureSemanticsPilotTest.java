@@ -8,13 +8,16 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
-import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.IntConsumer;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -30,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 @Tag("formal-pilot")
 class BoundedParallelFailureSemanticsPilotTest {
 
-    private static final int MAX_INPUTS = Integer.getInteger("formalPilot.maxInputs", 4);
+    private static final int MAX_INPUTS = maxInputs(System.getProperty("formalPilot.maxInputs", "4"));
     private static final Path REPORT_DIR = Path.of(System.getProperty("formalPilot.reportDir", "build/reports/formal-pilot"));
 
     @Test
@@ -88,9 +91,13 @@ class BoundedParallelFailureSemanticsPilotTest {
                 .orElseThrow();
 
         var replay = ScheduledCoordinatorRun.run(counterexample.workload(), new ChoicePath(counterexample.choices()));
+        // A caller cannot change a stored counterexample's replay through the returned array.
+        var returned = counterexample.choices();
+        returned[0]++;
 
         assertAll(
-                () -> assertArrayEquals(counterexample.choices(), replay.choices()),
+                () -> assertArrayEquals(replay.choices(), counterexample.choices()),
+                () -> assertEquals(returned[0] - 1, counterexample.choices()[0]),
                 () -> assertEquals(counterexample.events(), replay.events()),
                 () -> assertEquals(ScheduleRun.render(counterexample.outcome()), ScheduleRun.render(replay.outcome())),
                 () -> assertTrue(FailureSemanticsProperty.EVERY_LATER_FAILURE_IS_SUPPRESSED.violation(replay).isPresent()));
@@ -98,26 +105,79 @@ class BoundedParallelFailureSemanticsPilotTest {
 
     @Test
     void aCoordinatorThatNeverEndsIsReportedAsAViolation() {
-        // The run a coordinator produces when it ignores the harness's interrupt: control lost, no outcome.
-        var neverEnded = new ScheduleRun(
-                new ScheduleWorkload(2, 2, 0b01),
-                new int[] {0},
-                List.of("execute(task 0)", "the coordinator neither waited nor ended within 10 s"),
-                List.of(),
-                List.of(),
-                false,
-                true,
-                List.of(),
-                new Outcome.DidNotEnd(),
-                new Outcome.Threw(new InputFailure(0)));
+        // Choice 1 inside execute(task 0) runs task 0 on the coordinator thread, where this propagation spins
+        // and ignores the harness's interrupt, so coordinate neither waits nor ends.
+        var workload = new ScheduleWorkload(1, 2, 0);
+        var released = new AtomicBoolean();
+        IntConsumer hang = inputIndex -> {
+            while (!released.get()) {
+                Thread.onSpinWait();
+            }
+        };
+        var path = new ChoicePath(new int[] {1});
+        ScheduleRun neverEnded;
+        try {
+            neverEnded = ScheduledCoordinatorRun.run(workload, path,
+                    ScheduledCoordinatorRun.oracle(workload), Duration.ofSeconds(1), hang);
+        } finally {
+            // The abandoned thread resumes and is rejected by the closed executor at its next choice.
+            released.set(true);
+        }
+        awaitNoCoordinatorThread();
 
         for (var property : FailureSemanticsProperty.values()) {
             assertDoesNotThrow(() -> property.violation(neverEnded), property.name());
         }
+        var run = neverEnded;
         assertAll(
-                () -> assertTrue(FailureSemanticsProperty.NO_WAIT_WITHOUT_PENDING_WORK.violation(neverEnded).isPresent()),
-                () -> assertTrue(FailureSemanticsProperty.MATCHES_SEQUENTIAL_ORACLE.violation(neverEnded).isPresent()),
-                () -> assertTrue(neverEnded.describe().contains("coordinate: did not end")));
+                () -> assertTrue(run.controlLost()),
+                () -> assertTrue(run.outcome() instanceof Outcome.DidNotEnd, ScheduleRun.render(run.outcome())),
+                () -> assertTrue(run.events().contains("coordinate did not end after the interrupt and a 1 s join"),
+                        run.events().toString()),
+                () -> assertTrue(FailureSemanticsProperty.NO_WAIT_WITHOUT_PENDING_WORK.violation(run).isPresent()),
+                () -> assertTrue(FailureSemanticsProperty.MATCHES_SEQUENTIAL_ORACLE.violation(run).isPresent()),
+                () -> assertTrue(run.describe().contains("coordinate: did not end")),
+                // Without the closed executor, the resumed thread would have taken a second choice on this path.
+                () -> assertArrayEquals(new int[] {1}, path.choices()));
+    }
+
+    private static void awaitNoCoordinatorThread() {
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        while (Thread.getAllStackTraces().keySet().stream()
+                .anyMatch(thread -> thread.getName().equals("formal-pilot-coordinator") && thread.isAlive())) {
+            if (System.nanoTime() > deadline) {
+                fail("the abandoned coordinator thread did not end after it was released");
+            }
+            Thread.onSpinWait();
+        }
+    }
+
+    @Test
+    void anInvalidInputBoundIsRejected() {
+        assertAll(
+                () -> assertEquals(5, maxInputs(" 5 ")),
+                () -> assertThrows(IllegalArgumentException.class, () -> maxInputs("five")),
+                () -> assertThrows(IllegalArgumentException.class, () -> maxInputs("1")),
+                () -> assertThrows(IllegalArgumentException.class, () -> maxInputs("31")));
+    }
+
+    /**
+     * Parses the input bound. The negative controls need two inputs, and {@link ScheduleWorkload} allows at
+     * most 30; any other value fails instead of silently running a different bound.
+     */
+    static int maxInputs(String value) {
+        int bound;
+        try {
+            bound = Integer.parseInt(value.strip());
+        } catch (NumberFormatException notANumber) {
+            throw new IllegalArgumentException("formalPilot.maxInputs (-PformalPilotMaxInputs) must be an integer "
+                    + "in [2, 30], got: '" + value + "'", notANumber);
+        }
+        if (bound < 2 || bound > 30) {
+            throw new IllegalArgumentException("formalPilot.maxInputs (-PformalPilotMaxInputs) must be in [2, 30]: "
+                    + "the negative controls need two inputs; got: " + bound);
+        }
+        return bound;
     }
 
     private static void write(String name, String text) {

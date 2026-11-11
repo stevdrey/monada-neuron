@@ -51,25 +51,32 @@ cleanup() { if [ "$keep" -eq 0 ]; then rm -rf "$work"; else echo "kept: $copy"; 
 trap cleanup EXIT INT TERM
 
 mkdir -p "$copy"
-(cd "$root" && git ls-files -co --exclude-standard -z | grep -zv '^\.claude/') \
-  | (cd "$root" && xargs -0 cp --parents -t "$copy")
+# Tracked files deleted in the working tree are still listed by ls-files; copy only paths that exist.
+(cd "$root" && git ls-files -co --exclude-standard -z | grep -zv '^\.claude/' \
+  | while IFS= read -r -d '' f; do if [ -e "$f" ]; then printf '%s\0' "$f"; fi; done \
+  | xargs -0 cp --parents -t "$copy")
 (cd "$copy" && git init -q && git add -A && git -c user.name=pilot -c user.email=pilot@localhost commit -qm base)
 
 report="$copy/build/reports/formal-pilot/exhaustive-max-inputs-4.txt"
+# Sets status to pass, fail, or noreport (the build or the test JVM failed before writing a report).
 check() {
   rm -f "$report"
   (cd "$copy" && ./gradlew -q formalPilotCheck --tests '*everyScheduleWithinTheBounds*' >"$work/last.log" 2>&1) \
     && status=pass || status=fail
   if [ ! -f "$report" ]; then
-    echo "no report written; see the Gradle output:" >&2
+    status=noreport
+    echo "no report written; last lines of the Gradle output:" >&2
     tail -40 "$work/last.log" >&2
-    return 1
   fi
+}
+violated_in_report() {
+  if [ "$status" = noreport ]; then return 0; fi
+  grep -oE '^[A-Z_]+: VIOLATED' "$report" | cut -d: -f1 | tr '\n' ' ' || true
 }
 
 failed=0
 check
-violated=$(grep -oE '^[A-Z_]+: VIOLATED' "$report" | cut -d: -f1 | tr '\n' ' ' || true)
+violated=$(violated_in_report)
 if [ "$status" = pass ] && [ -z "$violated" ]; then
   echo "baseline: PASS (no property violated)"
 else
@@ -85,9 +92,19 @@ for name in "${selected[@]}"; do
     failed=1
     continue
   fi
-  (cd "$copy" && git apply "$patch")
+  if ! (cd "$copy" && git apply "$patch"); then
+    echo "$name: NOT KILLED (patch does not apply)"
+    failed=1
+    continue
+  fi
   check
-  violated=$(grep -oE '^[A-Z_]+: VIOLATED' "$report" | cut -d: -f1 | tr '\n' ' ' || true)
+  if [ "$status" = noreport ]; then
+    echo "$name: NOT KILLED (no report: the build or the test JVM failed)"
+    failed=1
+    (cd "$copy" && git checkout -q -- .)
+    continue
+  fi
+  violated=$(violated_in_report)
   counts=$(for p in "${held[@]}"; do grep -E "^$p: " "$report" | sed -E 's/^([A-Z_]+): .*violating schedules: ([0-9]+).*/\1=\2/'; done | tr '\n' ' ')
   if [ "$status" = fail ] && [[ " $violated " == *" $want "* ]]; then
     echo "$name: KILLED by $want (violated: $(echo "$violated" | xargs); $counts)"

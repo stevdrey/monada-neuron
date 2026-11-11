@@ -49,10 +49,11 @@ final class ScheduleExplorer {
     void explore(ScheduleWorkload workload) {
         long start = System.nanoTime();
         long before = schedules;
+        var oracle = ScheduledCoordinatorRun.oracle(workload);
         int[] prefix = new int[0];
         while (true) {
             var path = new ChoicePath(prefix);
-            var run = ScheduledCoordinatorRun.run(workload, path);
+            var run = ScheduledCoordinatorRun.run(workload, path, oracle);
             path.requireReplayed();
             check(run);
             var next = path.next();

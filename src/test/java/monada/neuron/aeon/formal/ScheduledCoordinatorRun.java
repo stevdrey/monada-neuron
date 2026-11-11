@@ -25,6 +25,7 @@ import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.IntConsumer;
 
 /**
@@ -46,11 +47,18 @@ import java.util.function.IntConsumer;
  * <p>The scheduler detects that the coordinator waits by reading its completion queue, which the
  * coordinator does not expose: the queue is found reflectively in the submitted task (see
  * {@link #completionQueueOf}). This is a test-only observation; the coordinator is not changed.
+ *
+ * <p>Each schedule gets a fresh coordinator thread, so a coordinator that never ends cannot reach the next
+ * schedule. Once a schedule's run is returned, this executor is closed: a coordinator thread that comes back
+ * later is rejected in {@code execute} and cannot change the choice path the explorer reads.
  */
 final class ScheduledCoordinatorRun implements Executor {
 
     /** How long the scheduler waits for the coordinator to wait again or end before reporting lost control. */
     static final Duration CONTROL_TIMEOUT = Duration.ofSeconds(10);
+
+    private static final int YIELDS_BEFORE_PARKING = 1024;
+    private static final long MAX_PARK_NANOS = 100_000L;
 
     private static final NodeProcessor UNUSED_PROCESSOR = (node, input) -> NodeProcessingResult.noOutput();
     private static final PropagationConfig CONFIG = PropagationConfig.routeAll(1, 0);
@@ -58,6 +66,9 @@ final class ScheduledCoordinatorRun implements Executor {
 
     private final ScheduleWorkload workload;
     private final ChoicePath path;
+    private final ScheduleRun.Outcome oracle;
+    private final Duration controlTimeout;
+    private final IntConsumer onPropagate;
     private final Fixture fixture;
     private final ThreadLocal<Integer> runningTask = new ThreadLocal<>();
 
@@ -67,24 +78,53 @@ final class ScheduledCoordinatorRun implements Executor {
     private final List<Integer> completionOrder = new ArrayList<>();
     private final List<String> submissionViolations = new ArrayList<>();
     private BlockingQueue<?> completionQueue;
+    private boolean closed;
 
     private volatile ScheduleRun.Outcome outcome;
 
-    private ScheduledCoordinatorRun(ScheduleWorkload workload, ChoicePath path) {
+    private ScheduledCoordinatorRun(
+            ScheduleWorkload workload,
+            ChoicePath path,
+            ScheduleRun.Outcome oracle,
+            Duration controlTimeout,
+            IntConsumer onPropagate) {
         this.workload = workload;
         this.path = path;
+        this.oracle = oracle;
+        this.controlTimeout = controlTimeout;
+        this.onPropagate = onPropagate;
         this.fixture = new Fixture(workload);
     }
 
     /** Runs the schedule {@code path} selects on {@code workload} and returns what it observed. */
     static ScheduleRun run(ScheduleWorkload workload, ChoicePath path) {
-        return new ScheduledCoordinatorRun(workload, path).execute();
+        return run(workload, path, oracle(workload));
+    }
+
+    /** Runs one schedule against an oracle outcome already computed for {@code workload}. */
+    static ScheduleRun run(ScheduleWorkload workload, ChoicePath path, ScheduleRun.Outcome oracle) {
+        return run(workload, path, oracle, CONTROL_TIMEOUT, inputIndex -> { });
+    }
+
+    /**
+     * Runs one schedule with a given control timeout, calling {@code onPropagate} inside each propagation after
+     * the harness's own input check. Tests use it to make a propagation hang.
+     */
+    static ScheduleRun run(
+            ScheduleWorkload workload,
+            ChoicePath path,
+            ScheduleRun.Outcome oracle,
+            Duration controlTimeout,
+            IntConsumer onPropagate) {
+        return new ScheduledCoordinatorRun(workload, path, oracle, controlTimeout, onPropagate).execute();
     }
 
     private ScheduleRun execute() {
-        var oracle = oracleOutcome();
         var coordinator = new BoundedParallelAeonCoordinator(
-                fixture.engine(this::checkPropagatedInput),
+                fixture.engine(inputIndex -> {
+                    checkPropagatedInput(inputIndex);
+                    onPropagate.accept(inputIndex);
+                }),
                 this,
                 workload.maxParallelism(),
                 PARALLELISM_THRESHOLD,
@@ -111,7 +151,7 @@ final class ScheduledCoordinatorRun implements Executor {
             }
             if (control == Control.LOST) {
                 controlLost = true;
-                record("the coordinator neither waited nor ended within " + CONTROL_TIMEOUT.toSeconds() + " s");
+                record("the coordinator neither waited nor ended within " + seconds(controlTimeout) + " s");
                 stop(coordinatorThread);
                 break;
             }
@@ -130,10 +170,11 @@ final class ScheduledCoordinatorRun implements Executor {
         var observed = outcome;
         if (observed == null) {
             observed = new ScheduleRun.Outcome.DidNotEnd();
-            record("coordinate did not end after the interrupt and a " + CONTROL_TIMEOUT.toSeconds() + " s join");
+            record("coordinate did not end after the interrupt and a " + seconds(controlTimeout) + " s join");
         }
         var runnableAfterEnd = new ArrayList<Integer>();
         synchronized (this) {
+            closed = true;
             for (int task = 0; task < submitted.size(); task++) {
                 var future = submitted.get(task);
                 if (future.isCancelled()) {
@@ -166,6 +207,7 @@ final class ScheduledCoordinatorRun implements Executor {
         }
         int index;
         synchronized (this) {
+            rejectIfClosed();
             index = submitted.size();
             submitted.add(task);
             if (completionQueue == null) {
@@ -188,13 +230,32 @@ final class ScheduledCoordinatorRun implements Executor {
             }
         }
         while (true) {
-            var pending = pendingTasks();
-            int choice = path.choose(pending.size() + 1);
+            List<Integer> pending;
+            int choice;
+            // Choose under the lock that closing takes, so a closed run's path never gains a choice.
+            synchronized (this) {
+                rejectIfClosed();
+                pending = pendingTasks();
+                choice = path.choose(pending.size() + 1);
+            }
             if (choice == 0) {
                 return;
             }
             complete(pending.get(choice - 1), "before execute(task " + index + ") returns to the coordinator");
         }
+    }
+
+    /** Rejects a coordinator thread that comes back after its schedule's run was returned. */
+    private void rejectIfClosed() {
+        if (closed) {
+            throw new IllegalStateException("the schedule already ended; this coordinator thread outlived its run");
+        }
+    }
+
+    private static String seconds(Duration duration) {
+        return duration.toMillis() % 1000 == 0
+                ? Long.toString(duration.toSeconds())
+                : Double.toString(duration.toMillis() / 1000.0);
     }
 
     private void complete(int task, String when) {
@@ -239,7 +300,9 @@ final class ScheduledCoordinatorRun implements Executor {
     }
 
     private Control awaitControl(Thread coordinatorThread) {
-        long deadline = System.nanoTime() + CONTROL_TIMEOUT.toNanos();
+        long deadline = System.nanoTime() + controlTimeout.toNanos();
+        int yields = 0;
+        long parkNanos = 1_000L;
         while (true) {
             var state = coordinatorThread.getState();
             if (state == Thread.State.TERMINATED) {
@@ -260,7 +323,16 @@ final class ScheduledCoordinatorRun implements Executor {
             if (System.nanoTime() > deadline) {
                 return Control.LOST;
             }
-            Thread.yield();
+            // Yield first, since the coordinator usually reacts within microseconds (measured as fast as the former
+            // unbounded yield loop); then park with a growing delay, so a coordinator that never reacts does not
+            // keep a core busy for the whole control timeout.
+            if (yields < YIELDS_BEFORE_PARKING) {
+                yields++;
+                Thread.yield();
+            } else {
+                LockSupport.parkNanos(parkNanos);
+                parkNanos = Math.min(parkNanos * 2, MAX_PARK_NANOS);
+            }
         }
     }
 
@@ -269,16 +341,17 @@ final class ScheduledCoordinatorRun implements Executor {
         joinQuietly(coordinatorThread);
     }
 
-    private static void joinQuietly(Thread thread) {
+    private void joinQuietly(Thread thread) {
         try {
-            thread.join(CONTROL_TIMEOUT.toMillis());
+            thread.join(controlTimeout.toMillis());
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("interrupted while joining the coordinator thread", interrupted);
         }
     }
 
-    private ScheduleRun.Outcome oracleOutcome() {
+    /** The sequential oracle's outcome; it depends only on the workload, so callers compute it once per workload. */
+    static ScheduleRun.Outcome oracle(ScheduleWorkload workload) {
         var oracleFixture = new Fixture(workload);
         var oracle = new DeterministicAeonCoordinator(oracleFixture.engine(inputIndex -> { }));
         try {

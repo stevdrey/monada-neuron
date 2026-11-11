@@ -200,6 +200,19 @@ suppressed list to equal the completed later failures, and mutant `m6-no-suppres
 that a coordinator that ignores the harness's interrupt left the outcome empty and aborted reporting; it is now an
 explicit `did not end` outcome, covered by the test `aCoordinatorThatNeverEndsIsReportedAsAViolation`.
 
+A second, local review hardened the harness for broken coordinators and the script for odd checkouts:
+- A coordinator thread that outlives its schedule is rejected by the closed executor, so it can no longer add
+  choices to the path the explorer reads. The test above now runs the real harness with a propagation that ignores
+  the interrupt, and checks that the released thread ends without changing the path.
+- The sequential oracle is computed once per workload instead of once per schedule.
+- Waiting for the coordinator yields up to 1,024 times, then parks with a growing delay of up to 100 µs. Bound 4
+  explores as fast as with the former unbounded yield loop (about 1.7 s in both over three runs each), and a
+  coordinator that never reacts no longer keeps a core busy for the whole timeout.
+- An invalid `-PformalPilotMaxInputs` (not an integer, below 2, or above 30) fails with a message that names the
+  value, instead of silently running bound 4.
+- The mutant script skips tracked files deleted from the working tree, and reports a mutant whose build fails as
+  NOT KILLED and continues with the next one, instead of stopping the run.
+
 ### Observations outside the properties
 
 These are not violations of ADR 0016, which speaks only of input-task failures, and the pilot did not explore them:
@@ -219,8 +232,8 @@ acceptable is a question for the owner of ADR 0016, tracked in
 | Dependencies | None added. JUnit and the JDK only; no runtime, CI, or published-artifact change. |
 | Tool availability | Runs wherever `./gradlew test` runs. No download, network access, or second language. |
 | Runtime | One command; bound 4 explores in 2 to 4 s, bound 5 in 27 to 88 s, both under the audit's five-minute limit. |
-| Portability | Relies on `Thread.getState()` and an empty-queue check to detect that the coordinator waits; both are standard Java SE. A 10-second control timeout turns a harness that loses control into a reported violation, not a hang; a coordinator that also ignores the interrupt is reported as `did not end`. |
-| Size | About 1,050 lines of test code in 7 files, 6 mutant patches, one script. |
+| Portability | Relies on `Thread.getState()` and an empty-queue check to detect that the coordinator waits; both are standard Java SE. Each schedule gets a fresh coordinator thread, so a coordinator that never ends cannot reach the next schedule; reusing threads would remove that isolation. A 10-second control timeout turns a harness that loses control into a reported violation, not a hang; a coordinator that also ignores the interrupt is reported as `did not end`. |
+| Size | About 1,200 lines of test code in 8 files, 6 mutant patches, one script. |
 | Maintenance risk | The harness reads one private detail reflectively: the completion queue captured by the direct task. A refactoring of `submitDirectTasks` can break it; the harness then fails with a message that names the method. Line numbers in the correspondence table need refreshing when the coordinator changes. Nothing checks staleness automatically before #204 decides. |
 | Gate status | Not a CI gate and not part of `./gradlew test`. Adoption, wider use, or a CI job is #204's decision. |
 
