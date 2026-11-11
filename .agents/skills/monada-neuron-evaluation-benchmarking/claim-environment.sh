@@ -6,7 +6,8 @@
 # Run it right before and right after the measured run. Pass --java with the JDK the benchmark runs on (for
 # Gradle tasks, the toolchain JDK), since JAVA_HOME or PATH may name another one. Every value the host cannot
 # provide is printed as "unavailable", never guessed. The script reads only local system information and starts
-# at most one JVM (to print the Vector API species); it changes nothing and needs no network.
+# at most two short JVMs (JVM properties and the Vector API species); it changes nothing and needs no network. Run it from the
+# checkout being benchmarked: the Repository row describes the git repository of the current directory.
 set -u
 
 java_bin=""
@@ -17,7 +18,7 @@ while [ $# -gt 0 ]; do
       if [ $# -lt 2 ] || [ -z "$2" ]; then echo "--java needs a path" >&2; exit 2; fi
       java_bin="$2"; shift 2 ;;
     --no-species) probe_species=0; shift ;;
-    -h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -26,6 +27,9 @@ if [ -z "$java_bin" ]; then
   if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
     java_bin="$JAVA_HOME/bin/java"
   else
+    if [ -n "${JAVA_HOME:-}" ]; then
+      echo "warning: JAVA_HOME/bin/java not executable ($JAVA_HOME), using java on PATH" >&2
+    fi
     java_bin="$(command -v java || true)"
   fi
 fi
@@ -35,8 +39,8 @@ value() {
 }
 
 row() {
-  # Escape pipes so a value cannot break the Markdown table.
-  printf '| %s | %s |\n' "$1" "$(value "$2" | sed 's/|/\\|/g')"
+  # Join lines and escape pipes so a value cannot break the Markdown table.
+  printf '| %s | %s |\n' "$1" "$(value "$2" | tr '\n' ' ' | sed 's/|/\\|/g; s/ *$//')"
 }
 
 os="$(uname -sr 2>/dev/null || true)"
@@ -75,7 +79,7 @@ fi
 
 revision=""
 if git rev-parse --git-dir >/dev/null 2>&1; then
-  revision="$(git rev-parse HEAD 2>/dev/null || true)"
+  revision="$(git rev-parse --show-toplevel 2>/dev/null || true) at $(git rev-parse HEAD 2>/dev/null || true)"
   if [ -n "$(git status --porcelain 2>/dev/null)" ]; then revision="$revision (working tree has changes)"; fi
 fi
 
@@ -85,10 +89,20 @@ if [ -n "$java_bin" ] && { [ ! -f "$java_bin" ] || [ ! -x "$java_bin" ]; }; then
   echo "warning: java executable not found or not executable: $java_bin" >&2
 fi
 if [ -n "$java_bin" ] && [ -f "$java_bin" ] && [ -x "$java_bin" ]; then
-  # Drop "Picked up ..." lines (JAVA_TOOL_OPTIONS, and "NOTE: Picked up JDK_JAVA_OPTIONS") so the runtime line is found.
-  jdk="$("$java_bin" -version 2>&1 | grep -v 'Picked up ' | sed -n '2p' | sed 's/^ *//')"
+  # Read JVM properties rather than the human-oriented -version banner, whose line layout varies.
+  if props="$("$java_bin" -XshowSettings:properties -version 2>&1)"; then
+    vendor="$(printf '%s\n' "$props" | sed -n 's/^ *java\.vendor = //p' | head -n1)"
+    vm="$(printf '%s\n' "$props" | sed -n 's/^ *java\.vm\.name = //p' | head -n1)"
+    version="$(printf '%s\n' "$props" | sed -n 's/^ *java\.runtime\.version = //p' | head -n1)"
+    if [ -n "$version" ]; then jdk="$vendor, $vm, $version"; fi
+  fi
+  if [ -z "$jdk" ]; then
+    echo "warning: java -version failed: $(printf '%s\n' "$props" | grep -v 'Picked up ' | head -n1)" >&2
+  fi
   if [ "$probe_species" -eq 1 ]; then
     probe_dir="$(mktemp -d)"
+    trap 'rm -rf "$probe_dir"' EXIT
+    trap 'exit 130' INT TERM
     cat > "$probe_dir/Species.java" <<'JAVA'
 public class Species {
     public static void main(String[] args) {
@@ -97,15 +111,17 @@ public class Species {
     }
 }
 JAVA
-    species="$("$java_bin" --add-modules jdk.incubator.vector "$probe_dir/Species.java" 2>/dev/null | tail -n1)"
-    rm -rf "$probe_dir"
+    species="$("$java_bin" --add-modules jdk.incubator.vector "$probe_dir/Species.java" 2>"$probe_dir/stderr" | tail -n1)"
+    if [ -z "$species" ]; then
+      echo "warning: Vector API species probe failed: $(tail -n1 "$probe_dir/stderr")" >&2
+    fi
   fi
 fi
 if [ "$probe_species" -eq 0 ]; then species="not probed (--no-species)"; fi
 
 printf '| Field | Value |\n| :--- | :--- |\n'
 row "Captured (UTC)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-row "Revision" "$revision"
+row "Repository" "$revision"
 row "OS" "$os $arch"
 row "CPU" "$cpu"
 row "Logical CPUs" "$cpus"

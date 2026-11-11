@@ -41,7 +41,7 @@ Use this checklist when validating a Monada Neuron change.
 - Are warm-up/JIT effects accounted for?
 - Are memory/allocation effects considered, not only elapsed time?
 - Does every stated speedup, latency, throughput, memory, recall, ranking, or evaluation gain have a claim evidence
-  report (`.agents/skills/monada-neuron-evaluation-benchmarking/SKILL.md`, "Claim Evidence Report") with status
+  report (a run labeled exploratory and not used for a decision is exempt, as in SKILL.md "When it applies") (`.agents/skills/monada-neuron-evaluation-benchmarking/SKILL.md`, "Claim Evidence Report") with status
   `SUPPORTED`, or `NARROWED` with the change stating only the narrowed statement? A claim whose invalid-claim rules
   (`IC1` to `IC11`) leave nothing standing is `UNSUPPORTED` and must not ship as a measured result.
 - For knowledge, recall, or ranking evaluations: are provenance, independent gold labels, abstention, holdouts, and
