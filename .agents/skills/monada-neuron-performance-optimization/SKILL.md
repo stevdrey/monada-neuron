@@ -47,6 +47,10 @@ Capture enough context to reproduce the result:
 
 For microbenchmarks, prefer JMH over ad-hoc `System.nanoTime()` loops.
 
+A stated before/after gain needs a claim evidence report (`monada-neuron-evaluation-benchmarking`, section "Claim
+Evidence Report"). It adds the claim, both sides tuned as they ship, the semantic check, a work-performed check, the
+bound check, the limiter, and the share of the end-to-end path to this list.
+
 ## Profiling
 
 Use evidence to identify hot paths. Depending on the problem, use JFR/JMC, async-profiler, allocation profiling, GC logs, hardware counters, or platform profilers.
@@ -151,6 +155,7 @@ Use protected deterministic workloads for automated checks and larger explorator
 A performance change is ready when:
 
 - the target bottleneck is measured;
+- any stated gain has a claim evidence report with status `SUPPORTED` or `NARROWED`;
 - before/after results are reproducible;
 - the chosen optimization is lower-complexity than rejected alternatives where possible;
 - semantic behavior remains protected;
