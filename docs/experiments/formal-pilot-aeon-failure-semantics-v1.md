@@ -122,7 +122,7 @@ No property went unchecked because of a bound: both explorations ran to completi
   Such a task's failure is neither suppressed nor cancelled. ADR 0016 attaches only *completed* concurrent failures,
   so this is allowed behavior, but the pilot does not exercise it.
 - **Caller interruption of the coordinator, executor rejection, and failures thrown from `done()`.** See
-  "Observations".
+  "Observations". Since #208 the first two are covered by unit tests rather than by the explorer.
 - **Shared exception instances.** Each failing input throws its own instance. With one instance thrown by several
   inputs, `rethrowDeterministicFailure` skips the primary by identity, and repeated `addSuppressed` calls on a shared
   instance would accumulate across calls; that is not checked.
@@ -224,6 +224,18 @@ These are not violations of ADR 0016, which speaks only of input-task failures, 
 Both leave discarded work running after the call ends. Neither has been reproduced by a test. Whether that is
 acceptable is a question for the owner of ADR 0016, tracked in
 [#208](https://github.com/stevdrey/monada-neuron/issues/208).
+
+**Resolved by #208.** `BoundedParallelAeonCoordinatorAbnormalExitTest` reproduced both observations on the code
+above, and the same gaps on the contextual path. ADR 0016 decision 7 now states the abnormal-exit contract: every
+submitted task is done or cancelled before any exception leaves `coordinate`, and the caller's interrupt status is
+preserved. The input-failure path keeps its own `cancelTasks` call before suppressed failures are attached; a
+handler around the direct submission loop then cancels the unreconciled window on every other exit, and the contextual
+path cancels the current wave the same way. The line numbers in this report still refer to blob `2af372e13d35`. The six
+mutant patches were regenerated against the new layout with the same intent, except that `m2-no-sibling-cancel` now
+drops both cancellations on the direct path: with only one removed, the other still cancels the siblings. The pilot's model and exclusions are unchanged:
+it still assumes no caller interrupt and no rejection, so those cases are covered by the unit tests, not by the
+explorer. In the rerun the baseline passes, every mutant is killed by its target property, and every count is the
+same as in the table above: [`logs/mutants-issue-208.txt`](formal-pilot-aeon-failure-semantics-v1/logs/mutants-issue-208.txt).
 
 ## Cost, portability, and maintainability (FV8)
 

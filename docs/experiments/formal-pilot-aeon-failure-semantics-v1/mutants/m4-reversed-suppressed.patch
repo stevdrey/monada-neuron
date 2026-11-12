@@ -1,8 +1,7 @@
 diff --git a/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java b/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
-index 2af372e..fba0051 100644
 --- a/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
 +++ b/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
-@@ -893,7 +893,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
+@@ -928,7 +928,7 @@
      }
  
      private void rethrowDeterministicFailure(Throwable primary, List<Throwable> concurrentFailures) {

@@ -1,0 +1,97 @@
+baseline: PASS (no property violated)
+m1-first-completed-failure: KILLED by MATCHES_SEQUENTIAL_ORACLE (violated: MATCHES_SEQUENTIAL_ORACLE SUPPRESSES_COMPLETED_LATER_FAILURES; MATCHES_SEQUENTIAL_ORACLE=3499 SUPPRESSES_COMPLETED_LATER_FAILURES=3904 BOUNDED_IN_ORDER_SUBMISSION=0 NO_RUNNABLE_TASK_AFTER_END=0 NO_WAIT_WITHOUT_PENDING_WORK=0 )
+    smallest counterexample, MATCHES_SEQUENTIAL_ORACLE (coordinate returns exactly the sequential oracle's results in input order, or throws the exception of the same input as the oracle (the earliest failing input))
+    violation: oracle threw InputFailure(0), coordinate threw InputFailure(1) suppressed=[]
+    workload: inputs=2 maxParallelism=2 failing={0,1}
+    replay choices: [0, 0, 1]
+    schedule:
+      1. execute(task 0)
+      2. execute(task 1)
+      3. task 1 completes, propagate throws InputFailure(1), while the coordinator waits in completedTaskIndexes.take()
+      4. task 0 is cancelled before it runs
+    coordinate: threw InputFailure(1) suppressed=[]
+    sequential oracle: threw InputFailure(0) suppressed=[]
+    
+    smallest counterexample, SUPPRESSES_COMPLETED_LATER_FAILURES (the suppressed exceptions are exactly the failures of later inputs whose tasks had completed when coordinate threw, each once, in input order)
+    violation: thrown InputFailure(0) suppresses inputs [], but the later failures completed before it was thrown are [1]
+    workload: inputs=2 maxParallelism=2 failing={0,1}
+m2-no-sibling-cancel: KILLED by NO_RUNNABLE_TASK_AFTER_END (violated: NO_RUNNABLE_TASK_AFTER_END; MATCHES_SEQUENTIAL_ORACLE=0 SUPPRESSES_COMPLETED_LATER_FAILURES=0 BOUNDED_IN_ORDER_SUBMISSION=0 NO_RUNNABLE_TASK_AFTER_END=6446 NO_WAIT_WITHOUT_PENDING_WORK=0 )
+    smallest counterexample, NO_RUNNABLE_TASK_AFTER_END (when coordinate returns or throws, every submitted task has completed or been cancelled, so none can still start)
+    violation: tasks [1] were neither completed nor cancelled
+    workload: inputs=2 maxParallelism=2 failing={0}
+    replay choices: [0, 0, 0]
+    schedule:
+      1. execute(task 0)
+      2. execute(task 1)
+      3. task 0 completes, propagate throws InputFailure(0), while the coordinator waits in completedTaskIndexes.take()
+      4. task 1 is still runnable after coordinate ended
+    coordinate: threw InputFailure(0) suppressed=[]
+    sequential oracle: threw InputFailure(0) suppressed=[]
+    
+    smallest counterexample, EVERY_LATER_FAILURE_IS_SUPPRESSED ((deliberately false) every failing input after the thrown one is attached as suppressed)
+    violation: failing input 1 is not suppressed by InputFailure(0)
+    workload: inputs=2 maxParallelism=2 failing={0,1}
+m3-unbounded-window: KILLED by BOUNDED_IN_ORDER_SUBMISSION (violated: BOUNDED_IN_ORDER_SUBMISSION; MATCHES_SEQUENTIAL_ORACLE=0 SUPPRESSES_COMPLETED_LATER_FAILURES=0 BOUNDED_IN_ORDER_SUBMISSION=6376 NO_RUNNABLE_TASK_AFTER_END=0 NO_WAIT_WITHOUT_PENDING_WORK=0 )
+    smallest counterexample, BOUNDED_IN_ORDER_SUBMISSION (no more tasks are submitted than there are inputs, no submission leaves more than maxParallelism tasks unfinished, and every task that runs propagates the input of its submission position)
+    violation: 3 tasks in flight after execute(task 2), above maxParallelism 2
+    workload: inputs=3 maxParallelism=2 failing={}
+    replay choices: [0, 0, 0, 0, 0, 0]
+    schedule:
+      1. execute(task 0)
+      2. execute(task 1)
+      3. execute(task 2)
+      4. task 0 completes, propagate returns, while the coordinator waits in completedTaskIndexes.take()
+      5. task 1 completes, propagate returns, while the coordinator waits in completedTaskIndexes.take()
+      6. task 2 completes, propagate returns, while the coordinator waits in completedTaskIndexes.take()
+    coordinate: returned 3 results
+    sequential oracle: returned 3 results
+    
+    smallest counterexample, EVERY_LATER_FAILURE_IS_SUPPRESSED ((deliberately false) every failing input after the thrown one is attached as suppressed)
+m4-reversed-suppressed: KILLED by SUPPRESSES_COMPLETED_LATER_FAILURES (violated: SUPPRESSES_COMPLETED_LATER_FAILURES; MATCHES_SEQUENTIAL_ORACLE=0 SUPPRESSES_COMPLETED_LATER_FAILURES=2997 BOUNDED_IN_ORDER_SUBMISSION=0 NO_RUNNABLE_TASK_AFTER_END=0 NO_WAIT_WITHOUT_PENDING_WORK=0 )
+    smallest counterexample, SUPPRESSES_COMPLETED_LATER_FAILURES (the suppressed exceptions are exactly the failures of later inputs whose tasks had completed when coordinate threw, each once, in input order)
+    violation: thrown InputFailure(0) suppresses inputs [2, 1], but the later failures completed before it was thrown are [1, 2]
+    workload: inputs=3 maxParallelism=2 failing={0,1,2}
+    replay choices: [0, 0, 1, 0, 1, 0]
+    schedule:
+      1. execute(task 0)
+      2. execute(task 1)
+      3. task 1 completes, propagate throws InputFailure(1), while the coordinator waits in completedTaskIndexes.take()
+      4. execute(task 2)
+      5. task 2 completes, propagate throws InputFailure(2), while the coordinator waits in completedTaskIndexes.take()
+      6. task 0 completes, propagate throws InputFailure(0), while the coordinator waits in completedTaskIndexes.take()
+    coordinate: threw InputFailure(0) suppressed=[InputFailure(2), InputFailure(1)]
+    sequential oracle: threw InputFailure(0) suppressed=[]
+    
+    smallest counterexample, EVERY_LATER_FAILURE_IS_SUPPRESSED ((deliberately false) every failing input after the thrown one is attached as suppressed)
+m5-lost-refill: KILLED by NO_WAIT_WITHOUT_PENDING_WORK (violated: MATCHES_SEQUENTIAL_ORACLE NO_WAIT_WITHOUT_PENDING_WORK; MATCHES_SEQUENTIAL_ORACLE=184 SUPPRESSES_COMPLETED_LATER_FAILURES=0 BOUNDED_IN_ORDER_SUBMISSION=0 NO_RUNNABLE_TASK_AFTER_END=0 NO_WAIT_WITHOUT_PENDING_WORK=184 )
+    smallest counterexample, NO_WAIT_WITHOUT_PENDING_WORK (the coordinator never waits for a completion while no submitted task can run, and always ends)
+    violation: the coordinator waited with no runnable task
+    workload: inputs=3 maxParallelism=2 failing={}
+    replay choices: [0, 0, 0, 0]
+    schedule:
+      1. execute(task 0)
+      2. execute(task 1)
+      3. task 0 completes, propagate returns, while the coordinator waits in completedTaskIndexes.take()
+      4. task 1 completes, propagate returns, while the coordinator waits in completedTaskIndexes.take()
+      5. the coordinator waits in completedTaskIndexes.take() but no submitted task can run
+    coordinate: threw IllegalStateException(interrupted while awaiting Aeon input completion) suppressed=[]
+    sequential oracle: returned 3 results
+    
+    smallest counterexample, EVERY_LATER_FAILURE_IS_SUPPRESSED ((deliberately false) every failing input after the thrown one is attached as suppressed)
+    violation: failing input 1 is not suppressed by InputFailure(0)
+m6-no-suppressed: KILLED by SUPPRESSES_COMPLETED_LATER_FAILURES (violated: SUPPRESSES_COMPLETED_LATER_FAILURES; MATCHES_SEQUENTIAL_ORACLE=0 SUPPRESSES_COMPLETED_LATER_FAILURES=9245 BOUNDED_IN_ORDER_SUBMISSION=0 NO_RUNNABLE_TASK_AFTER_END=0 NO_WAIT_WITHOUT_PENDING_WORK=0 )
+    smallest counterexample, SUPPRESSES_COMPLETED_LATER_FAILURES (the suppressed exceptions are exactly the failures of later inputs whose tasks had completed when coordinate threw, each once, in input order)
+    violation: thrown InputFailure(0) suppresses inputs [], but the later failures completed before it was thrown are [1]
+    workload: inputs=2 maxParallelism=2 failing={0,1}
+    replay choices: [0, 0, 1, 0]
+    schedule:
+      1. execute(task 0)
+      2. execute(task 1)
+      3. task 1 completes, propagate throws InputFailure(1), while the coordinator waits in completedTaskIndexes.take()
+      4. task 0 completes, propagate throws InputFailure(0), while the coordinator waits in completedTaskIndexes.take()
+    coordinate: threw InputFailure(0) suppressed=[]
+    sequential oracle: threw InputFailure(0) suppressed=[]
+    
+    smallest counterexample, EVERY_LATER_FAILURE_IS_SUPPRESSED ((deliberately false) every failing input after the thrown one is attached as suppressed)
+    violation: failing input 1 is not suppressed by InputFailure(0)
+    workload: inputs=2 maxParallelism=2 failing={0,1}

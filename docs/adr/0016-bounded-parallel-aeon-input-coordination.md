@@ -50,6 +50,47 @@ deterministic semantics require:
    subsequent completed concurrent exceptions as suppressed (`addSuppressed`). Cancellation interrupts cooperative
    processors but cannot forcibly stop a processor that ignores interruption.
 6. **Reference Oracle**: `DeterministicAeonCoordinator` remains the semantic oracle and fallback.
+7. **Abnormal-Exit Cancellation** (added by Issue #208): Whenever `coordinate` ends with an exception, for any reason,
+   every task it has already submitted is done or cancelled with `cancel(true)` before the exception leaves the call.
+   This covers the input failures of decision 5 and also failures of the coordinator itself: a caller interrupt
+   while it waits, an executor that rejects a submission (the rejected task is cancelled too, so it can never run
+   later), and any other exception raised while it submits, awaits, or reconciles. The coordinator rethrows the
+   original exception unchanged; when the caller was interrupted it throws `IllegalStateException` with the
+   `InterruptedException` as cause and leaves the caller's interrupt status set. On an input failure the siblings
+   are still cancelled before the suppressed failures are attached, as decision 5 requires; one handler around the
+   direct submission loop, and one per contextual wave, then covers every other exit by cancelling the unreconciled
+   window (direct) or the current wave (contextual; earlier waves are already reconciled). A failure raised while
+   cancelling is attached to the original exception as suppressed and never replaces it. As in decision 5,
+   cancellation is cooperative: a processor that is already running and ignores interruption can still run briefly
+   after `coordinate` has thrown.
+
+   *Cost.* The normal path allocates nothing new and does no extra work. The contextual handler cancels one wave of
+   at most `maxParallelism` tasks. The direct handler scans the created tasks from the first unreconciled input on,
+   which is **`O(inputCount)` in the worst case**, not `O(maxParallelism)`: at most `maxParallelism` of them are
+   still in flight, but when an early input stalls while later inputs complete, each completion refills the window
+   without advancing the first unreconciled index. Every other task in the scan is already done, and `cancel` on a
+   done `FutureTask` is a constant-time state check. The decision-5 sibling cancellation already had the same bound.
+   Bounding the scan to the in-flight tasks would need an index of in-flight tasks maintained on every submission and
+   completion of the normal path; that cost is not justified for a path taken only once per failed call, so the
+   linear worst case is accepted. Issue #208's `O(maxParallelism)` expectation is revised accordingly.
+
+   *Context after an abnormal contextual exit.* The coordinator never adds a synthetic completion event: it would
+   break decision 6, because the sequential oracle adds none when an input's propagation throws. What the
+   `CognitiveContext` holds depends on where the exit happened:
+   - **Before the wave's reconciliation starts** (an executor rejection during the wave's submission): the context
+     holds exactly the events of the earlier, fully reconciled waves, with no `AeonInputStarted` for the current
+     wave. It stays active.
+   - **During reconciliation, with the context still active** (a caller interrupt while awaiting an input, an input
+     failure, or a reconciliation failure): the context holds the events recorded up to the input in progress,
+     including that input's `AeonInputStarted` with no matching completion, and possibly its input signal. It stays
+     active.
+   - **The context was closed or completed by someone else** (its owner, or a processor or callback): the coordinator
+     does not reactivate or modify it; the context's own `IllegalStateException` propagates and the context remains
+     in the state that party left it in.
+
+   In the first two cases the owner must complete the context with `CognitiveCycleOutcome.FAILURE` or close it, and
+   must not report it as a success. Callers must not rely on an `AeonInputStarted` existing for the failing input,
+   or on the context being active, without knowing which case applies.
 
 ## Alternatives Considered
 
@@ -81,6 +122,10 @@ coarsely and efficiently.
 - `CognitiveContext` retains its sequential, single-threaded invariants and deterministic diagnostic traces.
 - Workloads that cannot prove independence safely fall back to the sequential oracle without runtime failures.
 - Multi-failure exception handling is strictly deterministic and matches the failure point of the sequential oracle.
+- No submitted input task outlives an abnormal `coordinate` call in a runnable state, whether the call ended because
+  of an input failure, a caller interrupt, or an executor rejection. Callers that interrupt a coordinating thread can
+  rely on its interrupt status surviving the wrapped exception. `BoundedParallelAeonCoordinatorAbnormalExitTest`
+  covers both paths with deterministic recording and rejecting executors.
 
 ## Follow-Up
 
