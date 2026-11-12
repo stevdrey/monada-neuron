@@ -60,16 +60,37 @@ deterministic semantics require:
    are still cancelled before the suppressed failures are attached, as decision 5 requires; one handler around the
    direct submission loop, and one per contextual wave, then covers every other exit by cancelling the unreconciled
    window (direct) or the current wave (contextual; earlier waves are already reconciled). A failure raised while
-   cancelling is attached to the original exception as suppressed and never replaces it. The cost is a scan of the
-   unreconciled window (direct) or one wave of at most `maxParallelism` tasks (contextual) on abnormal exit only;
-   the normal path allocates nothing new. As in decision 5, cancellation is cooperative: a processor that is
-   already running and ignores interruption can still run briefly after `coordinate` has thrown.
+   cancelling is attached to the original exception as suppressed and never replaces it. As in decision 5,
+   cancellation is cooperative: a processor that is already running and ignores interruption can still run briefly
+   after `coordinate` has thrown.
 
-   After an abnormal contextual exit, the `CognitiveContext` keeps the events recorded up to the input that was in
-   progress, including that input's `AeonInputStarted` with no matching completion. This is the same prefix the
-   sequential oracle leaves when an input's propagation throws, so no synthetic completion event is added (it would
-   break decision 6). The context stays active; its owner must complete it with `CognitiveCycleOutcome.FAILURE` or
-   close it, and must not report it as a success.
+   *Cost.* The normal path allocates nothing new and does no extra work. The contextual handler cancels one wave of
+   at most `maxParallelism` tasks. The direct handler scans the created tasks from the first unreconciled input on,
+   which is **`O(inputCount)` in the worst case**, not `O(maxParallelism)`: at most `maxParallelism` of them are
+   still in flight, but when an early input stalls while later inputs complete, each completion refills the window
+   without advancing the first unreconciled index. Every other task in the scan is already done, and `cancel` on a
+   done `FutureTask` is a constant-time state check. The decision-5 sibling cancellation already had the same bound.
+   Bounding the scan to the in-flight tasks would need an index of in-flight tasks maintained on every submission and
+   completion of the normal path; that cost is not justified for a path taken only once per failed call, so the
+   linear worst case is accepted. Issue #208's `O(maxParallelism)` expectation is revised accordingly.
+
+   *Context after an abnormal contextual exit.* The coordinator never adds a synthetic completion event: it would
+   break decision 6, because the sequential oracle adds none when an input's propagation throws. What the
+   `CognitiveContext` holds depends on where the exit happened:
+   - **Before the wave's reconciliation starts** (an executor rejection during the wave's submission): the context
+     holds exactly the events of the earlier, fully reconciled waves, with no `AeonInputStarted` for the current
+     wave. It stays active.
+   - **During reconciliation, with the context still active** (a caller interrupt while awaiting an input, an input
+     failure, or a reconciliation failure): the context holds the events recorded up to the input in progress,
+     including that input's `AeonInputStarted` with no matching completion, and possibly its input signal. It stays
+     active.
+   - **The context was closed or completed by someone else** (its owner, or a processor or callback): the coordinator
+     does not reactivate or modify it; the context's own `IllegalStateException` propagates and the context remains
+     in the state that party left it in.
+
+   In the first two cases the owner must complete the context with `CognitiveCycleOutcome.FAILURE` or close it, and
+   must not report it as a success. Callers must not rely on an `AeonInputStarted` existing for the failing input,
+   or on the context being active, without knowing which case applies.
 
 ## Alternatives Considered
 

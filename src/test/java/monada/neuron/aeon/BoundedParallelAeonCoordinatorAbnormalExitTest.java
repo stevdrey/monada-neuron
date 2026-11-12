@@ -3,6 +3,7 @@ package monada.neuron.aeon;
 import monada.neuron.context.CognitiveBudget;
 import monada.neuron.context.CognitiveContext;
 import monada.neuron.context.CognitiveCycleOutcome;
+import monada.neuron.context.CognitiveCycleSnapshot;
 import monada.neuron.context.CognitiveTraceEntry;
 import monada.neuron.context.CognitiveTraceEvent;
 import monada.neuron.model.FrequencyState;
@@ -30,6 +31,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntPredicate;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -259,6 +261,75 @@ class BoundedParallelAeonCoordinatorAbnormalExitTest {
 
             executor.runAll();
             assertEquals(0, processedInputs.get());
+
+            // ADR 0016 decision 7, exit before the wave's reconciliation: no input of the wave was started.
+            assertTrue(context.isActive());
+            var events = traceEvents(context.complete(CognitiveCycleOutcome.FAILURE));
+            assertAll(
+                    () -> assertEquals(0, count(events, CognitiveTraceEvent.AeonInputStarted.class)),
+                    () -> assertEquals(0, count(events, CognitiveTraceEvent.AeonInputCompleted.class)));
+        }
+    }
+
+    @Test
+    void contextualPathKeepsEarlierWavesWhenALaterWaveSubmissionIsRejected() {
+        // Wave 1 (inputs 0 and 1) runs inline and is reconciled; the first submission of wave 2 is rejected.
+        var executor = new RecordingExecutor(2, 2);
+        try (var coordinator = coordinator(executor, ContextualParallelism.EXPERIMENTAL_PARALLEL)) {
+            var root = node(1);
+            var context = new CognitiveContext(BUDGET);
+
+            assertThrows(
+                    RejectedExecutionException.class,
+                    () -> coordinator.coordinate(aeonWith(root), inputs(root, 3), countingProcessor, config(), context));
+
+            assertAll(
+                    () -> assertEquals(3, executor.submitted().size()),
+                    () -> assertTrue(executor.submitted().get(2).isCancelled(), "rejected input 2 can never run"),
+                    () -> assertTrue(context.isActive()));
+
+            var events = traceEvents(context.complete(CognitiveCycleOutcome.FAILURE));
+            assertAll(
+                    () -> assertEquals(2, count(events, CognitiveTraceEvent.AeonInputStarted.class)),
+                    () -> assertEquals(2, count(events, CognitiveTraceEvent.AeonInputCompleted.class)),
+                    () -> assertEquals(2, processedInputs.get()));
+        }
+    }
+
+    @Test
+    void directPathCancelsTheStalledInputWhenLaterInputsCompletedFirst() {
+        // ADR 0016 decision 7 cost note: input 0 stalls while inputs 1..5 complete in order, so every completion
+        // refills the window but the first unreconciled index stays 0. The last inline input then interrupts the
+        // caller, whose next wait fails. The scan covers all six tasks; only the stalled one is still in flight.
+        int inputCount = 6;
+        var executor = new RecordingExecutor(Integer.MAX_VALUE, submission -> submission > 1);
+        NodeProcessor interruptingLast = (node, input) -> {
+            processedInputs.incrementAndGet();
+            if (input.frequencyState().amplitude() == inputCount) {
+                Thread.currentThread().interrupt();
+            }
+            return NodeProcessingResult.noOutput();
+        };
+        try (var coordinator = coordinator(executor, ContextualParallelism.SEQUENTIAL_ORACLE)) {
+            var root = node(1);
+
+            var failure = assertThrows(
+                    IllegalStateException.class,
+                    () -> coordinator.coordinate(aeonWith(root), inputs(root, inputCount), interruptingLast, config()));
+
+            var tasks = executor.submitted();
+            assertAll(
+                    () -> assertTrue(Thread.currentThread().isInterrupted(), "caller interrupt status is preserved"),
+                    () -> assertInstanceOf(InterruptedException.class, failure.getCause()),
+                    () -> assertEquals(inputCount, tasks.size(), "every refill happened before the interrupt"),
+                    () -> assertTrue(tasks.getFirst().isCancelled(), "stalled input 0 is cancelled"),
+                    () -> assertEveryTaskDone(tasks),
+                    () -> assertTrue(tasks.subList(1, inputCount).stream().noneMatch(Future::isCancelled),
+                            "completed inputs keep their results"));
+
+            Thread.interrupted();
+            executor.runAll();
+            assertEquals(inputCount - 1, processedInputs.get(), "the stalled input never ran");
         }
     }
 
@@ -309,6 +380,14 @@ class BoundedParallelAeonCoordinatorAbnormalExitTest {
         }
     }
 
+    private static List<CognitiveTraceEvent> traceEvents(CognitiveCycleSnapshot snapshot) {
+        return snapshot.traceEntries().stream().map(CognitiveTraceEntry::event).toList();
+    }
+
+    private static long count(List<CognitiveTraceEvent> events, Class<? extends CognitiveTraceEvent> type) {
+        return events.stream().filter(type::isInstance).count();
+    }
+
     private static void assertEveryTaskDone(List<Future<?>> tasks) {
         for (int i = 0; i < tasks.size(); i++) {
             assertTrue(tasks.get(i).isDone(), "task " + i + " must be done or cancelled");
@@ -348,23 +427,28 @@ class BoundedParallelAeonCoordinatorAbnormalExitTest {
     }
 
     /**
-     * Records every submitted {@link Future} without running it, except for the first {@code inlineSubmissions},
-     * which run on the calling thread. Submission number {@code acceptedSubmissions + 1} and later are recorded and
-     * then rejected, as a saturated or shut-down executor would.
+     * Records every submitted {@link Future} without running it, except for the submissions (numbered from 1) that
+     * {@code runsInline} selects, which run on the calling thread. Submission number {@code acceptedSubmissions + 1}
+     * and later are recorded and then rejected, as a saturated or shut-down executor would.
      */
     private static final class RecordingExecutor implements Executor {
 
         private final int acceptedSubmissions;
-        private final int inlineSubmissions;
+        private final IntPredicate runsInline;
         private final List<Future<?>> submitted = new ArrayList<>();
 
         RecordingExecutor(int acceptedSubmissions) {
             this(acceptedSubmissions, 0);
         }
 
+        /** Runs the first {@code inlineSubmissions} submissions inline. */
         RecordingExecutor(int acceptedSubmissions, int inlineSubmissions) {
+            this(acceptedSubmissions, submission -> submission <= inlineSubmissions);
+        }
+
+        RecordingExecutor(int acceptedSubmissions, IntPredicate runsInline) {
             this.acceptedSubmissions = acceptedSubmissions;
-            this.inlineSubmissions = inlineSubmissions;
+            this.runsInline = runsInline;
         }
 
         @Override
@@ -375,7 +459,7 @@ class BoundedParallelAeonCoordinatorAbnormalExitTest {
             if (submitted.size() > acceptedSubmissions) {
                 throw new RejectedExecutionException("rejected submission " + submitted.size());
             }
-            if (submitted.size() <= inlineSubmissions) {
+            if (runsInline.test(submitted.size())) {
                 command.run();
             }
         }
