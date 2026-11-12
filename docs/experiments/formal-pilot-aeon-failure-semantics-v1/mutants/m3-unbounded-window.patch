@@ -2,7 +2,7 @@ diff --git a/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.jav
 --- a/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
 +++ b/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
 @@ -261,7 +261,7 @@
-             nextToSubmit = submitDirectTasks(
+             int nextToSubmit = submitDirectTasks(
                      tasks,
                      0,
 -                    Math.min(inputCount, maxParallelism),

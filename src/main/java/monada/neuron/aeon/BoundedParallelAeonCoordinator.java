@@ -251,14 +251,14 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
         var results = new PropagationResult[inputCount];
         var failures = new Throwable[inputCount];
         var completed = new boolean[inputCount];
-        int nextToSubmit = 0;
         int completedTaskCount = 0;
         int nextToReconcile = 0;
 
-        // Every abnormal exit (an input failure, a caller interrupt, an executor rejection, or any other coordinator
-        // failure) leaves through the catch below, which cancels the not-yet-reconciled window before rethrowing.
+        // An input failure cancels its siblings before attaching suppressed failures (ADR 0016 decision 5). Every
+        // other abnormal exit (a caller interrupt, an executor rejection, or any other coordinator failure) is caught
+        // below, which cancels the not-yet-reconciled window before rethrowing (decision 7).
         try {
-            nextToSubmit = submitDirectTasks(
+            int nextToSubmit = submitDirectTasks(
                     tasks,
                     0,
                     Math.min(inputCount, maxParallelism),
@@ -279,6 +279,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                 while (nextToReconcile < nextToSubmit && completed[nextToReconcile]) {
                     if (failures[nextToReconcile] != null) {
                         var concurrentFailures = collectCompletedFailures(tasks, nextToReconcile + 1, nextToSubmit);
+                        cancelTasks(tasks, nextToReconcile + 1, nextToSubmit);
                         rethrowDeterministicFailure(failures[nextToReconcile], concurrentFailures);
                     }
                     inputResults.add(new AeonInputResult(
@@ -300,7 +301,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                 }
             }
         } catch (Throwable abnormalExit) {
-            cancelSubmittedTasks(tasks, nextToReconcile);
+            cancelAfterAbnormalExit(tasks, nextToReconcile, abnormalExit);
             throw abnormalExit;
         }
         return new AeonCoordinationResult(inputResults);
@@ -377,8 +378,9 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
 
             var waveTasks = this.<InputExecutionLog>newTaskArray(waveLength);
 
-            // Every abnormal exit during a wave (an input failure, a caller interrupt, an executor rejection, or a
-            // reconciliation failure) cancels the whole wave before rethrowing; earlier waves are already done.
+            // An input failure cancels its later wave siblings itself (decision 5). Every other abnormal exit during
+            // a wave (a caller interrupt, an executor rejection, or a reconciliation failure) cancels the whole wave
+            // before rethrowing (decision 7); earlier waves are already done.
             try {
                 for (int w = 0; w < waveLength; w++) {
                     final int waveIndex = w;
@@ -405,7 +407,7 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
                         waveTasks,
                         inputResults);
             } catch (Throwable abnormalExit) {
-                cancelSubmittedTasks(waveTasks, 0);
+                cancelAfterAbnormalExit(waveTasks, 0, abnormalExit);
                 throw abnormalExit;
             }
         }
@@ -866,22 +868,27 @@ public final class BoundedParallelAeonCoordinator implements CognitiveAeonCoordi
     }
 
     /**
-     * Cancels every task created at or after {@code startInclusive}. Tasks are created contiguously from index 0, so
-     * the first {@code null} slot ends the submitted window. A task whose submission the executor rejected is
-     * included, which guarantees that it can never run later.
+     * Cancels every created task from {@code startInclusive} on and keeps {@code exit} as the exception that leaves
+     * {@code coordinate}: a failure raised while cancelling is attached to it as suppressed instead of replacing it.
      */
-    private void cancelSubmittedTasks(FutureTask<?>[] tasks, int startInclusive) {
-        for (int i = startInclusive; i < tasks.length && tasks[i] != null; i++) {
-            tasks[i].cancel(true);
+    private void cancelAfterAbnormalExit(FutureTask<?>[] tasks, int startInclusive, Throwable exit) {
+        try {
+            cancelTasks(tasks, startInclusive, tasks.length);
+        } catch (Throwable secondary) {
+            if (secondary != exit) {
+                exit.addSuppressed(secondary);
+            }
         }
     }
 
+    /**
+     * Cancels the tasks in {@code [startInclusive, endExclusive)}. Tasks are created contiguously from index 0, so the
+     * first {@code null} slot ends the created window. A task whose submission the executor rejected is created, so it
+     * is included and can never run later.
+     */
     private void cancelTasks(FutureTask<?>[] tasks, int startInclusive, int endExclusive) {
-        for (int i = startInclusive; i < endExclusive; i++) {
-            var task = tasks[i];
-            if (task != null) {
-                task.cancel(true);
-            }
+        for (int i = startInclusive; i < endExclusive && tasks[i] != null; i++) {
+            tasks[i].cancel(true);
         }
     }
 

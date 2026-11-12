@@ -2,6 +2,9 @@ package monada.neuron.aeon;
 
 import monada.neuron.context.CognitiveBudget;
 import monada.neuron.context.CognitiveContext;
+import monada.neuron.context.CognitiveCycleOutcome;
+import monada.neuron.context.CognitiveTraceEntry;
+import monada.neuron.context.CognitiveTraceEvent;
 import monada.neuron.model.FrequencyState;
 import monada.neuron.model.Node;
 import monada.neuron.model.NodeType;
@@ -192,6 +195,50 @@ class BoundedParallelAeonCoordinatorAbnormalExitTest {
             Thread.interrupted();
             executor.runAll();
             assertEquals(0, processedInputs.get());
+
+            // ADR 0016 decision 7: the context keeps the prefix recorded up to the interrupted input, as the
+            // sequential oracle does when an input throws, and stays active for its owner to complete as a failure.
+            assertTrue(context.isActive());
+            var snapshot = context.complete(CognitiveCycleOutcome.FAILURE);
+            var events = snapshot.traceEntries().stream().map(CognitiveTraceEntry::event).toList();
+            assertAll(
+                    () -> assertEquals(CognitiveCycleOutcome.FAILURE, snapshot.outcome()),
+                    () -> assertEquals(1, events.stream()
+                            .filter(CognitiveTraceEvent.AeonInputStarted.class::isInstance).count()),
+                    () -> assertTrue(events.stream()
+                            .noneMatch(CognitiveTraceEvent.AeonInputCompleted.class::isInstance)),
+                    () -> assertEquals(0, snapshot.aeonResults().size()));
+        }
+    }
+
+    @Test
+    void contextualPathCancelsTheWaveWhenReconciliationFails() {
+        // Input 0 runs inline and discards the context; reconciling it then fails while input 1 is still pending.
+        var executor = new RecordingExecutor(Integer.MAX_VALUE, 1);
+        var context = new CognitiveContext(BUDGET);
+        NodeProcessor discardingFirst = (node, input) -> {
+            processedInputs.incrementAndGet();
+            if (input.frequencyState().amplitude() == 1.0) {
+                context.close();
+            }
+            return NodeProcessingResult.noOutput();
+        };
+        try (var coordinator = coordinator(executor, ContextualParallelism.EXPERIMENTAL_PARALLEL)) {
+            var root = node(1);
+
+            var failure = assertThrows(
+                    IllegalStateException.class,
+                    () -> coordinator.coordinate(aeonWith(root), inputs(root, 3), discardingFirst, config(), context));
+
+            assertAll(
+                    () -> assertFalse(context.isActive()),
+                    () -> assertTrue(failure.getMessage().contains("active"), failure.getMessage()),
+                    () -> assertEquals(2, executor.submitted().size()),
+                    () -> assertFalse(executor.submitted().getFirst().isCancelled(), "input 0 completed normally"),
+                    () -> assertTrue(executor.submitted().get(1).isCancelled(), "pending input 1 is cancelled"));
+
+            executor.runAll();
+            assertEquals(1, processedInputs.get(), "only the inline input was processed");
         }
     }
 

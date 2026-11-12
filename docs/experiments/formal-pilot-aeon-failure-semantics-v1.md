@@ -228,11 +228,11 @@ acceptable is a question for the owner of ADR 0016, tracked in
 **Resolved by #208.** `BoundedParallelAeonCoordinatorAbnormalExitTest` reproduced both observations on the code
 above, and the same gaps on the contextual path. ADR 0016 decision 7 now states the abnormal-exit contract: every
 submitted task is done or cancelled before any exception leaves `coordinate`, and the caller's interrupt status is
-preserved. The direct path now cancels its unreconciled window from a single handler around the submission loop, which
-also replaces the separate `cancelTasks` call on the input-failure path; the contextual path cancels the current wave
-the same way. The line numbers in this report still refer to blob `2af372e13d35`. The six mutant patches were
-regenerated against the new layout with the same intent, except that `m2-no-sibling-cancel` now drops the single
-abnormal-exit cancellation, which is where sibling cancellation lives. The pilot's model and exclusions are unchanged:
+preserved. The input-failure path keeps its own `cancelTasks` call before suppressed failures are attached; a
+handler around the direct submission loop then cancels the unreconciled window on every other exit, and the contextual
+path cancels the current wave the same way. The line numbers in this report still refer to blob `2af372e13d35`. The six
+mutant patches were regenerated against the new layout with the same intent, except that `m2-no-sibling-cancel` now
+drops both cancellations on the direct path: with only one removed, the other still cancels the siblings. The pilot's model and exclusions are unchanged:
 it still assumes no caller interrupt and no rejection, so those cases are covered by the unit tests, not by the
 explorer. In the rerun the baseline passes, every mutant is killed by its target property, and every count is the
 same as in the table above: [`logs/mutants-issue-208.txt`](formal-pilot-aeon-failure-semantics-v1/logs/mutants-issue-208.txt).

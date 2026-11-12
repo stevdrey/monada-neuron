@@ -56,12 +56,20 @@ deterministic semantics require:
    while it waits, an executor that rejects a submission (the rejected task is cancelled too, so it can never run
    later), and any other exception raised while it submits, awaits, or reconciles. The coordinator rethrows the
    original exception unchanged; when the caller was interrupted it throws `IllegalStateException` with the
-   `InterruptedException` as cause and leaves the caller's interrupt status set. The direct path cancels the
-   unreconciled window from one handler around its submission loop; the experimental contextual path cancels the
-   current wave from one handler per wave, since earlier waves are already reconciled. The cost is a scan of the
+   `InterruptedException` as cause and leaves the caller's interrupt status set. On an input failure the siblings
+   are still cancelled before the suppressed failures are attached, as decision 5 requires; one handler around the
+   direct submission loop, and one per contextual wave, then covers every other exit by cancelling the unreconciled
+   window (direct) or the current wave (contextual; earlier waves are already reconciled). A failure raised while
+   cancelling is attached to the original exception as suppressed and never replaces it. The cost is a scan of the
    unreconciled window (direct) or one wave of at most `maxParallelism` tasks (contextual) on abnormal exit only;
    the normal path allocates nothing new. As in decision 5, cancellation is cooperative: a processor that is
    already running and ignores interruption can still run briefly after `coordinate` has thrown.
+
+   After an abnormal contextual exit, the `CognitiveContext` keeps the events recorded up to the input that was in
+   progress, including that input's `AeonInputStarted` with no matching completion. This is the same prefix the
+   sequential oracle leaves when an input's propagation throws, so no synthetic completion event is added (it would
+   break decision 6). The context stays active; its owner must complete it with `CognitiveCycleOutcome.FAILURE` or
+   close it, and must not report it as a success.
 
 ## Alternatives Considered
 

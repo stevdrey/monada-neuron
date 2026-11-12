@@ -1,11 +1,19 @@
 diff --git a/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java b/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
 --- a/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
 +++ b/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
-@@ -300,7 +300,6 @@
+@@ -279,7 +279,6 @@
+                 while (nextToReconcile < nextToSubmit && completed[nextToReconcile]) {
+                     if (failures[nextToReconcile] != null) {
+                         var concurrentFailures = collectCompletedFailures(tasks, nextToReconcile + 1, nextToSubmit);
+-                        cancelTasks(tasks, nextToReconcile + 1, nextToSubmit);
+                         rethrowDeterministicFailure(failures[nextToReconcile], concurrentFailures);
+                     }
+                     inputResults.add(new AeonInputResult(
+@@ -301,7 +300,6 @@
                  }
              }
          } catch (Throwable abnormalExit) {
--            cancelSubmittedTasks(tasks, nextToReconcile);
+-            cancelAfterAbnormalExit(tasks, nextToReconcile, abnormalExit);
              throw abnormalExit;
          }
          return new AeonCoordinationResult(inputResults);

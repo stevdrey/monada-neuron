@@ -1,7 +1,7 @@
 diff --git a/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java b/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
 --- a/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
 +++ b/src/main/java/monada/neuron/aeon/BoundedParallelAeonCoordinator.java
-@@ -923,7 +923,7 @@
+@@ -930,7 +930,7 @@
      private void rethrowDeterministicFailure(Throwable primary, List<Throwable> concurrentFailures) {
          for (var failure : concurrentFailures) {
              if (failure != primary) {
