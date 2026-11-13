@@ -119,7 +119,7 @@ A violation that does not reach R4 stays `[suspected]`, or becomes an `UNMET` or
   Required by: <criterion id, ADR and decision, spec clause, or rule, with the clause quoted or cited>.
   Rung: R4 — <what was run>.
   Reproduce: `<exact command or steps>` → `<observed output>`; required: `<output the requirement demands>`.
-  Rerun: <clean scratch copy, command rerun, same result | not rerun, reason>.
+  Rerun: <clean scratch copy, command rerun, same result>.
   Smallest regression check: <the cheapest test or command that fails now and must pass after the fix>.
 ```
 
@@ -150,7 +150,7 @@ A conditional part of probing, done by the same reviewer. It extends the compati
    - canonical bytes (ADR 0039, ADR 0048) and checkpoints (ADR 0031);
    - the consumer fixtures under `consumer-fixture/` and the `monada-neuron-resonance-adapter` module (present only when `../monada-resonance-store` exists, ADR 0018).
 5. For a concurrent, SIMD, or native path, check and record: determinism of results and iteration order; cancellation, interruption, and failure propagation on every exit; allocation on the hot path; memory lifetime (`Arena` and `MemorySegment` ownership, no use after close); equivalence with the reference implementation within its documented tolerance, including tails and small inputs; and the fallback when the capability is absent.
-6. For each touched surface that has a consumer task, run it (`consumerSmokeTest`, `jpmsConsumerTest`, `forgeHostConsumerTest`, `embeddedHostConsumerTest`, the adapter module's tests) or report it `NOT RUN` with the reason. Do not run consumer tasks for untouched surfaces.
+6. For each touched surface that has a consumer task, run it (`consumerSmokeTest`, `jpmsConsumerTest`, `forgeHostConsumerTest`, `embeddedHostConsumerTest`, the adapter module's tests) or report it `NOT RUN` with the reason. `embeddedHostConsumerTest` and the adapter module's tests exist only when the adapter module is included, that is when `../monada-resonance-store` resolves (ADR 0018); when it is absent, report them `NOT RUN`, never `FAIL` or `PASS`. Do not run consumer tasks for untouched surfaces.
 
 No probability scores, no redesign proposals, and no inventory for its own sake. Report the trace in the result's `Boundary impact` section.
 
@@ -198,7 +198,7 @@ Return exactly this Markdown block to the orchestrator. Keep it factual and prop
   Required by: <criterion, ADR decision, spec clause, or rule>.
   Rung: R1–R5 — <evidence>.
   Reproduce: `<exact command or steps>` → `<observed output>`; required: `<output the requirement demands>`.
-  Rerun: <for blocking demonstrated findings>.
+  Rerun: <for blocking demonstrated findings, and for findings downgraded after a rerun (both runs)>.
   Smallest regression check: <for demonstrated findings>.
 
 ### Optional improvements

@@ -111,8 +111,9 @@ the evidence ladder in `.agents/skills/monada-neuron-independent-verification/SK
 - **Blocking defect:** a failing test, a reproducible command with its output, or a recorded command that shows a
   violated contract beside the clause it breaks (for a behavioral clause, a run that shows the behavior). It cites the
   criterion, ADR decision, spec clause, or rule that requires otherwise, and the smallest regression check.
-- **Hypothesis:** a suspected risk that was reasoned but not reproduced. State what would prove it. It blocks only when it
-  leaves a required criterion unverifiable.
+- **Hypothesis:** a suspected risk that was reasoned but not reproduced. State what would prove it. It never blocks on its own. If it
+  leaves a required criterion unverifiable, that criterion is `NOT VERIFIABLE` and the review is incomplete
+  (`BLOCKED`), not a change request.
 - **Optional improvement:** something no requirement demands. It never blocks.
 
 Report impact only. A finding names the smallest change that satisfies the cited requirement, never a speculative
@@ -126,5 +127,7 @@ Conclude with one of:
 - Ready after small fixes.
 - Not ready: architectural/performance/correctness issue must be resolved.
 
-List the smallest actionable fixes when changes are needed. Only blocking defects, as defined in "Evidence Standard", and
-unmet criteria make a change "Not ready"; list hypotheses and optional improvements separately.
+List the smallest actionable fixes when changes are needed. Any open blocking defect, as defined in "Evidence Standard",
+or unmet criterion rules out "Ready to merge": choose "Ready after small fixes" when each such item has a small, named
+fix, and "Not ready" otherwise. A `NOT VERIFIABLE` required criterion also rules out "Ready to merge": report the
+review as incomplete. Hypotheses and optional improvements never decide the recommendation; list them separately.

@@ -24,7 +24,7 @@ cognitive boundary, ownership, format, or data layout. The audit leaves the adop
 | P3 (IR1, IR5, IR6, IR7, BR1, BR5) | `monada-neuron-independent-verification`, new section "Proof-graded findings" | A five-rung evidence ladder fixes when a finding is `[demonstrated]` (R4 or R5). There is a rule for contract violations. Each finding body adds `Required by:`, `Rung:`, `Rerun:` and `Smallest regression check:`. Observations that no requirement demands go under `Optional improvements` and never block. A reproducer that does not fail again on the rerun keeps its finding as non-blocking (IR6 gates only the blocking tag, and IR1 keeps unproven findings). Only findings that were themselves wrong are retracted, and those are counted. Review cost is recorded. Fan-out and redesign proposals are excluded. |
 | P4 (BR2, BR3, BR4, BR6) | Same skill, new section "Boundary impact trace" and result section `Boundary impact` | When a change crosses a boundary, each touched surface is confirmed or cleared with a rung. One safety fact is stated with its rung or marked unproven. The trace checks the surfaces a grep misses. Concurrent, SIMD and native paths get a fixed list of checks. Consumer tasks run for touched surfaces only. |
 | P5 (AR4) | `docs/specs/pr-review-checklist.md`, "Cognitive Architecture" | Four boundary questions, each tied to an ADR or design principle: split ownership, information leakage, hand-synced list, importable internals. |
-| Review template | `pr-review-checklist.md`, new "Evidence Standard"; "Merge Recommendation" | Defines a blocking defect, a hypothesis, and an optional improvement for human and agent reviews. Only blocking defects and unmet criteria make a change "Not ready". |
+| Review template | `pr-review-checklist.md`, new "Evidence Standard"; "Merge Recommendation" | Defines a blocking defect, a hypothesis, and an optional improvement for human and agent reviews. Open blocking defects and unmet criteria rule out "Ready to merge" ("Ready after small fixes" when each has a small, named fix, "Not ready" otherwise), a `NOT VERIFIABLE` required criterion marks the review incomplete, and hypotheses and optional improvements never decide the recommendation. |
 | Review shape | `monada-neuron-agent-task-workflow`, "Review Shape" | One paragraph that points to the above. |
 
 **Unchanged, by design (audit P3 precedence).** The verification line, the three-tag finding head, the status rules,
@@ -52,6 +52,11 @@ clause constrains, so the skill now splits the rule in two:
   told to follow the new skill and checklist from this branch's working tree. It got a verification request in the
   skill's input contract and was not told the expected outcome. The three ran at the same time on one machine and shared
   the Gradle daemon cache.
+- **Skill revision.** The three reviews followed the working-tree skill as it stood before verification round 1 of this
+  change. That revision differed from the committed text in three places: a reproducer that did not fail again was
+  retracted rather than kept as non-blocking, the finding example used a `markdown` fence, and the contract rule said
+  "only at R4". No sample retracted a finding or had a rerun that failed to repeat, so the results do not depend on
+  these differences.
 - **Environment.** Fedora Linux, JDK 27 through the Gradle toolchain. The `../monada-resonance-store` sibling resolved,
   so the adapter module was in every build. Snapshots were detached worktrees, and every reviewer left them unmodified.
 - **Ground truth.** It was fixed before the runs:
@@ -82,7 +87,7 @@ reviewers' own `Review cost` lines report fewer commands, because they counted s
 
 | Practice | Outcome required by the audit | Observed |
 | :--- | :--- | :--- |
-| P3 | A historical or seeded defect is reported blocking with a reproducer that fails before the fix and passes after it | Met. Historical F1's schedule cancels input 0 and scans 6 tasks on `7919563`. The fixed snapshot carries the ADR cost statement and the regression test `directPathCancelsTheStalledInputWhenLaterInputsCompletedFirst`, which the no-defect reviewer killed with a mutant. Seeded F1 and F2 each name a regression check (a `grep` that must come back empty, and two assertions). |
+| P3 | A historical or seeded defect is reported blocking with a reproducer that fails before the fix and passes after it | Partly met. Historical F1 was reported blocking at R4 on `7919563`: its probe cancels input 0 after scanning 6 tasks. The fix in `a5c80cd` documents the `O(inputCount)` cost in ADR 0016 and adds `directPathCancelsTheStalledInputWhenLaterInputsCompletedFirst`, which the no-defect reviewer killed with a mutant. The scan probe was not rerun on `a5c80cd`, and it would still report 6, so "passes after the fix" is not shown for the historical sample. Seeded F1 and F2 each name a regression check (a `grep` that must come back empty, and two assertions), but neither was run against a fixed version. |
 | P3 | A no-defect sample yields no blocking finding | Met (`PASS`, `blocking_open=0`). |
 | P3 | `publication-gate-check.sh` and its `--mutants` mode still pass | Met: all checks passed, and 35 of 35 mutants were killed. `fingerprint-check.sh` also passes. |
 | P3 | Retracted-finding counts and tool cost are recorded | Met: 0 retracted in every sample. Cost is in the table above. |
@@ -99,6 +104,10 @@ reviewers' own `Review cost` lines report fewer commands, because they counted s
 - **Request completeness is the orchestrator's job.** Historical F2 shows that the reviewer reads Issue comments, and
   that it reports a mismatch with the request as the input contract requires. The no-defect reviewer used the same
   comment to judge IM1. The cause was the orchestrator, which built IM1 from the Issue body alone.
+- **Historical F1 cannot be replayed from the repository.** Its probe (`ReviewProbeAbnormalExitTest`) and the
+  print-only `instrument.sh` counter lived only in the reviewer's scratch directory and were not kept. To rebuild them:
+  `maxParallelism=2` and 6 inputs; the executor holds input 0 unrun and runs the other inputs inline; it interrupts the
+  caller on submission 6; then count the tasks `cancelAfterAbnormalExit` scans. The committed result file is unchanged.
 - **Sample size.** There were three samples and one run each. The reviewer is a single model, and run-to-run variance
   was not measured (`monada-neuron-independent-verification/validation.md`, round 3, shows that it exists).
 - **Seeded sample.** The seed author wrote both the defect and the synthetic issue, so it tests whether the screen
