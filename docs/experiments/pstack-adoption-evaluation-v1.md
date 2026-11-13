@@ -37,7 +37,8 @@ concurrency model, or data layout. None of the ADR triggers in `AGENTS.md` appli
 Each reviewer was one fresh `general-purpose` subagent in Claude Code (Opus 5.5), with no fan-out. It was told to
 follow `monada-neuron-independent-verification` and the files it points to from its arm's guidance checkout, in place
 of the snapshot's own copy, and it received a verification request in that skill's input contract. It was not told the
-expected outcome or that the run was part of a comparison.
+expected outcome. It was not blind to the setup: the prompt called its reading restrictions "part of the experiment
+design", and the guidance checkout's name (`eval204-guidance-baseline` or `eval204-guidance-pilot`) revealed its arm.
 
 ### Samples and ground truth
 
@@ -50,6 +51,14 @@ Ground truth was fixed before the first run. Three samples are the #203 samples,
 | CONC-F | State and concurrency, no-defect control | PR #209 at `a5c80cd` on `b7f5d2d` | No known defect. Any blocking finding is a false positive unless shown real. |
 | ARCH-S | Architecture boundary, seeded | `samples/seeded-spend-preapproval.patch` of #203 on `634093f` (tree `87f73da`, identical to #203's) | **S1:** public Javadoc says a verdict "authorizes the spend" (ADR 0026). The #203 pilot also found an unplanted test gap. |
 | PERF-S | Performance claim, seeded | [`samples/seeded-vector-million.patch`](pstack-adoption-evaluation-v1/samples/seeded-vector-million.patch) on `923c9e5` (tree `4799793`), Issue [S204-1](pstack-adoption-evaluation-v1/samples/seeded-issue-S204-1.md) | A documentation change that records a 1,000,000-pair Vector result. **G1:** one fork, no warm-up, one iteration, no variability (IC5). **G2:** 8.9x attributed to four lanes, above the 4x lane bound, no limiter (IC6). **G3:** the micro result stated as a cognitive-cycle result (IC7). **G4:** no semantic check against the scalar reference at the measured size (IC3). |
+
+**G4 is disputed after the runs, by the orchestrator.** The seeded change measures evaluators it does not modify,
+and IC3 asks for a semantic check of the *variant*, so it may not apply to a measurement of unchanged code. The
+reviewers did not settle this. The baseline reviewer noted only that the "equivalence claim at line 722 is
+pre-existing" (`results/baseline-perf-seeded.md`, Probes). The pilot reviewer marked its tolerance probe n/a because
+"the doc states no new tolerance", yet listed a "semantic check on the 1,000,000-pair workload" among the fields a
+claim evidence report would make explicit (`results/pilot-perf-seeded.md`, Optional improvements). The table keeps G4
+as fixed before the runs; the counts below report it separately and do not score it as a miss.
 
 PERF-S sits on `923c9e5` so that its snapshot does not contain the P1 standard or its worked example. Its numbers are
 invented for the sample and appear only in the patch.
@@ -75,8 +84,8 @@ paths redacted. Pilot-arm results for CONC-D, CONC-F and ARCH-S are the #203 fil
 | CONC-F | P | `PASS` | n/a | n/a | n/a | 2 optional improvements | 0 |
 | ARCH-S | B | `NEEDS CHANGES` | S1 (F1) | none | none | F2: the unplanted test gap, plus an untested public entry point | 0 |
 | ARCH-S | P | `NEEDS CHANGES` | S1 (F1, R4, rerun) | none | none | F2: the unplanted test gap | 0 |
-| PERF-S | B | `NEEDS CHANGES` | G1 (F1), G3 (F3d); G2 in part (F3b: the lane mechanism is unmeasured, with no bound computed) | none | G4 | F2: a warmed rerun does not reproduce 8.9x; F1 shows the recorded command gives Vector slower than Scalar | 0 |
-| PERF-S | P | `NEEDS CHANGES` | G1 (F1), G2 (F2, against the 4x bound), G3 (F3) | G4 named only inside an optional improvement | G4 as a finding | F4: the growth and retention statements compare an Intel/Temurin 26 run with a Ryzen/Zulu 27 run without saying so (IC1) | 0 |
+| PERF-S | B | `NEEDS CHANGES` | G1 (F1), G3 (F3d); G2 in part (F3b: the lane mechanism is unmeasured, with no bound computed) | none | none (G4 disputed: not raised) | F2: a warmed rerun does not reproduce 8.9x; F1 shows the recorded command gives Vector slower than Scalar | 0 |
+| PERF-S | P | `NEEDS CHANGES` | G1 (F1), G2 (F2, against the 4x bound), G3 (F3) | G4 named only inside an optional improvement | none (G4 disputed) | F4: the growth and retention statements compare an Intel/Temurin 26 run with a Ryzen/Zulu 27 run without saying so (IC1) | 0 |
 
 **Verdicts.** The pilot arm returned the verdict the ground truth calls for on all four samples. The baseline arm did on
 three; on CONC-D it returned `PASS` on a snapshot whose IM1, as revised by the owner, was not met. Both arms saw the
@@ -84,9 +93,10 @@ same facts there: the baseline reviewer wrote down that the ADR sentence and the
 criterion against the revised bound alone. One run per arm cannot separate the effect of P3's `Required by:` and rung
 rules from reviewer variance.
 
-**Detection.** Of seven planted or historical defects (the unplanted ARCH-S test gap, which both arms found, is listed
-with the other valid findings), the pilot arm reported five as blocking (H1, S1, G1, G2, G3) and the
-baseline arm three and a part of G2 (S1, G1, G3). Both arms missed H2 and G4. Neither arm raised a blocking false
+**Detection.** Of six undisputed planted or historical defects (the unplanted ARCH-S test gap, which both arms
+found, is listed with the other valid findings, and G4 is reported separately above), the pilot arm reported five as
+blocking (H1, S1, G1, G2, G3) and the baseline arm three and a part of G2 (S1, G1, G3). Both arms missed H2. Neither
+arm raised G4 as a finding. Neither arm raised a blocking false
 positive, so the pilot guidance showed no increase in false positives on these samples.
 
 **Evidence quality.** Every pilot blocking finding names its requirement and rung and was rerun; the baseline findings
@@ -119,15 +129,16 @@ out. No practice is made mandatory on every PR.
 | :--- | :--- |
 | Real claim (#201) | Replaying ADR 0013's "6.2x to 6.7x" claim gave `NARROWED`: 5.0x to 8.5x on another machine, above the four-lane bound, with differing arithmetic and a 32 B/pair reference allocation. A committed claim was shown to be overstated in its attribution, and its numbers were kept. |
 | Seeded claims (#201) | All ten seeded invalid claims (S1 to S10) were flagged by the intended rule. The authors of the rules wrote the seeds. |
-| Comparison (PERF-S) | Both arms blocked the seeded change. The pilot arm graded the lane attribution against the 4x bound (IC6) and found the unplanted cross-machine comparison (IC1). The baseline arm flagged the mechanism as unmeasured without a bound. Both missed the absent semantic check (G4). |
+| Comparison (PERF-S) | Both arms blocked the seeded change. The pilot arm graded the lane attribution against the 4x bound (IC6) and found the unplanted cross-machine comparison (IC1). The baseline arm flagged the mechanism as unmeasured without a bound. Neither raised the disputed G4. |
 | Cost | Under 2 minutes of JMH for the #201 replay; the claim-environment probe under 1 s. Trigger-only: no cost on a change without a numeric claim. |
 | Maintenance | One skill section, one template, one script. No dependency, CI gate, or hardware. |
 
 Decision: keep P1 as it stands, triggered only by a stated measured gain. The data supports more precise grading of an
 invalid claim, not more detection. **Rollback condition:** remove or narrow it if a later review shows it blocking a
 valid claim, or if its required fields are repeatedly filled with `pending` for no claim that matters.
-**Gap recorded, not fixed:** G4 was missed in both arms although IC3 exists. One miss is not enough to tell whether a
-new probe would generalize, so the standard is not tuned to it here.
+**Open question, not fixed:** whether IC3 applies when a change only measures unchanged code (G4). The standard does
+not say, and the two reviewers' notes point in different directions (see "Samples and ground truth"). It is left as
+written until a real claim raises the question.
 
 ### P2. Bounded schedule check of Aeon failure semantics: ADOPT, narrowed to its target
 
@@ -142,7 +153,8 @@ new probe would generalize, so the standard is not tuned to it here.
 | Maintenance | #208 required regenerating all six mutant patches and rewriting one (`m2`). The harness reads one private field reflectively. About 1,200 lines of test code. |
 
 Decision: keep the harness, the `formal-pilot` tag, and `formalPilotCheck` as they are, and ask for the check only
-when a change touches `BoundedParallelAeonCoordinator`, its ADR 0016 decisions, or the harness itself. It stays out of
+in the scope defined in `monada-neuron-concurrency-hardware-acceleration`, "Bounded Parallel Aeon Coordination": the
+coordinator, its ADR 0016 failure or abnormal-exit decisions, or the schedule harness. It stays out of
 `./gradlew test` and CI. Wider formal modeling, a generated verification skill (FV10), and TLA+ or other tools stay
 rejected: one model on one target found its defects through modeling, and that does not show a per-PR return.
 **Rollback condition:** delete the harness, the task, and the pointers if a refactoring of the coordinator would need
@@ -166,24 +178,26 @@ while blocking false positives appear.
 
 | Evidence | Observed |
 | :--- | :--- |
-| Comparison | No outcome differed because of it. On CONC-D the pilot reviewer cleared the contextual path at R4 and still missed H2, as the baseline reviewer did. On ARCH-S the baseline arm found S1 without the trace. |
+| Comparison | No outcome differed because of it. On CONC-D the pilot reviewer cleared the contextual path at R4 and still missed H2, as the baseline reviewer did. ARCH-S could not test it: both arms' requests named ADR 0026 as a criterion (IM2), and the baseline reviewer cited that criterion. |
 | Format | Pilot reviewers filled the table, graded surfaces honestly (one R3 where R4 was not reached), and marked it not triggered on the documentation-only PERF-S. |
 | Cost | Not separable from the rest of the review. |
 
 Decision: keep it as written, because it is conditional and adds no reviewer or check, but do not present it as an
-improvement. The verifier skill now says that no gain has been shown. **Rollback condition:** at the next evaluation of
-the review guidance, remove it if no boundary-crossing review in between has produced a confirmed finding or an
+improvement. The verifier skill now says that no gain has been shown. **Re-evaluation trigger:** after five boundary-crossing PRs
+reviewed under the current skills, or on 2027-05-13, whichever comes first; the repository owner decides.
+**Rollback condition:** at that re-evaluation, remove it if none of those reviews produced a confirmed finding or an
 avoided consumer regression through a traced surface.
 
 ### P5. Boundary red-flag screen: RETAIN ON PROBATION
 
 | Evidence | Observed |
 | :--- | :--- |
-| Comparison | The baseline arm caught the seeded ADR 0026 violation (S1) at the same strength without the screen. No false flag in either arm. |
+| Comparison | Untested. Both arms flagged the seeded ADR 0026 violation (S1), but both requests named ADR 0026 as a criterion (IM2), and the baseline reviewer reached S1 through that criterion (`results/baseline-arch-seeded.md`, IM2). The sample therefore cannot show whether the screen or the older questions would find such a violation unprompted. No false flag in either arm. |
 | Cost | Four questions in the checklist; no tool. |
 
-Decision: keep the four questions, but record in the checklist that the comparison showed no gain over the existing
-architecture questions. **Rollback condition:** the same as P4.
+Decision: keep the four questions, and record in the checklist that the comparison could not test them. A later
+sample must not name the violated ADR in its criteria. **Re-evaluation trigger and rollback condition:** the same as
+P4.
 
 ### Not adopted, unchanged from the audit
 
@@ -220,9 +234,10 @@ discovers a stub skill and loads the canonical file; that migration is out of sc
 | :--- | :--- |
 | `.agents/skills/README.md` | New section "Evidence Practices (Epic #199)" with each practice's status and owner. |
 | `monada-neuron-independent-verification/SKILL.md` | Notes that the boundary impact trace is on probation. |
-| `monada-neuron-concurrency-hardware-acceleration/SKILL.md` | Asks for `./gradlew formalPilotCheck` when a change touches `BoundedParallelAeonCoordinator`. |
+| `monada-neuron-concurrency-hardware-acceleration/SKILL.md` | New section "Bounded Parallel Aeon Coordination": the one definition of when `./gradlew formalPilotCheck` runs, and how to keep the mutants effective. |
 | `docs/specs/pr-review-checklist.md` | The same P2 question under "Concurrency"; the red-flag screen marked as on probation. |
-| `formal-pilot-aeon-failure-semantics-v1.md` | Gate status points to this decision. |
+| `formal-pilot-aeon-failure-semantics-v1.md` | Gate status and maintenance rows point to this decision. |
+| `build.gradle.kts` | The comment on the `formal-pilot` exclusion points to that skill section (comment only). |
 
 Each skill change is mirrored under `.windsurf/skills/`.
 
@@ -236,8 +251,13 @@ Each skill change is mirrored under `.windsurf/skills/`.
   and both cited it.
 - **Seed authorship.** The orchestrator wrote PERF-S and its ground truth. G1 to G3 resemble #201's seeded claims S5 to
   S7, which favors the pilot arm, although the reviewers were barred from reading those.
-- **Guidance read from another checkout.** Reviewers read their arm's guidance from a separate checkout while the
-  snapshot held its own copy. Nothing checked that they never read the snapshot's copy.
+- **Unequal access between arms.** The baseline reviewers, and the pilot reviewer on PERF-S, read their guidance from
+  a separate checkout and were barred from `docs/experiments/`, `docs/benchmarks/` and other checkouts. The #203
+  pilot-arm reviewers for CONC-D, CONC-F and ARCH-S had no such restriction and read the guidance from the branch's
+  working tree. Part of the CONC-D difference may come from that access rather than from the guidance. Nothing checked
+  that restricted reviewers never read the snapshot's own copy of the guidance.
+- **Partial blinding.** No reviewer was told the expected outcome, but the new runs knew they were in an experiment and
+  could infer their arm from the guidance checkout's name. The #203 runs were reviews of a pilot, not of a comparison.
 - **One model.** Every reviewer was the same model in the same harness. Results may differ in Codex.
 - **Tokens.** Counts come from the harness and include reading the guidance; they are not comparable across days.
 

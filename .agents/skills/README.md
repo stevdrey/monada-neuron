@@ -28,10 +28,10 @@ on every PR, and none adds a reviewer, fan-out, or dependency.
 | Practice | Status | Lives in | Applies when |
 | --- | --- | --- | --- |
 | Claim evidence report (P1) | Adopted | `monada-neuron-evaluation-benchmarking`, "Claim Evidence Report" | A change states a measured performance or evaluation gain. |
-| Bounded schedule check (P2) | Adopted, narrowed | `monada-neuron-concurrency-hardware-acceleration`, "Bounded Parallel Aeon Coordination" | A change touches `BoundedParallelAeonCoordinator`, its ADR 0016 failure decisions, or the harness. |
+| Bounded schedule check (P2) | Adopted, narrowed | `monada-neuron-concurrency-hardware-acceleration`, "Bounded Parallel Aeon Coordination" | As defined in that section: the coordinator, its ADR 0016 failure or abnormal-exit decisions, or the schedule harness. |
 | Proof-graded findings (P3) | Adopted | `monada-neuron-independent-verification`, "Proof-graded findings" | Every independent verification that raises a finding. |
-| Boundary impact trace (P4) | On probation | `monada-neuron-independent-verification`, "Boundary impact trace" | A change crosses a cognitive, host, format, or optimized-path boundary. |
-| Boundary red-flag screen (P5) | On probation | `docs/specs/pr-review-checklist.md`, "Cognitive Architecture" | The same boundary changes, except paths that are only concurrent, SIMD, or native. |
+| Boundary impact trace (P4) | On probation (re-evaluate after five boundary-crossing PRs or on 2027-05-13) | `monada-neuron-independent-verification`, "Boundary impact trace" | A change crosses a cognitive, host, format, or optimized-path boundary. |
+| Boundary red-flag screen (P5) | On probation, untested (re-evaluate after five boundary-crossing PRs or on 2027-05-13) | `docs/specs/pr-review-checklist.md`, "Cognitive Architecture" | The same boundary changes, except paths that are only concurrent, SIMD, or native. |
 
 `.windsurf/skills/` stays a byte-identical mirror checked by `diff -r` in CI. A thin pointer shim is not adopted until
 a client test shows it is discovered and followed.

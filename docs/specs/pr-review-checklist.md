@@ -19,8 +19,9 @@ When the change crosses a cognitive or host boundary (Monad, Aeon, Node, or Sign
 boundary; a host facade or routing contract; published API, module names, or a serialized format), also screen it with
 the four questions below. Each one is tied to a named rule. A flag on its own is a suspected risk, and it blocks only
 under the evidence rules in "Evidence Standard". Do not use the screen for general design taste or to propose rewrites.
-The screen is on probation: in the #204 comparison the questions above it caught the seeded violation without it
-(`docs/experiments/pstack-adoption-evaluation-v1.md`, P5).
+The screen is on probation: the #204 comparison could not test it, because both arms' requests named ADR 0026
+directly as criterion IM2 (`docs/experiments/pstack-adoption-evaluation-v1.md`, P5, and the IM2 row of each
+ARCH-S result).
 
 - **Split ownership:** beyond long-term memory, does a second writer appear for state another component owns? Examples:
   an authorization, quota, or spending decision taken inside Neuron, which Forge owns (ADR 0026), or Neuron mutating
@@ -91,9 +92,9 @@ When applicable:
 - Are cancellation/failure/lifecycle semantics clear?
 - Can shared mutable state be reduced through ownership or immutability?
 - Are races, false sharing, contention, or unsafe native-memory access possible?
-- Does a change to `BoundedParallelAeonCoordinator` or ADR 0016's failure semantics pass `./gradlew formalPilotCheck`
-  (`monada-neuron-concurrency-hardware-acceleration`, "Bounded Parallel Aeon Coordination")? It is not required
-  elsewhere.
+- Does a change in the scope of `monada-neuron-concurrency-hardware-acceleration`, "Bounded Parallel Aeon
+  Coordination" (the coordinator, its ADR 0016 failure or abnormal-exit decisions, or the schedule harness), pass
+  `./gradlew formalPilotCheck`? It is not required elsewhere.
 
 ## Correctness and Testing
 
