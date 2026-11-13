@@ -74,13 +74,13 @@ echo "base=$base head=$head tree=$tree"
    - text, encoding, and locale: non-ASCII and Unicode look-alikes (digits, signs, whitespace), default versus `C` locale, decimal separators, line endings;
    - determinism and iteration order; floating-point tolerance;
    - concurrency, cancellation, and shared state, when the change is concurrent;
-   - compatibility: public API, JPMS exports, serialized or persisted formats, consumers;
+   - compatibility: public API, JPMS exports, serialized or persisted formats, consumers; when the change crosses a boundary listed under "Boundary impact trace", this class is exercised by that trace;
    - resource behavior: allocation in hot paths, unbounded growth, leaks;
    - numerical claims: when the change states a measured gain, check its claim evidence report against the invalid-claim rules in `monada-neuron-evaluation-benchmarking` ("Claim Evidence Report"), and replay it when the environment allows; a claim with no report, a report with status `UNSUPPORTED` or `PENDING`, or a stated claim broader than the report's statement to ship is an unmet criterion only when an acceptance criterion requires the claim, and a non-blocking finding otherwise;
    - documentation, ADR, and skill-mirror consistency (`diff -r .agents/skills .windsurf/skills` for skill changes);
    - scope control: unrelated changes, violated non-goals, cognitive and memory ownership boundaries.
    Probe the whole input class a changed check, parser, or condition accepts or rejects, not only the examples in the issue or the tests. Record every probe class as exercised or not applicable (with a reason) in the result; an unrecorded class is not covered.
-   Distinguish a **demonstrated** defect (reproduced, with steps and observed output) from a **suspected** risk (reasoned, not reproduced). Only demonstrated defects or unmet criteria may be blocking on their own; a suspected risk is blocking only when it makes a required criterion unverifiable.
+   Distinguish a **demonstrated** defect (reproduced, with steps and observed output) from a **suspected** risk (reasoned, not reproduced). Only demonstrated defects or unmet criteria may be blocking on their own; a suspected risk is blocking only when it makes a required criterion unverifiable. "Proof-graded findings" below defines what counts as demonstrated and what a finding must carry.
 4. **Execute in isolation.** Run checks in an environment that cannot alter the author's checkout:
    - committed snapshot: `git worktree add --detach <scratch-dir> <head>`;
    - uncommitted snapshot: wrap the fingerprinted tree in a commit, `snap=$(git commit-tree "$tree" -p "$head" -m verification-snapshot)`, and keep it reachable with `git update-ref "refs/verification/$tree" "$snap"` so a later recheck can still diff against it. Then run `git worktree add --detach <scratch-dir> "$snap"`. This carries contents, executable bits and symlinks exactly; copying files by hand can lose them. The `refs/verification/` ref is the one allowed exception to leaving the author's refs untouched; it is not a branch or tag, and the author's working tree and index stay unchanged. Delete it (`git update-ref -d`) once the orchestrator no longer needs the snapshot for a recheck.
@@ -90,6 +90,69 @@ echo "base=$base head=$head tree=$tree"
 5. **Decide statuses** using the rules below, re-fingerprint the snapshot, and return the result.
 
 A required check that cannot run (missing toolchain, network, sibling repository, permission, or time) is reported as `NOT RUN` with the reason. It is never inferred from the author's claim, from CI that ran on a different snapshot, or from reading the code.
+
+## Proof-graded findings
+
+A review is adversarial: look for the input, schedule, or consumer that breaks the change. It is also evidence-only: a finding is graded by the proof behind it, never by how plausible it sounds.
+
+**Evidence ladder.** Every finding states the highest rung its evidence reached on this snapshot:
+
+| Rung | Evidence | Evidence kind |
+| --- | --- | --- |
+| R1 | Stated: the reviewer believes it. | `[suspected]` |
+| R2 | Located: a cited line or clause where it happens. | `[suspected]` |
+| R3 | Walked: a written trace of the inputs or schedule through the code to the wrong outcome. | `[suspected]` |
+| R4 | Ran: a recorded command on the snapshot (a test, a repro program, a check) prints the wrong outcome. | `[demonstrated]` |
+| R5 | Reproduced end to end: the wrong outcome also appears through a real consumer path (a consumer fixture task, the published artifact, a host facade, a scenario run). | `[demonstrated]` |
+
+**Contract violations.** A violated written contract (an acceptance criterion, an accepted ADR decision, a spec clause, a rule in `AGENTS.md` or `docs/design-principles.md`) is demonstrated only at R4 or above, and what R4 needs depends on what the clause constrains:
+
+- a clause about **behavior** (what code does at run time: ordering, cancellation, a thrown exception, a value, a complexity bound) needs a run that shows the behavior, such as a failing test or a repro program whose output contradicts the clause; showing the code beside the clause is R2;
+- a clause about **text or structure** (a dependency, an import, a package or module name, a mirrored file, a statement a document must or must not make) is met at R4 by a recorded command whose output shows the violating text and the clause it breaks, for example `grep -n` or `sed -n` over both files.
+
+A violation that does not reach R4 stays `[suspected]`, or becomes an `UNMET` or `PARTIAL` criterion row when a criterion names the contract.
+
+**What a finding carries.** The bold head keeps its three tags. The body adds:
+
+```text
+- **F1 [blocking] [demonstrated] [open]** `path:line` — observed vs expected.
+  Required by: <criterion id, ADR and decision, spec clause, or rule, with the clause quoted or cited>.
+  Rung: R4 — <what was run>.
+  Reproduce: `<exact command or steps>` → `<observed output>`; required: `<output the requirement demands>`.
+  Rerun: <clean scratch copy, command rerun, same result | not rerun, reason>.
+  Smallest regression check: <the cheapest test or command that fails now and must pass after the fix>.
+```
+
+- `Required by:` is mandatory. An observation that no criterion, ADR, spec, or rule requires is not a finding: list it under `Optional improvements`, where it never blocks and is not counted.
+- `Rerun:` is mandatory for a `[blocking] [demonstrated]` finding. Before tagging it blocking, rerun its reproducer from a fresh scratch worktree of the snapshot. A reproducer that does not fail again keeps the finding, tagged `[non-blocking]`, with both runs recorded in `Rerun:` (an intermittent failure is still evidence, especially on a concurrent path); it never blocks on a single unrepeated run.
+- `Smallest regression check:` is required for `[demonstrated]` findings. It recommends one check, not a fix.
+- A `[suspected]` finding states its rung and what would raise it to R4 (the command that was not run, or why it could not run).
+- A finding names the smallest change that would satisfy the requirement it cites. It never proposes a redesign, a new abstraction, or an architecture rewrite; when only a redesign would satisfy a requirement, say so as a question for the human.
+
+**Retractions.** A finding withdrawn before the result is returned is not listed as a finding. Retract only when the finding itself was wrong: the cited clause did not say what was assumed, the reproducer tested something other than the snapshot's behavior, or the behavior lies outside the diff and every criterion. A reproducer that does not fail again is not a reason to retract (see `Rerun:`). Record the number of retracted findings and a one-line reason each under `Residual risks and limitations`, as `Retracted findings: <n> — <reasons>`. The orchestrator never filters findings; only the reviewer retracts its own.
+
+**Bounded cost.** One reviewer does the whole review: no fan-out to further reviewers, no second model, no repeated passes over untouched code. Trace only the surfaces the diff touches. Record under `Residual risks and limitations`, as `Review cost: <wall time>, <number of commands run>`, plus tokens or tool cost when the harness shows them.
+
+## Boundary impact trace
+
+A conditional part of probing, done by the same reviewer. It extends the compatibility probe class and replaces neither `./gradlew check` nor any consumer task.
+
+**Trigger.** The diff touches any of: Monad, Aeon, Node, or Signal contracts; an adapter; the Monada Resonance Store boundary; a host facade or routing contract; published API, module names, or the published artifact; a serialized or persisted format; or a concurrent, SIMD, or native path. Otherwise write `Boundary impact: not triggered — <reason>` and skip this section.
+
+**Steps.**
+
+1. List the touched surfaces from the diff. A list of callers is not an impact result: for each surface, say what the change does to it.
+2. Mark each touched surface `confirmed` (a defect or risk exists, with its finding id) or `cleared` (why it holds), with the rung of that evidence.
+3. State the **safety fact**: the one fact the change is safe because of (for example, "every submitted task is cancelled before the exception leaves `coordinate`"). Give its rung, or write `unproven`. An unproven safety fact on a surface that a required criterion covers makes that criterion `NOT VERIFIABLE` or `PARTIAL`.
+4. Look where grep stops. These surfaces are reached by reflection, naming, bytes, or another build, so a text search of the diff misses them:
+   - reflective Vector API loading and the scalar fallback (ADR 0013, ADR 0017, ADR 0032);
+   - automatic module names and the absence of a module descriptor (ADR 0025, ADR 0032): every package is exported, so a "private" package is still importable;
+   - canonical bytes (ADR 0039, ADR 0048) and checkpoints (ADR 0031);
+   - the consumer fixtures under `consumer-fixture/` and the `monada-neuron-resonance-adapter` module (present only when `../monada-resonance-store` exists, ADR 0018).
+5. For a concurrent, SIMD, or native path, check and record: determinism of results and iteration order; cancellation, interruption, and failure propagation on every exit; allocation on the hot path; memory lifetime (`Arena` and `MemorySegment` ownership, no use after close); equivalence with the reference implementation within its documented tolerance, including tails and small inputs; and the fallback when the capability is absent.
+6. For each touched surface that has a consumer task, run it (`consumerSmokeTest`, `jpmsConsumerTest`, `forgeHostConsumerTest`, `embeddedHostConsumerTest`, the adapter module's tests) or report it `NOT RUN` with the reason. Do not run consumer tasks for untouched surfaces.
+
+No probability scores, no redesign proposals, and no inventory for its own sake. Report the trace in the result's `Boundary impact` section.
 
 ## Status rules
 
@@ -132,7 +195,23 @@ Return exactly this Markdown block to the orchestrator. Keep it factual and prop
 
 ### Findings
 - **F1 [blocking|non-blocking] [demonstrated|suspected] [open|resolved]** `path:line` — observed vs expected.
-  Reproduce: `<exact command or steps>` → `<observed output>`.
+  Required by: <criterion, ADR decision, spec clause, or rule>.
+  Rung: R1–R5 — <evidence>.
+  Reproduce: `<exact command or steps>` → `<observed output>`; required: `<output the requirement demands>`.
+  Rerun: <for blocking demonstrated findings>.
+  Smallest regression check: <for demonstrated findings>.
+
+### Optional improvements
+- <observation no requirement demands; never blocking, never counted>, or "none".
+
+### Boundary impact
+Boundary impact: not triggered — <reason>. (Or the table below.)
+
+| Surface | Change to it | Status | Rung | Evidence |
+| --- | --- | --- | --- | --- |
+| `<surface>` | ... | confirmed (F1) / cleared | R4 | C2 |
+
+Safety fact: <the one fact the change is safe because of> — R<n> | unproven.
 
 ### Probes
 | Class | Exercised | Inputs or reason |
@@ -148,6 +227,8 @@ Return exactly this Markdown block to the orchestrator. Keep it factual and prop
 
 ### Residual risks and limitations
 - <untested scenarios, environment differences, assumptions>.
+- Retracted findings: <n> — <one-line reason each>.
+- Review cost: <wall time>, <number of commands run>.
 ```
 
 The first non-blank line after the heading is the **verification line**: one HTML comment that summarizes the block for tools such as the publication gate of `monada-neuron-implement-issue`, which read it instead of the Markdown. Write it exactly once, in this form, with single spaces and nothing else on the line:
@@ -161,6 +242,8 @@ The first non-blank line after the heading is the **verification line**: one HTM
 Numbers are ASCII decimals without sign or leading zeros. The line states the same facts as the Markdown below it; a result whose line is missing, duplicated, malformed, or disagrees with the Markdown is not a valid result.
 
 Each finding's bold head carries exactly three tags in this order: severity, evidence kind, and state. The state is `[open]` on a first run and for every finding still open on a recheck, and `[resolved]` only for a previous finding a recheck shows fixed; nothing outside the bold head changes the state.
+
+The evidence kind follows the rung under "Proof-graded findings": `[demonstrated]` only at R4 or R5. The body lines added there (`Required by:`, `Rung:`, `Rerun:`, `Smallest regression check:`), the `Optional improvements` and `Boundary impact` sections, and the `Retracted findings` and `Review cost` lines add detail for people; they change neither the verification line nor how its counts are computed.
 
 The `Checks run` and `Checks not run` lines use the PASS / FAIL / NOT RUN vocabulary of the `How to test / verify` heading in `monada-neuron-create-pull-request`, so the orchestrator can transfer them into the PR without reinterpretation. Findings carry ids so a recheck can report each one as resolved or still open.
 
@@ -189,4 +272,4 @@ The result goes to the orchestrator only. The orchestrator owns corrections, com
 
 ## Validation
 
-`validation.md` records the scenarios (pass, defect, missing requirement, blocked environment, corrected snapshot) that exercised these rules and the observed results; `validation-fixtures.sh` rebuilds the fixtures.
+`validation.md` records the scenarios (pass, defect, missing requirement, blocked environment, corrected snapshot) that exercised these rules and the observed results; `validation-fixtures.sh` rebuilds the fixtures. The proof-graded findings and boundary impact trace were exercised for issue #203 on a historical defect, its corrected snapshot, and a seeded boundary violation; `docs/experiments/evidence-review-pilot-v1.md` records those runs.

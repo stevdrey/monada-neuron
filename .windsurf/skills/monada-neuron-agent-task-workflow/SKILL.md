@@ -58,6 +58,8 @@ Check:
 - docs/ADR consistency;
 - merge safety.
 
+Grade findings by proof and separate blocking defects from hypotheses and optional improvements (`docs/specs/pr-review-checklist.md`, "Evidence Standard"). When the change crosses a cognitive or host boundary, add the checklist's four boundary questions and the verifier's boundary impact trace; review the exact diff and report impact, not redesigns.
+
 ## Acceptance
 
 The task or review is self-contained enough that another agent can understand what exists, what must change, what must not change, and how success will be verified without guessing the architecture.

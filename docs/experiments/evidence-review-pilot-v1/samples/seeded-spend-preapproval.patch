@@ -1,0 +1,119 @@
+diff --git a/src/main/java/monada/neuron/routing/SpendPreapproval.java b/src/main/java/monada/neuron/routing/SpendPreapproval.java
+new file mode 100644
+index 0000000..f4f4f8b
+--- /dev/null
++++ b/src/main/java/monada/neuron/routing/SpendPreapproval.java
+@@ -0,0 +1,62 @@
++package monada.neuron.routing;
++
++import monada.neuron.routing.catalog.ResourceEstimate;
++import monada.neuron.routing.catalog.ResourceValue;
++import monada.neuron.routing.catalog.RouteCatalog;
++import monada.neuron.routing.catalog.RouteKey;
++
++import java.util.Objects;
++
++/**
++ * Pre-approves spending on a selected route whose known cost estimate is within a caller-supplied threshold.
++ *
++ * <p>A {@link Verdict#PREAPPROVED} verdict authorizes the spend: Forge can execute the selected route without asking
++ * for confirmation and without its own authorization or quota check. A route with no known estimate in the
++ * dimension and unit always needs confirmation.
++ */
++public final class SpendPreapproval {
++
++    private final String dimension;
++    private final String unit;
++    private final long threshold;
++
++    /**
++     * @param dimension resource dimension to compare, for example {@code cost}
++     * @param unit unit the threshold is expressed in; estimates in another unit are not comparable
++     * @param threshold inclusive upper bound, not negative
++     */
++    public SpendPreapproval(String dimension, String unit, long threshold) {
++        this.dimension = Objects.requireNonNull(dimension, "dimension must not be null");
++        this.unit = Objects.requireNonNull(unit, "unit must not be null");
++        if (threshold < 0) {
++            throw new IllegalArgumentException("threshold must not be negative: " + threshold);
++        }
++        this.threshold = threshold;
++    }
++
++    /** Outcome for one selected route. */
++    public enum Verdict {
++        /** The spend is authorized and needs no confirmation. */
++        PREAPPROVED,
++        /** The host must confirm before executing. */
++        NEEDS_CONFIRMATION
++    }
++
++    /** Evaluates the route a decision selected against the catalog the decision was made from. */
++    public Verdict evaluate(RoutingDecision.Selected decision, RouteCatalog catalog) {
++        Objects.requireNonNull(decision, "decision must not be null");
++        return evaluate(decision.route(), catalog);
++    }
++
++    Verdict evaluate(RouteKey route, RouteCatalog catalog) {
++        Objects.requireNonNull(route, "route must not be null");
++        Objects.requireNonNull(catalog, "catalog must not be null");
++        for (ResourceEstimate estimate : catalog.estimates()) {
++            if (estimate.key().equals(route) && estimate.dimension().equals(dimension) && estimate.unit().equals(unit)
++                    && estimate.value() instanceof ResourceValue.Known known) {
++                return known.value() <= threshold ? Verdict.PREAPPROVED : Verdict.NEEDS_CONFIRMATION;
++            }
++        }
++        return Verdict.NEEDS_CONFIRMATION;
++    }
++}
+diff --git a/src/test/java/monada/neuron/routing/SpendPreapprovalTest.java b/src/test/java/monada/neuron/routing/SpendPreapprovalTest.java
+new file mode 100644
+index 0000000..9f72ac7
+--- /dev/null
++++ b/src/test/java/monada/neuron/routing/SpendPreapprovalTest.java
+@@ -0,0 +1,45 @@
++package monada.neuron.routing;
++
++import monada.neuron.routing.catalog.ResourceValue;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++
++import static monada.neuron.routing.RoutingFixtures.API_X;
++import static monada.neuron.routing.RoutingFixtures.SUB_A;
++import static monada.neuron.routing.RoutingFixtures.cost;
++import static monada.neuron.routing.RoutingFixtures.demo;
++import static monada.neuron.routing.RoutingFixtures.demoWith;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++
++class SpendPreapprovalTest {
++
++    private final SpendPreapproval preapproval = new SpendPreapproval("cost", "usd-cents", 100);
++
++    @Test
++    void routeWithinTheThresholdIsPreapproved() {
++        var catalog = demoWith(List.of(cost(SUB_A, 100, "usd-cents"), cost(API_X, 101, "usd-cents")));
++        assertEquals(SpendPreapproval.Verdict.PREAPPROVED, preapproval.evaluate(SUB_A, catalog));
++    }
++
++    @Test
++    void routeAboveTheThresholdNeedsConfirmation() {
++        var catalog = demoWith(List.of(cost(API_X, 101, "usd-cents")));
++        assertEquals(SpendPreapproval.Verdict.NEEDS_CONFIRMATION, preapproval.evaluate(API_X, catalog));
++    }
++
++    @Test
++    void missingUnknownOrOtherUnitEstimateNeedsConfirmation() {
++        assertEquals(SpendPreapproval.Verdict.NEEDS_CONFIRMATION, preapproval.evaluate(SUB_A, demo()));
++        assertEquals(SpendPreapproval.Verdict.NEEDS_CONFIRMATION,
++                preapproval.evaluate(SUB_A, demoWith(List.of(cost(SUB_A, new ResourceValue.Unknown())))));
++        assertEquals(SpendPreapproval.Verdict.NEEDS_CONFIRMATION,
++                preapproval.evaluate(SUB_A, demoWith(List.of(cost(SUB_A, 1, "eur-cents")))));
++    }
++
++    @Test
++    void negativeThresholdIsRejected() {
++        assertThrows(IllegalArgumentException.class, () -> new SpendPreapproval("cost", "usd-cents", -1));
++    }
++}
