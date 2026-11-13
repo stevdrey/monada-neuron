@@ -20,6 +20,21 @@ Use the smallest relevant skill set for the task. `AGENTS.md` remains the reposi
 | `monada-neuron-evaluation-benchmarking` | Designing correctness baselines, performance experiments, JMH benchmarks, or regression gates; stating or reviewing a measured performance or evaluation claim with a claim evidence report. |
 | `monada-neuron-executive-summary` | Generating or publishing high-level, non-technical executive summaries in English Markdown for GitHub Issues. |
 
+## Evidence Practices (Epic #199)
+
+Practices adapted from pstack and evaluated in `docs/experiments/pstack-adoption-evaluation-v1.md`. None is mandatory
+on every PR, and none adds a reviewer, fan-out, or dependency.
+
+| Practice | Status | Lives in | Applies when |
+| --- | --- | --- | --- |
+| Claim evidence report (P1) | Adopted | `monada-neuron-evaluation-benchmarking`, "Claim Evidence Report" | A change states a measured performance or evaluation gain. |
+| Bounded schedule check (P2) | Adopted, narrowed | `monada-neuron-concurrency-hardware-acceleration`, "Bounded Parallel Aeon Coordination" | A change touches `BoundedParallelAeonCoordinator`, its ADR 0016 failure decisions, or the harness. |
+| Proof-graded findings (P3) | Adopted | `monada-neuron-independent-verification`, "Proof-graded findings" | Every independent verification that raises a finding. |
+| Boundary impact trace (P4) | On probation | `monada-neuron-independent-verification`, "Boundary impact trace" | A change crosses a cognitive, host, format, or optimized-path boundary. |
+| Boundary red-flag screen (P5) | On probation | `docs/specs/pr-review-checklist.md`, "Cognitive Architecture" | The same boundary changes, except paths that are only concurrent, SIMD, or native. |
+
+`.windsurf/skills/` stays a byte-identical mirror checked by `diff -r` in CI. A thin pointer shim is not adopted until
+a client test shows it is discovered and followed.
 
 ## Skill Combination Examples
 

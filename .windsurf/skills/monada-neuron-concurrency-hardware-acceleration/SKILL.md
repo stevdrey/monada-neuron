@@ -59,6 +59,17 @@ If used:
 - test cancellation and partial failure;
 - document the preview dependency and expected migration path.
 
+## Bounded Parallel Aeon Coordination
+
+A change to `BoundedParallelAeonCoordinator`, to ADR 0016's failure or abnormal-exit decisions, or to the schedule
+harness under `src/test/java/monada/neuron/aeon/formal/` also runs `./gradlew formalPilotCheck` (about 7 s). It checks
+the direct path's failure semantics on every schedule up to four inputs against the sequential oracle. It is not part
+of `./gradlew test` or CI, and it does not cover the contextual path, caller interruption, executor rejection, or cost
+bounds: those stay with unit tests. When the coordinator's layout changes, rerun `scripts/formal-pilot-mutants.sh` and
+regenerate any mutant patch that no longer applies. Model, bounds, and exclusions:
+`docs/experiments/formal-pilot-aeon-failure-semantics-v1.md`; adoption decision:
+`docs/experiments/pstack-adoption-evaluation-v1.md`.
+
 ## CPU SIMD with Vector API
 
 The Vector API is an incubating JDK API in Java 27.

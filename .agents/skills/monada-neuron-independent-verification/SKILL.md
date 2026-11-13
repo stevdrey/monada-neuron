@@ -137,6 +137,8 @@ A violation that does not reach R4 stays `[suspected]`, or becomes an `UNMET` or
 
 A conditional part of probing, done by the same reviewer. It extends the compatibility probe class and replaces neither `./gradlew check` nor any consumer task.
 
+This trace is on probation (`docs/experiments/pstack-adoption-evaluation-v1.md`, P4): the #204 comparison showed no outcome it changed. Apply it as written, and do not cite it as evidence that a review is stronger.
+
 **Trigger.** The diff touches any of: Monad, Aeon, Node, or Signal contracts; an adapter; the Monada Resonance Store boundary; a host facade or routing contract; published API, module names, or the published artifact; a serialized or persisted format; or a concurrent, SIMD, or native path. Otherwise write `Boundary impact: not triggered — <reason>` and skip this section.
 
 **Steps.**

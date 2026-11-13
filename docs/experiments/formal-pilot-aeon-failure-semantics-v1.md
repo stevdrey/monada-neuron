@@ -246,8 +246,8 @@ same as in the table above: [`logs/mutants-issue-208.txt`](formal-pilot-aeon-fai
 | Runtime | One command; bound 4 explores in 2 to 4 s, bound 5 in 27 to 88 s, both under the audit's five-minute limit. |
 | Portability | Relies on `Thread.getState()` and an empty-queue check to detect that the coordinator waits; both are standard Java SE. Each schedule gets a fresh coordinator thread, so a coordinator that never ends cannot reach the next schedule; reusing threads would remove that isolation. A 10-second control timeout turns a harness that loses control into a reported violation, not a hang; a coordinator that also ignores the interrupt is reported as `did not end`. |
 | Size | About 1,200 lines of test code in 8 files, 6 mutant patches, one script. |
-| Maintenance risk | The harness reads one private detail reflectively: the completion queue captured by the direct task. A refactoring of `submitDirectTasks` can break it; the harness then fails with a message that names the method. Line numbers in the correspondence table need refreshing when the coordinator changes. Nothing checks staleness automatically before #204 decides. |
-| Gate status | Not a CI gate and not part of `./gradlew test`. Adoption, wider use, or a CI job is #204's decision. |
+| Maintenance risk | The harness reads one private detail reflectively: the completion queue captured by the direct task. A refactoring of `submitDirectTasks` can break it; the harness then fails with a message that names the method. Line numbers in the correspondence table need refreshing when the coordinator changes. Nothing checks staleness automatically; #204 kept it manual: rerun `scripts/formal-pilot-mutants.sh` and regenerate a patch that no longer applies. |
+| Gate status | Not a CI gate and not part of `./gradlew test`. #204 adopted it as a targeted check for changes to the coordinator, its ADR 0016 failure decisions, or the harness, and kept wider use and a CI job out ([`pstack-adoption-evaluation-v1.md`](pstack-adoption-evaluation-v1.md), P2). |
 
 ## Files
 
