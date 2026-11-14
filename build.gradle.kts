@@ -249,7 +249,8 @@ if (findProject(":monada-neuron-resonance-adapter") != null) {
 tasks.test {
     useJUnitPlatform {
         // The bounded formal-verification pilot (Issue #202) is not a per-PR gate; it runs only through
-        // `formalPilotCheck` until Issue #204 decides whether to adopt it.
+        // `formalPilotCheck`. When to run it: monada-neuron-concurrency-hardware-acceleration,
+        // "Bounded Parallel Aeon Coordination" (decision: docs/experiments/pstack-adoption-evaluation-v1.md, P2).
         excludeTags("formal-pilot")
     }
     // Boundary tests read Javadoc from the sources, and an edit to Javadoc alone leaves the compiled classes unchanged.
