@@ -1,0 +1,59 @@
+name: Set up patched Temurin 27
+description: Install the verified Temurin release and restrict Gradle to that JDK
+inputs:
+  project-directory:
+    description: Directory containing the Gradle wrapper
+    default: .
+runs:
+  using: composite
+  steps:
+    - name: Install and verify Eclipse Temurin
+      shell: bash
+      run: |
+        # CVE-2026-114938: keep the full release identity and archive digest together.
+        runtime_version='27.0.1.1+4'
+        archive_version='27.0.1.1_4'
+        sha256='005e57ee860978acfeeff1be2b30f770664fe2b941e9b803c61c76992086d107'
+        install_dir="$(mktemp -d "${RUNNER_TEMP}/temurin.XXXXXXXX")"
+        archive="${install_dir}/jdk.tar.gz"
+        java_home="${install_dir}/jdk"
+        curl --fail --silent --show-error --location --retry 3 \
+          --output "$archive" \
+          "https://github.com/adoptium/temurin27-binaries/releases/download/jdk-${runtime_version/+/%2B}/OpenJDK27U-jdk_x64_linux_hotspot_${archive_version}.tar.gz"
+        printf '%s  %s\n' "$sha256" "$archive" | sha256sum --check
+        mkdir "$java_home"
+        tar -xzf "$archive" -C "$java_home" --strip-components=1
+        rm "$archive"
+
+        properties="$("$java_home/bin/java" -XshowSettings:properties -version 2>&1)"
+        grep -Fx "    java.vendor = Eclipse Adoptium" <<< "$properties"
+        grep -Fx "    java.runtime.version = ${runtime_version}" <<< "$properties"
+        "$java_home/bin/java" -version
+
+        printf '%s\n' "$java_home/bin" >> "$GITHUB_PATH"
+        {
+          printf 'JAVA_HOME=%s\n' "$java_home"
+          # System properties reach the Gradle launcher and daemon in nested consumer builds as well.
+          printf 'GRADLE_OPTS=%s -Dorg.gradle.java.home="%s" -Dorg.gradle.project.org.gradle.java.installations.paths="%s" -Dorg.gradle.project.org.gradle.java.installations.auto-detect=false -Dorg.gradle.project.org.gradle.java.installations.auto-download=false\n' "${GRADLE_OPTS:-}" "$java_home" "$java_home"
+        } >> "$GITHUB_ENV"
+        printf '### Java runtime\n\n- Vendor: Eclipse Adoptium\n- Temurin build: `%s`\n' \
+          "$runtime_version" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Record Gradle launcher, daemon and toolchains
+      shell: bash
+      working-directory: ${{ inputs.project-directory }}
+      run: |
+        gradle_version="$(./gradlew --version)"
+        printf '%s\n' "$gradle_version"
+        if ! grep -Fq "Daemon JVM:    ${JAVA_HOME} (" <<< "$gradle_version"; then
+          echo "::error::Gradle did not select the patched daemon JVM."
+          exit 1
+        fi
+
+        toolchains="$(./gradlew --no-daemon -q javaToolchains)"
+        printf '%s\n' "$toolchains"
+        locations="$(sed -n 's/^[[:space:]]*| Location:[[:space:]]*//p' <<< "$toolchains")"
+        if [[ "$locations" != "$JAVA_HOME" ]]; then
+          echo "::error::Expected the patched JDK to be Gradle's only Java toolchain."
+          exit 1
+        fi
