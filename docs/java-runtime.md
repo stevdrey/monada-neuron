@@ -1,0 +1,57 @@
+# Java 27 runtime setup
+
+Use Eclipse Temurin **27.0.1.1+4** or a later Java 27 build that the vendor confirms contains the fix for
+CVE-2026-114938 (Java4Shell). Verify other distributions against their own advisories.
+[Adoptium advisory](https://adoptium.net/es/news/2026/11/temurin-november-2026-cspu-java4shell) ·
+[Temurin 27.0.1.1+4 release](https://github.com/adoptium/temurin27-binaries/releases/tag/jdk-27.0.1.1%2B4)
+
+## Build and test
+
+Install a patched JDK and set `JAVA_HOME` and `PATH` to use it. Point your IDE's Gradle JVM at the same installation.
+Stop existing Gradle daemons after switching JDKs, then verify the full build and vendor:
+
+```bash
+"$JAVA_HOME/bin/java" -version
+./gradlew --stop
+./gradlew --version
+./gradlew --no-daemon -q javaToolchains
+./gradlew --no-daemon test
+```
+
+If Gradle discovers other Java 27 installations, restrict it to the patched JDK for builds and nested consumer tests.
+In your Gradle user-home `gradle.properties`, set the following properties using the absolute path to that JDK.
+These user-home settings also apply to other Gradle builds that use that Gradle user home.
+
+```properties
+org.gradle.java.installations.paths=/absolute/path/to/patched-jdk
+org.gradle.java.installations.auto-detect=false
+org.gradle.java.installations.auto-download=false
+```
+
+The Java CI build, adapter job and dependency submission share one checksum-pinned Temurin archive for Ubuntu x64.
+Each job records the verified vendor and full version and reports its Gradle launcher, daemon and toolchain in the
+logs. The setup restricts Gradle's Java toolchain selection to the installed JDK. When moving the pin, check the
+vendor advisory and update the release identity and SHA-256 together.
+
+## Running Neuron
+
+An embedded library runs on the host application's JVM. Update the host runtime for both classpath and JPMS
+consumers, including any separately configured JDK, service or container image. Restart the host and verify the
+running process's `java.vendor` and `java.runtime.version`, for example through
+`jcmd <pid> VM.system_properties` when the JVM can be attached to. Record the exact build and image digest if applicable.
+
+| Runtime in scope | Patch status |
+| --- | --- |
+| GitHub-hosted Java CI build, adapter and consumer fixtures | Pinned to Temurin 27.0.1.1+4. Confirm the selected build and results in a fresh Java CI run. |
+| GitHub-hosted dependency submission | Pinned to Temurin 27.0.1.1+4. Confirm a run of the Dependency Submission workflow on the same revision. |
+| Local development, demos and IDE launches | Operator-managed. Verify the launcher, toolchain and any separately configured IDE runtime. |
+| External Forge or other embedded consumers | Operator-managed. The repository exercises classpath and JPMS fixtures. Obtain runtime evidence from each external host owner. |
+
+The repository ships a library and development fixtures. It does not define a production deployment or identify
+the JVMs running on external hosts. Those hosts' patch status and any active startup mitigation remain unverified
+until their operators provide runtime evidence.
+
+If a Temurin HotSpot host cannot upgrade immediately, Adoptium documents `-XX:-UseBASE64Intrinsics` as an interim
+mitigation. Add it to the affected service's startup options, restart the service and verify that the flag is
+active in the running JVM. Remove the flag after confirming the restarted service uses a vendor-confirmed fixed
+build. Treat that verification as part of the host rollout. [Adoptium advisory](https://adoptium.net/es/news/2026/11/temurin-november-2026-cspu-java4shell)
