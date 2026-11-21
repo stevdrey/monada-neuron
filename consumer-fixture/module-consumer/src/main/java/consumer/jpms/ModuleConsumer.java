@@ -46,6 +46,11 @@ import monada.neuron.routing.review.DecisionReview;
 import monada.neuron.routing.review.ReviewNotice;
 import monada.neuron.signal.Signal;
 import monada.neuron.signal.SignalKind;
+import monada.neuron.visual.Canonicalized;
+import monada.neuron.visual.Circle;
+import monada.neuron.visual.Result;
+import monada.neuron.visual.Transform2D;
+import monada.neuron.visual.VisualGeometry;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -155,6 +160,13 @@ public final class ModuleConsumer {
         require(preview instanceof ScenarioComparison.Compared c && c.differences().isEmpty()
                         && c.delta().routeChange() == RouteChange.SAME_ROUTE && c.before().equals(levelA),
                 "an identical scenario preview must report no difference: " + preview);
+
+        var canonical = VisualGeometry.canonicalize(new Circle(0.75, 0.25, 0.125));
+        require(canonical instanceof Result.Ok<Canonicalized>(Canonicalized c)
+                        && c.geometry().primitive().equals(new Circle(0.5, 0.5, 0.5))
+                        && c.pose().equals(new Transform2D(0.25, -0.25, 0.25, 0.0))
+                        && c.geometry().canonicalMask().width() == 64,
+                "a posed circle must canonicalize to the unit circle with its pose: " + canonical);
 
         System.out.println("[module-consumer] " + self.getName() + " reads " + neuron.getName()
                 + " (automatic=" + neuron.getDescriptor().isAutomatic() + ", location="
