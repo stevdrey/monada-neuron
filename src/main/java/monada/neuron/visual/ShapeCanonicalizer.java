@@ -8,14 +8,17 @@ import java.util.List;
  * 4.2 and 4.8): center the bounding box, scale the larger extent to {@code 1}, remove the rotation, snap to the grid.
  *
  * <p>Rejections are checked in a fixed order: the composite caps before any work, then the pose translation range,
- * then collapse on the grid. Edge lengths and shoelace sums are exact, on {@code long} numerators; only the rotation
- * and rescaling run in {@code double}, with {@code StrictMath} trigonometry.
+ * then collapse on the grid. Edge lengths, shoelace sums and the snapped numerators of a triangle are exact, on
+ * {@code long} numerators, so a triangle snaps the same at every grid exact pose; only the pose and the rescaling of a
+ * composite run in {@code double}, with {@code StrictMath} trigonometry.
  */
 final class ShapeCanonicalizer {
 
     static final int MAX_PARTS = 16;
     static final int MAX_HOLES = 16;
     private static final double CENTER = 0.5;
+    private static final int GRID_BITS = 12;
+    private static final long GRID_STEPS = 1L << GRID_BITS;
 
     /** A canonical primitive with the pose that maps it onto the input. */
     record CanonicalForm(ShapePrimitive primitive, Transform2D pose) {
@@ -122,23 +125,57 @@ final class ShapeCanonicalizer {
         double my = (minY + maxY) / 2;
         double scale = Math.max(maxX - minX, maxY - minY);
 
-        double apexY = ((ry[apex] - my) / scale + CENTER) * DyadicGrid.STEPS_PER_UNIT;
-        double baseY = (((ry[right] - my) / scale + CENTER) + ((ry[left] - my) / scale + CENTER)) / 2
-                * DyadicGrid.STEPS_PER_UNIT;
-        long ax = Math.round(Math.rint(((rx[apex] - mx) / scale + CENTER) * DyadicGrid.STEPS_PER_UNIT));
-        long bx = Math.round(Math.rint(((rx[right] - mx) / scale + CENTER) * DyadicGrid.STEPS_PER_UNIT));
-        long lx = Math.round(Math.rint(((rx[left] - mx) / scale + CENTER) * DyadicGrid.STEPS_PER_UNIT));
-        long ay = Math.round(Math.rint(apexY));
-        long by = Math.round(Math.rint(baseY));
+        // The snapped numerators come from exact integer ratios of the input numerators, never from the rotated
+        // doubles above: rounding noise there differs per pose and flips a half grid tie, so two grid exact poses of
+        // one triangle could snap one step apart. The base is the longest edge, so the box is as wide as the base,
+        // the apex sits at dot / base² along it and cross / base² above it, and both survive any exact rigid motion.
+        long baseX = DyadicGrid.numerator(xs[right]) - DyadicGrid.numerator(xs[left]);
+        long baseY = DyadicGrid.numerator(ys[right]) - DyadicGrid.numerator(ys[left]);
+        long apexX = DyadicGrid.numerator(xs[apex]) - DyadicGrid.numerator(xs[left]);
+        long apexY = DyadicGrid.numerator(ys[apex]) - DyadicGrid.numerator(ys[left]);
+        long squaredBase = baseX * baseX + baseY * baseY;
+        long cross = apexX * baseY - apexY * baseX;
+        long lx = 0;
+        long bx = GRID_STEPS;
+        long ax = scaledRatio(apexX * baseX + apexY * baseY, squaredBase, GRID_BITS, true);
+        long halfHeight = scaledRatio(cross, squaredBase, GRID_BITS - 1, true);
+        long ay = GRID_STEPS / 2 - halfHeight;
+        long by = GRID_STEPS / 2 + halfHeight;
         long base = (bx - lx) * (bx - lx);
         long rise = (by - ay) * (by - ay);
         if ((ax - bx) * (ax - bx) + rise > base || (ax - lx) * (ax - lx) + rise > base) {
             // Section 4.8 item 1: round both inward so the bottom edge stays the longest and the box stays centered.
-            ay = Math.round(Math.ceil(apexY));
-            by = Math.round(Math.floor(baseY));
+            long inward = scaledRatio(cross, squaredBase, GRID_BITS - 1, false);
+            ay = GRID_STEPS / 2 - inward;
+            by = GRID_STEPS / 2 + inward;
         }
         return new BaseCandidate(ax, ay, bx, lx, by,
                 mx * cos - my * sin - CENTER, mx * sin + my * cos - CENTER, scale, theta);
+    }
+
+    /**
+     * {@code numerator * 2^bits / denominator} as an exact integer: the floor, or the nearest with ties to even.
+     * Long division one bit at a time, because the product itself does not fit a {@code long}; the remainder stays
+     * below the denominator, which is at most {@code 2^59}, so doubling it never overflows.
+     */
+    private long scaledRatio(long numerator, long denominator, int bits, boolean nearest) {
+        long quotient = Math.floorDiv(numerator, denominator);
+        long remainder = Math.floorMod(numerator, denominator);
+        for (int bit = 0; bit < bits; bit++) {
+            quotient <<= 1;
+            remainder <<= 1;
+            if (remainder >= denominator) {
+                remainder -= denominator;
+                quotient |= 1;
+            }
+        }
+        if (nearest) {
+            long twice = remainder << 1;
+            if (twice > denominator || (twice == denominator && (quotient & 1) == 1)) {
+                quotient++;
+            }
+        }
+        return quotient;
     }
 
     private Result<CanonicalForm> compositeForm(Composite input) {

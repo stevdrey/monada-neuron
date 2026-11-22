@@ -365,6 +365,13 @@ These close the gaps a fixture author would otherwise fill by guessing.
    inward keeps the box centered exactly. A true equilateral triangle has apex `y` `274.38 / 4096` and base `y`
    `3821.62 / 4096`; nearest snapping would give `274` and `3822`, whose sloping edges (squared `16782608`) exceed the
    bottom (`16777216`), so `T1` is `275` and `3821` (sloping edges squared `16768420`).
+   A triangle's snapped numerators are computed exactly from the input numerators, never from rotated `double`
+   coordinates. With base vector `d` from the bottom left to the bottom right vertex, `e` from the bottom left
+   vertex to the apex and `L² = d · d`, the bottom left is `(0, by)`, the bottom right `(4096, by)`, the apex `x` is
+   `4096 · (e · d) / L²` and the half height is `h = 2048 · (e x d) / L²`, each rounded to nearest with ties to even
+   as an exact rational, giving apex `y` `2048 - h` and base `y` `2048 + h`; the inward rule takes the floor of the
+   exact `h` instead. A half grid tie therefore resolves the same way at every grid exact pose of one triangle. The
+   pose itself (`tx`, `ty`, `scale`, `rotation`) is still computed in `double`.
 2. **Triangle vertex order**: clockwise on screen (positive shoelace sum, `y` down), starting at the minimum `(y, x)`
    vertex, the same rule as contour rings. Every canonical `Triangle` and every triangle in a gold decomposition is
    written in this order.
@@ -1206,6 +1213,12 @@ ADR or verdict.
   longer (Section 4.2). Composite canonicalization is deterministic but not
   idempotent in general. `BinaryMask` gains `cardinality()` and value equality, and its packed `long[]` layout is
   kept after the comparison in [visual-binary-mask-layout.md](../benchmarks/visual-binary-mask-layout.md).
+- `/1` (issue #143, PR #214 review before V1, 2026-11-21): a triangle's snapped numerators are computed exactly
+  from the input numerators (Section 4.8 item 1) instead of from coordinates rotated in `double`. Before, a
+  normalized coordinate on a half grid tie could round either way with the pose: `Triangle((0, 0), (2048, 2048),
+  (0, 2671)) / 4096` gave apex `y` `712` and its quarter turn copy `Triangle((4096, 4096), (2048, 6144),
+  (1425, 4096)) / 4096` gave `713`, both accepted by the fixed point rule, which missed a reuse. No fixture,
+  threshold or gold value moves.
 
 ## 16. References
 

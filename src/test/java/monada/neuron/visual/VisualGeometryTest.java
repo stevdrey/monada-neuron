@@ -100,6 +100,56 @@ class VisualGeometryTest {
     }
 
     @Test
+    void aTriangleOnAHalfGridTieSnapsTheSameAfterAQuarterTurnAndAShift() {
+        // The apex height is exactly 712.5 grid steps. Snapping after a rotation in double gave 712 for one pose
+        // and 713 for the other (PR #214 review).
+        var first = ok(VisualGeometry.canonicalize(triangle(0, 0, 2048, 2048, 0, 2671)));
+        var turned = ok(VisualGeometry.canonicalize(triangle(4096, 4096, 2048, 6144, 1425, 4096)));
+
+        assertAll(
+                () -> assertEquals(triangle(1425, 712, 4096, 3384, 0, 3384), first.geometry().primitive()),
+                () -> assertEquals(first.geometry(), turned.geometry()));
+    }
+
+    @Test
+    void aTriangleSnapsTheSameAtEveryQuarterTurnAndGridShift() {
+        int accepted = 0;
+        for (long ax = -900; ax <= 3000; ax += 347) {
+            for (long ay = 100; ay <= 3000; ay += 313) {
+                for (long bx = 1024; bx <= 2560; bx += 512) {
+                    long[] x = {0, bx, ax};
+                    long[] y = {0, bx, ay};
+                    if ((x[1] - x[0]) * (y[2] - y[0]) == (x[2] - x[0]) * (y[1] - y[0])) {
+                        continue;
+                    }
+                    var expected = VisualGeometry.canonicalize(triangle(x[0], y[0], x[1], y[1], x[2], y[2]));
+                    for (int turn = 1; turn < 4; turn++) {
+                        for (int i = 0; i < 3; i++) {
+                            long previousX = x[i];
+                            x[i] = -y[i];
+                            y[i] = previousX;
+                        }
+                        // Keeps every turned copy inside the pose translation range.
+                        long shiftX = 3500 + 777L * turn;
+                        long shiftY = 3500 - 512L * turn;
+                        var actual = VisualGeometry.canonicalize(triangle(x[0] + shiftX, y[0] + shiftY,
+                                x[1] + shiftX, y[1] + shiftY, x[2] + shiftX, y[2] + shiftY));
+                        if (expected instanceof Result.Ok<Canonicalized>(Canonicalized c)) {
+                            assertEquals(c.geometry(), ok(actual).geometry());
+                        } else {
+                            assertEquals(rejection(expected), rejection(actual));
+                        }
+                    }
+                    if (expected instanceof Result.Ok<Canonicalized>) {
+                        accepted++;
+                    }
+                }
+            }
+        }
+        assertTrue(accepted > 300, "most triangles canonicalize, accepted " + accepted);
+    }
+
+    @Test
     void everyCanonicalTriangleIsAFixedPointWithTheIdentityPose() {
         int accepted = 0;
         for (long ax = -3000; ax <= 9000; ax += 1500) {
