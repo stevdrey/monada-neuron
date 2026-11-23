@@ -15,7 +15,7 @@ Stop existing Gradle daemons after switching JDKs, then verify the full build an
 ./gradlew --stop
 ./gradlew --version
 ./gradlew --no-daemon -q javaToolchains
-./gradlew --no-daemon test
+./gradlew --no-daemon --no-configuration-cache test
 ```
 
 If Gradle discovers other Java 27 installations, restrict it to the patched JDK for builds and nested consumer tests.
@@ -32,10 +32,10 @@ Every settings file in the repository, including the standalone consumer fixture
 `gradle/java-runtime-floor.settings.gradle.kts`. It checks the Gradle daemon JVM and the Java toolchain of every Java
 project, which also runs the test workers and fixture hosts. An Eclipse Adoptium Java 27 build older than 27.0.1.1
 fails the build. Another vendor's older Java 27 build only logs a warning, because its fix has to be checked against
-that vendor's advisory. The check runs while Gradle configures the build, so run `./gradlew --stop` after switching
-JDKs to make sure no reused daemon or configuration cache entry skips it. When the Gradle property
-`monada.requiredJavaHome` is set, the daemon and every toolchain must be exactly that installation, and the build logs
-the selected runtime.
+that vendor's advisory. After switching JDKs, run `./gradlew --stop` to stop existing daemons. Use
+`--no-configuration-cache` for the verification build so Gradle configures the build again and checks the selected JDK.
+When `monada.requiredJavaHome` is set, the daemon and every toolchain must be exactly that installation, and the build
+logs the selected runtime.
 
 The Java CI build, adapter job and dependency submission share one checksum-pinned Temurin archive for Ubuntu x64. The
 setup fails on any other runner OS or architecture, caches the archive by its SHA-256 and verifies that digest on every
