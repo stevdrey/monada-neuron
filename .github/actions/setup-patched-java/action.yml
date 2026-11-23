@@ -1,59 +1,71 @@
 name: Set up patched Temurin 27
 description: Install the verified Temurin release and restrict Gradle to that JDK
-inputs:
-  project-directory:
-    description: Directory containing the Gradle wrapper
-    default: .
 runs:
   using: composite
   steps:
-    - name: Install and verify Eclipse Temurin
+    - name: Pin the Temurin release
+      id: pin
       shell: bash
       run: |
+        # The archive below is Linux x64 only; fail with a clear message on any other runner.
+        if [[ "$RUNNER_OS" != Linux || "$RUNNER_ARCH" != X64 ]]; then
+          echo "::error::The pinned Temurin archive is Linux x64; this runner is ${RUNNER_OS} ${RUNNER_ARCH}."
+          exit 1
+        fi
         # CVE-2026-114938: keep the full release identity and archive digest together.
-        runtime_version='27.0.1.1+4'
-        archive_version='27.0.1.1_4'
-        sha256='005e57ee860978acfeeff1be2b30f770664fe2b941e9b803c61c76992086d107'
-        install_dir="$(mktemp -d "${RUNNER_TEMP}/temurin.XXXXXXXX")"
-        archive="${install_dir}/jdk.tar.gz"
-        java_home="${install_dir}/jdk"
-        curl --fail --silent --show-error --location --retry 3 \
-          --output "$archive" \
-          "https://github.com/adoptium/temurin27-binaries/releases/download/jdk-${runtime_version/+/%2B}/OpenJDK27U-jdk_x64_linux_hotspot_${archive_version}.tar.gz"
-        printf '%s  %s\n' "$sha256" "$archive" | sha256sum --check
+        {
+          echo "runtime-version=27.0.1.1+4"
+          echo "archive-version=27.0.1.1_4"
+          echo "sha256=005e57ee860978acfeeff1be2b30f770664fe2b941e9b803c61c76992086d107"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Restore the Temurin archive
+      uses: actions/cache@v6
+      with:
+        path: ${{ runner.temp }}/temurin-download
+        key: temurin-27-linux-x64-${{ steps.pin.outputs.sha256 }}
+
+    - name: Install and verify Eclipse Temurin
+      shell: bash
+      env:
+        RUNTIME_VERSION: ${{ steps.pin.outputs.runtime-version }}
+        ARCHIVE_VERSION: ${{ steps.pin.outputs.archive-version }}
+        SHA256: ${{ steps.pin.outputs.sha256 }}
+      run: |
+        download_dir="${RUNNER_TEMP}/temurin-download"
+        archive="${download_dir}/OpenJDK27U-jdk_x64_linux_hotspot_${ARCHIVE_VERSION}.tar.gz"
+        # A fixed path keeps JAVA_HOME and the Gradle properties below stable across runs.
+        java_home="${RUNNER_TEMP}/temurin-${ARCHIVE_VERSION}"
+        mkdir -p "$download_dir"
+        if [[ ! -f "$archive" ]]; then
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "$archive" \
+            "https://github.com/adoptium/temurin27-binaries/releases/download/jdk-${RUNTIME_VERSION/+/%2B}/OpenJDK27U-jdk_x64_linux_hotspot_${ARCHIVE_VERSION}.tar.gz"
+        fi
+        # Verified on every run, including a cache hit; the archive stays for the cache to save.
+        printf '%s  %s\n' "$SHA256" "$archive" | sha256sum --check
+        rm -rf "$java_home"
         mkdir "$java_home"
         tar -xzf "$archive" -C "$java_home" --strip-components=1
-        rm "$archive"
 
         properties="$("$java_home/bin/java" -XshowSettings:properties -version 2>&1)"
         grep -Fx "    java.vendor = Eclipse Adoptium" <<< "$properties"
-        grep -Fx "    java.runtime.version = ${runtime_version}" <<< "$properties"
+        grep -Fx "    java.runtime.version = ${RUNTIME_VERSION}" <<< "$properties"
         "$java_home/bin/java" -version
 
         printf '%s\n' "$java_home/bin" >> "$GITHUB_PATH"
+        printf 'JAVA_HOME=%s\n' "$java_home" >> "$GITHUB_ENV"
+        # User-home Gradle properties reach the daemon, the toolchain detection and the nested consumer builds.
+        # monada.requiredJavaHome makes the build's runtime guard (gradle/java-runtime-floor.settings.gradle.kts)
+        # fail unless the daemon and every Java toolchain are this installation.
+        gradle_user_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
+        mkdir -p "$gradle_user_home"
         {
-          printf 'JAVA_HOME=%s\n' "$java_home"
-          # System properties reach the Gradle launcher and daemon in nested consumer builds as well.
-          printf 'GRADLE_OPTS=%s -Dorg.gradle.java.home="%s" -Dorg.gradle.project.org.gradle.java.installations.paths="%s" -Dorg.gradle.project.org.gradle.java.installations.auto-detect=false -Dorg.gradle.project.org.gradle.java.installations.auto-download=false\n' "${GRADLE_OPTS:-}" "$java_home" "$java_home"
-        } >> "$GITHUB_ENV"
+          printf 'org.gradle.java.home=%s\n' "$java_home"
+          printf 'org.gradle.java.installations.paths=%s\n' "$java_home"
+          printf 'org.gradle.java.installations.auto-detect=false\n'
+          printf 'org.gradle.java.installations.auto-download=false\n'
+          printf 'monada.requiredJavaHome=%s\n' "$java_home"
+        } >> "${gradle_user_home}/gradle.properties"
         printf '### Java runtime\n\n- Vendor: Eclipse Adoptium\n- Temurin build: `%s`\n' \
-          "$runtime_version" >> "$GITHUB_STEP_SUMMARY"
-
-    - name: Record Gradle launcher, daemon and toolchains
-      shell: bash
-      working-directory: ${{ inputs.project-directory }}
-      run: |
-        gradle_version="$(./gradlew --version)"
-        printf '%s\n' "$gradle_version"
-        if ! grep -Fq "Daemon JVM:    ${JAVA_HOME} (" <<< "$gradle_version"; then
-          echo "::error::Gradle did not select the patched daemon JVM."
-          exit 1
-        fi
-
-        toolchains="$(./gradlew --no-daemon -q javaToolchains)"
-        printf '%s\n' "$toolchains"
-        locations="$(sed -n 's/^[[:space:]]*| Location:[[:space:]]*//p' <<< "$toolchains")"
-        if [[ "$locations" != "$JAVA_HOME" ]]; then
-          echo "::error::Expected the patched JDK to be Gradle's only Java toolchain."
-          exit 1
-        fi
+          "$RUNTIME_VERSION" >> "$GITHUB_STEP_SUMMARY"

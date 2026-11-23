@@ -173,8 +173,6 @@ jobs:
 
       - name: Set up patched Java 27
         uses: ./monada-neuron/.github/actions/setup-patched-java
-        with:
-          project-directory: monada-neuron
 
       - name: Run adapter tests
         working-directory: monada-neuron

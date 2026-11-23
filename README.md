@@ -199,7 +199,8 @@ no runtime dependencies.
 
 Use **Eclipse Temurin 27.0.1.1+4** or a later Java 27 build that your vendor confirms fixes CVE-2026-114938.
 Set `JAVA_HOME` and your IDE's Gradle JVM to the patched JDK. Apply the same security requirement to any JVM
-that loads Neuron, including embedded classpath and JPMS hosts. See [Java 27 runtime setup and verification](docs/java-runtime.md).
+that loads Neuron, including embedded classpath and JPMS hosts. The Gradle build fails on an older Temurin 27 daemon or
+toolchain. See [Java 27 runtime setup and verification](docs/java-runtime.md).
 
 Publish to your local Maven repository (no remote repository is involved):
 

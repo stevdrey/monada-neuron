@@ -38,3 +38,7 @@ jobs:
 
       - name: Generate and submit dependency graph
         uses: gradle/actions/dependency-submission@v6
+        with:
+          # The Java setup above writes ~/.gradle/gradle.properties; without this the action finds an existing
+          # Gradle User Home and disables its cache.
+          cache-overwrite-existing: true
