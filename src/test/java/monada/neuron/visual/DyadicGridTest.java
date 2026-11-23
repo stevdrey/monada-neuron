@@ -52,4 +52,18 @@ class DyadicGridTest {
         var error = assertThrows(IllegalArgumentException.class, () -> DyadicGrid.requireOnGrid(0.1, "side"));
         assertTrue(error.getMessage().startsWith("side "), error.getMessage());
     }
+
+    @Test
+    void theGridConstantsDeriveFromOneBitCount() {
+        assertEquals(12, DyadicGrid.BITS);
+        assertEquals(4096L, DyadicGrid.STEPS);
+        assertEquals(4096.0, DyadicGrid.STEPS_PER_UNIT);
+    }
+
+    @Test
+    void theShoelaceSumIsPositiveClockwiseOnScreenNegativeCounterclockwiseAndZeroWhenCollinear() {
+        assertEquals(4096L * 4096L, DyadicGrid.shoelace(0, 0, 1, 0, 0, 1));
+        assertEquals(-4096L * 4096L, DyadicGrid.shoelace(0, 0, 0, 1, 1, 0));
+        assertEquals(0, DyadicGrid.shoelace(0, 0, 0.5, 0.25, 1, 0.5));
+    }
 }

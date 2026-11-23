@@ -124,4 +124,15 @@ class CompositeTest {
                 () -> assertThrows(UnsupportedOperationException.class, () -> composite.parts().add(SQUARE)),
                 () -> assertThrows(UnsupportedOperationException.class, () -> composite.holes().clear()));
     }
+
+    @Test
+    void theInternalFactoryKeepsARepeatedShapeOnceWhereTheConstructorThrows() {
+        List<ShapePrimitive> repeated = List.of(SQUARE, CIRCLE, SQUARE);
+
+        Composite composite = Composite.keepingEachShapeOnce(repeated, List.of(CIRCLE, CIRCLE));
+
+        assertAll(
+                () -> assertEquals(new Composite(List.of(CIRCLE, SQUARE), List.of(CIRCLE)), composite),
+                () -> assertThrows(IllegalArgumentException.class, () -> new Composite(repeated, List.of())));
+    }
 }

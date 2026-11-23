@@ -21,7 +21,8 @@ public record Transform2D(double tx, double ty, double scale, double rotation) {
 
     static final double MIN_TRANSLATION = -1.0;
     static final double MAX_TRANSLATION = 2.0;
-    private static final double CENTER = 0.5;
+    /** The fixed center {@code c = (0.5, 0.5)} of every pose (Section 4.1), on both axes. */
+    static final double CENTER = 0.5;
 
     public Transform2D {
         if (!(tx >= MIN_TRANSLATION && tx <= MAX_TRANSLATION)) {

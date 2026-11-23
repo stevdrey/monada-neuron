@@ -51,11 +51,14 @@ public final class BinaryMask {
             throw new IllegalArgumentException(
                     "a " + width + "x" + height + " mask needs " + expectedWords + " words, got " + words.length);
         }
+        // Copy before the tail check: a caller that writes to its array during this call cannot then store a mask
+        // with nonzero tail bits, which would break equality between masks with the same pixels.
+        long[] copy = words.clone();
         int tailBits = bits & 63;
-        if (tailBits != 0 && (words[expectedWords - 1] >>> tailBits) != 0) {
+        if (tailBits != 0 && (copy[expectedWords - 1] >>> tailBits) != 0) {
             throw new IllegalArgumentException("bits beyond the last pixel must be zero");
         }
-        return new Result.Ok<>(new BinaryMask(width, height, words.clone()));
+        return new Result.Ok<>(new BinaryMask(width, height, copy));
     }
 
     public int width() {

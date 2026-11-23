@@ -33,6 +33,26 @@ public record Composite(List<ShapePrimitive> parts, List<ShapePrimitive> holes) 
         }
     }
 
+    /**
+     * A composite over entries that may hold the same shape more than once, each kept once. Canonicalization uses it
+     * after snapping, where two distinct entries can land on one grid shape; the public constructor still throws on a
+     * repeated entry.
+     */
+    static Composite keepingEachShapeOnce(List<ShapePrimitive> parts, List<ShapePrimitive> holes) {
+        return new Composite(distinct(parts), distinct(holes));
+    }
+
+    private static List<ShapePrimitive> distinct(List<ShapePrimitive> entries) {
+        List<ShapePrimitive> sorted = new ArrayList<>(entries);
+        sorted.sort(CANONICAL_ORDER);
+        for (int i = sorted.size() - 1; i > 0; i--) {
+            if (sorted.get(i).equals(sorted.get(i - 1))) {
+                sorted.remove(i);
+            }
+        }
+        return sorted;
+    }
+
     private static List<ShapePrimitive> canonicalList(List<ShapePrimitive> entries, String name) {
         if (entries == null) {
             throw new IllegalArgumentException(name + " must not be null");
@@ -74,8 +94,7 @@ public record Composite(List<ShapePrimitive> parts, List<ShapePrimitive> holes) 
             return switch (shape) {
                 case Circle circle -> circle.cx();
                 case Square square -> square.cx();
-                case Triangle t -> (Math.min(t.x1(), Math.min(t.x2(), t.x3()))
-                        + Math.max(t.x1(), Math.max(t.x2(), t.x3()))) / 2;
+                case Triangle t -> BoundingBox.of(t).centerX();
                 case Composite _ -> throw new IllegalArgumentException("a composite has no canonical order key");
             };
         }
@@ -84,8 +103,7 @@ public record Composite(List<ShapePrimitive> parts, List<ShapePrimitive> holes) 
             return switch (shape) {
                 case Circle circle -> circle.cy();
                 case Square square -> square.cy();
-                case Triangle t -> (Math.min(t.y1(), Math.min(t.y2(), t.y3()))
-                        + Math.max(t.y1(), Math.max(t.y2(), t.y3()))) / 2;
+                case Triangle t -> BoundingBox.of(t).centerY();
                 case Composite _ -> throw new IllegalArgumentException("a composite has no canonical order key");
             };
         }

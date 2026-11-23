@@ -10,7 +10,11 @@ package monada.neuron.visual;
  */
 final class DyadicGrid {
 
-    static final double STEPS_PER_UNIT = 4096.0;
+    /** Fractional bits of the grid; every other grid constant derives from it. */
+    static final int BITS = 12;
+    /** Grid steps per unit, {@code 2^12}, as an exact integer. */
+    static final long STEPS = 1L << BITS;
+    static final double STEPS_PER_UNIT = STEPS;
     static final long MAX_NUMERATOR = 1L << 28;
 
     private DyadicGrid() {
@@ -33,6 +37,17 @@ final class DyadicGrid {
 
     static double ofNumerator(long numerator) {
         return numerator / STEPS_PER_UNIT;
+    }
+
+    /**
+     * The exact shoelace sum of three on grid points, on numerators: positive when they run clockwise on screen
+     * ({@code y} down), negative when counterclockwise, zero when they are collinear. The one zero area rule for
+     * triangles.
+     */
+    static long shoelace(double x1, double y1, double x2, double y2, double x3, double y3) {
+        long ax = numerator(x1);
+        long ay = numerator(y1);
+        return (numerator(x2) - ax) * (numerator(y3) - ay) - (numerator(x3) - ax) * (numerator(y2) - ay);
     }
 
     /** Returns the value with {@code -0.0} stored as {@code +0.0}, or throws when it is off the grid. */

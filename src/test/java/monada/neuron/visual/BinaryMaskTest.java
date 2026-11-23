@@ -3,6 +3,7 @@ package monada.neuron.visual;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static monada.neuron.visual.VisualFixtures.ok;
 import static monada.neuron.visual.VisualFixtures.rejection;
@@ -132,5 +133,31 @@ class BinaryMaskTest {
     @Test
     void toStringNamesTheSizeAndCountButPrintsNoBits() {
         assertEquals("BinaryMask[2x3, cardinality=2]", ok(BinaryMask.of(2, 3, new long[] {0b101})).toString());
+    }
+
+    @Test
+    void aCallerWritingToItsArrayDuringTheCallNeverLeavesTailBitsInTheStoredMask() throws InterruptedException {
+        BinaryMask clean = ok(BinaryMask.of(1, 1, new long[] {1L}));
+        long[] shared = {1L};
+        var stop = new AtomicBoolean();
+        Thread writer = Thread.ofPlatform().start(() -> {
+            while (!stop.get()) {
+                shared[0] ^= 2L;
+            }
+        });
+        try {
+            for (int i = 0; i < 300_000; i++) {
+                try {
+                    if (BinaryMask.of(1, 1, shared) instanceof Result.Ok<BinaryMask> stored) {
+                        assertEquals(clean, stored.value());
+                    }
+                } catch (IllegalArgumentException tailBitSeen) {
+                    // The writer's bit was set when the copy was taken; rejecting it is the correct outcome.
+                }
+            }
+        } finally {
+            stop.set(true);
+            writer.join();
+        }
     }
 }

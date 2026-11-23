@@ -25,10 +25,7 @@ public record Triangle(double x1, double y1, double x2, double y2, double x3, do
         x3 = DyadicGrid.requireOnGrid(x3, "x3");
         y3 = DyadicGrid.requireOnGrid(y3, "y3");
 
-        long ax = DyadicGrid.numerator(x1);
-        long ay = DyadicGrid.numerator(y1);
-        long shoelace = (DyadicGrid.numerator(x2) - ax) * (DyadicGrid.numerator(y3) - ay)
-                - (DyadicGrid.numerator(x3) - ax) * (DyadicGrid.numerator(y2) - ay);
+        long shoelace = DyadicGrid.shoelace(x1, y1, x2, y2, x3, y3);
         if (shoelace == 0) {
             throw new IllegalArgumentException("a triangle needs three vertices that are not collinear");
         }

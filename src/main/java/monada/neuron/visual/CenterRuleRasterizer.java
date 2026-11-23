@@ -32,10 +32,10 @@ final class CenterRuleRasterizer {
         long[] words = new long[(n * n + 63) >>> 6];
         for (int y = 0; y < n; y++) {
             for (int x = 0; x < n; x++) {
-                double qx = (x + 0.5) / n - 0.5 - tx;
-                double qy = (y + 0.5) / n - 0.5 - ty;
-                double u = (qx * cos + qy * sin) / scale + 0.5;
-                double v = (-qx * sin + qy * cos) / scale + 0.5;
+                double qx = (x + 0.5) / n - Transform2D.CENTER - tx;
+                double qy = (y + 0.5) / n - Transform2D.CENTER - ty;
+                double u = (qx * cos + qy * sin) / scale + Transform2D.CENTER;
+                double v = (-qx * sin + qy * cos) / scale + Transform2D.CENTER;
                 if (u >= 0 && u <= 1 && v >= 0 && v <= 1 && shape.contains(u, v)) {
                     int bit = y * n + x;
                     words[bit >>> 6] |= 1L << bit;

@@ -47,7 +47,7 @@ class VisualPackageBoundaryTest {
 
     private boolean isVisual(Path classesRoot, Path file) {
         return classesRoot.relativize(file).getParent() != null
-                && classesRoot.relativize(file).getParent().equals(Paths.get(VISUAL_DIRECTORY));
+                && classesRoot.relativize(file).getParent().startsWith(Paths.get(VISUAL_DIRECTORY));
     }
 
     private boolean mentionsVisual(Path file) {
