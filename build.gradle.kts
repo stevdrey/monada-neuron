@@ -254,9 +254,15 @@ tasks.test {
         excludeTags("formal-pilot")
     }
     // Boundary tests read Javadoc from the sources, and an edit to Javadoc alone leaves the compiled classes unchanged.
-    inputs.dir(layout.projectDirectory.dir("src/main/java"))
+    val mainSources = layout.projectDirectory.dir("src/main/java")
+    inputs.dir(mainSources)
         .withPropertyName("mainSources")
         .withPathSensitivity(PathSensitivity.RELATIVE)
+    // The same directory reaches the tests, so they never resolve sources against the working directory (Issue #165).
+    // An argument provider keeps the absolute path out of the task inputs, so the build cache stays relocatable.
+    jvmArgumentProviders.add(CommandLineArgumentProvider {
+        listOf("-Dmonada.mainSources=${mainSources.asFile.absolutePath}")
+    })
 }
 
 // Explores every schedule of BoundedParallelAeonCoordinator's direct path within fixed bounds and checks

@@ -1,6 +1,7 @@
 package monada.neuron.routing.review;
 
 import monada.neuron.routing.catalog.EligibilityReason;
+import monada.neuron.testsupport.MainSources;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -38,7 +39,7 @@ class DecisionReviewBoundaryTest {
     private static final List<String> FORBIDDEN = List.of("ready", "allowed", "authorized", "authenticated",
             "granted", "approved", "safe");
 
-    private static final Path SOURCES = Path.of("src/main/java/monada/neuron/routing/review");
+    private static final Path SOURCES = MainSources.packageDirectory("monada.neuron.routing.review");
 
     private static final List<Class<?>> TOP_LEVEL = List.of(DecisionReview.class, ExclusionGroup.class,
             ReviewNotice.class);

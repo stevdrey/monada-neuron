@@ -1,5 +1,6 @@
 package monada.neuron.routing.comparison;
 
+import monada.neuron.testsupport.MainSources;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -33,10 +34,11 @@ class ComparisonBoundaryTest {
             RouteChange.class, RouteStanding.class, RoutingScenario.class, ScenarioComparator.class,
             ScenarioComparison.class, ScenarioDelta.class, ScenarioDifference.class);
 
-    private static final Path SOURCES = Path.of("src/main/java/monada/neuron/routing/comparison");
+    private static final Path SOURCES = MainSources.packageDirectory("monada.neuron.routing.comparison");
 
     /** The trusted composition every preview runs; it must stay as free of those packages as the preview itself. */
-    private static final Path TRUSTED_ADVICE = Path.of("src/main/java/monada/neuron/routing/TrustedRoutingAdvice.java");
+    private static final Path TRUSTED_ADVICE = MainSources.packageDirectory("monada.neuron.routing")
+            .resolve("TrustedRoutingAdvice.java");
 
     private static List<Class<?>> publicTypes() {
         List<Class<?>> types = new ArrayList<>(TOP_LEVEL);

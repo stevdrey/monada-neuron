@@ -2,6 +2,7 @@ package monada.neuron.routing.receipt;
 
 import monada.neuron.routing.RoutingDecision;
 import monada.neuron.routing.receipt.ReceiptFixtures.Base;
+import monada.neuron.testsupport.MainSources;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -35,7 +36,7 @@ class ReceiptBoundaryTest {
     private static final List<Class<?>> TOP_LEVEL = List.of(AdviceReceipt.class, DecodeResult.class,
             RejectReason.class);
 
-    private static final Path SOURCES = Path.of("src/main/java/monada/neuron/routing/receipt");
+    private static final Path SOURCES = MainSources.packageDirectory("monada.neuron.routing.receipt");
 
     private static List<Class<?>> publicTypes() {
         List<Class<?>> types = new ArrayList<>(TOP_LEVEL);

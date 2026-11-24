@@ -1,5 +1,6 @@
 package monada.neuron.routing.adaptation.recovery;
 
+import monada.neuron.testsupport.MainSources;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -17,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** The recovery package is values and pure functions: no IO, logging, threads, store mutation or reset. */
 class RecoveryBoundaryTest {
 
-    private static final Path SOURCES = Path.of("src/main/java/monada/neuron/routing/adaptation/recovery");
+    private static final Path SOURCES = MainSources.packageDirectory("monada.neuron.routing.adaptation.recovery");
 
     /** Names that would read or write a file, socket or log, run work elsewhere, or reset a store. */
     private static final List<String> BANNED = List.of("java.nio.file", "java.io.File", "java.net", "java.nio.channels",
