@@ -4,6 +4,7 @@ import monada.neuron.routing.RoutingPolicy;
 import monada.neuron.routing.TrustedRoutingProfile;
 import monada.neuron.routing.catalog.RouteCatalog;
 import monada.neuron.routing.catalog.RoutingRequest;
+import monada.neuron.testsupport.MainSources;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -29,6 +30,8 @@ class FeatureReadinessBoundaryTest {
 
     private static final String SENTENCE = "Diagnostics are information only: they are never eligibility, readiness,"
             + " authentication or authorization, and no routing decision reads them.";
+
+    private static final Path SOURCES = MainSources.packageDirectory("monada.neuron.routing.features");
 
     private static final List<String> FORBIDDEN = List.of("ready", "allowed", "authorized", "authenticated",
             "granted", "pass");
@@ -116,16 +119,14 @@ class FeatureReadinessBoundaryTest {
         Map<Class<?>, Integer> typesPerFile = new HashMap<>();
         for (Class<?> type : allTypes()) {
             Class<?> topLevel = type.getEnclosingClass() == null ? type : type.getEnclosingClass();
-            String source = Files.readString(Path.of("src/main/java/monada/neuron/routing/features",
-                    topLevel.getSimpleName() + ".java"));
+            String source = Files.readString(SOURCES.resolve(topLevel.getSimpleName() + ".java"));
 
             assertEquals(1, occurrences(javadocText(typeJavadoc(source, type.getSimpleName()))),
                     type.getSimpleName());
             typesPerFile.merge(topLevel, 1, Integer::sum);
         }
         for (Map.Entry<Class<?>, Integer> entry : typesPerFile.entrySet()) {
-            String source = Files.readString(Path.of("src/main/java/monada/neuron/routing/features",
-                    entry.getKey().getSimpleName() + ".java"));
+            String source = Files.readString(SOURCES.resolve(entry.getKey().getSimpleName() + ".java"));
             assertEquals(entry.getValue(), occurrences(javadocText(source)), entry.getKey().getSimpleName());
         }
     }

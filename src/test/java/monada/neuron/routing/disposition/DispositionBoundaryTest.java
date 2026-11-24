@@ -7,6 +7,7 @@ import monada.neuron.routing.disposition.AdviceDisposition.Deferred;
 import monada.neuron.routing.disposition.AdviceDisposition.Followed;
 import monada.neuron.routing.disposition.DispositionFixtures.Base;
 import monada.neuron.routing.receipt.AdviceReceipt;
+import monada.neuron.testsupport.MainSources;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -47,7 +48,7 @@ class DispositionBoundaryTest {
     private static final List<Class<?>> TOP_LEVEL = List.of(AdviceDisposition.class, AdviceReference.class,
             AdviceKind.class, AlternativeStanding.class, DispositionResult.class, DispositionRejection.class);
 
-    private static final Path SOURCES = Path.of("src/main/java/monada/neuron/routing/disposition");
+    private static final Path SOURCES = MainSources.packageDirectory("monada.neuron.routing.disposition");
 
     private static final String HEX = "[0-9a-f]{64}";
 

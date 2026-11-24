@@ -1,5 +1,6 @@
 package monada.neuron.routing.adaptation.codec;
 
+import monada.neuron.testsupport.MainSources;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -18,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** The codec package works on in-memory arrays only and keeps no channel for checkpoint bytes or host tokens. */
 class CheckpointBoundaryTest {
 
-    private static final Path SOURCES = Path.of("src/main/java/monada/neuron/routing/adaptation/codec");
+    private static final Path SOURCES = MainSources.packageDirectory("monada.neuron.routing.adaptation.codec");
 
     /** Names that would read or write a file, socket or log, or use Java object serialization. */
     private static final List<String> BANNED = List.of("java.nio.file", "java.io.File", "java.net", "java.nio.channels",
