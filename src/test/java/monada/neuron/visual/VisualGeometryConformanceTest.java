@@ -55,6 +55,20 @@ class VisualGeometryConformanceTest {
         shapes.put("m-cmp-13 T1 frame", T1_FRAME);
         shapes.put("m-cmp-17 notch", NOTCH);
         shapes.put("m-cmp-19 L shape", L_SHAPE);
+        shapes.put("m-cmp-06 ring", VisualFixtures.RING_06);
+        shapes.put("m-cmp-07 ring", VisualFixtures.RING_07);
+        shapes.put("m-cmp-09 square frame", VisualFixtures.SQUARE_FRAME_09);
+        shapes.put("m-cmp-11 two circles", VisualFixtures.TWO_CIRCLES_11);
+        shapes.put("m-cmp-12 two circles", VisualFixtures.TWO_CIRCLES_12);
+        shapes.put("m-cmp-14 T1 frame", VisualFixtures.T1_FRAME_14);
+        shapes.put("m-cmp-15 snowman", VisualFixtures.SNOWMAN_15);
+        shapes.put("m-cmp-16 snowman", VisualFixtures.SNOWMAN_16);
+        shapes.put("m-cmp-18 notch", VisualFixtures.NOTCH_18);
+        shapes.put("m-cmp-20 L shape", VisualFixtures.L_SHAPE_20);
+        shapes.put("m-cmp-21 dumbbell", VisualFixtures.DUMBBELL_21);
+        shapes.put("m-cmp-22 dumbbell", VisualFixtures.DUMBBELL_22);
+        shapes.put("m-cmp-23 touching squares", VisualFixtures.TOUCHING_SQUARES_23);
+        shapes.put("m-cmp-24 touching squares", VisualFixtures.TOUCHING_SQUARES_24);
         return shapes;
     }
 
@@ -83,6 +97,21 @@ class VisualGeometryConformanceTest {
         expected.put("m-cmp-13 T1 frame", new MaskTopology(1, 1));
         expected.put("m-cmp-17 notch", new MaskTopology(1, 0));
         expected.put("m-cmp-19 L shape", new MaskTopology(1, 0));
+        // The gap 0 snowman (m-cmp-15) is one component and the gap 0.05 one (m-cmp-16) is three.
+        expected.put("m-cmp-06 ring", new MaskTopology(1, 1));
+        expected.put("m-cmp-07 ring", new MaskTopology(1, 1));
+        expected.put("m-cmp-09 square frame", new MaskTopology(1, 1));
+        expected.put("m-cmp-11 two circles", new MaskTopology(2, 0));
+        expected.put("m-cmp-12 two circles", new MaskTopology(2, 0));
+        expected.put("m-cmp-14 T1 frame", new MaskTopology(1, 1));
+        expected.put("m-cmp-15 snowman", new MaskTopology(1, 0));
+        expected.put("m-cmp-16 snowman", new MaskTopology(3, 0));
+        expected.put("m-cmp-18 notch", new MaskTopology(1, 0));
+        expected.put("m-cmp-20 L shape", new MaskTopology(1, 0));
+        expected.put("m-cmp-21 dumbbell", new MaskTopology(1, 0));
+        expected.put("m-cmp-22 dumbbell", new MaskTopology(1, 0));
+        expected.put("m-cmp-23 touching squares", new MaskTopology(1, 0));
+        expected.put("m-cmp-24 touching squares", new MaskTopology(1, 0));
 
         var actual = new LinkedHashMap<String, MaskTopology>();
         GOLD.forEach((id, shape) -> actual.put(id,
@@ -213,6 +242,21 @@ class VisualGeometryConformanceTest {
         pinned.put("m-cmp-13 T1 frame", "1638 aea74e10");
         pinned.put("m-cmp-17 notch", "4060 3152caa1");
         pinned.put("m-cmp-19 L shape", "2071 f57236e2");
+        // The fourteen below were pinned on 2026-11-24, when the map grew to every gold composite of Section 8.5.
+        pinned.put("m-cmp-06 ring", "2068 27203e1");
+        pinned.put("m-cmp-07 ring", "620 45ae1aa1");
+        pinned.put("m-cmp-09 square frame", "732 ac1232a1");
+        pinned.put("m-cmp-11 two circles", "1040 14bc0501");
+        pinned.put("m-cmp-12 two circles", "716 7a35d0e1");
+        pinned.put("m-cmp-14 T1 frame", "1138 4a4e8608");
+        pinned.put("m-cmp-15 snowman", "1206 84c1a719");
+        pinned.put("m-cmp-16 snowman", "1030 54151e5a");
+        pinned.put("m-cmp-18 notch", "3716 c4c6fd42");
+        pinned.put("m-cmp-20 L shape", "3072 24af3601");
+        pinned.put("m-cmp-21 dumbbell", "1184 3ed07e41");
+        pinned.put("m-cmp-22 dumbbell", "1200 1b9a4c81");
+        pinned.put("m-cmp-23 touching squares", "2048 4dbf7801");
+        pinned.put("m-cmp-24 touching squares", "2176 39e7801");
         var actual = new LinkedHashMap<String, String>();
         GOLD.forEach((id, shape) -> {
             var mask = ok(VisualGeometry.canonicalize(shape)).geometry().canonicalMask();

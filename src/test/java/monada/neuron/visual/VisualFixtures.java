@@ -25,6 +25,31 @@ final class VisualFixtures {
     static final Composite NOTCH = new Composite(List.of(SQUARE), List.of(square(2048, 205, 410)));
     static final Composite L_SHAPE = new Composite(List.of(SQUARE), List.of(square(2662, 1434, 2867)));
 
+    // The other composite variants of Section 8.5, named by their fixture id.
+    static final Composite RING_06 = new Composite(List.of(CIRCLE), List.of(circle(2048, 2048, 1229)));
+    static final Composite RING_07 = new Composite(List.of(CIRCLE), List.of(circle(2048, 2048, 1843)));
+    static final Composite SQUARE_FRAME_09 = new Composite(List.of(SQUARE), List.of(square(2048, 2048, 3686)));
+    static final Composite TWO_CIRCLES_11 = new Composite(
+            List.of(circle(819, 2048, 819), circle(3277, 2048, 819)), List.of());
+    static final Composite TWO_CIRCLES_12 = new Composite(
+            List.of(circle(683, 2048, 683), circle(3413, 2048, 683)), List.of());
+    static final Composite T1_FRAME_14 = new Composite(
+            List.of(T1), List.of(triangle(2048, 984, 3277, 3112, 819, 3112)));
+    static final Composite SNOWMAN_15 = new Composite(
+            List.of(circle(2048, 396, 396), circle(2048, 1453, 661), circle(2048, 3105, 991)), List.of());
+    static final Composite SNOWMAN_16 = new Composite(
+            List.of(circle(2048, 367, 367), circle(2048, 1498, 611), circle(2048, 3179, 917)), List.of());
+    static final Composite NOTCH_18 = new Composite(List.of(SQUARE), List.of(square(2048, 614, 1229)));
+    static final Composite L_SHAPE_20 = new Composite(List.of(SQUARE), List.of(square(3072, 1024, 2048)));
+    static final Composite DUMBBELL_21 = new Composite(
+            List.of(circle(819, 2048, 819), square(2048, 2048, 819), circle(3277, 2048, 819)), List.of());
+    static final Composite DUMBBELL_22 = new Composite(
+            List.of(circle(683, 2048, 683), square(2048, 2048, 1365), circle(3413, 2048, 683)), List.of());
+    static final Composite TOUCHING_SQUARES_23 = new Composite(
+            List.of(square(1024, 2048, 2048), square(3072, 2048, 2048)), List.of());
+    static final Composite TOUCHING_SQUARES_24 = new Composite(
+            List.of(square(1280, 2048, 2560), square(3328, 2048, 1536)), List.of());
+
     private VisualFixtures() {
     }
 

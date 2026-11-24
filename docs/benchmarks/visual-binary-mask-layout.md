@@ -134,11 +134,12 @@ The layout stays packed `long[]`, as the contract says.
 
 Packed does lose on one measured operation: the bare 32x32 `get` scan is about 6% slower than a flat plane (639 ns
 against 600 ns), and the error intervals do not overlap. AC-10 says a result where packed loses on an access pattern
-of the contract is filed as a `visual-geometry/2` issue. No issue is filed for this one, for three reasons stated so
-a reader can disagree: the loop does no work per pixel, so 6% of a read is the upper end of what a consumer would
-see; at 64x64, the size the witness mask uses, there is no measurable difference; and the operations the contract
-leans on (the witness mask built once per geometry, masks compared and hashed as values) all favor packed. If #144's
-fitter or #145's tracer shows the scan to be a hotspot, that measurement reopens the question.
+of the contract is filed as a `visual-geometry/2` issue. It is filed as issue #216, which carries the measured
+numbers, the workloads to measure (#144's fitter and #145's tracer) and the criterion for the decision. Three reasons
+why v1 keeps packed in the meantime, stated so a reader can disagree: the loop does no work per pixel, so 6% of a read
+is the upper end of what a consumer would see; at 64x64, the size the witness mask uses, there is no measurable
+difference; and the operations the contract leans on (the witness mask built once per geometry, masks compared and
+hashed as values) all favor packed.
 
 ## Limits
 
