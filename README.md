@@ -399,7 +399,9 @@ reconstructs on 32x32 and 64x64 fixtures. The [Visual Geometry Experiment Contra
 (`visual-geometry/1`, issue #141, [ADR 0053](docs/adr/0053-visual-geometry-experiment-protocol.md)) freezes the
 vocabulary, numeric conventions, fixtures, splits, thresholds and go or no go gates before any code exists. A spatial
 frequency is not a light frequency, labels stay host supplied, and the `Signal` path, the stage order and the Store
-formats are unchanged. No visual type is implemented yet.
+formats are unchanged. Issue #143 adds the first types, in the opt in package `monada.neuron.visual`: bounded shape
+records, a packed binary mask, a canonical geometry and its separate pose. Fitting, contours, color and spectra are
+not implemented yet.
 
 Epic #182 researches a separate, bounded language task: selecting an English or Spanish expression for an ambiguous
 word in context, or abstaining. Its [data feasibility report](docs/experiments/bilingual-sense-feasibility.md)

@@ -129,7 +129,7 @@ Host or evaluation runner
   -> BinaryMask | RgbaImage | annotations (part and hole kinds)  typed inputs, caller owned; no Signal, no stage
   -> PrimitiveFitter (#144)                        mask (+ annotation) -> ranked ShapeHypothesis list | Abstain
   -> VisualGeometry (#143), Contour and SignedDistanceField views (#145)
-  -> ShapeInstance = geometry reference + Transform2D (#146)   one geometry, many instances, in memory only
+  -> ShapeInstance (#146) = geometry reference + Transform2D (#143)   one geometry, many instances, in memory only
   -> ImagePlane / RgbaImage, ColorSpace conversions (#147)
   -> Dft2d (#148) | Haar2d (#149): forward and inverse, typed rejection outside the caps
   -> Compositor (#150): instances + Appearance -> deterministic RgbaImage
@@ -154,13 +154,13 @@ the children keep the issue titles and build into the package named here (ADR 00
 
 | Entity | Owner | Fields | Rules |
 |---|---|---|---|
-| `ShapePrimitive` (sealed) | #143 | `Circle(cx, cy, r)`, `Square(cx, cy, side, rotation)`, `Triangle(x1, y1, x2, y2, x3, y3)`, `Composite(List<ShapePrimitive> parts, List<ShapePrimitive> holes)` | unit square coordinates; every parameter is a multiple of `2^-12` (record constructors throw otherwise); rotation is normalized to the shape's symmetry period (circle `0`, square `[0, π/2)`); composites hold at most 16 parts and 16 holes, each a non composite, in canonical order (Section 4.2); the record constructor does not enforce the cap (a larger `Composite` value is constructible), every operation that receives one returns `CAP_EXCEEDED` (Section 7) |
+| `ShapePrimitive` (sealed) | #143 | `Circle(cx, cy, r)`, `Square(cx, cy, side, rotation)`, `Triangle(x1, y1, x2, y2, x3, y3)`, `Composite(List<ShapePrimitive> parts, List<ShapePrimitive> holes)` | unit square coordinates; every parameter is a multiple of `2^-12` (record constructors throw otherwise); a rotation is stored within the shape's symmetry period (a circle has none, a square takes `[0, π/2)`) and the `Square` constructor throws for a rotation outside it instead of folding it; composites hold at most 16 parts and 16 holes, each a non composite, in canonical order (Section 4.2); the record constructor does not enforce the cap (a larger `Composite` value is constructible), every operation that receives one returns `CAP_EXCEEDED` (Section 7); a grid numerator is at most `2^28` in magnitude (coordinates within `±65536`); constructors store `-0.0` as `+0.0`, store a triangle's vertices in the order of Section 4.8 item 2 and a composite's lists in canonical order whatever the argument order, and throw for a degenerate shape (`r <= 0`, `side <= 0`, zero area), an empty `parts`, a nested `Composite` or the same shape twice within `parts` or within `holes` |
 | `Canonicalized` | #143 | `geometry` (`VisualGeometry`), `pose` (`Transform2D`) | the result of `VisualGeometry.canonicalize(primitive)`: center, scale the larger extent to `1`, remove the rotation, snap to the grid; the pose maps the canonical geometry back to the input |
 | `VisualGeometry` | #143 | `primitive` (canonical), `canonicalMask` (`BinaryMask` 64x64) | one per canonical primitive; the mask is derived at construction and is the equality witness in tests; immutable; `equals` is exact on the primitive |
-| `BinaryMask` | #143 | `width`, `height`, `long[] words` | bit `i = y * width + x` lives in word `i >>> 6`, bit `i & 63`, least significant bit first; tail bits are zero; `1 <= width, height <= 64`; the factory copies the array and returns `Result` |
+| `BinaryMask` | #143 | `width`, `height`, `long[] words` | bit `i = y * width + x` lives in word `i >>> 6`, bit `i & 63`, least significant bit first; tail bits are zero; `1 <= width, height <= 64`; the factory copies the array and returns `Result`: a size outside the range is `SIZE_UNSUPPORTED`, then a wrong word count or a nonzero tail bit throws; a value over its size and pixels (`equals`, `hashCode`, `cardinality()`), `get` outside the raster throws `IndexOutOfBoundsException` |
 | `Contour` | #145 | `List<Ring> rings`; `Ring(double[] xy, boolean hole)` closed | derived view; pixel edge polygon over a square raster; outer rings have a positive shoelace sum (clockwise on screen), holes negative; each ring starts at its minimum `(y, x)` vertex; only turning vertices are kept; ring order: outer rings by start vertex, each followed by its holes by start vertex |
 | `SignedDistanceField` | #145 | `width`, `height`, `double[] distances` in pixels | negative inside, positive outside, clamped to `[-4, 4]`; band `4.0` is a constant of the contract; outside the raster is background; empty mask gives `+4` everywhere (Section 4.6) |
-| `Transform2D` | #146 | `tx`, `ty`, `scale`, `rotation` | finite; `tx`, `ty` in `[-1, 2]`; `scale > 0`; `rotation` stored in `(-π, π]`, positive clockwise on screen; `applyInverse` defined for every valid value, as a point map rather than a `Transform2D`, because the inverse translation `-R(-rotation) (tx, ty) / scale` can leave `[-1, 2]` (`tx 1`, `scale 0.25` inverts to `tx -4`) |
+| `Transform2D` | #143 | `tx`, `ty`, `scale`, `rotation` | finite; `tx`, `ty` in `[-1, 2]`; `scale > 0`; `rotation` stored in `(-π, π]`, positive clockwise on screen; `applyInverse` defined for every valid value, as a point map rather than a `Transform2D`, because the inverse translation `-R(-rotation) (tx, ty) / scale` can leave `[-1, 2]` (`tx 1`, `scale 0.25` inverts to `tx -4`); the constructor throws for any invalid value and stores `-0.0` as `+0.0`; values are not grid bound |
 | `ShapeInstance` | #146 | `geometry` (shared reference), `transform`, `ordinal` | many instances to one geometry; carries no color; `ordinal` orders draw order, ties keep list order |
 | `ImagePlane` | #147 | `width`, `height`, `double[] samples`, `ColorSpace` (`SRGB`, `LINEAR`) | samples in `[0, 1]`, finite; `1 <= width, height <= 64`, rectangular allowed; copied at construction; the factory returns `Result` |
 | `RgbaImage` | #147 | `r`, `g`, `b`, `alpha` planes, `colorSpace` | all planes same size; `colorSpace` applies to `r`, `g`, `b`; `alpha` is straight (unassociated) and linear by definition |
@@ -170,7 +170,7 @@ the children keep the issue titles and build into the package named here (ADR 00
 | `ShapeHypothesis` | #144 | `geometry` (`VisualGeometry`), `pose` (`Transform2D`), `score` in `[0, 1]`, `ordinal` | lists are bounded to 8, ordered by score descending then ordinal ascending; `ordinal` is the catalogue index of the candidate (`0` to `5`, Section 4.9) or `6` for a composite hypothesis from an annotated fit, which always comes back as a list of exactly one hypothesis or an `Abstain` |
 | `Abstain` | #144 | `reason` (`EMPTY`, `TOO_SMALL`, `FULL`, `NO_PRIMITIVE_ABOVE_MARGIN`, `AMBIGUOUS`, `PART_COUNT_MISMATCH`) | returned instead of a list, never beside one |
 | `Result<T>` | #143 | `Ok(T value)` or `Rejected(VisualRejection)` | the typed result for a valid value outside a limit; no partial output |
-| `VisualRejection` | #143 | `reason` (`SIZE_UNSUPPORTED`, `NOT_POWER_OF_TWO`, `LEVELS_UNSUPPORTED`, `CAP_EXCEEDED`, `COLOR_SPACE_MISMATCH`, `TRANSFORM_OUT_OF_RANGE`) | |
+| `VisualRejection` | #143 | `reason` (`SIZE_UNSUPPORTED`, `NOT_POWER_OF_TWO`, `LEVELS_UNSUPPORTED`, `CAP_EXCEEDED`, `COLOR_SPACE_MISMATCH`, `TRANSFORM_OUT_OF_RANGE`, `BELOW_GRID_RESOLUTION`) | `VisualRejectionReason` enum; no code may rely on its ordinals |
 | Manifest row (one per `(id, size)`) | #142 | `id`, `size`, `kind`, `group`, `seed`, `formula`, `gold_geometry`, `gold_transform`, `gold_accept`, `gold_abstain`, `gold_layers`, `split`, `pixel_sha256`, `png_bytes`, `webp_lossless_bytes`, `webp_q75_bytes` | frozen; a changed gold value is a new manifest version with a new header hash; `gold_layers` is `NONE` for every id except the shape render ids (Section 8.8) |
 
 ### 3.4 API sketches
@@ -185,11 +185,12 @@ public record Circle(double cx, double cy, double r) implements ShapePrimitive {
 public record Square(double cx, double cy, double side, double rotation) implements ShapePrimitive {}
 public record Triangle(double x1, double y1, double x2, double y2, double x3, double y3) implements ShapePrimitive {}
 public record Composite(List<ShapePrimitive> parts, List<ShapePrimitive> holes) implements ShapePrimitive {}
-public sealed interface Result<T> permits Ok, Rejected {}       // Ok(T value) | Rejected(VisualRejection rejection)
+public sealed interface Result<T> permits Result.Ok, Result.Rejected {}   // nested records Ok(T value) | Rejected(VisualRejection rejection)
 public record VisualRejection(VisualRejectionReason reason) {}
-public final class BinaryMask { static Result<BinaryMask> of(int w, int h, long[] words); int width(); int height(); boolean get(int x, int y); long[] words(); /* copy */ }
+public final class BinaryMask { static Result<BinaryMask> of(int w, int h, long[] words); int width(); int height(); boolean get(int x, int y); int cardinality(); long[] words(); /* copy */ }
 public final class VisualGeometry { static Result<Canonicalized> canonicalize(ShapePrimitive p); ShapePrimitive primitive(); BinaryMask canonicalMask(); }
 public record Canonicalized(VisualGeometry geometry, Transform2D pose) {}
+public record Transform2D(double tx, double ty, double scale, double rotation) { double[] apply(double x, double y); double[] applyInverse(double x, double y); }
 
 // #144 (proposed, owned by issue #144)
 public interface PrimitiveFitter { FitResult fit(BinaryMask mask); FitResult fit(BinaryMask mask, Annotation annotation); }
@@ -204,8 +205,7 @@ public record Abstain(AbstainReason reason) implements FitResult {}
 public record Contour(List<Ring> rings) { static Contour of(BinaryMask m); Result<BinaryMask> rasterize(int n); }
 public record SignedDistanceField(int width, int height, double[] distances) { static Result<SignedDistanceField> of(Contour c, int n); BinaryMask mask(); }
 
-// #146 (proposed, owned by issue #146)
-public record Transform2D(double tx, double ty, double scale, double rotation) { double[] apply(double x, double y); double[] applyInverse(double x, double y); }
+// #146 (proposed, owned by issue #146); wraps #143's package private Section 4.4 rasterizer core
 public record ShapeInstance(VisualGeometry geometry, Transform2D transform, int ordinal) {}
 public final class InstanceRasterizer { Result<BinaryMask> render(ShapeInstance i, int n); }
 
@@ -248,16 +248,38 @@ canonical point `p` to `R(rotation) * (scale * (p - c)) + c + (tx, ty)` with `c 
 
 A primitive is canonical when its axis aligned bounding box is centered at `(0.5, 0.5)`, its larger extent is `1`
 within one grid step, and its rotation is `0`. For a square, rotation `0` means axis aligned; for a triangle, the
-longest edge, measured on the snapped numerators (Section 4.8 item 1), lies horizontal at the bottom with the third vertex above, ties pick the lexicographically smallest
-vertex sequence; a circle has no rotation. A composite is canonical at rotation `0` as given by its frozen gold
+longest edge lies horizontal at the bottom with the third vertex above; a circle has no rotation. `canonicalize`
+picks the base as the longest **input** edge by exact squared length on the grid numerators, breaks an exact tie by
+the lexicographically smallest snapped vertex sequence, and a remaining tie by the lowest stored edge; the snapped
+result still has its bottom edge longest on the snapped numerators (Section 4.8 item 1), which the fixed point check
+below enforces. A composite is canonical at rotation `0` as given by its frozen gold
 decomposition (composites are never re oriented); its parts and holes are canonicalized as a whole, not
-individually.
+individually. The box of a composite is the union of its parts' boxes; holes never move it. Parts (or holes) that
+snap to the same shape are kept once. A hole is never dropped: one that lands beyond the `2^28` numerator bound after
+rescaling makes `canonicalize` return `BELOW_GRID_RESOLUTION` (Section 7), even when it misses every part.
 
 `canonicalize` centers, scales, removes the rotation, then snaps every parameter to the grid `k / 4096` (a dyadic
 rational with 12 fractional bits) and returns the geometry and the pose that undoes the normalization. Record
 constructors throw on a value off the grid. Equality is exact on the snapped canonical parameters. Similarity (IoU,
 boundary distance) is a reported metric and never an identity. In memory reuse happens only on exact equality,
 through a map the caller owns; Neuron keeps no registry.
+
+A snapped triangle must be a fixed point: `canonicalize` runs the triangle path once more on its own result and
+returns `BELOW_GRID_RESOLUTION` unless it gets the same triangle with the identity pose. `canonicalize` of a
+canonical circle, square or triangle therefore returns the identity pose exactly. For a composite this holds only
+when its snapped box is exactly centered with larger extent exactly `1` (true for every gold composite of Section
+8.5): snapping each part separately can move a box edge by one step, so composite canonicalization is deterministic
+but not idempotent in general, which can miss a reuse and never causes a false merge.
+
+The fixed point rule rejects more than needles. When a triangle's two longest edges are exactly equal, one of them
+becomes the base and the other is exactly as long as the base before snapping; if snapping then leaves that other
+edge longer than the base, the result is not a fixed point and `canonicalize` returns `BELOW_GRID_RESOLUTION`, however
+large the triangle is. No choice among the tied edges avoids it. A tall isosceles written by hand (apex angle under
+60 degrees) is the usual case: about one in eight grid exact, axis symmetric ones is rejected, for example
+`Triangle((3200, 96), (80, 1056), (3200, 2016)) / 4096`. `T1`, `T2`, `T3`, their grid exact poses, flat isosceles
+triangles and triangles with one strictly longest edge and a height well above the grid step are not affected. A
+host that needs such a shape breaks the tie by one grid step. Accepting these shapes needs a wider snap rule, which
+is a `visual-geometry/2` change.
 
 Composite canonical order: parts and holes are each sorted by `cy`, then `cx`, then kind ordinal, then the remaining
 parameters in declaration order; equal entries stay adjacent.
@@ -343,6 +365,13 @@ These close the gaps a fixture author would otherwise fill by guessing.
    inward keeps the box centered exactly. A true equilateral triangle has apex `y` `274.38 / 4096` and base `y`
    `3821.62 / 4096`; nearest snapping would give `274` and `3822`, whose sloping edges (squared `16782608`) exceed the
    bottom (`16777216`), so `T1` is `275` and `3821` (sloping edges squared `16768420`).
+   A triangle's snapped numerators are computed exactly from the input numerators, never from rotated `double`
+   coordinates. With base vector `d` from the bottom left to the bottom right vertex, `e` from the bottom left
+   vertex to the apex and `L² = d · d`, the bottom left is `(0, by)`, the bottom right `(4096, by)`, the apex `x` is
+   `4096 · (e · d) / L²` and the half height is `h = 2048 · (e x d) / L²`, each rounded to nearest with ties to even
+   as an exact rational, giving apex `y` `2048 - h` and base `y` `2048 + h`; the inward rule takes the floor of the
+   exact `h` instead. A half grid tie therefore resolves the same way at every grid exact pose of one triangle. The
+   pose itself (`tx`, `ty`, `scale`, `rotation`) is still computed in `double`.
 2. **Triangle vertex order**: clockwise on screen (positive shoelace sum, `y` down), starting at the minimum `(y, x)`
    vertex, the same rule as contour rings. Every canonical `Triangle` and every triangle in a gold decomposition is
    written in this order.
@@ -469,9 +498,19 @@ constructor: `VisualGeometry.canonicalize` and the fitter for a `Composite` over
 for its own hypothesis list, and `Compositor.render` for the layer cap. A `Composite` or `List<Layer>` value over a
 cap is constructible; it is rejected when used.
 
+**`canonicalize` rejections.** In this order, first match wins: `CAP_EXCEEDED` before any work;
+`TRANSFORM_OUT_OF_RANGE` when the pose translation it would return leaves `[-1, 2]` (beside Section 4.3's two pixel
+render rule; the test is made on the translation as computed in `double`, so a rotated shape whose exact translation
+lies on a bound can come out one unit in the last place beyond it and be rejected, for example `T2` posed by
+`Transform2D(2, 2, 4, π)`); `BELOW_GRID_RESOLUTION` when a snapped radius or side is `0`, a snapped triangle has zero area, a
+snapped triangle is not a fixed point (Section 4.2), or a snapped hole lands beyond the `2^28` numerator bound.
+
 **Rejection versus exception.** A malformed value (null, NaN, infinity, a sample outside `[0, 1]`, a parameter off
-the grid) throws `IllegalArgumentException` from a record constructor: it is a caller bug. A well formed value
-outside a limit (size, power of two, depth, cap, color space mismatch, transform range) comes back as
+the grid or with a numerator beyond `2^28`, a degenerate shape, a square rotation outside `[0, π/2)`, an invalid
+`Transform2D`, a `BinaryMask` word array
+of the wrong length or with nonzero tail bits) throws `IllegalArgumentException` from a record constructor or
+factory: it is a caller bug. `null` throws `IllegalArgumentException` too, never `NullPointerException`. A well formed value
+outside a limit (size, power of two, depth, cap, color space mismatch, transform range, grid resolution) comes back as
 `Rejected(VisualRejection)` from a factory or an operation: it is an expected outcome. No operation returns a
 partial result.
 
@@ -1094,10 +1133,10 @@ GitHub is authoritative, and every prerequisite PR merges into `main` before a d
 |---|---|---|---|---|
 | #141 | this contract, ADR 0053, pointers | none | `docs/` | V0 |
 | #142 | fixture generator, PNGs, manifest, splits, WebP and PNG baselines | #141 | `monada-neuron-evaluation` | V1 |
-| #143 | `ShapePrimitive`, `VisualGeometry`, `BinaryMask`, `Result`, `VisualRejection` | #141 | `monada.neuron.visual` | V1 |
+| #143 | `ShapePrimitive`, `VisualGeometry`, `Canonicalized`, `BinaryMask`, `Transform2D`, `Result`, `VisualRejection` | #141 | `monada.neuron.visual` | V1 |
 | #144 | `PrimitiveFitter`, `GeometryMetrics`, `τ_fit`, `τ_margin` | #142, #143 | `monada.neuron.visual`, evaluation | V2 |
 | #145 | `Contour`, `SignedDistanceField` | #142, #143, #144 | `monada.neuron.visual` | V3 |
-| #146 | `Transform2D`, `ShapeInstance`, `InstanceRasterizer` | #143, #144 | `monada.neuron.visual` | V3 |
+| #146 | `ShapeInstance`, `InstanceRasterizer` | #143, #144 | `monada.neuron.visual` | V3 |
 | #147 | `ImagePlane`, `RgbaImage`, `ColorSpace`, `SrgbCodec` | #141, #142 | `monada.neuron.visual` | V4 |
 | #148 | `Dft2d`, `Spectrum2D` | #142, #147 | `monada.neuron.visual` | V4 |
 | #149 | `Haar2d`, `WaveletPyramid2D` | #142, #147 | `monada.neuron.visual` | V4 |
@@ -1156,6 +1195,30 @@ ADR or verdict.
   point map instead of `inverse()`, whose result could leave the translation bounds; the spectral arm's bytes add a
   `W · H / 8` position bitmap per color plane, because magnitude selected positions are not recoverable from the
   values.
+- `/1` (issue #143, spec 0012, before V1, 2026-11-20): the first visual code refines the sketches without changing a
+  fixture, threshold or gold value. `Transform2D` moves from #146 to #143 with `apply` and `applyInverse`; #146 keeps
+  `ShapeInstance` and `InstanceRasterizer` and wraps #143's package private Section 4.4 rasterizer core. A seventh
+  rejection reason, `BELOW_GRID_RESOLUTION`, covers a shape whose snapped radius, side or triangle area is `0`, a
+  snapped triangle that is not a fixed point of `canonicalize`, and a snapped hole beyond the numerator bound.
+  Constructors normalize instead of rejecting order: a triangle's vertices and a composite's parts and holes are
+  stored in canonical order whatever the argument order, and `-0.0` is stored as `+0.0`. A composite throws for the
+  same shape twice within `parts` or within `holes`; a hole that misses every part is allowed; shapes that become
+  identical after snapping are kept once. The canonical box of a composite is the union of its parts' boxes only.
+  `null` throws `IllegalArgumentException`. A grid numerator is bounded by `2^28` so edge lengths and shoelace sums
+  are exact in `long`. Section 4.2's triangle rule is made precise as "longest input edge, then smallest snapped
+  sequence, then lowest edge". `TRANSFORM_OUT_OF_RANGE` now also covers a `canonicalize` pose translation outside
+  `[-1, 2]`, beside Section 4.3's two pixel render rule; the test uses the computed `double`, so a pose exactly on
+  a bound can be rejected. A `Square` rotation outside `[0, π/2)` throws; the constructor does not fold it. The fixed
+  point rule also rejects a triangle with two exactly equal longest edges when snapping leaves the non base one
+  longer (Section 4.2). Composite canonicalization is deterministic but not
+  idempotent in general. `BinaryMask` gains `cardinality()` and value equality, and its packed `long[]` layout is
+  kept after the comparison in [visual-binary-mask-layout.md](../benchmarks/visual-binary-mask-layout.md).
+- `/1` (issue #143, PR #214 review before V1, 2026-11-21): a triangle's snapped numerators are computed exactly
+  from the input numerators (Section 4.8 item 1) instead of from coordinates rotated in `double`. Before, a
+  normalized coordinate on a half grid tie could round either way with the pose: `Triangle((0, 0), (2048, 2048),
+  (0, 2671)) / 4096` gave apex `y` `712` and its quarter turn copy `Triangle((4096, 4096), (2048, 6144),
+  (1425, 4096)) / 4096` gave `713`, both accepted by the fixed point rule, which missed a reuse. No fixture,
+  threshold or gold value moves.
 
 ## 16. References
 

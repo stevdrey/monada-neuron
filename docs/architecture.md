@@ -630,15 +630,18 @@ data never travels inside a `Signal`. All artifacts are cycle-local and bounded,
 and memory, recall and ranking stay in Monada Resonance Store. Binding stop/go gates decide whether later issues proceed;
 G3 is no-go, so cycle integration exists only as the experimental opt-in of contract `/2`, never as a default.
 
-## Visual Geometry Research Extension (specified; no code yet)
+## Visual Geometry Research Extension (experimental; geometry contracts only)
 
 Epic #138 researches a geometry first visual path that keeps an object's canonical shape apart from its instances
 (position, size, pose), its appearance (RGB color, alpha, texture) and its 2D spatial spectrum, then measures how well
 each one reconstructs. The [Visual Geometry Experiment Contract](specs/visual-geometry-v1.md) (`visual-geometry/1`,
-issue #141) and [ADR 0053](adr/0053-visual-geometry-experiment-protocol.md) specify it before any code exists: the
+issue #141) and [ADR 0053](adr/0053-visual-geometry-experiment-protocol.md) specify it ahead of the code: the
 vocabulary and truth tables, numeric conventions, 72 mask and 48 RGB fixtures at 32x32 and 64x64 with gold values and
-keyed hash splits, frozen thresholds, gates V0 to V6 and the verdict rule for Epic #139. No visual type exists yet;
-every name below is a sketch owned by one of issues #142 to #151.
+keyed hash splits, frozen thresholds, gates V0 to V6 and the verdict rule for Epic #139. Issue #143 ships the first
+types in `monada.neuron.visual`: the `ShapePrimitive` records (`Circle`, `Square`, `Triangle`, `Composite`), the packed
+`BinaryMask`, the canonical `VisualGeometry` with its 64x64 witness mask, the `Transform2D` pose, and the typed
+`Result` and `VisualRejection`. They are immutable values with no stage, no `Signal` and no persistence. Every other
+name below is still a sketch owned by one of issues #142 and #144 to #151.
 
 ```text
 Host or evaluation runner -> BinaryMask | RgbaImage | Annotation   (typed, caller owned; no Signal, no stage)
