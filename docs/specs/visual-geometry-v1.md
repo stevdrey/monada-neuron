@@ -228,7 +228,7 @@ public final class Compositor { Result<RgbaImage> render(List<Layer> layers, int
 
 // monada.neuron.evaluation.visual: FixtureGenerator, FixtureManifest (proposed, owned by issue #142);
 // ReuseMap, VisualAblationRunner (proposed, owned by issue #151)
-public final class FixtureGenerator { /* manifest row -> decoded pixels, deterministic; PNG written once by #142 */ }
+public final class FixtureGenerator { /* manifest row -> decoded pixels, deterministic; PNGs regenerated under build/, never committed */ }
 public record FixtureManifest(List<Row> rows, String sha256) { static FixtureManifest load(); }
 public final class GeometryMetrics { /* IoU, boundary distances, pose error; owned by #144 */ }
 public final class ReuseMap { /* caller owned Map<ShapePrimitive, VisualGeometry>; counts instances per geometry */ }
@@ -533,14 +533,16 @@ streams, no hash order iteration, ties by explicit ordinals. Every reference pat
 Location: `monada-neuron-evaluation/src/main/resources/visual-fixtures-v1/`.
 
 - `LICENSE`: CC0 1.0 Universal; the project is the author. No external file is downloaded in #141 or #142.
-- `PROVENANCE.md`: generator class, seed scheme, PNG writer, `cwebp` version and flags.
+- `PROVENANCE.md`: generator class, seed scheme, PNG writer, JDK vendor and build, `cwebp` version and flags.
 - `manifest-v1.tsv`: Section 8.3.
-- PNG files `<id>-32.png` and `<id>-64.png`. Masks are 8 bit grayscale PNG whose decoded values must be exactly `0` or
-  `255` (anything else throws); RGB fixtures are 8 bit RGBA PNG.
+- No PNG file is committed. The corpus is regenerated: the generator writes `<id>-32.png` and `<id>-64.png` under
+  `build/` on demand, and a loader regenerates the pixels in memory and returns them only when they hash to their
+  manifest row. Masks are 8 bit grayscale PNG whose decoded values must be exactly `0` or `255` (anything else
+  throws); RGB fixtures are 8 bit RGBA PNG.
 - `pixel_sha256` is the SHA-256 of the decoded pixel bytes in raster order with channels interleaved. Replay compares
-  decoded pixels, so the PNG writer's byte stream is not part of the frozen contract, and `png_bytes` is the
-  committed file's size. The generator writes PNGs through `javax.imageio` once; a replay test regenerates pixels and
-  compares hashes.
+  decoded pixels, so the PNG writer's byte stream is not part of the frozen contract. `png_bytes` is the size of the
+  PNG the generator wrote through `javax.imageio` in the freeze run; like the two WebP columns it is recorded once and
+  not replayed. A replay test regenerates pixels on every test run and compares every other column with the manifest.
 - Core unit tests use tiny inline masks, never these files.
 
 ### 8.2 Seeds and random values
@@ -602,7 +604,9 @@ rotation does not change it. The `gold_transform` column holds these exact value
 
 Some poses clip at the raster edge: poses 2 and 8 at the right edge (by `0.075` and `0.275`), circle pose 6 at the
 left and bottom edges (by `0.175`), the 45 degree square of pose 6 at its four corners (its half diagonal is
-`0.375 · √2`, about `0.03` past each edge), and triangles by their own vertex positions. Clipped renders are gated
+`0.375 · √2`, about `0.03` past each edge), the 30 degree square of pose 5 at its corners (about `0.012` past each
+edge), and triangles by their own vertex positions. The corner tips of the two turned squares are thin: they light
+pixels past the edge at 64 and none at 32. Clipped renders are gated
 like any other, because the fitter renders its hypotheses with the same clipping; #142 reports the clipped
 `(id, pose, size)` triples in its benchmark document.
 
@@ -956,7 +960,7 @@ sizes of an id share its split. The per id `b` and split are in the tables above
 
 No two ids share decoded pixels at either size. The check that computed Section 8 rendered all 72 mask ids and all 48
 RGB ids at 32 and 64 under these rules (the noise ids with `SplittableRandom` on JDK 27) and found no duplicate; #142's
-replay test repeats it on the committed files.
+replay test repeats it on the pixel hashes of the committed manifest, which the same test regenerates.
 
 ## 9. Metrics, Thresholds and Tolerances
 
@@ -1082,7 +1086,8 @@ The lossy spectral bar may fail on checkerboards and noise; that is an allowed n
 
 ## 12. Baselines
 
-- **PNG**: `javax.imageio` with the default PNG writer; bytes of the committed file recorded per fixture.
+- **PNG**: `javax.imageio` with the default PNG writer; bytes of the file the freeze run wrote, recorded per fixture
+  in the manifest (no PNG is committed).
 - **WebP**: measured once by #142 with a named `cwebp` version at `-lossless -exact` and `-q 75 -exact` (`-exact`
   keeps the color of transparent pixels, which `c-deg-01` and `c-deg-02` need); bytes and tool version recorded in
   the manifest and `PROVENANCE.md`; marked as externally produced data; no Java WebP dependency; `NA` when no `cwebp`
@@ -1219,6 +1224,12 @@ ADR or verdict.
   (0, 2671)) / 4096` gave apex `y` `712` and its quarter turn copy `Triangle((4096, 4096), (2048, 6144),
   (1425, 4096)) / 4096` gave `713`, both accepted by the fixed point rule, which missed a reuse. No fixture,
   threshold or gold value moves.
+- `/1` (issue #142, before V1, 2026-11-22): the corpus is regenerated instead of committed. Section 8.1 asked for 240
+  committed PNG files, which cannot fit the 40 changed file limit of issue #142; #142 commits the generator, the
+  frozen manifest, `LICENSE` and `PROVENANCE.md`, and a loader that returns regenerated pixels only when they hash to
+  their row. `png_bytes` becomes a value recorded at freeze time, like the WebP columns (Sections 3.4, 8.1, 8.11 and
+  12 follow). No id, gold value, seed, split or pixel changes. The clipping note of Section 8.4 gains the 30 degree
+  square of pose 5 and the fact that both turned squares clip at 64 only, as #142's render found.
 
 ## 16. References
 
