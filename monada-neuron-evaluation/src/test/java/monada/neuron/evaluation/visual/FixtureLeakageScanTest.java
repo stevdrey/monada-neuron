@@ -35,7 +35,10 @@ class FixtureLeakageScanTest {
             "monada-neuron-evaluation/src/test/java/monada/neuron/evaluation/visual/CompositeGoldDerivationTest.java",
             "monada-neuron-evaluation/src/test/java/monada/neuron/evaluation/visual/FixtureCataloguePinTest.java",
             "monada-neuron-evaluation/src/test/java/monada/neuron/evaluation/visual/FixtureLeakageScanTest.java",
-            "monada-neuron-evaluation/src/test/java/monada/neuron/evaluation/visual/VisualFixtureReplayTest.java");
+            "monada-neuron-evaluation/src/test/java/monada/neuron/evaluation/visual/VisualFixtureReplayTest.java",
+            // Issue #143's conformance test pins the witness mask of every gold composite, five of them in the test
+            // split. It selects nothing and scores no algorithm, so Section 8.10 exempts it like the lossless checks.
+            "src/test/java/monada/neuron/visual/VisualGeometryConformanceTest.java");
 
     private static final String SCAN_ROOTS_PROPERTY = "visualFixtures.scanRoots";
 

@@ -131,8 +131,15 @@ Before the freeze, the generator was checked against the branch of issue #143 (`
 For all 28 distinct gold shapes (the five catalogue primitives, the 21 composite decompositions and the two
 overlapping circle pairs), #143's constructors accepted the shape, `VisualGeometry.canonicalize` returned the same
 numerators with the identity pose, and `canonicalMask()` equalled this generator's own 64x64 render at the identity
-transform, bit for bit. The test that repeats this on every run, `VisualGeometryAgreementTest`, can only compile once
-#143 is on `main`, so it joins this change at that point.
+transform, bit for bit.
+
+#143 merged on 2026-11-24 (`a3e68d1`, after two more review rounds that refactored its canonicalizer).
+`VisualGeometryAgreementTest` now repeats the check on every run against the merged code, and it passes for all 28
+shapes with no change to the generator or the frozen manifest.
+
+The #143 conformance test pins the witness mask of every gold composite, five of which are in the test split
+(`m-cmp-06`, `m-cmp-11`, `m-cmp-14`, `m-cmp-15`, `m-cmp-18`). It selects nothing and scores no algorithm, so the
+leakage scan lists it as exempt, in the allow list of `FixtureLeakageScanTest`.
 
 ## Limits and negative results
 
