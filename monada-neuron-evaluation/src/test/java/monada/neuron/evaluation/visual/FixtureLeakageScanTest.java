@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Stream;
@@ -22,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Guards the single use test split (contract Section 8.10). A test source outside {@link #ALLOWED} fails this scan
- * when it contains a test split id, the token {@code FixtureSplit.TEST} or the name of the all splits entry point,
+ * when it contains a test split id (one that {@link #ALLOWED_IDS} does not grant it), the token {@code FixtureSplit.TEST} or the name of the all splits entry point,
  * anywhere in the file, comments included. The scan matches text: it stops accidents, not intent.
  */
 class FixtureLeakageScanTest {
@@ -35,10 +36,18 @@ class FixtureLeakageScanTest {
             "monada-neuron-evaluation/src/test/java/monada/neuron/evaluation/visual/CompositeGoldDerivationTest.java",
             "monada-neuron-evaluation/src/test/java/monada/neuron/evaluation/visual/FixtureCataloguePinTest.java",
             "monada-neuron-evaluation/src/test/java/monada/neuron/evaluation/visual/FixtureLeakageScanTest.java",
-            "monada-neuron-evaluation/src/test/java/monada/neuron/evaluation/visual/VisualFixtureReplayTest.java",
-            // Issue #143's conformance test pins the witness mask of every gold composite, five of them in the test
-            // split. It selects nothing and scores no algorithm, so Section 8.10 exempts it like the lossless checks.
-            "src/test/java/monada/neuron/visual/VisualGeometryConformanceTest.java");
+            "monada-neuron-evaluation/src/test/java/monada/neuron/evaluation/visual/VisualFixtureReplayTest.java");
+
+    /**
+     * Files that may name some test split ids and nothing else of the test split, relative to the repository root.
+     * Issue #143's conformance test pins the witness mask of every gold composite, five of them in the test split.
+     * It builds them from its own copy of the gold, selects nothing and scores no algorithm, which is the conformance
+     * exemption of Section 8.10. Any other test split id, the split token or the all splits entry point still fails
+     * there.
+     */
+    private static final Map<String, Set<String>> ALLOWED_IDS = Map.of(
+            "src/test/java/monada/neuron/visual/VisualGeometryConformanceTest.java",
+            Set.of("m-cmp-06", "m-cmp-11", "m-cmp-14", "m-cmp-15", "m-cmp-18"));
 
     private static final String SCAN_ROOTS_PROPERTY = "visualFixtures.scanRoots";
 
@@ -66,9 +75,12 @@ class FixtureLeakageScanTest {
                     if (ALLOWED.stream().anyMatch(allowed -> file.endsWith(Path.of(allowed)))) {
                         continue;
                     }
+                    Set<String> permitted = ALLOWED_IDS.entrySet().stream()
+                            .filter(entry -> file.endsWith(Path.of(entry.getKey()))).map(Map.Entry::getValue)
+                            .findFirst().orElse(Set.of());
                     String text = new String(Files.readAllBytes(file), StandardCharsets.ISO_8859_1);
                     for (String token : tokens) {
-                        if (text.contains(token)) {
+                        if (!permitted.contains(token) && text.contains(token)) {
                             offenders.add(file + ": " + token);
                         }
                     }
@@ -114,6 +126,23 @@ class FixtureLeakageScanTest {
 
         Files.writeString(leaking, "class LeakingTest { Object all = corpus.loadEverySplitForLosslessChecks(); }\n");
         assertEquals(List.of(leaking + ": loadEverySplitForLosslessChecks"),
+                offenders(List.of(root), forbiddenTokens()));
+    }
+
+    @Test
+    void theConformanceTestMayNameItsFiveCompositeIdsAndNothingElseOfTheTestSplit(@TempDir Path root)
+            throws IOException {
+        // covers: AC-6
+        Path conformance = root.resolve("src/test/java/monada/neuron/visual/VisualGeometryConformanceTest.java");
+        Files.createDirectories(conformance.getParent());
+        Files.writeString(conformance, "class VisualGeometryConformanceTest {\n"
+                + "    // m-cmp-06 m-cmp-11 m-cmp-14 m-cmp-15 m-cmp-18\n}\n");
+
+        assertEquals(List.of(), offenders(List.of(root), forbiddenTokens()));
+
+        Files.writeString(conformance, "class VisualGeometryConformanceTest {\n"
+                + "    // m-cmp-06 and m-pos-02\n    Object split = FixtureSplit.TEST;\n}\n");
+        assertEquals(List.of(conformance + ": FixtureSplit.TEST", conformance + ": m-pos-02"),
                 offenders(List.of(root), forbiddenTokens()));
     }
 

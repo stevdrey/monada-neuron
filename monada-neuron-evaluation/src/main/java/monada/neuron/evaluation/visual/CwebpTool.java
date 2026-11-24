@@ -4,18 +4,33 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Runs one external {@code cwebp} binary with fixed arguments and no shell, to record the WebP baseline sizes of
- * contract Section 12. Any failure stops the caller: a missing binary, a non zero exit or an empty version line.
+ * contract Section 12. Any failure stops the caller: a missing binary, a non zero exit, an empty version line or a
+ * call that does not finish within the time limit, after which the process is killed.
  */
 final class CwebpTool {
 
+    private static final Duration LIMIT = Duration.ofSeconds(60);
+
     private final Path binary;
+    private final Duration limit;
 
     CwebpTool(Path binary) {
+        this(binary, LIMIT);
+    }
+
+    /** A tool whose every call must finish within {@code limit}. */
+    CwebpTool(Path binary, Duration limit) {
         this.binary = binary;
+        this.limit = limit;
     }
 
     /** The first line {@code cwebp -version} prints. */
@@ -54,12 +69,26 @@ final class CwebpTool {
         try {
             Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
             process.getOutputStream().close();
-            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            int exit = process.waitFor();
+            // Read on another thread: a read on this one would block for as long as a hung process keeps its output
+            // open, and the time limit would never be checked.
+            var reading = new FutureTask<>(() -> process.getInputStream().readAllBytes());
+            Thread.ofVirtual().start(reading);
+            if (!process.waitFor(limit.toMillis(), TimeUnit.MILLISECONDS)) {
+                process.destroyForcibly();
+                throw new IllegalStateException("command '" + printed + "' did not finish within " + limit.toMillis()
+                        + " ms");
+            }
+            int exit = process.exitValue();
             if (exit != 0) {
                 throw new IllegalStateException("command '" + printed + "' exited with code " + exit);
             }
-            return output;
+            return new String(reading.get(limit.toMillis(), TimeUnit.MILLISECONDS), StandardCharsets.UTF_8);
+        } catch (TimeoutException e) {
+            throw new IllegalStateException("command '" + printed + "' kept its output open for more than "
+                    + limit.toMillis() + " ms after it exited", e);
+        } catch (ExecutionException e) {
+            throw new IllegalStateException("command '" + printed + "' could not run: " + e.getCause().getMessage(),
+                    e.getCause());
         } catch (IOException e) {
             throw new IllegalStateException("command '" + printed + "' could not run: " + e.getMessage(), e);
         } catch (InterruptedException e) {

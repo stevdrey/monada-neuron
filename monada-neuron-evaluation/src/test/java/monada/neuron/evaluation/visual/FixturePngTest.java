@@ -96,4 +96,15 @@ class FixturePngTest {
 
         assertThrows(IllegalStateException.class, () -> png.readRgba(gray));
     }
+
+    @Test
+    void anRgbaPngOfAnotherSizeThrows() throws IOException {
+        // covers: AC-5
+        Path small = write(new BufferedImage(16, 16, BufferedImage.TYPE_4BYTE_ABGR), "small-color.png");
+        Path wide = write(new BufferedImage(64, 32, BufferedImage.TYPE_4BYTE_ABGR), "wide-color.png");
+
+        var wrongSize = assertThrows(IllegalStateException.class, () -> png.readRgba(small));
+        assertTrue(wrongSize.getMessage().contains("small-color.png is 16x16"), wrongSize.getMessage());
+        assertThrows(IllegalStateException.class, () -> png.readRgba(wide));
+    }
 }

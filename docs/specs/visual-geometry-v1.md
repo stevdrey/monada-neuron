@@ -951,7 +951,10 @@ sizes of an id share its split. The per id `b` and split are in the tables above
 - Selection (#144's `τ_fit` and `τ_margin`, #151's arms) uses validation only. Gates V2 to V5 are scored on
   validation; the test split is scored once, by #151 at V6, and is single use.
 - "Reading" the test split means scoring it with selected parameters. The byte replay check of V1 and the lossless
-  checks (round trips, exact bins, contour and SDF inversion) run on every split, because nothing is selected.
+  checks (round trips, exact bins, contour and SDF inversion) run on every split, because nothing is selected. The same
+  holds for a conformance check of the geometry types that builds a gold shape from its own copy of the tables above
+  and pins the mask it renders: it reads no fixture, selects nothing and scores no algorithm, so it may name the test
+  split ids whose gold it pins and no other.
 - A leakage test scans the test sources for test split ids used outside those exempt checks and fails on a hit.
 - The train split is never scored for a gate or the verdict; it exists for development and diagnostics. Both
   `m-amb-09` and `m-amb-10` fall in train, so their annotated composite fit is development evidence only.
@@ -1230,6 +1233,11 @@ ADR or verdict.
   their row. `png_bytes` becomes a value recorded at freeze time, like the WebP columns (Sections 3.4, 8.1, 8.11 and
   12 follow). No id, gold value, seed, split or pixel changes. The clipping note of Section 8.4 gains the 30 degree
   square of pose 5 and the fact that both turned squares clip at 64 only, as #142's render found.
+- `/1` (issue #142, before V1, 2026-11-24): Section 8.10 names one more exempt check. #143's conformance test pins
+  the witness mask of every gold composite, five of them in the test split (`m-cmp-06`, `m-cmp-11`, `m-cmp-14`,
+  `m-cmp-15`, `m-cmp-18`); it selects nothing, so it is exempt like the lossless checks, for those ids only. The
+  leakage scan grants that file those five ids and still fails it on any other test split id. No rule that guards
+  selection changes.
 
 ## 16. References
 

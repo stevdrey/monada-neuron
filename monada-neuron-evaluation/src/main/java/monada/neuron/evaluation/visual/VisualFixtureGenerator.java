@@ -2,10 +2,10 @@ package monada.neuron.evaluation.visual;
 
 import java.io.IOException;
 import java.io.PrintStream;
-import java.io.UncheckedIOException;
 import java.lang.management.ManagementFactory;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
@@ -23,8 +23,10 @@ import java.util.stream.Stream;
  * <p>Options: {@code --output-dir <dir>} (required) and {@code --cwebp <path>} (optional; fills the two WebP columns,
  * which are {@code NA} without it). Everything is written into {@code <dir>/.staging} first, every PNG is read back
  * and compared with its pixels, and the files move into {@code <dir>} only when the whole run succeeded. Exit status
- * {@code 1} on any failure, with the output directory left exactly as it was. The generator never writes into tracked
- * files: freezing a manifest is one manual copy, described in {@code PROVENANCE.md}.
+ * {@code 1} on any failure, with the output directory left exactly as it was. One case is weaker: the final move is one
+ * file at a time, so a failure during it can leave some regenerated PNG files in {@code <dir>}. The manifest moves
+ * last, so the manifest in {@code <dir>} is replaced only after every other file arrived. The generator never writes
+ * into tracked files: freezing a manifest is one manual copy, described in {@code PROVENANCE.md}.
  */
 public final class VisualFixtureGenerator {
 
@@ -65,10 +67,16 @@ public final class VisualFixtureGenerator {
                 err.println(USAGE);
                 return 1;
             }
-            if (args[i].equals("--output-dir")) {
-                outputDir = Path.of(args[i + 1]);
-            } else {
-                cwebp = Optional.of(Path.of(args[i + 1]));
+            try {
+                if (args[i].equals("--output-dir")) {
+                    outputDir = Path.of(args[i + 1]);
+                } else {
+                    cwebp = Optional.of(Path.of(args[i + 1]));
+                }
+            } catch (InvalidPathException e) {
+                err.println("invalid argument: " + args[i] + " is not a path: " + e.getReason());
+                err.println(USAGE);
+                return 1;
             }
         }
         if (outputDir == null) {
@@ -86,9 +94,9 @@ public final class VisualFixtureGenerator {
             out.println("Wrote " + manifest.rows().size() + " fixtures and " + MANIFEST_NAME + " (sha256 "
                     + manifest.sha256() + ") to " + outputDir);
             return 0;
-        } catch (IllegalStateException | IOException | UncheckedIOException e) {
-            discard(existed ? staging : outputDir);
+        } catch (IOException | RuntimeException e) {
             err.println("visual fixture generation failed: " + e.getMessage());
+            discard(existed ? staging : outputDir, err);
             return 1;
         }
     }
@@ -144,15 +152,21 @@ public final class VisualFixtureGenerator {
         }
     }
 
-    /** Moves the PNG files, the manifest and the report out of staging; the WebP files are deleted with it. */
+    /**
+     * Moves the PNG files, the report and then the manifest out of staging; the WebP files are deleted with it. The
+     * manifest goes last, so a move that fails partway never leaves a regenerated manifest beside missing files.
+     */
     private void publish(Path staging, Path outputDir) throws IOException {
         try (Stream<Path> files = Files.list(staging)) {
             for (Path file : files.sorted().toList()) {
-                if (!file.getFileName().toString().endsWith(".webp")) {
-                    Files.move(file, outputDir.resolve(file.getFileName()), StandardCopyOption.REPLACE_EXISTING);
+                String name = file.getFileName().toString();
+                if (!name.endsWith(".webp") && !name.equals(MANIFEST_NAME)) {
+                    Files.move(file, outputDir.resolve(name), StandardCopyOption.REPLACE_EXISTING);
                 }
             }
         }
+        Files.move(staging.resolve(MANIFEST_NAME), outputDir.resolve(MANIFEST_NAME),
+                StandardCopyOption.REPLACE_EXISTING);
         deleteTree(staging);
     }
 
@@ -235,11 +249,12 @@ public final class VisualFixtureGenerator {
         Files.writeString(file, String.join("\n", lines) + "\n", StandardCharsets.UTF_8);
     }
 
-    private void discard(Path tree) {
+    /** Deletes what a failed run left; a failure here is reported after the run's own error, never in its place. */
+    private void discard(Path tree, PrintStream err) {
         try {
             deleteTree(tree);
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
+        } catch (IOException | RuntimeException e) {
+            err.println("cleanup also failed, delete " + tree + " by hand: " + e);
         }
     }
 

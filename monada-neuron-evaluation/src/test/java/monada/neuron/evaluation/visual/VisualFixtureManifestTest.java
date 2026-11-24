@@ -152,4 +152,104 @@ class VisualFixtureManifestTest {
         assertDefect(rehashed(pngBytes), "manifest line 5: png_bytes must be a decimal integer, found 'NA'");
         assertDefect(rehashed(hash), "manifest line 5: pixel_sha256 must be 64 lowercase hex digits");
     }
+
+    @Test
+    void aRowWithAnUnknownKindOrGroupIsRejected() {
+        // covers: AC-5
+        List<String> kind = valid();
+        kind.set(4, kind.get(4).replace("\tmask\t", "\tvector\t"));
+        List<String> group = valid();
+        group.set(4, group.get(4).replace("\tpositive\t", "\tneutral\t"));
+
+        assertDefect(rehashed(kind), "manifest line 5: unknown kind 'vector'");
+        assertDefect(rehashed(group), "manifest line 5: unknown group 'neutral'");
+    }
+
+    @Test
+    void aSeedOrWebpSizeThatIsNotAnIntegerIsRejected() {
+        // covers: AC-5, AC-7. A WebP column is an integer or exactly NA.
+        List<String> seed = valid();
+        seed.set(4, seed.get(4).replace("\t42\t", "\t4x2\t"));
+        List<String> lossless = valid();
+        lossless.set(4, lossless.get(4).replace("\tNA\t", "\tna\t"));
+        List<String> q75 = valid();
+        q75.set(4, q75.get(4).substring(0, q75.get(4).length() - 2) + "7.5");
+
+        assertDefect(rehashed(seed), "manifest line 5: seed must be a decimal integer, found '4x2'");
+        assertDefect(rehashed(lossless), "manifest line 5: webp_lossless_bytes must be a decimal integer, found 'na'");
+        assertDefect(rehashed(q75), "manifest line 5: webp_q75_bytes must be a decimal integer, found '7.5'");
+    }
+
+    @Test
+    void theTwoSizesOfOneIdMustComeSmallerFirst() {
+        // covers: AC-5
+        List<String> lines = valid();
+        String size32 = lines.get(4);
+        lines.set(4, lines.get(5));
+        lines.set(5, size32);
+
+        assertDefect(rehashed(lines), "manifest line 6: unsorted rows: (m-pos-01, 32) comes after (m-pos-01, 64)");
+    }
+
+    @Test
+    void aFileThatEndsAfterItsHeaderIsRejectedAtTheColumnLine() {
+        // covers: AC-5
+        List<String> headerOnly = new ArrayList<>(valid().subList(0, 3));
+
+        assertDefect(rehashed(headerOnly), "manifest line 4: the file ends before this line");
+    }
+
+    @Test
+    void aSizeBeyondTheIntRangeIsRejectedAndNotWrappedIntoAValidSize() {
+        // covers: AC-5. 4294967328 is 2^32 + 32, so a narrowing cast would read it as 32.
+        List<String> lines = valid();
+        lines.set(4, lines.get(4).replace("\t32\t", "\t4294967328\t"));
+
+        assertDefect(rehashed(lines), "manifest line 5: size must be 32 or 64, found 4294967328");
+    }
+
+    @Test
+    void anIntegerMustBePrintedTheWayTheManifestWriterPrintsIt() {
+        // covers: AC-5. A sign or a leading zero would parse and then print as another text with another hash.
+        List<String> plusSize = valid();
+        plusSize.set(4, plusSize.get(4).replace("\t32\t", "\t+32\t"));
+        List<String> paddedSize = valid();
+        paddedSize.set(4, paddedSize.get(4).replace("\t32\t", "\t032\t"));
+        List<String> plusSeed = valid();
+        plusSeed.set(4, plusSeed.get(4).replace("\t42\t", "\t+42\t"));
+        List<String> minusZeroSeed = valid();
+        minusZeroSeed.set(4, minusZeroSeed.get(4).replace("\t42\t", "\t-0\t"));
+        List<String> paddedPng = valid();
+        paddedPng.set(4, paddedPng.get(4).replace("\t120\t", "\t0120\t"));
+
+        assertDefect(rehashed(plusSize), "manifest line 5: size must be a decimal integer, found '+32'");
+        assertDefect(rehashed(paddedSize), "manifest line 5: size must be a decimal integer, found '032'");
+        assertDefect(rehashed(plusSeed), "manifest line 5: seed must be a decimal integer, found '+42'");
+        assertDefect(rehashed(minusZeroSeed), "manifest line 5: seed must be a decimal integer, found '-0'");
+        assertDefect(rehashed(paddedPng), "manifest line 5: png_bytes must be a decimal integer, found '0120'");
+    }
+
+    @Test
+    void aNegativeSeedParsesButANegativeByteCountIsRejected() {
+        // covers: AC-5
+        List<String> seed = valid();
+        seed.set(4, seed.get(4).replace("\t42\t", "\t-42\t"));
+        List<String> pngBytes = valid();
+        pngBytes.set(4, pngBytes.get(4).replace("\t120\t", "\t-120\t"));
+        List<String> q75 = valid();
+        q75.set(4, q75.get(4).substring(0, q75.get(4).length() - 2) + "-7");
+
+        assertEquals(-42L, VisualFixtureManifest.parse(rehashed(seed)).rows().getFirst().seed());
+        assertDefect(rehashed(pngBytes), "manifest line 5: png_bytes must not be negative, found -120");
+        assertDefect(rehashed(q75), "manifest line 5: webp_q75_bytes must not be negative, found -7");
+    }
+
+    @Test
+    void aKindThatDoesNotBelongToTheGroupIsRejected() {
+        // covers: AC-5. The loader reads its channel count from the kind, so a mask group must stay a mask.
+        List<String> lines = valid();
+        lines.set(4, lines.get(4).replace("\tmask\t", "\trgb\t"));
+
+        assertDefect(rehashed(lines), "manifest line 5: kind 'rgb' does not match group 'positive', which is 'mask'");
+    }
 }

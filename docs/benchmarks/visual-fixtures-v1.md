@@ -36,7 +36,9 @@ arithmetic of contract Section 4.4, so a bug in one side cannot hide in the gold
 ./gradlew :monada-neuron-evaluation:test --tests 'monada.neuron.evaluation.visual.*'
 ```
 
-The generator exits with status `1` on any failure and leaves its output directory exactly as it was. Freezing a
+The generator exits with status `1` on any failure and leaves its output directory exactly as it was. (One case is
+weaker: the last step moves the files one by one, manifest last, so a failure during that step can leave regenerated
+PNG files beside the earlier manifest. A `cwebp` call that runs longer than 60 seconds is killed and fails the run.) Freezing a
 manifest is one manual copy, described in `PROVENANCE.md` beside the manifest.
 
 ## Report fields (contract Section 13)
@@ -138,8 +140,9 @@ transform, bit for bit.
 shapes with no change to the generator or the frozen manifest.
 
 The #143 conformance test pins the witness mask of every gold composite, five of which are in the test split
-(`m-cmp-06`, `m-cmp-11`, `m-cmp-14`, `m-cmp-15`, `m-cmp-18`). It selects nothing and scores no algorithm, so the
-leakage scan lists it as exempt, in the allow list of `FixtureLeakageScanTest`.
+(`m-cmp-06`, `m-cmp-11`, `m-cmp-14`, `m-cmp-15`, `m-cmp-18`). It selects nothing and scores no algorithm, which
+contract Section 8.10 now names as exempt. `FixtureLeakageScanTest` grants that file those five ids only: any other
+test split id, the split token or the all splits entry point still fails the scan there.
 
 ## Limits and negative results
 

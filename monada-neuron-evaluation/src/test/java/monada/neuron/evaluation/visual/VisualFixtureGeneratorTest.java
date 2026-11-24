@@ -9,12 +9,15 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class VisualFixtureGeneratorTest {
@@ -182,5 +185,101 @@ class VisualFixtureGeneratorTest {
         assertTrue(errors().contains("invalid argument: --colour"), errors());
         assertTrue(errors().contains("Usage: --output-dir <dir> [--cwebp <path>]"), errors());
         assertEquals("", out.toString(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void aCwebpThatExitsZeroButWritesNoFileFailsTheRunAndLeavesNoOutputDirectory() throws IOException {
+        // covers: AC-7
+        Path output = work.resolve("corpus");
+        Path silent = work.resolve("silent-cwebp");
+        Files.writeString(silent, """
+                #!/bin/sh
+                if [ "$1" = "-version" ]; then echo 'silent 0.0'; fi
+                exit 0
+                """);
+        assertTrue(silent.toFile().setExecutable(true));
+
+        assertEquals(1, run("--output-dir", output.toString(), "--cwebp", silent.toString()));
+
+        assertFalse(Files.exists(output));
+        assertTrue(errors().contains("wrote no file"), errors());
+    }
+
+    @Test
+    void aCwebpFlagWithoutAPathIsAnInvalidArgumentAndWritesNothing() {
+        // covers: AC-7
+        Path output = work.resolve("corpus");
+
+        assertEquals(1, run("--output-dir", output.toString(), "--cwebp"));
+
+        assertTrue(errors().contains("invalid argument: --cwebp"), errors());
+        assertFalse(Files.exists(output));
+    }
+
+    @Test
+    void aCwebpThatNeverExitsIsStoppedAtTheTimeLimitAndNamedInTheError() throws IOException {
+        // covers: AC-7
+        Path hanging = work.resolve("hanging-cwebp");
+        Files.writeString(hanging, """
+                #!/bin/sh
+                exec sleep 30
+                """);
+        assertTrue(hanging.toFile().setExecutable(true));
+        var tool = new CwebpTool(hanging, Duration.ofMillis(300));
+
+        var failure = assertTimeoutPreemptively(Duration.ofSeconds(10),
+                () -> assertThrows(IllegalStateException.class, tool::version));
+
+        assertEquals("command '" + hanging + " -version' did not finish within 300 ms", failure.getMessage());
+    }
+
+    @Test
+    void anOutputDirectoryThatIsNotAPathIsAnInvalidArgument() {
+        // covers: AC-7
+        assertEquals(1, run("--output-dir", "corpus\u0000"));
+
+        assertTrue(errors().contains("invalid argument: --output-dir"), errors());
+        assertTrue(errors().contains("Usage: --output-dir <dir> [--cwebp <path>]"), errors());
+    }
+
+    @Test
+    void aCleanupThatFailsStillReportsTheFirstErrorAndExitsWithStatusOne() throws IOException {
+        // covers: AC-7. The fake encoder locks the staging folder, so deleting it afterwards fails.
+        Path output = work.resolve("corpus");
+        Path locking = work.resolve("locking-cwebp");
+        Files.writeString(locking, """
+                #!/bin/sh
+                if [ "$1" = "-version" ]; then echo 'locking 0.0'; exit 0; fi
+                while [ $# -gt 1 ]; do
+                  if [ "$1" = "-o" ]; then chmod 555 "$(dirname "$2")"; fi
+                  shift
+                done
+                exit 3
+                """);
+        assertTrue(locking.toFile().setExecutable(true));
+
+        int status;
+        try {
+            status = run("--output-dir", output.toString(), "--cwebp", locking.toString());
+        } finally {
+            output.resolve(".staging").toFile().setWritable(true);
+        }
+
+        assertEquals(1, status);
+        assertTrue(errors().contains("exited with code 3"), errors());
+        assertTrue(errors().contains("cleanup also failed"), errors());
+    }
+
+    @Test
+    void aPublishThatFailsPartwayKeepsTheOldManifest() throws IOException {
+        // covers: AC-7. The report cannot replace a folder that is not empty, so the move stops there.
+        Path output = Files.createDirectories(work.resolve("corpus"));
+        Files.writeString(output.resolve("manifest-v1.tsv"), "kept");
+        Files.writeString(Files.createDirectories(output.resolve("report-fragment.md")).resolve("in-the-way"), "x");
+
+        assertEquals(1, run("--output-dir", output.toString()));
+
+        assertEquals("kept", Files.readString(output.resolve("manifest-v1.tsv")));
+        assertFalse(Files.exists(output.resolve(".staging")));
     }
 }

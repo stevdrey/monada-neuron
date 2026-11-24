@@ -28,6 +28,8 @@ public record VisualFixtureManifest(String version, String splitKey, String sha2
     private static final String SPLIT_KEY_LINE = "# split-key: " + FixtureDigests.SPLIT_KEY;
     private static final String SHA_PREFIX = "# sha256: ";
     private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
+    // The only form the writer prints, so that parsing and printing a row give back the same text and hash.
+    private static final Pattern INTEGER = Pattern.compile("0|-?[1-9][0-9]*");
     private static final int FIRST_ROW_LINE = 5;
 
     public VisualFixtureManifest {
@@ -128,14 +130,20 @@ public record VisualFixtureManifest(String version, String splitKey, String sha2
         if (values.length != COLUMNS.size()) {
             throw defect(number, "expected " + COLUMNS.size() + " columns, found " + values.length);
         }
-        int size = (int) integer(values[1], "size", number);
-        if (!FixtureCatalogue.SIZES.contains(size)) {
-            throw defect(number, "size must be 32 or 64, found " + size);
+        // Checked as a long: a narrowing cast would read 2^32 + 32 as 32.
+        long printedSize = integer(values[1], "size", number);
+        if (printedSize != (int) printedSize || !FixtureCatalogue.SIZES.contains((int) printedSize)) {
+            throw defect(number, "size must be 32 or 64, found " + printedSize);
         }
+        int size = (int) printedSize;
         FixtureKind kind = Arrays.stream(FixtureKind.values()).filter(k -> k.printed().equals(values[2])).findFirst()
                 .orElseThrow(() -> defect(number, "unknown kind '" + values[2] + "'"));
         FixtureGroup group = Arrays.stream(FixtureGroup.values()).filter(g -> g.printed().equals(values[3]))
                 .findFirst().orElseThrow(() -> defect(number, "unknown group '" + values[3] + "'"));
+        if (kind != group.kind()) {
+            throw defect(number, "kind '" + kind.printed() + "' does not match group '" + group.printed()
+                    + "', which is '" + group.kind().printed() + "'");
+        }
         FixtureSplit split = Arrays.stream(FixtureSplit.values()).filter(s -> s.printed().equals(values[11]))
                 .findFirst().orElseThrow(() -> defect(number, "unknown split '" + values[11] + "'"));
         if (!SHA256.matcher(values[12]).matches()) {
@@ -143,16 +151,27 @@ public record VisualFixtureManifest(String version, String splitKey, String sha2
         }
         return new ManifestRow(values[0], size, kind, group, integer(values[4], "seed", number), values[5],
                 values[6], values[7], values[8], values[9], values[10], split, values[12],
-                integer(values[13], "png_bytes", number), webpBytes(values[14], "webp_lossless_bytes", number),
+                count(values[13], "png_bytes", number), webpBytes(values[14], "webp_lossless_bytes", number),
                 webpBytes(values[15], "webp_q75_bytes", number));
     }
 
     private static OptionalLong webpBytes(String value, String column, int number) {
         return value.equals(ManifestRow.NOT_AVAILABLE) ? OptionalLong.empty()
-                : OptionalLong.of(integer(value, column, number));
+                : OptionalLong.of(count(value, column, number));
+    }
+
+    private static long count(String value, String column, int number) {
+        long count = integer(value, column, number);
+        if (count < 0) {
+            throw defect(number, column + " must not be negative, found " + count);
+        }
+        return count;
     }
 
     private static long integer(String value, String column, int number) {
+        if (!INTEGER.matcher(value).matches()) {
+            throw defect(number, column + " must be a decimal integer, found '" + value + "'");
+        }
         try {
             return Long.parseLong(value);
         } catch (NumberFormatException e) {
