@@ -127,6 +127,19 @@ tasks.register<JavaExec>("runBilingualSense") {
     args(quotedBenchmarkArgs())
 }
 
+// Visual fixture corpus visual-fixtures/1 (Issue #142, spec docs/specs/visual-geometry-v1.md Section 8). Writes the
+// PNG files, manifest-v1.tsv and report-fragment.md under build/ only; freezing the manifest into resources is a manual
+// copy described in src/main/resources/visual-fixtures-v1/PROVENANCE.md. -PbenchmarkArgs='--cwebp /path/to/cwebp'
+// records the WebP baseline sizes.
+tasks.register<JavaExec>("runVisualFixtureGenerator") {
+    group = "benchmark"
+    description = "Regenerates the visual-fixtures/1 PNG files, manifest and report fragment under build/ (Issue #142)"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("monada.neuron.evaluation.visual.VisualFixtureGenerator")
+    args("--output-dir", layout.buildDirectory.dir("visual-fixtures-v1").get().asFile.absolutePath)
+    args(quotedBenchmarkArgs())
+}
+
 tasks.register<JavaExec>("jmh") {
     group = "benchmark"
     description = "Runs JMH microbenchmarks"
@@ -143,6 +156,20 @@ tasks.register<JavaExec>("jmh") {
 tasks.test {
     useJUnitPlatform()
     jvmArgs("--add-modules", "jdk.incubator.vector")
+    // The visual fixture leakage scan (Issue #142) reads test sources. The roots come from the build layout, never
+    // from the working directory.
+    val visualFixtureScanRoots = listOf(
+        layout.projectDirectory.dir("src/test/java"),
+        layout.projectDirectory.dir("src/integrationTest/java"),
+        rootProject.layout.projectDirectory.dir("src/test/java"),
+    )
+    systemProperty(
+        "visualFixtures.scanRoots",
+        visualFixtureScanRoots.joinToString(File.pathSeparator) { it.asFile.absolutePath },
+    )
+    visualFixtureScanRoots.forEachIndexed { index, root ->
+        inputs.dir(root).withPropertyName("visualFixtureScanRoot$index").withPathSensitivity(PathSensitivity.RELATIVE)
+    }
 }
 
 // Real Resonance Store integration evaluation (Issue #31). The adapter module, and with it the
