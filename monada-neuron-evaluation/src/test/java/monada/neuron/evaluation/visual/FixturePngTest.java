@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -84,7 +85,7 @@ class FixturePngTest {
     @Test
     void aFileThatIsNotAnImageThrows() throws IOException {
         Path file = directory.resolve("text.png");
-        java.nio.file.Files.writeString(file, "not a png");
+        Files.writeString(file, "not a png");
 
         assertThrows(IllegalStateException.class, () -> png.readMask(file));
         assertThrows(IllegalStateException.class, () -> png.readRgba(file));

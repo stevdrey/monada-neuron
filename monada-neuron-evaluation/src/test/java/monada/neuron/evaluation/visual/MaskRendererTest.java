@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.SplittableRandom;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -120,7 +122,7 @@ class MaskRendererTest {
     @ValueSource(ints = {32, 64})
     void theSeededMasksDrawOneLongPerPixelInRasterOrder(int n) {
         long seed = 5137362645076074028L;
-        var random = new java.util.SplittableRandom(seed);
+        var random = new SplittableRandom(seed);
         byte[] mask = render("m-neg-10", n);
 
         assertEquals(seed, digests.seed("m-neg-10"));

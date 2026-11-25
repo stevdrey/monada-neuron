@@ -13,6 +13,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Stream;
@@ -158,8 +159,8 @@ class FixtureLeakageScanTest {
         for (FixtureDefinition render : catalogue.definitions()) {
             for (GoldLayer layer : render.layers()) {
                 for (FixtureDefinition mask : catalogue.definitions()) {
-                    if (mask.shape().equals(java.util.Optional.of(layer.geometry()))
-                            && mask.transform().equals(java.util.Optional.of(layer.transform()))) {
+                    if (mask.shape().equals(Optional.of(layer.geometry()))
+                            && mask.transform().equals(Optional.of(layer.transform()))) {
                         reused.add(mask.id());
                         assertEquals(FixtureSplit.TRAIN, renderer.split(mask.id()),
                                 render.id() + " reuses " + mask.id());
