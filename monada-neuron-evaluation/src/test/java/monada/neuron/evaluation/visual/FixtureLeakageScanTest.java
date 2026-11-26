@@ -24,10 +24,24 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Guards the single use test split (contract Section 8.10). A test source outside {@link #ALLOWED} fails this scan
- * when it contains a test split id (one that {@link #ALLOWED_IDS} does not grant it), the token {@code FixtureSplit.TEST} or the name of the all splits entry point,
- * anywhere in the file, comments included. The scan matches text: it stops accidents, not intent.
+ * when it contains a test split id (one that {@link #ALLOWED_TOKENS} does not grant it), the token
+ * {@code FixtureSplit.TEST} or the name of the all splits entry point, anywhere in the file, comments included. It
+ * also fails on the forms that reach every split without naming the test split (issue #217):
+ * {@code FixtureSplit.values}, {@code FixtureSplit.valueOf}, {@code FixtureSplit.class} (the form of
+ * {@code @EnumSource} and {@code EnumSet.allOf}), {@code ManifestRow::split}, {@code manifest().rows()} and the type
+ * name {@code VisualFixtureManifest}. A consumer takes its rows from {@code load(split)}, through
+ * {@code LoadedFixture.row()}. The scan ignores whitespace, so a token wrapped over two lines is still found. It
+ * matches text: it stops accidents, not intent. A manifest held in a {@code var} is one form it does not see.
  */
 class FixtureLeakageScanTest {
+
+    private static final String MANIFEST_ROWS = "manifest().rows()";
+    private static final String MANIFEST_TYPE = "VisualFixtureManifest";
+
+    /** The forms that reach every split, the test split included, without naming it. */
+    private static final Set<String> EVERY_SPLIT_FORMS =
+            Set.of("FixtureSplit.values", "FixtureSplit.valueOf", "FixtureSplit.class", "ManifestRow::split",
+                    MANIFEST_ROWS, MANIFEST_TYPE);
 
     /**
      * Files that may name the test split, relative to the repository root. A later issue adds its file here in the
@@ -45,10 +59,20 @@ class FixtureLeakageScanTest {
      * It builds them from its own copy of the gold, selects nothing and scores no algorithm, which is the conformance
      * exemption of Section 8.10. Any other test split id, the split token or the all splits entry point still fails
      * there.
+     *
+     * <p>The corpus, generator and manifest tests read the manifest to check the manifest itself: row counts, row
+     * order, parsing and tampered rows. They score nothing, so they get the manifest tokens and nothing else of the
+     * test split.
      */
-    private static final Map<String, Set<String>> ALLOWED_IDS = Map.of(
+    private static final Map<String, Set<String>> ALLOWED_TOKENS = Map.of(
             "src/test/java/monada/neuron/visual/VisualGeometryConformanceTest.java",
-            Set.of("m-cmp-06", "m-cmp-11", "m-cmp-14", "m-cmp-15", "m-cmp-18"));
+            Set.of("m-cmp-06", "m-cmp-11", "m-cmp-14", "m-cmp-15", "m-cmp-18"),
+            "monada-neuron-evaluation/src/test/java/monada/neuron/evaluation/visual/VisualFixtureCorpusTest.java",
+            Set.of(MANIFEST_ROWS, MANIFEST_TYPE),
+            "monada-neuron-evaluation/src/test/java/monada/neuron/evaluation/visual/VisualFixtureGeneratorTest.java",
+            Set.of(MANIFEST_ROWS, MANIFEST_TYPE),
+            "monada-neuron-evaluation/src/test/java/monada/neuron/evaluation/visual/VisualFixtureManifestTest.java",
+            Set.of(MANIFEST_TYPE));
 
     private static final String SCAN_ROOTS_PROPERTY = "visualFixtures.scanRoots";
 
@@ -59,6 +83,7 @@ class FixtureLeakageScanTest {
         var tokens = new TreeSet<String>();
         tokens.add("FixtureSplit.TEST");
         tokens.add("loadEverySplitForLosslessChecks");
+        tokens.addAll(EVERY_SPLIT_FORMS);
         corpus.manifest().rows().stream().filter(row -> row.split() == FixtureSplit.TEST).map(ManifestRow::id)
                 .forEach(tokens::add);
         return tokens;
@@ -76,10 +101,12 @@ class FixtureLeakageScanTest {
                     if (ALLOWED.stream().anyMatch(allowed -> file.endsWith(Path.of(allowed)))) {
                         continue;
                     }
-                    Set<String> permitted = ALLOWED_IDS.entrySet().stream()
+                    Set<String> permitted = ALLOWED_TOKENS.entrySet().stream()
                             .filter(entry -> file.endsWith(Path.of(entry.getKey()))).map(Map.Entry::getValue)
                             .findFirst().orElse(Set.of());
-                    String text = new String(Files.readAllBytes(file), StandardCharsets.ISO_8859_1);
+                    // No token holds whitespace, so dropping it finds a token that was wrapped over two lines.
+                    String text = new String(Files.readAllBytes(file), StandardCharsets.ISO_8859_1)
+                            .replaceAll("\\s+", "");
                     for (String token : tokens) {
                         if (!permitted.contains(token) && text.contains(token)) {
                             offenders.add(file + ": " + token);
@@ -107,7 +134,7 @@ class FixtureLeakageScanTest {
     void theScanCoversTheTestSplitIdsTheSplitTokenAndTheAllSplitsEntryPoint() {
         Set<String> tokens = forbiddenTokens();
 
-        assertEquals(28 + 2, tokens.size());
+        assertEquals(28 + 2 + 6, tokens.size());
         assertTrue(tokens.contains("m-pos-02"));
         assertFalse(tokens.contains("m-pos-01"));
     }
@@ -128,6 +155,58 @@ class FixtureLeakageScanTest {
         Files.writeString(leaking, "class LeakingTest { Object all = corpus.loadEverySplitForLosslessChecks(); }\n");
         assertEquals(List.of(leaking + ": loadEverySplitForLosslessChecks"),
                 offenders(List.of(root), forbiddenTokens()));
+    }
+
+    @Test
+    void aTestSourceThatReachesEverySplitWithoutNamingTheTestSplitFailsTheScan(@TempDir Path root)
+            throws IOException {
+        // covers: issue #217, guard 1
+        Path leaking = root.resolve("LeakingTest.java");
+
+        Files.writeString(leaking, "class LeakingTest {\n"
+                + "    void all() { for (FixtureSplit split : FixtureSplit.values()) corpus.load(split); }\n}\n");
+        assertEquals(List.of(leaking + ": FixtureSplit.values"), offenders(List.of(root), forbiddenTokens()));
+
+        Files.writeString(leaking, "class LeakingTest { Object held = corpus.load(FixtureSplit.valueOf(name)); }\n");
+        assertEquals(List.of(leaking + ": FixtureSplit.valueOf"), offenders(List.of(root), forbiddenTokens()));
+
+        Files.writeString(leaking, "class LeakingTest {\n    Object held = corpus.manifest().rows().stream()\n"
+                + "            .filter(row -> row.split() != train).toList();\n}\n");
+        assertEquals(List.of(leaking + ": manifest().rows()"), offenders(List.of(root), forbiddenTokens()));
+
+        Files.writeString(leaking, "class LeakingTest { Object bySplit = groupingBy(ManifestRow::split); }\n");
+        assertEquals(List.of(leaking + ": ManifestRow::split"), offenders(List.of(root), forbiddenTokens()));
+
+        Files.writeString(leaking, "class LeakingTest {\n    @ParameterizedTest\n"
+                + "    @EnumSource(FixtureSplit.class)\n    void scores(FixtureSplit split) { }\n}\n");
+        assertEquals(List.of(leaking + ": FixtureSplit.class"), offenders(List.of(root), forbiddenTokens()));
+
+        Files.writeString(leaking, "class LeakingTest { Object all = EnumSet.allOf(FixtureSplit.class); }\n");
+        assertEquals(List.of(leaking + ": FixtureSplit.class"), offenders(List.of(root), forbiddenTokens()));
+
+        Files.writeString(leaking, "class LeakingTest {\n    VisualFixtureManifest held = corpus.manifest();\n"
+                + "    Object rows = held.rows();\n}\n");
+        assertEquals(List.of(leaking + ": VisualFixtureManifest"), offenders(List.of(root), forbiddenTokens()));
+
+        Files.writeString(leaking, "class LeakingTest {\n    Object held = corpus.manifest()\n"
+                + "            .rows();\n    Object all = FixtureSplit\n            .values();\n}\n");
+        assertEquals(List.of(leaking + ": FixtureSplit.values", leaking + ": manifest().rows()"),
+                offenders(List.of(root), forbiddenTokens()));
+    }
+
+    @Test
+    void theCorpusTestsMayReadTheManifestRowsAndNothingElseOfTheTestSplit(@TempDir Path root) throws IOException {
+        // covers: issue #217, guard 1
+        Path corpusTest = root.resolve(
+                "monada-neuron-evaluation/src/test/java/monada/neuron/evaluation/visual/VisualFixtureCorpusTest.java");
+        Files.createDirectories(corpusTest.getParent());
+        Files.writeString(corpusTest, "class VisualFixtureCorpusTest { Object rows = corpus.manifest().rows(); }\n");
+
+        assertEquals(List.of(), offenders(List.of(root), forbiddenTokens()));
+
+        Files.writeString(corpusTest, "class VisualFixtureCorpusTest {\n"
+                + "    Object rows = corpus.manifest().rows();\n    Object all = FixtureSplit.values();\n}\n");
+        assertEquals(List.of(corpusTest + ": FixtureSplit.values"), offenders(List.of(root), forbiddenTokens()));
     }
 
     @Test

@@ -15,6 +15,10 @@ import java.util.Objects;
  *
  * <p>Every read names its split. The test split is single use and belongs to issue #151; a leakage test fails when
  * another test source names {@link FixtureSplit#TEST}, a test split id or {@link #loadEverySplitForLosslessChecks()}.
+ * It also fails on the forms that reach every split without naming one: {@code FixtureSplit.values()},
+ * {@code FixtureSplit.valueOf}, {@code FixtureSplit.class}, {@code ManifestRow::split} and the manifest rows read
+ * straight from {@link #manifest()}. A consumer takes its rows from {@link #load(FixtureSplit)} through
+ * {@link LoadedFixture#row()}.
  */
 public final class VisualFixtureCorpus {
 
@@ -23,7 +27,6 @@ public final class VisualFixtureCorpus {
     private final VisualFixtureManifest manifest;
     private final FixtureCatalogue catalogue = new FixtureCatalogue();
     private final FixtureRenderer renderer = new FixtureRenderer(catalogue);
-    private final FixtureDigests digests = new FixtureDigests();
 
     private VisualFixtureCorpus(VisualFixtureManifest manifest) {
         this.manifest = manifest;
@@ -90,11 +93,7 @@ public final class VisualFixtureCorpus {
             FixtureDefinition definition = catalogue.find(row.id()).orElseThrow(() -> new IllegalStateException(
                     "fixture " + row.id() + " at size " + row.size() + " is not in the catalogue"));
             byte[] pixels = renderer.pixels(definition, row.size());
-            String actual = digests.sha256Hex(pixels);
-            if (!actual.equals(row.pixelSha256())) {
-                throw new IllegalStateException("fixture " + row.id() + " at size " + row.size()
-                        + " regenerated to pixel hash " + actual + " but its manifest row says " + row.pixelSha256());
-            }
+            // The fixture's constructor checks the pixel hash against the row and throws on a mismatch.
             fixtures.add(new LoadedFixture(row, row.size(), row.size(), row.kind().channels(), pixels));
         }
         return List.copyOf(fixtures);

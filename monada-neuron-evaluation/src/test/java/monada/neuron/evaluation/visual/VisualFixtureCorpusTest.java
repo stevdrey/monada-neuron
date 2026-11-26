@@ -3,10 +3,12 @@ package monada.neuron.evaluation.visual;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -56,13 +58,73 @@ class VisualFixtureCorpusTest {
 
     @Test
     void aLoadedFixtureCopiesItsPixelsInAndOut() {
-        var source = new byte[] {0, (byte) 255, 0, 0};
-        var fixture = new LoadedFixture(corpus.manifest().rows().getFirst(), 2, 2, 1, source);
+        LoadedFixture loaded = corpus.load(FixtureSplit.TRAIN).getFirst();
+        byte[] expected = loaded.pixels();
+        byte[] source = expected.clone();
+        var fixture = new LoadedFixture(loaded.row(), loaded.width(), loaded.height(), loaded.channels(), source);
 
-        source[0] = 7;
-        fixture.pixels()[1] = 7;
+        source[0] ^= 0x7f;
+        fixture.pixels()[1] ^= 0x7f;
 
-        assertArrayEquals(new byte[] {0, (byte) 255, 0, 0}, fixture.pixels());
+        assertArrayEquals(expected, fixture.pixels());
+    }
+
+    @Test
+    void aLoadedFixtureWhoseDimensionsDisagreeWithItsRowCannotBeBuilt() {
+        // covers: issue #217, guard 3
+        LoadedFixture loaded = corpus.load(FixtureSplit.TRAIN).getFirst();
+        ManifestRow row = loaded.row();
+        int size = row.size();
+        int channels = row.kind().channels();
+        byte[] pixels = loaded.pixels();
+
+        assertEquals("fixture " + row.id() + " at size " + size + " cannot be " + (size + 1) + " by " + size
+                        + " with " + channels + " channels",
+                assertThrows(IllegalArgumentException.class,
+                        () -> new LoadedFixture(row, size + 1, size, channels, pixels)).getMessage());
+        assertThrows(IllegalArgumentException.class, () -> new LoadedFixture(row, size, size - 1, channels, pixels));
+        assertThrows(IllegalArgumentException.class, () -> new LoadedFixture(row, size, size, channels + 1, pixels));
+        assertEquals("fixture " + row.id() + " at size " + size + " needs " + pixels.length + " pixel bytes, got "
+                        + (pixels.length - 1),
+                assertThrows(IllegalArgumentException.class, () -> new LoadedFixture(row, size, size, channels,
+                        Arrays.copyOf(pixels, pixels.length - 1))).getMessage());
+    }
+
+    @Test
+    void aLoadedFixtureWhoseForgedRowOverflowsTheByteCountCannotBeBuilt() {
+        ManifestRow row = corpus.load(FixtureSplit.TRAIN).getFirst().row();
+        var huge = new ManifestRow(row.id(), 65536, row.kind(), row.group(), row.seed(), row.formula(),
+                row.goldGeometry(), row.goldTransform(), row.goldAccept(), row.goldAbstain(), row.goldLayers(),
+                row.split(), row.pixelSha256(), row.pngBytes(), row.webpLosslessBytes(), row.webpQ75Bytes());
+
+        assertThrows(ArithmeticException.class,
+                () -> new LoadedFixture(huge, 65536, 65536, huge.kind().channels(), new byte[0]));
+    }
+
+    @Test
+    void aLoadedFixtureWhosePixelsDoNotHashToItsRowCannotBeBuilt() {
+        // covers: issue #217, guard 3
+        LoadedFixture loaded = corpus.load(FixtureSplit.TRAIN).getFirst();
+        byte[] pixels = loaded.pixels();
+        pixels[0] ^= 0x7f;
+
+        var mismatch = assertThrows(IllegalStateException.class, () -> new LoadedFixture(loaded.row(),
+                loaded.width(), loaded.height(), loaded.channels(), pixels));
+
+        assertEquals("fixture " + loaded.row().id() + " at size " + loaded.row().size()
+                + " regenerated to pixel hash " + digests.sha256Hex(pixels) + " but its manifest row says "
+                + loaded.row().pixelSha256(), mismatch.getMessage());
+    }
+
+    @Test
+    void twoLoadedFixturesWithEqualRowsAndEqualBytesAreEqual() {
+        // covers: issue #217, guard 3
+        List<LoadedFixture> first = corpus.load(FixtureSplit.TRAIN);
+        List<LoadedFixture> second = corpus.load(FixtureSplit.TRAIN);
+
+        assertEquals(first, second);
+        assertEquals(first.getFirst().hashCode(), second.getFirst().hashCode());
+        assertNotEquals(first.get(0), first.get(1));
     }
 
     @Test
